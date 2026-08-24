@@ -1,0 +1,5 @@
+# 작업자 산출물 중 재생성 가능한 것만 무시
+__pycache__/
+*.pyc
+.venv/
+node_modules/
