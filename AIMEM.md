@@ -147,7 +147,7 @@
 | ---- | -------- | -------- | -------- | ------------------------------------------------------- | ---------------- |
 | S1   | `062dd2` | claude   | T-006    | `agent:claude:acp:c58c32e0-40e8-467b-9877-e1fc2ce34a87` | 15:27 스폰. 보드 CLI 구현 |
 | S2 | `eb1056` | claude | T-007 | agent:claude:acp:64d56280-7d19-4a01-a76d-d225fee184c6 | 15:32 스폰. opencode 장애로 claude 대행(8.1) |
-| S3   | `471983` | opencode | (대기)   | `agent:opencode:acp:0bcdb343-88ca-4172-9376-4faf64859214` | T-002B DONE. 어댑터 종료 - 다음 태스크는 새 스폰 |
+| S3 | `471983` | claude | T-008 | agent:claude:acp:f136d456-af62-4c55-8ee8-5b147c1436f3 | 15:39 스폰. opencode 장애로 claude 대행(8.1) |
 | S4   | `6cd650` | (미배정) | -        | -                                                       | 예약             |
 
 상태(idle/running/error)는 이 표에 적지 않습니다. **실시간 조회로만 판정합니다:**
@@ -172,7 +172,7 @@ python3 ~/.openclaw/workspace-coding/scripts/acp-fleet.py --idle    # 지시 가
 | T-005B | aimem_lint 테스트          | S2       | DONE     | T-005A | tests/test_aimem_lint.py        |
 | T-006 | 보드/큐/명부 갱신 CLI | S1 | DONE | - | tools/aimem_board.py |
 | T-007 | 무인 파이프라인 드라이버 | S2 | DONE | T-006 | tools/aimem_pipeline.py |
-| T-008 | pre-commit 린트 훅 | S3 | ASSIGNED | T-006 | .githooks/pre-commit |
+| T-008 | pre-commit 린트 훅 | S3 | IN-PROGRESS | T-006 | .githooks/pre-commit |
 
 상태 값: `TODO` / `ASSIGNED` / `IN-PROGRESS` / `REVIEW` / `DONE` / `BLOCKED`
 
