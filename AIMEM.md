@@ -3,8 +3,8 @@
 이 폴더(`/home/tsyi/work/opencode`)에서 일하는 **모든 AI 세션의 단일 진실 소스**입니다.
 관리자와 작업자가 여기서 만나고, 여기서만 조율합니다.
 
-- **REV: 18** (개정 번호. 지시 메시지의 REV 와 다르면 작업을 멈추고 되묻습니다 - `0.1` 참조)
-- 최종 갱신: 2026-08-25 15:38 KST
+- **REV: 19** (개정 번호. 지시 메시지의 REV 와 다르면 작업을 멈추고 되묻습니다 - `0.1` 참조)
+- 최종 갱신: 2026-08-25 15:44 KST
 - 관리자(단독 쓰기 권한): **클로** (OpenClaw `coding` 에이전트)
 - 공유 작업 폴더: `/home/tsyi/work/opencode`
 
@@ -145,7 +145,7 @@
 
 | 슬롯 | 확인토큰 | 하네스   | 역할     | 세션키                                                  | 비고             |
 | ---- | -------- | -------- | -------- | ------------------------------------------------------- | ---------------- |
-| S1   | `062dd2` | claude   | T-006    | `agent:claude:acp:c58c32e0-40e8-467b-9877-e1fc2ce34a87` | 15:27 스폰. 보드 CLI 구현 |
+| S1 | `062dd2` | claude | (대기) | agent:claude:acp:c58c32e0-40e8-467b-9877-e1fc2ce34a87 | T-006 DONE(15:28) |
 | S2 | `eb1056` | claude | T-007 | agent:claude:acp:64d56280-7d19-4a01-a76d-d225fee184c6 | 15:32 스폰. opencode 장애로 claude 대행(8.1) |
 | S3 | `471983` | claude | T-008 | agent:claude:acp:f136d456-af62-4c55-8ee8-5b147c1436f3 | 15:39 스폰. opencode 장애로 claude 대행(8.1) |
 | S4   | `6cd650` | (미배정) | -        | -                                                       | 예약             |
@@ -172,7 +172,7 @@ python3 ~/.openclaw/workspace-coding/scripts/acp-fleet.py --idle    # 지시 가
 | T-005B | aimem_lint 테스트          | S2       | DONE     | T-005A | tests/test_aimem_lint.py        |
 | T-006 | 보드/큐/명부 갱신 CLI | S1 | DONE | - | tools/aimem_board.py |
 | T-007 | 무인 파이프라인 드라이버 | S2 | DONE | T-006 | tools/aimem_pipeline.py |
-| T-008 | pre-commit 린트 훅 | S3 | IN-PROGRESS | T-006 | .githooks/pre-commit |
+| T-008 | pre-commit 린트 훅 | S3 | DONE | T-006 | .githooks/pre-commit |
 
 상태 값: `TODO` / `ASSIGNED` / `IN-PROGRESS` / `REVIEW` / `DONE` / `BLOCKED`
 

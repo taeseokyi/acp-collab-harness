@@ -1,0 +1,51 @@
+#!/bin/sh
+# AIMEM.md 협약 무결성 + tests/tools 회귀 가드.
+# 활성화/우회 방법은 .githooks/README.md 참고. 관련 없는 커밋에서는 아무 검사도 하지 않는다.
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel) || exit 1
+cd "$repo_root"
+
+staged=$(git diff --cached --name-only --diff-filter=d)
+
+run_lint=0
+run_tests=0
+
+if printf '%s\n' "$staged" | grep -qx 'AIMEM.md'; then
+    run_lint=1
+fi
+
+if printf '%s\n' "$staged" | grep -qE '^(tests|tools)/'; then
+    run_tests=1
+fi
+
+if [ "$run_lint" -eq 0 ] && [ "$run_tests" -eq 0 ]; then
+    exit 0
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "pre-commit: python3 을 찾을 수 없습니다." >&2
+    echo "pre-commit: AIMEM.md/tests/tools 검사를 건너뛸 수 없어 커밋을 거부합니다." >&2
+    echo "pre-commit: python3 을 설치하거나 PATH 에 추가한 뒤 다시 시도하십시오." >&2
+    exit 1
+fi
+
+status=0
+
+if [ "$run_lint" -eq 1 ]; then
+    echo "pre-commit: AIMEM.md 변경 감지 - tools/aimem_lint.py 실행"
+    if ! python3 tools/aimem_lint.py AIMEM.md; then
+        echo "pre-commit: AIMEM.md 가 협약 불변식을 위반합니다 (위 위반 목록 참고). 커밋을 거부합니다." >&2
+        status=1
+    fi
+fi
+
+if [ "$run_tests" -eq 1 ]; then
+    echo "pre-commit: tests/ 또는 tools/ 변경 감지 - 단위 테스트 실행"
+    if ! python3 -m unittest discover -s tests; then
+        echo "pre-commit: 단위 테스트 실패. 커밋을 거부합니다." >&2
+        status=1
+    fi
+fi
+
+exit "$status"
