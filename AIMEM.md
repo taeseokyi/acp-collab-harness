@@ -146,7 +146,7 @@
 | 슬롯 | 확인토큰 | 하네스   | 역할     | 세션키                                                  | 비고             |
 | ---- | -------- | -------- | -------- | ------------------------------------------------------- | ---------------- |
 | S1   | `062dd2` | claude   | T-006    | `agent:claude:acp:c58c32e0-40e8-467b-9877-e1fc2ce34a87` | 15:27 스폰. 보드 CLI 구현 |
-| S2   | `eb1056` | opencode | (대기)   | `agent:opencode:acp:0c5f4a6b-c729-4fbf-811b-d1d2bb199223` | T-005B DONE(14:44). 1차 시도는 프로바이더 장애로 즉사, 재시도로 성공 |
+| S2 | `eb1056` | claude | T-007 | agent:claude:acp:64d56280-7d19-4a01-a76d-d225fee184c6 | 15:32 스폰. opencode 장애로 claude 대행(8.1) |
 | S3   | `471983` | opencode | (대기)   | `agent:opencode:acp:0bcdb343-88ca-4172-9376-4faf64859214` | T-002B DONE. 어댑터 종료 - 다음 태스크는 새 스폰 |
 | S4   | `6cd650` | (미배정) | -        | -                                                       | 예약             |
 
@@ -171,7 +171,7 @@ python3 ~/.openclaw/workspace-coding/scripts/acp-fleet.py --idle    # 지시 가
 | T-005A | aimem_lint 구현            | S1       | DONE     | -      | tools/aimem_lint.py             |
 | T-005B | aimem_lint 테스트          | S2       | DONE     | T-005A | tests/test_aimem_lint.py        |
 | T-006 | 보드/큐/명부 갱신 CLI | S1 | DONE | - | tools/aimem_board.py |
-| T-007 | 무인 파이프라인 드라이버 | S2 | ASSIGNED | T-006 | tools/aimem_pipeline.py |
+| T-007 | 무인 파이프라인 드라이버 | S2 | IN-PROGRESS | T-006 | tools/aimem_pipeline.py |
 
 상태 값: `TODO` / `ASSIGNED` / `IN-PROGRESS` / `REVIEW` / `DONE` / `BLOCKED`
 
@@ -303,6 +303,7 @@ python3 ~/.openclaw/workspace-coding/scripts/acp-fleet.py --idle    # 지시 가
 | `tools/aimem_board.py`     | S1              | T-006                           |
 | (그 외)                    | 미배정          | 태스크 배정 시 여기에 등록      |
 | `tools/aimem_pipeline.py` | S2 | T-007 |
+| `.aimem/pipeline.log` | S2 | T-007 진행 로그 |
 
 새 경로가 필요하면 아웃박스에 `NEEDS-LOCK` 으로 요청하십시오.
 관리자가 이 표에 등록한 뒤에 작업을 시작합니다.
