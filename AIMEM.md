@@ -3,7 +3,7 @@
 이 폴더(`/home/tsyi/work/opencode`)에서 일하는 **모든 AI 세션의 단일 진실 소스**입니다.
 관리자와 작업자가 여기서 만나고, 여기서만 조율합니다.
 
-- **REV: 15** (개정 번호. 지시 메시지의 REV 와 다르면 작업을 멈추고 되묻습니다 - `0.1` 참조)
+- **REV: 16** (개정 번호. 지시 메시지의 REV 와 다르면 작업을 멈추고 되묻습니다 - `0.1` 참조)
 - 최종 갱신: 2026-08-25 15:18 KST
 - 관리자(단독 쓰기 권한): **클로** (OpenClaw `coding` 에이전트)
 - 공유 작업 폴더: `/home/tsyi/work/opencode`
@@ -145,7 +145,7 @@
 
 | 슬롯 | 확인토큰 | 하네스   | 역할     | 세션키                                                  | 비고             |
 | ---- | -------- | -------- | -------- | ------------------------------------------------------- | ---------------- |
-| S1   | `062dd2` | claude   | (대기)   | `agent:claude:acp:88c14b8e-497d-4ae8-bd9a-dceb66bd923d` | T-005A DONE(14:24) |
+| S1   | `062dd2` | claude   | T-006    | `agent:claude:acp:c58c32e0-40e8-467b-9877-e1fc2ce34a87` | 15:27 스폰. 보드 CLI 구현 |
 | S2   | `eb1056` | opencode | (대기)   | `agent:opencode:acp:0c5f4a6b-c729-4fbf-811b-d1d2bb199223` | T-005B DONE(14:44). 1차 시도는 프로바이더 장애로 즉사, 재시도로 성공 |
 | S3   | `471983` | opencode | (대기)   | `agent:opencode:acp:0bcdb343-88ca-4172-9376-4faf64859214` | T-002B DONE. 어댑터 종료 - 다음 태스크는 새 스폰 |
 | S4   | `6cd650` | (미배정) | -        | -                                                       | 예약             |
@@ -170,6 +170,7 @@ python3 ~/.openclaw/workspace-coding/scripts/acp-fleet.py --idle    # 지시 가
 | T-004B | 가드레일 - 소유권/승인 거부 | S2       | DONE     | -      | .aimem/outbox/S2.md             |
 | T-005A | aimem_lint 구현            | S1       | DONE     | -      | tools/aimem_lint.py             |
 | T-005B | aimem_lint 테스트          | S2       | DONE     | T-005A | tests/test_aimem_lint.py        |
+| T-006 | 보드/큐/명부 갱신 CLI      | S1       | ASSIGNED | -      | tools/aimem_board.py            |
 
 상태 값: `TODO` / `ASSIGNED` / `IN-PROGRESS` / `REVIEW` / `DONE` / `BLOCKED`
 
@@ -267,9 +268,8 @@ python3 ~/.openclaw/workspace-coding/scripts/acp-fleet.py --idle    # 지시 가
 
 | 순서 | 태스크 | 후보 슬롯 | 이어받음 | 비고 |
 | ---- | ------ | --------- | -------- | ---- |
-| 1 | T-006 `tools/aimem_board.py` - 보드/큐/명부 갱신 CLI | S1 | - | 관리자 수작업(python 인라인 치환) 대체. 갱신 후 린트 자동 실행 |
-| 2 | T-007 `tools/aimem_pipeline.py` - 무인 파이프라인 드라이버 | S2 | T-006 | 단계 DAG + 재시도 + 검증 게이트. `openclaw agent` 블로킹 호출 사용 |
-| 3 | T-008 pre-commit 훅으로 린트 강제 | S3 | T-006 | 규약이 깨진 상태로는 커밋이 안 되게 |
+| 1 | T-007 `tools/aimem_pipeline.py` - 무인 파이프라인 드라이버 | S2 | T-006 | 단계 DAG + 재시도 + 검증 게이트. `openclaw agent` 블로킹 호출 사용 |
+| 2 | T-008 pre-commit 훅으로 린트 강제 | S3 | T-006 | 규약이 깨진 상태로는 커밋이 안 되게 |
 
 ---
 
@@ -300,6 +300,7 @@ python3 ~/.openclaw/workspace-coding/scripts/acp-fleet.py --idle    # 지시 가
 | `.aimem/archive/**`        | 관리자          |                                 |
 | `tools/aimem_lint.py`      | S1              | T-005A                          |
 | `tests/test_aimem_lint.py` | S2              | T-005B                          |
+| `tools/aimem_board.py`     | S1              | T-006                           |
 | (그 외)                    | 미배정          | 태스크 배정 시 여기에 등록      |
 
 새 경로가 필요하면 아웃박스에 `NEEDS-LOCK` 으로 요청하십시오.
