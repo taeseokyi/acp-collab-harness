@@ -3,8 +3,8 @@
 이 폴더(`/home/tsyi/work/opencode`)에서 일하는 **모든 AI 세션의 단일 진실 소스**입니다.
 관리자와 작업자가 여기서 만나고, 여기서만 조율합니다.
 
-- **REV: 16** (개정 번호. 지시 메시지의 REV 와 다르면 작업을 멈추고 되묻습니다 - `0.1` 참조)
-- 최종 갱신: 2026-08-25 15:18 KST
+- **REV: 17** (개정 번호. 지시 메시지의 REV 와 다르면 작업을 멈추고 되묻습니다 - `0.1` 참조)
+- 최종 갱신: 2026-08-25 15:31 KST
 - 관리자(단독 쓰기 권한): **클로** (OpenClaw `coding` 에이전트)
 - 공유 작업 폴더: `/home/tsyi/work/opencode`
 
@@ -170,7 +170,8 @@ python3 ~/.openclaw/workspace-coding/scripts/acp-fleet.py --idle    # 지시 가
 | T-004B | 가드레일 - 소유권/승인 거부 | S2       | DONE     | -      | .aimem/outbox/S2.md             |
 | T-005A | aimem_lint 구현            | S1       | DONE     | -      | tools/aimem_lint.py             |
 | T-005B | aimem_lint 테스트          | S2       | DONE     | T-005A | tests/test_aimem_lint.py        |
-| T-006 | 보드/큐/명부 갱신 CLI      | S1       | ASSIGNED | -      | tools/aimem_board.py            |
+| T-006 | 보드/큐/명부 갱신 CLI | S1 | DONE | - | tools/aimem_board.py |
+| T-007 | 무인 파이프라인 드라이버 | S2 | ASSIGNED | T-006 | tools/aimem_pipeline.py |
 
 상태 값: `TODO` / `ASSIGNED` / `IN-PROGRESS` / `REVIEW` / `DONE` / `BLOCKED`
 
@@ -268,8 +269,7 @@ python3 ~/.openclaw/workspace-coding/scripts/acp-fleet.py --idle    # 지시 가
 
 | 순서 | 태스크 | 후보 슬롯 | 이어받음 | 비고 |
 | ---- | ------ | --------- | -------- | ---- |
-| 1 | T-007 `tools/aimem_pipeline.py` - 무인 파이프라인 드라이버 | S2 | T-006 | 단계 DAG + 재시도 + 검증 게이트. `openclaw agent` 블로킹 호출 사용 |
-| 2 | T-008 pre-commit 훅으로 린트 강제 | S3 | T-006 | 규약이 깨진 상태로는 커밋이 안 되게 |
+| 1 | T-008 pre-commit 훅으로 린트 강제 | S3 | T-006 | 규약이 깨진 상태로는 커밋이 안 되게 |
 
 ---
 
@@ -302,6 +302,7 @@ python3 ~/.openclaw/workspace-coding/scripts/acp-fleet.py --idle    # 지시 가
 | `tests/test_aimem_lint.py` | S2              | T-005B                          |
 | `tools/aimem_board.py`     | S1              | T-006                           |
 | (그 외)                    | 미배정          | 태스크 배정 시 여기에 등록      |
+| `tools/aimem_pipeline.py` | S2 | T-007 |
 
 새 경로가 필요하면 아웃박스에 `NEEDS-LOCK` 으로 요청하십시오.
 관리자가 이 표에 등록한 뒤에 작업을 시작합니다.
