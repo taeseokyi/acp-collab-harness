@@ -8,7 +8,14 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools"))
 
-from aimem_lint import ADMIN_OWNER_LITERALS, lint_file, lint_text, main
+from aimem_lint import (
+    ADMIN_OWNER_LITERALS,
+    MAX_HANDOFF_ENTRIES,
+    MAX_TOTAL_LINES,
+    lint_file,
+    lint_text,
+    main,
+)
 
 VALID_DOC = """# AIMEM.md - 공유 작업 메모리
 
@@ -168,6 +175,93 @@ class TestMainExitCodes(unittest.TestCase):
 
     def test_exit_1_on_missing_file(self):
         self.assertEqual(main([os.path.join(self._tmpdir, "nope.md")]), 1)
+
+
+class TestSizeConstantsMatchSpec(unittest.TestCase):
+    """`5절`이 정한 상한값(총 800줄 / 핸드오프 12건)과 린터 상수가 일치하는지 못박는다.
+    상수를 5절과 다르게 바꾸면 여기서 걸린다 - 문서와 코드가 갈라지는 것을 막는 가드."""
+
+    def test_total_lines_limit_is_800(self):
+        self.assertEqual(MAX_TOTAL_LINES, 800)
+
+    def test_handoff_entries_limit_is_12(self):
+        self.assertEqual(MAX_HANDOFF_ENTRIES, 12)
+
+
+class TestSizeTotalLines(unittest.TestCase):
+    """총 줄수 상한(800). 경계 800/801 을 정확히 덮는다."""
+
+    def _doc_with_total_lines(self, target):
+        base = VALID_DOC if VALID_DOC.endswith("\n") else VALID_DOC + "\n"
+        n = len(base.splitlines())
+        self.assertLessEqual(n, target, "패딩 대상 줄수가 기준 문서보다 작음")
+        doc = base + ("\n" * (target - n))
+        # 픽스처 자체의 off-by-one 을 막는 자기검증 - 실제 줄수가 목표와 같아야 한다
+        self.assertEqual(len(doc.splitlines()), target)
+        return doc
+
+    def test_exactly_800_lines_passes(self):
+        self.assertEqual(lint_text(self._doc_with_total_lines(800)), [])
+
+    def test_801_lines_violates(self):
+        self.assertEqual(
+            codes(lint_text(self._doc_with_total_lines(801))), ["SIZE_TOTAL_LINES"]
+        )
+
+
+class TestSizeHandoffLog(unittest.TestCase):
+    """`4. 핸드오프 로그` 항목 수 상한(12). 경계 12/13 을 덮고,
+    `4.5 대기 큐`·`9절 승인 이력`의 날짜꼴 줄이 잘못 포함되지 않는지 확인한다."""
+
+    def _handoff_section(self, count):
+        entries = "\n".join(
+            "- `2026-08-%02d 10:00` 관리자: 항목 %d" % ((i % 28) + 1, i)
+            for i in range(count)
+        )
+        body = (entries + "\n\n") if entries else ""
+        return "## 4. 핸드오프 로그\n\n" + body + "---\n\n"
+
+    def _doc(self, count, trailing=""):
+        # §4 를 §3 과 §6 사이에 끼운다. trailing 은 문서 끝(§6 뒤)에 붙인다.
+        doc = VALID_DOC.replace(
+            "## 6. 파일 소유권",
+            self._handoff_section(count) + "## 6. 파일 소유권",
+        )
+        return doc + trailing
+
+    def test_exactly_12_entries_passes(self):
+        self.assertEqual(lint_text(self._doc(12)), [])
+
+    def test_13_entries_violates(self):
+        self.assertEqual(codes(lint_text(self._doc(13))), ["SIZE_HANDOFF_LOG"])
+
+    def test_queue_and_approval_dates_not_counted(self):
+        # §4 는 정확히 12건(통과선)으로 둔다. §4.5 대기 큐와 9절 승인 이력에
+        # 날짜꼴(`- \`YYYY-MM-DD ...`) 줄을 여럿 두어도, `_find_section(4)` 경계가
+        # `## 4.5` 에서 끝나므로 이들은 항목 수에 포함되면 안 된다. 포함됐다면
+        # 12+3+3 = 18 > 12 로 SIZE_HANDOFF_LOG 가 잘못 떴을 것이다.
+        queue = (
+            "## 4.5 대기 큐\n\n"
+            "- `2026-09-01 09:00` 대기 A\n"
+            "- `2026-09-02 09:00` 대기 B\n"
+            "- `2026-09-03 09:00` 대기 C\n\n"
+            "---\n\n"
+        )
+        approvals = (
+            "\n## 9. 승인 대기\n\n"
+            "**승인 이력**\n\n"
+            "- `2026-08-25 15:19` 태석님: 승인 A\n"
+            "- `2026-08-26 15:19` 태석님: 승인 B\n"
+            "- `2026-08-27 15:19` 태석님: 승인 C\n"
+        )
+        doc = VALID_DOC.replace(
+            "## 6. 파일 소유권",
+            self._handoff_section(12) + queue + "## 6. 파일 소유권",
+        ) + approvals
+        cds = codes(lint_text(doc))
+        self.assertNotIn("SIZE_HANDOFF_LOG", cds)
+        # 경계가 옳다면 이 문서는 완전히 깨끗하다 (다른 위반도 없어야 함)
+        self.assertEqual(cds, [])
 
 
 if __name__ == "__main__":

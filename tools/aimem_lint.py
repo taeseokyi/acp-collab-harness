@@ -12,6 +12,15 @@ SEP_RE = re.compile(r"^\|?[\s\-:|]+\|?$")
 VALID_STATUSES = {"TODO", "ASSIGNED", "IN-PROGRESS", "REVIEW", "DONE", "BLOCKED"}
 ADMIN_OWNER_LITERALS = {"해당 슬롯", "미배정"}
 
+# 크기 상한 (`5절`). 작업자가 매 턴 전문을 읽으므로 크기는 곧 턴당 비용이다. 총량만 강제한다.
+# 상한(거부선)과 롤오버 목표(archive-rollover --keep 10)는 일부러 다르다 - 여유 2건을 띄워
+# 롤오버 직후 로그를 한두 건 써도 바로 막히지 않게 한다.
+MAX_TOTAL_LINES = 800
+MAX_HANDOFF_ENTRIES = 12
+# 4절 핸드오프 로그 항목 경계. aimem_board.py 의 archive-rollover 와 **같은 기준**이어야 두
+# 도구가 같은 수를 센다. aimem_board 를 import 하지는 않는다(훅이 린터만 단독 실행하므로).
+HANDOFF_ENTRY_RE = re.compile(r"^- `(\d{4})-(\d{2})-\d{2}")
+
 
 @dataclass
 class Violation:
@@ -87,6 +96,25 @@ def lint_text(text: str) -> List[Violation]:
     """AIMEM.md 본문 문자열을 검사해 위반 목록을 반환한다. 위반이 없으면 빈 리스트."""
     violations: List[Violation] = []
     lines = text.splitlines()
+
+    # 0. 크기 상한 (`5절`) - 총량만 검사한다. 항목당 줄수는 검사하지 않는다.
+    total_lines = len(lines)
+    if total_lines > MAX_TOTAL_LINES:
+        violations.append(Violation(
+            "SIZE_TOTAL_LINES", None,
+            f"총 {total_lines}줄로 상한 {MAX_TOTAL_LINES}줄을 초과함. 오래된 '4. 핸드오프 로그'를 "
+            f"`python3 tools/aimem_board.py archive-rollover --keep 10` 로 아카이브해 줄이십시오",
+        ))
+    handoff = _find_section(lines, 4)
+    if handoff is not None:
+        h_start, h_end = handoff
+        entry_count = sum(1 for i in range(h_start, h_end) if HANDOFF_ENTRY_RE.match(lines[i]))
+        if entry_count > MAX_HANDOFF_ENTRIES:
+            violations.append(Violation(
+                "SIZE_HANDOFF_LOG", h_start + 1,
+                f"'4. 핸드오프 로그' 항목이 {entry_count}건으로 상한 {MAX_HANDOFF_ENTRIES}건을 초과함. "
+                f"`python3 tools/aimem_board.py archive-rollover --keep 10` 로 오래된 것부터 아카이브하십시오",
+            ))
 
     # 1. REV 선언 - 정확히 한 번, 양의 정수
     rev_matches = [(i + 1, m.group(1)) for i, line in enumerate(lines) for m in [REV_RE.search(line)] if m]

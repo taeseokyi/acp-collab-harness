@@ -23,6 +23,12 @@ from pathlib import Path
 import aimem_lint as lint
 
 NEXT_HEADING_RE = re.compile(r"^##(?!#)\s")
+# 4절 핸드오프 로그 항목 경계: "- `YYYY-MM-DD ...`" 로 시작하는 줄. 다음 경계 전까지(들여쓴
+# 연속 줄 포함)가 한 항목이다. 캡처그룹으로 연/월을 뽑아 아카이브 파일명에 쓴다.
+# 단일 출처: aimem_lint 의 상수를 그대로 참조한다. 롤오버(여기)와 린터가 같은 정규식으로
+# 세야 "롤오버가 남긴 건수 != 린터가 세는 건수" divergence 가 생기지 않는다. 방향은 board->lint
+# 뿐이다(훅이 린터를 단독 실행하므로 lint 는 board 에 의존하면 안 된다).
+ENTRY_RE = lint.HANDOFF_ENTRY_RE
 
 # 동시 갱신 상호배제: 셸 flock(1) 과 파이썬 fcntl.flock 은 같은 flock(2) 라
 # 같은 .aimem.lock 에 대해 상호 호환된다. 저장소는 ext4 로컬(/dev/sdd)이라 flock 이 동작한다.
@@ -279,8 +285,84 @@ def cmd_owner_add(args, lines):
     return f"owner-add {args.path_pattern} -> {args.owner_slot}"
 
 
+def cmd_archive_rollover(args, lines):
+    if args.keep < 0:
+        die("--keep 는 0 이상이어야 함")
+    section = find_section(lines, 4)
+    if section is None:
+        die("'4. 핸드오프 로그' 절을 찾을 수 없음")
+    start, end = section
+    starts = [i for i in range(start, end) if ENTRY_RE.match(lines[i])]
+    total = len(starts)
+    if total <= args.keep:
+        args._archive_plan = []
+        return f"archive-rollover: 항목 {total}건 (상한 keep={args.keep} 이하) - 롤오버 없음"
+
+    # 최신 keep 건은 맨 위(시간 역순)이므로 그 아래 전부를 잘라낸다. 항목 끝의 구분선/빈 줄
+    # (--- 등)은 절 구조 유지를 위해 파일에 남긴다.
+    cut_start = starts[args.keep]
+    cut_end = end
+    while cut_end > cut_start and lines[cut_end - 1].strip() in ("", "---"):
+        cut_end -= 1
+    archived = lines[cut_start:cut_end]
+    del lines[cut_start:cut_end]
+
+    plan = _plan_archive(archived, Path(args.file))
+    args._archive_plan = plan
+    moved = total - args.keep
+    dest = ", ".join(f"handoff-{m}.md({cnt}건)" for m, _p, _t, cnt in plan)
+    return f"archive-rollover: {moved}건 아카이브({dest}), 최신 {args.keep}건 유지"
+
+
+def cmd_handoff_add(args, lines):
+    body = args.text if args.text is not None else sys.stdin.read()
+    body = body.rstrip("\n")
+    if not body.strip():
+        die("본문이 비어 있음 - --text 또는 표준입력으로 본문을 주십시오")
+
+    section = find_section(lines, 4)
+    if section is None:
+        die("'4. 핸드오프 로그' 절을 찾을 수 없음")
+    start, end = section
+    entry_starts = [i for i in range(start, end) if ENTRY_RE.match(lines[i])]
+
+    # 삽입 전에 상한 초과를 선제 거부한다. 린터(T-011)가 12건 초과를 위반으로 막으므로 그냥
+    # 삽입하면 finalize 의 린트에서 쓰기가 거부된다. 여기서 먼저 멈추고 archive-rollover 를
+    # 안내하는 편이 더 명확하다. 자동 롤오버는 하지 않는다(파괴적 동작 결합 금지).
+    if len(entry_starts) + 1 > lint.MAX_HANDOFF_ENTRIES:
+        die(
+            f"현재 {len(entry_starts)}건으로 한 건 더하면 {len(entry_starts) + 1}건 - 상한 "
+            f"{lint.MAX_HANDOFF_ENTRIES}건 초과라 린터가 거부합니다. 먼저 "
+            f"`python3 tools/aimem_board.py archive-rollover --keep 10` 로 롤오버한 뒤 다시 추가하십시오"
+        )
+
+    # 시각은 도구가 직접 읽어 박는다. 사람이 넘길 수 없다 - 옮겨 적는 실수를 원천 차단.
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    body_lines = body.split("\n")
+    entry = [f"- `{ts}` 관리자: {body_lines[0]}"]
+    for bl in body_lines[1:]:
+        entry.append(f"  {bl}" if bl.strip() else "")
+
+    if entry_starts:
+        insert_at = entry_starts[0]
+    else:
+        # 항목이 없으면 헤더/안내문 다음에 넣는다(안내문 뒤 빈 줄들을 건너뜀).
+        insert_at = start + 1
+        while insert_at < end and lines[insert_at].strip() != "":
+            insert_at += 1
+        while insert_at < end and lines[insert_at].strip() == "":
+            insert_at += 1
+    lines[insert_at:insert_at] = entry
+
+    new_count = len(entry_starts) + 1
+    note = " (상한 도달 - 다음 추가 전 롤오버 권장)" if new_count == lint.MAX_HANDOFF_ENTRIES else ""
+    return f"handoff-add: `{ts}` 관리자 항목 1건 추가 (총 {new_count}건){note}"
+
+
 CMD_FUNCS = {
     "rev-bump": cmd_rev_bump,
+    "handoff-add": cmd_handoff_add,
+    "archive-rollover": cmd_archive_rollover,
     "board-set": cmd_board_set,
     "board-add": cmd_board_add,
     "queue-pop": cmd_queue_pop,
@@ -357,7 +439,50 @@ def _atomic_write(path: Path, text: str) -> None:
         raise
 
 
-def finalize(path: Path, original_text: str, lines, dry_run: bool, success_msg: str) -> int:
+def _archive_dir_for(path: Path) -> Path:
+    parent = path.parent if str(path.parent) else Path(".")
+    return parent / ".aimem" / "archive"
+
+
+def _plan_archive(archived_lines, path: Path):
+    """잘린 줄들을 항목의 연-월 기준으로 묶어 [(월, 아카이브경로, 본문, 항목수)] 로 만든다.
+
+    잘린 순서(4절의 원래 순서)를 그대로 보존한다. 여러 달이 섞이면 달마다 나눠 넣는다.
+    """
+    groups = []          # [(월, [줄], 항목수)]
+    pos_of = {}          # 월 -> groups 내 위치
+    cur = None
+    for line in archived_lines:
+        m = ENTRY_RE.match(line)
+        if m:
+            cur = f"{m.group(1)}-{m.group(2)}"
+            if cur not in pos_of:
+                pos_of[cur] = len(groups)
+                groups.append((cur, [], 0))
+        if cur is None:
+            die("아카이브 대상의 첫 줄이 항목 시작이 아님 - 경계 파싱 오류")
+        month, buf, cnt = groups[pos_of[cur]]
+        buf.append(line)
+        groups[pos_of[cur]] = (month, buf, cnt + (1 if m else 0))
+
+    adir = _archive_dir_for(path)
+    return [(month, adir / f"handoff-{month}.md", "\n".join(buf), cnt) for month, buf, cnt in groups]
+
+
+def _append_archive(apath: Path, text: str) -> None:
+    """아카이브 파일에 덧붙인다. 기존 내용은 덮어쓰지 않고, 없으면 만든다. 권한 0664."""
+    apath.parent.mkdir(parents=True, exist_ok=True)
+    block = text if text.endswith("\n") else text + "\n"
+    if apath.exists() and apath.stat().st_size > 0:
+        existing = apath.read_text(encoding="utf-8")
+        if not existing.endswith("\n"):
+            block = "\n" + block
+    with open(apath, "a", encoding="utf-8") as f:
+        f.write(block)
+    os.chmod(apath, 0o664)
+
+
+def finalize(path: Path, original_text: str, lines, dry_run: bool, success_msg: str, archive_plan=None) -> int:
     new_text = "\n".join(lines)
     if original_text.endswith("\n"):
         new_text += "\n"
@@ -379,9 +504,16 @@ def finalize(path: Path, original_text: str, lines, dry_run: bool, success_msg: 
             tofile=f"{path} (dry-run, 미저장)",
         )
         sys.stdout.writelines(diff)
+        for _month, apath, _text, cnt in (archive_plan or []):
+            print(f"[dry-run] 아카이브 append -> {apath} ({cnt}건)")
         print(f"[dry-run] {success_msg}")
         return 0
 
+    # 아카이브를 먼저 덧붙이고(실패 시 AIMEM.md 무변경 -> 깨끗한 재시도), 그 다음 AIMEM.md 를
+    # 원자적으로 교체한다. 린트는 이미 통과한 상태다. 아카이브 append 와 AIMEM.md 쓰기 모두
+    # main() 의 flock 안에서 일어난다.
+    for _month, apath, text, _cnt in (archive_plan or []):
+        _append_archive(apath, text)
     _atomic_write(path, new_text)
     print(success_msg)
     return 0
@@ -404,6 +536,20 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("rev-bump", parents=[common], help="REV 증가 및 최종 갱신 시각 갱신")
     sp.add_argument("--to", type=int, default=None, help="증가(+1) 대신 이 값으로 설정")
     sp.add_argument("--now", default=None, help='시각 문자열 (예: "2026-08-25 15:30"). 생략 시 시스템 시각 사용')
+
+    sp = sub.add_parser(
+        "handoff-add",
+        parents=[common],
+        help="4절 핸드오프 로그 맨 위에 항목 추가. 시각은 도구가 직접 박음(사람이 못 넘김)",
+    )
+    sp.add_argument("--text", default=None, help="항목 본문. 생략 시 표준입력에서 읽음. 여러 줄이면 이어지는 줄은 2칸 들여씀")
+
+    sp = sub.add_parser(
+        "archive-rollover",
+        parents=[common],
+        help="4절 핸드오프 로그가 상한을 넘으면 오래된 것부터 월별 아카이브(.aimem/archive/handoff-YYYY-MM.md)로 롤오버",
+    )
+    sp.add_argument("--keep", type=int, default=10, help="4절에 남길 최신 항목 수 (기본 10)")
 
     sp = sub.add_parser("board-set", parents=[common], help="작업 보드의 상태 칸 갱신")
     sp.add_argument("task_id")
@@ -479,7 +625,7 @@ def main(argv=None) -> int:
         except SystemExit as e:
             return int(e.code) if e.code is not None else 1
 
-        return finalize(path, original_text, lines, args.dry_run, msg)
+        return finalize(path, original_text, lines, args.dry_run, msg, getattr(args, "_archive_plan", None))
     finally:
         os.close(lock_fd)
 
