@@ -54,11 +54,13 @@ def row_line(cells):
 
 
 def find_section(lines, number):
-    return lint._find_section(lines, number)
+    # 린터 공개 API 를 통해 절을 찾는다(T-024). lint 의 내부 헬퍼를 직접 부르지 않는다 -
+    # 파서 재작성(T-021)에서 _find_section 이 사라져 이 도구 전체가 죽었던 회귀의 교훈.
+    return lint.find_section(lines, number)
 
 
 def find_queue_section(lines):
-    """'## 4.5 대기 큐' 절. lint._find_section 은 정수 번호만 받으므로 여기서 직접 찾는다."""
+    """'## 4.5 대기 큐' 절. lint.find_section 은 정수 번호만 받으므로 여기서 직접 찾는다."""
     heading_re = re.compile(r"^##(?!#)\s*4\.5\s")
     start = None
     for i, line in enumerate(lines):
@@ -76,8 +78,10 @@ def find_queue_section(lines):
 
 
 def table_block(lines, start, end):
-    """(header_idx, sep_idx, data_idxs) - lint._extract_table 의 블록 탐지 규칙과 동일하게 맞춘다."""
-    pipe_lines = [i for i in range(start, end) if lines[i].strip().startswith("|")]
+    """(header_idx, sep_idx, data_idxs) - lint.extract_table 의 블록 탐지 규칙과 동일하게 맞춘다.
+    펜스 안 줄은 제외하고, 둘째 줄이 구분선인 블록만 표로 인정한다(T-021 린터 규칙과 일치)."""
+    fenced = lint._fenced_mask(lines)
+    pipe_lines = [i for i in range(start, end) if not fenced[i] and lines[i].strip().startswith("|")]
     if not pipe_lines:
         return None
     block = [pipe_lines[0]]
@@ -86,13 +90,13 @@ def table_block(lines, start, end):
             block.append(i)
         else:
             break
-    if len(block) < 2:
+    if len(block) < 2 or not lint.SEP_RE.match(lines[block[1]].strip()):
         return None
     return block[0], block[1], block[2:]
 
 
 def replace_row_cells(lines, start, end, key_col, key_val, updates):
-    table = lint._extract_table(lines, start, end)
+    table = lint.extract_table(lines, start, end)
     if table is None:
         return False, "표를 찾을 수 없음"
     header_cells, rows = table
@@ -126,7 +130,7 @@ def append_row(lines, start, end, cells):
 
 
 def pop_first_row(lines, start, end, order_col):
-    table = lint._extract_table(lines, start, end)
+    table = lint.extract_table(lines, start, end)
     if table is None:
         return None, None, "표를 찾을 수 없음"
     header_cells, rows = table
@@ -189,7 +193,7 @@ def cmd_board_add(args, lines):
     if section is None:
         die("'3. 작업 보드' 절을 찾을 수 없음")
     start, end = section
-    table = lint._extract_table(lines, start, end)
+    table = lint.extract_table(lines, start, end)
     if table is None:
         die("'3. 작업 보드' 표를 찾을 수 없음")
     header_cells, rows = table
@@ -229,7 +233,7 @@ def cmd_queue_add(args, lines):
     if section is None:
         die("'4.5 대기 큐' 절을 찾을 수 없음")
     start, end = section
-    table = lint._extract_table(lines, start, end)
+    table = lint.extract_table(lines, start, end)
     if table is None:
         die("'4.5 대기 큐' 표를 찾을 수 없음")
     header_cells, rows = table

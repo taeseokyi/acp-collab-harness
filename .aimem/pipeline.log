@@ -1,0 +1,23 @@
+[T-026] 2026-09-11 / 오탐 제거 테스트 + 계층소유/둘째표 회귀 + 사용성 감사 (S2) / DONE
+- 방향: 보안 우회 안 쫓음, 오탐만. 핸드온 S1 [T-025]. 실 도구 무수정, 실 AIMEM.md 읽기만.
+- 테스트 60→64, 전건 OK. aimem_lint AIMEM.md 통과 유지.
+- 1) S1 F3 재분류 타당 확인(FP1 과 구조 동일) → 옛 test_glob_overlap_flagged(오탐 고정) 제거, 계층소유 통과 2건 + 같은구체성 충돌 1건으로 대체.
+- 2) FP2/FP3 회귀: §6 범례표·§2 이력표(다른 헤더) 통과 고정. 같은 헤더 디코이는 여전히 MULTIPLE_TABLE.
+- 3) 사용성 감사(보고만, 린터 S1 소유). 통과확인: 1~2슬롯/빈보드/한줄소유권/제목텍스트변경/무관리자/자유형식핸드오프. 부당차단 6건: (1)하드코딩 MANAGER_SESSION_KEY 가 타 프로젝트 관리자선언 거부-가장큼 (2)한국어전용 열헤더 (3)하드코딩 절번호 (4)소유자 관리자접두강제 (5)토큰 6-hex강제 (6)상태 하드코딩. #1 은 보안(코드못박기) vs 재사용성 상충 - 관리자 판단.
+- 마무리 라운드. 커밋·보드 갱신 관리자 몫.
+
+- 핸드온 T-021: S1 [T-021](신규 9코드) + [T-024](board 스모크 골격). 실 도구 무수정(S1 소유), 실 AIMEM.md 읽기만.
+- 테스트 34→60(+26), 전건 OK. aimem_lint AIMEM.md 통과 유지.
+- 1) 신규 9코드 각 위반/정상/함정: MANAGER_KEY_MISMATCH·HANDOFF_SECTION_MISSING(선언 게이트), DUPLICATE_SECTION, *_MULTIPLE_TABLE, ROSTER_DUPLICATE_SESSION_KEY, OWNERSHIP_PROTECTED_OWNER, OWNERSHIP_GLOB_OVERLAP. 파서 회귀 2건 고정: 펜스 마스킹(F5b)+헤더 정확일치(F7).
+- 2) VALID_DOC 판단=고침. 근거: 픽스처 미니멀함이 린터 엄격함에 상한(F8 미차단). §4+관리자선언 넣어 통치문서화 → S1 이 §4 무조건 필수 승격 가능. 세션키 열은 선택적이라 제외. TestSizeHandoffLog 헬퍼는 §4 교체식으로 리팩터.
+- 3) board 스모크: 자체완결 BOARD_FIXTURE 로 9개 쓰기 하위명령 각 exit0+산출물 린트 통과 + expect-rev 거부 회귀. import aimem_board 로 unittest 가 board 로드 → T-024 회귀가 이제 discover 만으로 터짐(훅 구멍 폐쇄).
+- 다음(S3/T-023 재감사): F8 최소재현은 여전히 미차단이고 test_no_handoff_check_without_declaration 가 그 한계를 의도적으로 고정. 승격 여부는 관리자·S1 판단.
+
+- 대상: tools/aimem_board.py 의 .aimem.lock flock + --expect-rev. 전 실험 /tmp/t019 사본, 실 AIMEM.md 읽기만(sha 무변동).
+- 1 경합유실: board-add N=30→30/30, N=40×5→전부 40/40, N=80→80/80(타임아웃0). 성공수==행수 전 시행 일치.
+- 2 무파손: 위 전 시행 후 aimem_lint PASS. 잘림/중복/표파손 0, tmp 파편 0.
+- 3 expect-rev: 25 동시 rev-bump --expect-rev 69 → 성공1(69→70)/거부24. 거부 시 파일 byte-identical.
+- 4 락구멍: 락 보유 중 9개 쓰기 하위명령 전부 블록+무변경. main() 단일 flock 경유, 미보유 경로 없음.
+- 5 비정상종료: 홀더 SIGKILL→다음 0.08s 성공(fd사망시 자동해제); 락보유중 CLI 10.1s 타임아웃 rc1 무변경; board.py 60회 SIGKILL→린터실패0/락고착0/tmp0/파일 항상 유효(os.replace 원자성).
+- 6 양성대조: naive 무락 30 동시→0/30 생존(유실+파손); board.py 락 30 동시→30/30. 락이 유실을 막음을 대조로 입증.
+- 판정: 유실·파손·락구멍 없음. 관찰(무해): mkstemp~replace 창 SIGKILL 시 tmp 고아 이론상 가능(60회 중 0관측); 처리량 상한=직렬화 속도(가용성 한계, 안전성 아님).
