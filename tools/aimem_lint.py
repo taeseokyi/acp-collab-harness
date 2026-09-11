@@ -200,7 +200,9 @@ def lint_text(text: str) -> List[Violation]:
             else:
                 seen_ids: Dict[str, int] = {}
                 task_ids = set()
-                handoff_refs: List[Tuple[int, str]] = []
+                dup_ids: set = set()
+                status_by_id: Dict[str, str] = {}
+                handoff_refs: List[Tuple[int, str, str, str]] = []
                 needed = max(id_idx, slot_idx, status_idx, handoff_idx)
                 for line_no, cells in rows:
                     if len(cells) <= needed:
@@ -216,19 +218,47 @@ def lint_text(text: str) -> List[Violation]:
                             violations.append(
                                 Violation("BOARD_DUPLICATE_TASK_ID", line_no, f"태스크 ID 중복: {task_id} (처음: 줄 {seen_ids[task_id]})")
                             )
+                            dup_ids.add(task_id)
                         else:
                             seen_ids[task_id] = line_no
+                        # 선행 태스크 상태 조회용. 중복 ID 는 위에서 이미 잡으므로 첫 등장분만 남긴다.
+                        status_by_id.setdefault(task_id, status)
                     if status not in VALID_STATUSES:
                         violations.append(Violation("BOARD_INVALID_STATUS", line_no, f"상태 값이 허용 목록 밖: {status}"))
                     if slot and slot != "-" and roster_parsed and slot not in roster_slots:
                         violations.append(Violation("BOARD_UNKNOWN_SLOT", line_no, f"담당 슬롯이 명부에 없음: {slot}"))
                     if handoff and handoff != "-":
-                        handoff_refs.append((line_no, handoff))
-                for line_no, handoff in handoff_refs:
+                        handoff_refs.append((line_no, task_id, status, handoff))
+                for line_no, task_id, status, handoff in handoff_refs:
                     if handoff not in task_ids:
                         violations.append(
                             Violation("BOARD_HANDOFF_UNKNOWN_TASK", line_no, f"이어받음이 가리키는 태스크 ID가 보드에 없음: {handoff}")
                         )
+                        continue
+                    # ID 가 중복인 행은 '자기 자신'/'선행'의 정본이 모호하다. 근본 결함은
+                    # BOARD_DUPLICATE_TASK_ID 가 이미 잡으므로, 그 위에 파생 위반을 얹지 않는다.
+                    # 중복을 고치고 재실행하면 남은 SELF/NOT_DONE 이 드러난다.
+                    if task_id in dup_ids or handoff in dup_ids:
+                        continue
+                    # 자기 자신을 이어받음으로 가리키면 위반. task_id 가 비어 있지 않으면
+                    # task_ids 에 들어가 있으므로 UNKNOWN_TASK 에 걸리지 않고 여기로 온다.
+                    if task_id and handoff == task_id:
+                        violations.append(
+                            Violation("BOARD_HANDOFF_SELF", line_no, f"태스크가 자기 자신을 이어받음으로 가리킴: {task_id}")
+                        )
+                        continue
+                    # 후행이 DONE 인데 선행이 DONE 이 아니면 위반 - 끝나지 않은 일을 이어받아
+                    # 끝났다고 적히는 상태를 막는다. 선행이 보드에 있을 때만 검사한다(없으면 위 UNKNOWN).
+                    if status == "DONE":
+                        pred_status = status_by_id.get(handoff)
+                        if pred_status != "DONE":
+                            violations.append(
+                                Violation(
+                                    "BOARD_HANDOFF_NOT_DONE",
+                                    line_no,
+                                    f"DONE 태스크의 이어받음이 가리키는 선행 태스크가 DONE 이 아님: {handoff} (상태: {pred_status})",
+                                )
+                            )
 
     # 6. 파일 소유권
     section = _find_section(lines, 6)

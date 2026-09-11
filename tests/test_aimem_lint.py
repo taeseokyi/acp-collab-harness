@@ -264,5 +264,71 @@ class TestSizeHandoffLog(unittest.TestCase):
         self.assertEqual(cds, [])
 
 
+class TestBoardHandoffInvariants(unittest.TestCase):
+    """T-016 이 추가한 핸드오프 불변식 두 개(`BOARD_HANDOFF_SELF`,
+    `BOARD_HANDOFF_NOT_DONE`)를 덮는다. 정상 케이스와 위반 케이스 양쪽,
+    그리고 S1 아웃박스([T-016])가 함정으로 지목한 네 가지 경계를 눌러 본다.
+
+    VALID_DOC 의 보드는 `T-1(DONE, -)` ← `T-2(TODO, T-1)` 이라 두 새 코드
+    어디에도 걸리지 않는다(핸드온 기준선). 아래 픽스처는 이 두 행만 치환한다."""
+
+    # VALID_DOC 보드의 두 데이터 행(정확한 문자열 - 문서 내 유일).
+    ROW_T1 = "| T-1  | 작업 A | S1        | DONE | -        |"
+    ROW_T2 = "| T-2  | 작업 B | S2        | TODO | T-1      |"
+
+    def test_self_reference_flagged(self):
+        # 이어받음 이 자기 ID 를 가리키면 SELF. ID 는 유일해야 실제로 뜬다
+        # (중복이면 억제됨 - test_self_suppressed_on_duplicate_id 참조).
+        text = VALID_DOC.replace(
+            self.ROW_T2, "| T-2  | 작업 B | S2        | TODO | T-2      |"
+        )
+        self.assertEqual(codes(lint_text(text)), ["BOARD_HANDOFF_SELF"])
+
+    def test_done_handoff_to_incomplete_predecessor_flagged(self):
+        # 후행이 DONE 인데 그 이어받음 선행(보드에 존재)이 DONE 이 아니면 NOT_DONE.
+        text = VALID_DOC.replace(
+            self.ROW_T1, "| T-1  | 작업 A | S1        | TODO | -        |"
+        ).replace(
+            self.ROW_T2, "| T-2  | 작업 B | S2        | DONE | T-1      |"
+        )
+        vs = lint_text(text)
+        self.assertEqual(codes(vs), ["BOARD_HANDOFF_NOT_DONE"])
+        # 아웃박스가 명시한 메시지 형식: 선행의 실제 상태를 `(상태: X)` 로 넣는다.
+        nd = next(v for v in vs if v.code == "BOARD_HANDOFF_NOT_DONE")
+        self.assertIn("(상태: TODO)", nd.message)
+
+    def test_done_handoff_to_done_predecessor_is_clean(self):
+        # 정상: DONE 후행이 DONE 선행을 이어받는 것은 허용(위반 0).
+        text = VALID_DOC.replace(
+            self.ROW_T2, "| T-2  | 작업 B | S2        | DONE | T-1      |"
+        )
+        self.assertEqual(lint_text(text), [])
+
+    def test_incomplete_chain_when_successor_not_done_is_clean(self):
+        # 함정 1: 후행이 DONE 이 아니면 NOT_DONE 안 뜬다. 진행 중 체인
+        # (TODO 후행이 미완료 선행을 이어받음)은 정상.
+        text = VALID_DOC.replace(
+            self.ROW_T1, "| T-1  | 작업 A | S1        | TODO | -        |"
+        )
+        self.assertEqual(lint_text(text), [])
+
+    def test_done_handoff_to_unknown_predecessor_is_unknown_only(self):
+        # 함정 2: 선행이 보드에 없으면 UNKNOWN 만. NOT_DONE 은 평가하지 않는다
+        # ("선행이 존재하는데 미완료"인 경우만 NOT_DONE).
+        text = VALID_DOC.replace(
+            self.ROW_T2, "| T-2  | 작업 B | S2        | DONE | T-99     |"
+        )
+        self.assertEqual(codes(lint_text(text)), ["BOARD_HANDOFF_UNKNOWN_TASK"])
+
+    def test_self_suppressed_on_duplicate_id(self):
+        # 함정 3: 자기 ID 가 중복이면 그 행의 SELF 는 일부러 생략되고,
+        # 근본 결함인 DUPLICATE 만 뜬다(파생 위반 억제). 중복을 고쳐 재실행하면
+        # 남은 SELF 가 드러난다.
+        text = VALID_DOC.replace(
+            self.ROW_T2, "| T-1  | 작업 B | S2        | TODO | T-1      |"
+        )
+        self.assertEqual(codes(lint_text(text)), ["BOARD_DUPLICATE_TASK_ID"])
+
+
 if __name__ == "__main__":
     unittest.main()
