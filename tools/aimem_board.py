@@ -1,21 +1,35 @@
 #!/usr/bin/env python3
 """AIMEM.md 표 갱신 CLI. 표준 라이브러리만 사용.
 
-인라인 문자열 치환 대신, 표 구조를 파싱해 셀 단위로 고치고 매 쓰기 뒤
-aimem_lint.lint_text() 로 검증한다. 위반이 나면 파일을 원래대로 되돌리고
+인라인 문자열 치환 대신, 표 구조를 파싱해 셀 단위로 고친다. 쓰기 전에
+aimem_lint.lint_text() (순수 함수) 로 검증하고, 위반이 있으면 아무것도 쓰지 않고
 exit 1 한다 - 규약을 깨는 갱신을 애초에 저장하지 않는 것이 이 도구의 핵심 가치다.
+동시 갱신은 .aimem.lock 에 대한 fcntl.flock 으로 read/modify/write 전체를 직렬화하고,
+저장은 os.replace 로 원자적 교체한다(반쪽 파일 노출 방지).
 """
 
 import argparse
 import datetime
 import difflib
+import errno
+import fcntl
+import os
 import re
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 import aimem_lint as lint
 
 NEXT_HEADING_RE = re.compile(r"^##(?!#)\s")
+
+# 동시 갱신 상호배제: 셸 flock(1) 과 파이썬 fcntl.flock 은 같은 flock(2) 라
+# 같은 .aimem.lock 에 대해 상호 호환된다. 저장소는 ext4 로컬(/dev/sdd)이라 flock 이 동작한다.
+LOCK_NAME = ".aimem.lock"
+LOCK_TIMEOUT_SEC = 10
+# --now 미래값 가드의 시계 오차 허용치
+MAX_CLOCK_SKEW = datetime.timedelta(minutes=2)
 
 
 def die(msg: str) -> None:
@@ -143,9 +157,7 @@ def cmd_rev_bump(args, lines):
     updated_idx = next((i for i, l in enumerate(lines) if "최종 갱신:" in l), None)
     if updated_idx is None:
         die("'최종 갱신:' 줄을 찾을 수 없음")
-    now_str = args.now.strip() if args.now else datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    if not now_str.endswith("KST"):
-        now_str = f"{now_str} KST"
+    now_str = _resolve_now(args.now)
     prefix_m = re.match(r"^(.*최종 갱신:\s*).*$", lines[updated_idx])
     lines[updated_idx] = prefix_m.group(1) + now_str
     return f"REV {cur} -> {new_rev}, 최종 갱신: {now_str}"
@@ -278,10 +290,86 @@ CMD_FUNCS = {
 }
 
 
+def _resolve_now(raw_now):
+    """--now 문자열을 파싱해 "YYYY-MM-DD HH:MM KST" 로 정규화. 미래 시각·형식 오류는 거부.
+
+    기존 구현은 endswith("KST") 만 봐서 아무 문자열이나 통과했고, 미래 시각도 막지 못했다.
+    """
+    if not raw_now:
+        return f"{datetime.datetime.now():%Y-%m-%d %H:%M} KST"
+    raw = re.sub(r"\s*KST$", "", raw_now.strip()).strip()
+    try:
+        given = datetime.datetime.strptime(raw, "%Y-%m-%d %H:%M")
+    except ValueError:
+        die(f'--now 형식이 잘못됨: {raw_now!r} ("YYYY-MM-DD HH:MM" 여야 함)')
+    now = datetime.datetime.now()
+    if given > now + MAX_CLOCK_SKEW:
+        die(f"--now 가 미래 시각임: {given:%Y-%m-%d %H:%M} > 현재 {now:%Y-%m-%d %H:%M}")
+    return f"{given:%Y-%m-%d %H:%M} KST"
+
+
+def _acquire(lock_path: Path) -> int:
+    """LOCK_EX 를 비블로킹으로 시도하다 타임아웃 시 실패. 락파일은 절대 unlink 하지 않는다.
+
+    O_EXCL(프로세스 사망 시 영구 교착)도 mtime 재확인(TOCTOU)도 아닌 fcntl.flock 을 쓴다 -
+    커널이 fd 수명으로 관리해 프로세스가 죽으면 자동 해제된다. CLI 는 짧게 살고 호출자가
+    재시도할 수 있으므로 무한 대기보다 "빨리 실패"가 낫다.
+    """
+    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o664)
+    deadline = time.monotonic() + LOCK_TIMEOUT_SEC
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except OSError as e:
+            if e.errno not in (errno.EACCES, errno.EAGAIN):
+                os.close(fd)
+                raise
+            if time.monotonic() >= deadline:
+                os.close(fd)
+                die(f"{LOCK_TIMEOUT_SEC}초 안에 락을 얻지 못함: {lock_path} (다른 갱신이 진행 중)")
+            time.sleep(0.1)
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """같은 디렉터리에 임시 파일을 쓰고 os.replace 로 원자적 교체. 반쪽 파일 노출을 막는다.
+
+    mkstemp 는 0600 이므로 원본 권한을 보존한다(빠뜨리면 조용히 권한이 좁아진다).
+    """
+    parent = path.parent if str(path.parent) else Path(".")
+    fd, tmp = tempfile.mkstemp(dir=str(parent), prefix=".aimem.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            orig_mode = os.stat(path).st_mode & 0o777
+        except OSError:
+            orig_mode = 0o664
+        os.chmod(tmp, orig_mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def finalize(path: Path, original_text: str, lines, dry_run: bool, success_msg: str) -> int:
     new_text = "\n".join(lines)
     if original_text.endswith("\n"):
         new_text += "\n"
+
+    # 쓰기 전에 검증한다. lint_text 는 순수 함수이므로 통과하면 한 번만 쓰면 되고,
+    # 위반이면 아무것도 쓰지 않는다 - "위반 시 롤백이 남의 편집을 날린다" 결함이 원인째 사라진다.
+    violations = lint.lint_text(new_text)
+    if violations:
+        print("린트 위반 - 저장하지 않음:", file=sys.stderr)
+        for v in violations:
+            print(f"  {v}", file=sys.stderr)
+        return 1
 
     if dry_run:
         diff = difflib.unified_diff(
@@ -294,14 +382,7 @@ def finalize(path: Path, original_text: str, lines, dry_run: bool, success_msg: 
         print(f"[dry-run] {success_msg}")
         return 0
 
-    path.write_text(new_text, encoding="utf-8")
-    violations = lint.lint_text(new_text)
-    if violations:
-        path.write_text(original_text, encoding="utf-8")
-        print("린트 위반 - 파일을 원래대로 되돌림:", file=sys.stderr)
-        for v in violations:
-            print(f"  {v}", file=sys.stderr)
-        return 1
+    _atomic_write(path, new_text)
     print(success_msg)
     return 0
 
@@ -310,6 +391,12 @@ def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--file", default="AIMEM.md", help="대상 AIMEM.md 경로 (기본: AIMEM.md)")
     common.add_argument("--dry-run", action="store_true", help="diff만 출력하고 저장하지 않음")
+    common.add_argument(
+        "--expect-rev",
+        type=int,
+        default=None,
+        help="락 안에서 읽은 현재 REV 가 이 값이 아니면 거부 (낙관적 동시성 - sed 우회 경로 안전망)",
+    )
 
     parser = argparse.ArgumentParser(prog="aimem_board.py", description="AIMEM.md 표 갱신 CLI (표준 라이브러리만)")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -358,20 +445,43 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     path = Path(args.file)
-    try:
-        original_text = path.read_text(encoding="utf-8")
-    except OSError as e:
-        print(f"오류: 파일을 읽을 수 없음: {e}", file=sys.stderr)
-        return 1
 
-    lines = original_text.splitlines()
-    func = CMD_FUNCS[args.command]
+    # read/modify/write 전체를 한 락 안에서 직렬화한다. finalize() 안에만 걸면
+    # read -> (남이 쓴다) -> write 구간이 열려 lost update 가 남는다. --dry-run 도 락 안에서
+    # 돌려야 낡은 내용을 진단하지 않는다.
+    lock_dir = path.parent if str(path.parent) else Path(".")
+    lock_fd = _acquire(lock_dir / LOCK_NAME)
     try:
-        msg = func(args, lines)
-    except SystemExit as e:
-        return int(e.code) if e.code is not None else 1
+        try:
+            original_text = path.read_text(encoding="utf-8")
+        except OSError as e:
+            print(f"오류: 파일을 읽을 수 없음: {e}", file=sys.stderr)
+            return 1
 
-    return finalize(path, original_text, lines, args.dry_run, msg)
+        lines = original_text.splitlines()
+
+        if args.expect_rev is not None:
+            m = lint.REV_RE.search(original_text)
+            if m is None:
+                print("오류: REV 선언을 찾을 수 없어 --expect-rev 를 대조할 수 없음", file=sys.stderr)
+                return 1
+            cur_rev = int(m.group(1))
+            if cur_rev != args.expect_rev:
+                print(
+                    f"오류: REV 불일치 - 예상 {args.expect_rev}, 실제 {cur_rev} (다시 읽고 재시도할 것)",
+                    file=sys.stderr,
+                )
+                return 1
+
+        func = CMD_FUNCS[args.command]
+        try:
+            msg = func(args, lines)
+        except SystemExit as e:
+            return int(e.code) if e.code is not None else 1
+
+        return finalize(path, original_text, lines, args.dry_run, msg)
+    finally:
+        os.close(lock_fd)
 
 
 if __name__ == "__main__":
