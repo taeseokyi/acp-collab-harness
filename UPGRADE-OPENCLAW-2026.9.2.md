@@ -79,7 +79,7 @@ the manual schema-upgrade instructions"* 가 있다. 트랜잭션 펜싱은 9.3�
 3. **`*.INCOMPLETE-DO-NOT-USE` 로 끝나는 41MB 파일은 쓰지 마라.** 21:08 최초본이고
    `local-bin` / `dist-patched` / `claude-memory` / `config/pnpm-workspace.yaml.bak` 이 빠져 있다
 
-**2순위(tar)로 후퇴할 때는 RUNBOOK 의 "무결성 검증" 절(19행)을 먼저 돌려라.** 판별은 파일 시각이
+**2순위(tar)로 후퇴할 때는 RUNBOOK 의 "무결성 검증" 절을 먼저 돌려라.** 판별은 파일 시각이
 아니라 해시로 한다 — 문서를 고칠 때마다 다시 말아서 시각 라벨이 세 번 어긋난 전례가 있다.
 
 백업에 든 것(요약): 상태 DB 4개(온라인 백업 API로 뜬 일관 스냅샷, `integrity_check ok` 확인),
@@ -123,9 +123,8 @@ dist: /home/tsyi/.local/share/pnpm/global/5/node_modules/openclaw/dist   <- 정�
 dist: /home/tsyi/work/openclaw/dist                                      <- 나오면 즉시 중단
 ```
 
-검증은 셋을 교차한다 (RUNBOOK `A.-0.5`): `readlink -f node_modules/openclaw` /
-`package.json` 버전 / `grep -c 'opus-5' dist/cli-constants-*.js` (패치 후 **3**).
-**`dist/*.bak` 개수는 지표가 아니다** — 실측 0건이고 이 스크립트는 `.bak` 을 남기지 않는다.
+**검증 세부는 RUNBOOK `A.-0.5` 절이 정본이다.** 여기에 옮겨 적지 않는다 — 두 벌로 갈리면
+오늘 백업 tar 가 어긋났던 일이 그대로 재발한다. 그 절을 열어서 그대로 따라라.
 
 ### (다) 롤백 시 WAL 사이드카 — 순서를 틀리면 복구가 아니라 DB 파괴다
 
@@ -189,8 +188,19 @@ for a in c['agents']['list']:
         a.setdefault('agentDir', '/home/tsyi/.openclaw/agents/main/agent')
 json.dump(c, open(p, 'w'), ensure_ascii=False, indent=2)
 PY
-python3 -c "import json,os;json.load(open(os.path.expanduser('~/.openclaw/openclaw.json')));print('JSON OK')"
+python3 - <<'PY'
+import json, os
+c = json.load(open(os.path.expanduser('~/.openclaw/openclaw.json')))
+m = [a for a in c['agents']['list'] if a.get('id') == 'main'][0]
+print(json.dumps(m, ensure_ascii=False))
+assert m.get('name') and m.get('workspace') and m.get('agentDir'), '보정 실패'
+print('OK: main 보정 확인')
+PY
 ```
+
+**`JSON OK` 만으로 끝내지 마라.** 그건 "파일이 JSON 이다" 만 말한다. 구조가 예상과 다르면
+루프가 조용히 아무것도 안 하고도 통과한다. **남았는지가 아니라 먹었는지를 본다** — 이 업그레이드를
+관통하는 원칙이다.
 
 `.pre-92` 사본은 롤백 때 `openclaw.json` 을 되돌리는 용도로도 쓴다
 (백업 `$B/config/openclaw.json` 이 정본이고, 이건 편집 직전 스냅샷이다).
@@ -220,9 +230,18 @@ RUNBOOK `A` 절을 그대로 따른다. 단계 번호는 RUNBOOK 기준이다.
 한 번에 갈면 실패했을 때 원인이 7갈래이고, **그중 discord 가 죽으면 연락 경로가 끊긴 채로
 원인을 찾아야 한다.** 그래서 코어 -> discord -> 실사격 -> 나머지 순이다.
 
+**A.2~A.4 중 게이트웨이가 아예 안 뜨면** 원인을 파지 말고 RUNBOOK `B` (롤백)로 간다.
+기동 실패는 관찰 가능한 상태가 없어서 전진 수리가 성립하지 않는다.
+
 **A.5 의 디스코드 실사격은 태석님 손이 필요하다.** 네가 대신 못 한다.
-"디스코드에서 아무 채널에 한 줄 보내 보시고 답이 오는지 봐 주십시오" 라고 요청해라.
-3계정 = 구름(main) / 클로(coding) / 옥티(review).
+3계정 = 구름(main) / 클로(coding) / 옥티(review) 이고, **셋이 각각 다른 디스코드 계정**이라
+한 채널에서 한 번 보는 것으로는 부족하다. 요청 문구:
+
+> "디스코드에서 ① 구름과 DM, ② 클로와 DM, ③ `#acp-fleet` 채널에 각각 한 줄씩 보내 보시고
+> 답이 오는지 봐 주십시오."
+
+**성공 기준: 세 곳 모두에서 답이 온다.** 하나라도 무응답이면 그 계정의 플러그인 로드를 먼저 본다.
+어느 채널에 어느 에이전트가 붙어 있는지는 네가 모른다 — 태석님 관찰이 판정이다.
 
 ---
 
@@ -250,10 +269,12 @@ RUNBOOK 의 (1)~(5)를 먼저 다 돌린다. 요지만 옮기면:
   락 대기만 쌓여 `pan-run` 이 `exit 67`(락 대기 초과)을 낸다
 
 **정확한 설정 키 이름을 나는 모른다. 7.1 스키마에 없는 키라 확인할 방법이 없었다.**
-추측해서 쓰지 마라. 9.2 를 깐 뒤 실물에서 찾아라:
+추측해서 쓰지 마라. 9.2 를 깐 뒤 실물에서 찾아라. **패키지에 설정 레퍼런스가 같이 온다**
+(`docs/gateway/configuration-reference.md`, 7.1 기준 76KB 실재). 난독화된 dist 보다 이쪽이 정확하다:
 
 ```bash
 D=~/.local/share/pnpm/global/5/node_modules/openclaw
+grep -n -i -e swarm -e 'self.*learn' $D/docs/gateway/configuration-reference.md | head -30   # 이쪽을 먼저
 grep -roh 'selfLearning[A-Za-z.]*\|self_learning\|autoApplySkill[A-Za-z]*\|swarm[A-Za-z.]*' $D/dist | sort | uniq -c | sort -rn | head -30
 openclaw doctor 2>&1 | grep -i -e swarm -e learning
 ```
