@@ -493,12 +493,18 @@ def finalize(path: Path, original_text: str, lines, dry_run: bool, success_msg: 
 
     # 쓰기 전에 검증한다. lint_text 는 순수 함수이므로 통과하면 한 번만 쓰면 되고,
     # 위반이면 아무것도 쓰지 않는다 - "위반 시 롤백이 남의 편집을 날린다" 결함이 원인째 사라진다.
-    violations = lint.lint_text(new_text)
+    notes: list = []
+    violations = lint.lint_text(new_text, notes)
     if violations:
         print("린트 위반 - 저장하지 않음:", file=sys.stderr)
         for v in violations:
             print(f"  {v}", file=sys.stderr)
         return 1
+
+    # 노트는 위반이 아니다(예: 게이팅으로 조용히 꺼진 검사). 저장은 성공시키되,
+    # "검사가 꺼진 초록불"을 눈에 보이게 한 줄 남긴다. 종료코드는 올리지 않는다(T-031/T-032).
+    for n in notes:
+        print(f"[INFO] {n}")
 
     if dry_run:
         diff = difflib.unified_diff(

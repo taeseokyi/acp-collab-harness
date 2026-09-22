@@ -12,9 +12,14 @@ import functools
 import re
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 REV_RE = re.compile(r"\*\*REV:\s*(-?\d+)\*\*")
+# 4절 로그 항목이 선언하는 REV. 헤더 `**REV: N**`(콜론)과 달리 로그는 `**REV N.`(공백)로 적는
+# 관례다. 이 관례가 실제로 쓰인 문서에서만 헤더-로그 동기(REV_LOG_MISSING)를 강제한다 - 관례가
+# 없는 문서(REV 표기 없는 로그)에서는 어떤 항목이 헤더 REV 에 대응하는지 식별할 수 없어 오탐이 된다.
+LOG_REV_RE = re.compile(r"\*\*REV\s+(\d+)")
 TOKEN_RE = re.compile(r"^[0-9a-fA-F]{6}$")
 SEP_RE = re.compile(r"^\|?[\s\-:|]+\|?$")
 VALID_STATUSES = {"TODO", "ASSIGNED", "IN-PROGRESS", "REVIEW", "DONE", "BLOCKED"}
@@ -39,6 +44,12 @@ PROTECTED_PATHS = {"AIMEM.md", "CLAUDE.md", "AGENTS.md"}
 # 롤오버 직후 로그를 한두 건 써도 바로 막히지 않게 한다.
 MAX_TOTAL_LINES = 800
 MAX_HANDOFF_ENTRIES = 12
+# 아웃박스 파일당 크기 상한(bytes, T-028). AIMEM.md 총줄수(작업자가 매 턴 읽는 비용)와 달리
+# 아웃박스는 매 턴 읽히지 않으므로 비용은 저장소 누적 = 바이트다 - 줄수가 아니라 바이트로 잰다.
+# 24KiB 근거: 롤오버 직후 각 ~8KB 의 3배 여유(여러 라운드 보고를 쌓을 수 있음)이면서, 실측된
+# 부풀음 S1 72KB/S2 39KB/S3 29KB 셋 다 이 선 위라 그 누적을 잡는다. 롤오버 집행은 관리자 몫이며
+# 자동 롤오버는 하지 않는다(파괴적 동작 결합 금지 - handoff-add 와 같은 원칙).
+MAX_OUTBOX_BYTES = 24 * 1024
 # 4절 핸드오프 로그 항목 경계. aimem_board.py 의 archive-rollover 와 **같은 기준**이어야 두
 # 도구가 같은 수를 센다. aimem_board 를 import 하지는 않는다(훅이 린터만 단독 실행하므로).
 HANDOFF_ENTRY_RE = re.compile(r"^- `(\d{4})-(\d{2})-\d{2}")
@@ -510,8 +521,13 @@ def _check_ownership(
                 )
 
 
-def lint_text(text: str) -> List[Violation]:
-    """AIMEM.md 본문 문자열을 검사해 위반 목록을 반환한다. 위반이 없으면 빈 리스트."""
+def lint_text(text: str, notes: Optional[List[str]] = None) -> List[Violation]:
+    """AIMEM.md 본문 문자열을 검사해 위반 목록을 반환한다. 위반이 없으면 빈 리스트.
+
+    `notes` 가 주어지면, **위반이 아닌 정보/경고**(예: 게이팅으로 건너뛴 검사)를 그 리스트에
+    덧붙인다. 노트는 반환값(위반 목록)에 들어가지 않으므로 exit 코드에 영향이 없고, 노트를
+    넘기지 않는 호출자(테스트, board self-lint)의 반환값 계약도 그대로 유지된다.
+    """
     violations: List[Violation] = []
     lines = text.splitlines()
     fenced = _fenced_mask(lines)
@@ -563,6 +579,38 @@ def lint_text(text: str) -> List[Violation]:
                 Violation("DUPLICATE_SECTION", sp[1][0] + 1, f"'{label}' 헤딩이 {len(sp)}번 등장함 - 뒤 절이 은닉될 수 있음")
             )
 
+    # REV 헤더-로그 동기 (T-028). 헤더 REV 는 4절 로그에 근거 항목을 가져야 한다. 오늘 21:12
+    # 사건(헤더만 80->81 오르고 로그 누락 -> 관리자 자신이 슬롯 무단 쓰기로 오인)이 실측 구멍이다.
+    # 단, **로그가 REV 를 본문에 표기하는 관례(`**REV N`)를 실제로 쓰는 문서에서만** 강제한다.
+    # 관례가 전혀 없으면(표기 없는 로그) 대응 항목을 식별할 수 없어 오탐이 되므로 건너뛴다.
+    # REV 선언이 하나이고 유효할 때만 검사한다(REV_MISSING/MULTIPLE/INVALID 와 중복 발화 방지).
+    if len(rev_matches) == 1:
+        h_line, h_val = rev_matches[0]
+        if re.match(r"^\d+$", h_val) and int(h_val) > 0:
+            logged_revs = set()
+            for s, e in _section_spans(lines, fenced, 4):
+                for i in range(s, e):
+                    if not fenced[i]:
+                        for m in LOG_REV_RE.finditer(lines[i]):
+                            logged_revs.add(int(m.group(1)))
+            if not logged_revs:
+                # 게이팅 유지: 4절에 `**REV N` 표기가 하나도 없으면 대응 항목을 식별할 수 없어
+                # 검사를 건너뛴다(픽스처·표기 관례 미사용 문서의 오탐 방지). 다만 조용히 죽으면
+                # 초록불이 "REV 동기 확인됨"을 거짓 보증하므로, 스킵 사실을 노트로 남긴다.
+                # 노트는 위반이 아니라 정보 한 줄이라 exit 코드를 올리지 않는다(T-031).
+                if notes is not None:
+                    notes.append(
+                        f"REV_LOG_SYNC 스킵: 4절에 **REV 표기 없음 - 헤더 REV {h_val} 의 "
+                        f"로그 동기 검사를 건너뜀(위반 아님, 정보)"
+                    )
+            elif int(h_val) not in logged_revs:
+                violations.append(Violation(
+                    "REV_LOG_MISSING", h_line,
+                    f"헤더 REV {h_val} 에 대응하는 로그 항목이 4절에 없음 "
+                    f"(로그가 선언한 REV: {sorted(logged_revs, reverse=True)}) - "
+                    f"REV 헤더 증가와 4절 로그 기재는 한 번에 끝내야 함",
+                ))
+
     # 의미: 관리자 선언과 감사 로그. VALID_DOC(관리자 선언 없는 최소 픽스처)를 깨지 않으려면
     # **관리자 선언이 있을 때만** 검사한다. 선언이 곧 "통치되는 AIMEM"이라는 표식이다.
     # (선언 자체를 지우는 공격은 이 조건 때문에 못 잡는다 - 한계로 outbox 에 명시)
@@ -600,10 +648,41 @@ def lint_text(text: str) -> List[Violation]:
     return violations
 
 
-def lint_file(path: str) -> List[Violation]:
+def _check_outbox_sizes(outbox_dir: Path) -> List[Violation]:
+    """아웃박스 파일당 크기 상한(T-028). `outbox_dir` 이 없으면 검사 없음(빈 리스트).
+
+    AIMEM.md 본문 검사가 아니라 형제 디렉터리의 저장소 상태 검사라, 순수 함수 lint_text 가 아니라
+    경로를 아는 lint_file 경로에서 돈다. 파일별로 독립 판정한다 - 한 슬롯 아웃박스가 부풀어도
+    다른 슬롯 보고에는 영향이 없다. 안정 정렬(파일명)로 위반 순서를 결정적으로 만든다.
+    """
+    violations: List[Violation] = []
+    try:
+        entries = sorted(p for p in outbox_dir.iterdir() if p.is_file() and p.suffix == ".md")
+    except OSError:
+        return violations
+    for p in entries:
+        try:
+            size = p.stat().st_size
+        except OSError:
+            continue
+        if size > MAX_OUTBOX_BYTES:
+            violations.append(Violation(
+                "OUTBOX_TOO_LARGE", None,
+                f"아웃박스 '{p.name}' 이 {size // 1024}KB 로 상한 {MAX_OUTBOX_BYTES // 1024}KB 초과 - "
+                f"오래된 보고를 .aimem/archive/outbox-<슬롯>-YYYY-MM.md 로 롤오버하십시오(관리자 집행)",
+            ))
+    return violations
+
+
+def lint_file(path: str, notes: Optional[List[str]] = None) -> List[Violation]:
     with open(path, "r", encoding="utf-8") as f:
         text = f.read()
-    return lint_text(text)
+    violations = lint_text(text, notes)
+    # 아웃박스 검사는 AIMEM.md 와 같은 트리의 `.aimem/outbox/` 를 본다. 경로 기준은 AIMEM.md 의
+    # 부모 디렉터리다(리포 루트 가정 대신 대상 파일 위치에 상대적 - 테스트 tmp 사본에서도 맞음).
+    outbox_dir = Path(path).resolve().parent / ".aimem" / "outbox"
+    violations.extend(_check_outbox_sizes(outbox_dir))
+    return violations
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -612,11 +691,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("usage: aimem_lint.py <AIMEM.md 경로>", file=sys.stderr)
         return 2
     path = argv[0]
+    notes: List[str] = []
     try:
-        violations = lint_file(path)
+        violations = lint_file(path, notes)
     except OSError as e:
         print(f"[IO_ERROR] 파일을 읽을 수 없음: {e}", file=sys.stderr)
         return 1
+    # 노트(스킵 알림 등)는 위반과 별개로, 클린 통과든 위반이든 항상 출력한다.
+    # 초록불과 "검사가 조용히 꺼진 초록불"을 구분하기 위한 정보 줄이다(T-031).
+    for n in notes:
+        print(f"[INFO] {n}")
     if not violations:
         print(f"OK: {path} - 위반 없음")
         return 0
