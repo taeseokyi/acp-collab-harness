@@ -1,131 +1,121 @@
 ---
 name: "acp-slot-lifecycle"
-description: "work/opencode 슬롯 작업 시작/종료 절차 - 시작은 태석님이 /acp spawn, 그 뒤는 클로가 전담. 종료도 클로가 전담"
+description: "work/opencode 작업자 절차 - 일회성 ACP 자식을 클로가 직접 띄우고 출력을 목적 고정 tmux 팬에 남긴다"
 ---
 
-# 슬롯 작업 시작/종료
+# 작업자 띄우기와 거두기
 
-`/home/tsyi/work/opencode` 의 작업자 슬롯 절차입니다. **태석님 확정 2026-09-11 16:48.**
+`/home/tsyi/work/opencode` 의 작업자 절차입니다. **태석님 확정 2026-09-22 17:29.**
+정본은 `AIMEM.md` 의 `8.0` 절이고 이 문서는 실행 절차입니다. 어긋나면 `8.0` 을 따릅니다.
 
-역할 분담이 핵심입니다. **슬롯을 여는 것만 태석님, 나머지는 전부 클로.**
+**전부 클로가 합니다.** 태석님이 `/acp spawn` 을 치실 일이 없습니다.
 
-## 시작
+## 왜 바뀌었나
 
-### 1. 명령을 보여드린다
+상주 슬롯(`/acp spawn --mode persistent`)은 **완료 통보 경로가 없습니다.** 관리자와 동급인
+동료 세션이라 런타임이 끝났다고 알려주지 않습니다. 2026-09-22 에 검수 완료를 세 번 모두
+태석님이 직접 알려주셔야 했고, **대기 시간을 특정할 수 없다**는 것이 폐지 사유입니다.
 
-슬롯 개수만큼 줄을 만들어 드립니다. 한 번에 한 줄씩 치시라고 안내합니다.
+일회성 자식은 부모-자식 관계라 **런타임이 완료를 통보합니다.** 작업자의 자발적 보고에
+기대지 않습니다. 실측 4건(22초 / 2분19초 / 2분42초 / 5분2초) 전부 통보가 도달했습니다.
 
-```
-/acp spawn claude --mode persistent --thread auto --cwd /home/tsyi/work/opencode --label aimem-S1
-/acp spawn claude --mode persistent --thread auto --cwd /home/tsyi/work/opencode --label aimem-S2
-/acp spawn claude --mode persistent --thread auto --cwd /home/tsyi/work/opencode --label aimem-S3
-```
+대신 **세션 기록이 이어지지 않습니다.** `resumeSessionId` 는 게이트를 통과하지만 하네스가
+이전 대화를 로드하지 않습니다(실측). 그래서 기록은 세션이 아니라 tmux 팬에 쌓습니다.
 
-- `--mode persistent` 가 기본입니다. 한 번 쓰고 버릴 일이면 `oneshot`
-- `--thread auto` 는 자식 스레드를 만들어 묶습니다. `--bind` 와 같이 쓰면 거부됩니다
-- `--label` 은 사람이 알아보는 이름일 뿐입니다. **세션키가 유일한 안정 식별자입니다**
-- `acp.maxConcurrentSessions` 를 넘지 않는지 먼저 확인합니다 (현재 5)
-
-**왜 태석님이 치셔야 하는가** — 클로의 `sessions_spawn` 은 스레드 바인딩이 안 됩니다
-(`thread_binding_invalid`: 클로 세션에서는 디스코드 대화가 해석되지 않음). 그리고 클로가 만든
-슬롯은 워커가 내려가면 되살릴 수 없습니다 - 게이트웨이가 세션키의 `claude` 를 `agents.list` 에서
-찾는데 없고, 그 등록은 보호된 설정 경로라 클로가 고칠 수 없습니다.
-
-태석님의 `/acp spawn` 은 다릅니다. 게이트웨이 클라이언트 컨텍스트가 없어 스코프 검사를 건너뛰고
-(`if (!Array.isArray(scopes)) return null`), `ownerAllowFrom` 의 owner 판정만 받아 통과합니다.
-
-### 2. 태석님이 실행하신다
-
-기다립니다. 재촉하지 않습니다.
-
-### 3. 그다음은 클로가 이어받는다
-
-**세션키를 직접 조회합니다.** 태석님께 여쭙지 않습니다.
+## 1. 팬 창 확인
 
 ```bash
-openclaw gateway call sessions.list --json | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-for s in d.get('sessions',[]):
-    if ':acp:' in s.get('key',''): print(s['key'],'|',s.get('label'))
-"
+slots-window-start   # 이미 있으면 그대로 유지
 ```
 
-그다음 순서대로:
+tmux `agents` 세션의 `slots` 창에 목적 고정 팬 3개가 있습니다.
 
-1. **`AIMEM.md` 2절 명부**에 세션키를 박습니다. 확인토큰은 폐쇄할 때 미리 발급해 둔 값을 그대로
-   씁니다. REV 를 올리고 4절에 로그 한 줄. 린터를 돌립니다
-2. **각 슬롯에 개시 브리프**를 보냅니다. 반드시 넣을 것:
-   - **슬롯 ID** (`당신의 슬롯 ID 는 S1 입니다`) - 작업자는 자기 세션키를 모릅니다
-   - REV 번호와 그 슬롯의 확인토큰 - 작업자가 `AIMEM.md` 실측과 대조합니다
-   - 작업 폴더, 할 일, 쓰기 범위
-3. 작업자가 REV/토큰 불일치로 되물으면 **거절이 정상 동작**입니다. 밀어붙이지 않습니다
+| 팬 | 목적 | 파일 로그 |
+| --- | --- | --- |
+| `[S1] 구현` | 코드 수정 | `~/.openclaw/shared/slot-logs/S1.log` |
+| `[S2] 테스트` | 테스트 작성/검증 | `~/.openclaw/shared/slot-logs/S2.log` |
+| `[S3] 검수` | 검수 | `~/.openclaw/shared/slot-logs/S3.log` |
 
-슬롯에 메시지가 닿지 않으면(`Agent "claude" no longer exists in configuration`) 워커가 내려간
-것입니다. 클로는 되살릴 수 없으니 태석님께 보고하고 다시 열어 주십사 요청합니다.
+**창 0(구름/클로/옥티)은 건드리지 않습니다.** 팬을 더하면 `pan-run` 의 팬 인덱스·제목
+검증이 깨집니다.
 
-## 종료
+## 2. 자식을 띄운다
 
-**전부 클로가 합니다.** 태석님이 "작업 종료" 라고만 하시면 됩니다.
+`sessions_spawn(runtime="acp", agentId="claude", mode="run", cwd="/home/tsyi/work/opencode",
+streamTo="parent", label=...)`.
+
+- **`streamTo: "parent"` 를 반드시 줍니다.** 응답의 `streamLogPath` 가 다음 단계의 입력입니다
+- 자식은 맥락을 물려받지 못합니다. 브리프에 **배경 / 할 일 / 쓰기 범위 / 검증 방법**을
+  매번 전부 싣습니다. 슬롯 ID·확인토큰·REV 대조는 그대로 유지합니다
+- **보고는 응답 본문에 직접 쓰게 합니다.** 자식은 슬롯이 아니므로 아웃박스에 쓰지 않습니다
+- 하드리밋을 브리프에 명시합니다: 커밋 금지, 소유 경로 밖 쓰기 금지, `AIMEM.md` 쓰기 금지
+- 브리프 머리말은 `tools/fleet.py brief` 로 만들면 쓰기 경로가 `6절` 과 자동 대조됩니다
+
+## 3. 팬에 연결한다
 
 ```bash
-# 1. 세션 삭제 - 파라미터는 key 다 (sessionKey 아님)
-openclaw gateway call sessions.delete --params '{"key":"agent:claude:acp:<uuid>"}' --json
+slot-pane <1|2|3> <streamLogPath> "[S1] T-033 린터 가드"
+```
 
-# 2. 남은 것 확인 - 둘 다 비어야 한다
-openclaw gateway call sessions.list --json | python3 -c "
-import sys,json;d=json.load(sys.stdin)
-print([s['key'] for s in d.get('sessions',[]) if ':acp:' in s.get('key','')])"
-ps -eo pid,args | grep -E "claude-agent-acp|acpx" | grep -v grep | wc -l
+즉시 반환합니다(자식을 기다리지 않습니다). 렌더러는 lifecycle end 를 보면 스스로 끝나고
+팬이 프롬프트로 돌아옵니다.
 
-# 3. 아카이브 정리 - 태석님은 이게 쌓이는 걸 원치 않으신다
+- `exit 66` 팬 제목 불일치 - 팬이 재배치됐습니다. 보내지 않았습니다
+- `exit 69` 팬 사용 중 - 이전 자식이 아직 출력 중입니다. 두 자식을 한 팬에 겹치지 마십시오
+- 렌더러: `~/.openclaw/workspace-coding/scripts/acp-stream-render.py`
+
+## 4. 완료를 받는다
+
+런타임이 부모 세션을 깨웁니다. 그 턴에서 **자식 보고를 그대로 받지 말고 직접 재현합니다** -
+린터·테스트·diff 를 관리자가 다시 돌려 확인한 뒤 보드와 REV 를 갱신합니다.
+
+팬 스트림이 길면 전문은 파일 로그에서 읽습니다: `~/.openclaw/shared/slot-logs/S3.log`
+
+## 5. 거둔다
+
+```bash
+openclaw gateway call sessions.delete --params '{"key":"agent:claude:acp:<uuid>"}' --timeout 60000 --json
 find /home/tsyi/.openclaw -name "*.jsonl.deleted.*" -delete
+python3 tools/fleet.py close
 ```
 
-`sessions.delete` 는 하네스 프로세스까지 함께 죽입니다. 따로 kill 하지 마십시오.
-백업은 만들지 않습니다 - 남길 산출물은 작업자가 `.aimem/outbox/<슬롯>.md` 에 써 둔 쪽을 씁니다.
+`--params` 입니다(위치 인자가 아닙니다). 키 이름은 `key` 입니다(`sessionKey` 아님).
+`sessions.delete` 는 하네스 프로세스까지 죽입니다. 따로 kill 하지 마십시오.
 
-### 명부 갱신
+팬과 파일 로그는 지우지 않습니다 - **그게 기록 본체입니다.**
 
-`AIMEM.md` 2절에서 세션키를 `-` 로 비우고 비고에 폐쇄 날짜를 적습니다.
+## AIMEM 갱신 순서
 
-**확인토큰 칸은 비우지 마십시오.** 린터가 6자리 hex 를 요구해서 `(없음)` 은 `ROSTER_TOKEN_INVALID` +
-`ROSTER_DUPLICATE_TOKEN` 을 냅니다. 재개설용 토큰을 미리 발급해 넣으면 다음에 열 때 그대로 씁니다.
-
-```python
-import re, secrets
-used = set(re.findall(r'`([0-9a-f]{6})`', open('AIMEM.md').read()))
-t = secrets.token_hex(3)   # used 에 없을 때까지 반복
-```
-
-REV 를 올리고 4절에 로그를 남긴 뒤 린터를 돌립니다.
+린터가 순서를 강제합니다. **`handoff-add` 를 먼저, `rev-bump` 를 나중에** 하십시오.
+거꾸로 하면 `[REV_LOG_MISSING]` 으로 저장이 거부됩니다.
 
 ```bash
-cd /home/tsyi/work/opencode && python3 tools/aimem_lint.py AIMEM.md
+python3 tools/aimem_board.py archive-rollover --keep 10   # 로그 12건 상한에 닿았을 때
+python3 tools/aimem_board.py handoff-add --expect-rev <현재> --text "**REV <다음>.** ..."
+python3 tools/aimem_board.py rev-bump --expect-rev <현재>
+python3 tools/aimem_lint.py AIMEM.md    # OK 문구를 눈으로 확인
 ```
 
-`OK: AIMEM.md - 위반 없음` 이어야 끝입니다. **인자를 빼면 usage 만 찍고 종료코드 0 이라
-통과한 것처럼 보입니다** - 출력을 눈으로 확인하십시오.
-핸드오프 로그 상한(12건)에 걸리면 `python3 tools/aimem_board.py archive-rollover --keep 10`.
+`aimem_lint.py` 는 **인자를 빼면 usage 만 찍고 종료코드 0** 이라 통과한 것처럼 보입니다.
 
 ## 위임
 
 `~/.claude/CLAUDE.md` 에 상시 위임이 있고 하네스가 `claudeMd` 로 자동 주입합니다.
-**태석님이 세션마다 위임하지 않으십니다.** 슬롯을 열기 전에 그 파일이 있는지만 확인합니다.
-
-```bash
-test -f ~/.claude/CLAUDE.md && head -5 ~/.claude/CLAUDE.md
-```
-
-그 파일을 클로가 고치지 않습니다. 위임의 출처가 지시받는 쪽이 되면 위임이 아닙니다.
+**태석님이 세션마다 위임하지 않으십니다.** 그 파일을 클로가 고치지 않습니다 -
+위임의 출처가 지시받는 쪽이 되면 위임이 아닙니다.
 
 ## 하지 않는 것
 
 - **먼저 커밋하지 않습니다.** `git commit`/`push` 는 하드리밋입니다. 미커밋으로 두고 보고합니다
-- **태석님이 커밋·푸시를 허락하셔도 순서가 있습니다: `작업 종료` 절차를 먼저 끝내고 그 다음에 커밋합니다.**
-  슬롯 폐쇄·명부 갱신·REV·린터까지 마친 상태가 한 커밋에 담겨야 저장소가 일관됩니다.
-  2026-09-11 에 이 순서를 어겨 커밋 `e07141f` 에 종료분이 빠졌고, 폐쇄 갱신이 후속 커밋으로 밀렸습니다
-- 작업자에게 하드리밋을 넘는 지시를 전달하지 않습니다 - 삭제, 의존성 설치, `AIMEM.md` 쓰기,
-  슬롯 소유 경로 밖 쓰기. 클로가 위임받은 범위 밖입니다
-- `/acp spawn` 을 클로가 우회해서 치려 하지 않습니다. `chat.send` 로 슬래시 명령을 넣는 경로가
-  있지만 `operator.admin` 스코프에서 막히고, 발신자 신원을 흉내내는 것은 위조입니다
+- 태석님이 커밋을 허락하셔도 **거두기 절차를 먼저 끝내고** 커밋합니다. 세션 정리·명부
+  갱신·REV·린터까지 마친 상태가 한 커밋에 담겨야 저장소가 일관됩니다
+- 상주 슬롯을 다시 열지 않습니다. 필요해지면 `8.0` 을 먼저 고치고 태석님 확인을 받습니다
+
+## 참고 - 상주 슬롯이 왜 클로 손으로는 안 열렸나
+
+문턱이 둘이었습니다. ① `sessions_spawn(mode="session", thread=true)` 이
+`thread_binding_invalid` 로 거부 - 클로 세션에서는 디스코드 대화가 해석되지 않습니다.
+② 게이트웨이가 세션키의 `claude` 를 `agents.list` 에서 찾는데 등록이 없습니다.
+태석님의 `/acp spawn` 은 게이트웨이 클라이언트 컨텍스트가 없어 스코프 검사를 건너뛰고
+(`if (!Array.isArray(scopes)) return null`) owner 판정만 받아 통과했습니다.
+일회성은 스레드를 묶지 않고 부모-자식으로 뜨므로 두 문턱 다 걸리지 않습니다.
