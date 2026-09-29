@@ -37,6 +37,25 @@ from . import CHANGED, LAYERS, OK, STATUSES, UNKNOWN
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STATE = REPO_ROOT / ".aimem" / "envcheck-state.json"
 
+# 구조적으로 UNKNOWN 인 항목 (REV 106, 옥티 §6 지적 반영).
+#
+# `check()` 3튜플 계약은 건드리지 않는다 - 이 목록은 러너 쪽에서만 쓴다.
+# 여기 있는 항목은 부작용 없이는 원리상 관측 불가능하다(확증하려면 실제
+# 스폰을 하거나, 타임아웃이 실제로 만료돼야 한다). streak 임계를 넘겨도
+# "신호"로 올리지 않고 "관측불가로 선언됨"으로만 표시한다 - 검사 고장이
+# 아니라 검사의 설계 한계라서다.
+#
+# **이 목록에서 이름을 빼면 그 항목은 다시 일반 규칙(streak 임계 도달 시
+# 신호)을 탄다.** 목록에 넣어 둔 채로 잊지 말 것 - 조건이 바뀌면(예: 부작용을
+# 감수하는 별도 검증 경로가 생기면) 여기서 빼야 다시 울린다.
+#
+# `runtime.wsl_dns_first_lookup` 은 재현되면 OK 로 돌아오는 항목이라 여기
+# 넣지 않는다 - 구조적 불가와 "아직 재현 안 됨"은 다르다.
+STRUCTURAL_UNKNOWN = frozenset({
+    "sessions.acp.can_create_sessions",
+    "terminal.pan_run.recovery_reachability",
+})
+
 EXIT_OK = 0
 EXIT_CHANGED = 1
 EXIT_UNKNOWN_STREAK = 2
@@ -133,7 +152,7 @@ def fold(state: dict, results: list[tuple[str, str, str]], stamp: str) -> None:
             rec["unknown_streak"] = 0
 
 
-def verdict(rec: dict, streak_limit: int) -> tuple[str, str]:
+def verdict(rec: dict, streak_limit: int, name: str = "") -> tuple[str, str]:
     """누적 판정. (판정, 사유) 를 돌려준다."""
     status = rec["last_status"]
     if status == CHANGED:
@@ -142,6 +161,11 @@ def verdict(rec: dict, streak_limit: int) -> tuple[str, str]:
         return "확인됨", "이번 실행에서 기록대로였습니다"
     # UNKNOWN
     streak = rec["unknown_streak"]
+    if name in STRUCTURAL_UNKNOWN:
+        return ("관측불가로 선언됨",
+                "구조적 UNKNOWN(STRUCTURAL_UNKNOWN) 목록에 있음 - 부작용 없이는 "
+                "원리상 관측 불가. streak {}회는 신호로 올리지 않는다. "
+                "목록에서 빼면 다시 일반 규칙을 탑니다".format(streak))
     if streak >= streak_limit:
         if rec["ever_ok"]:
             reason = ("UNKNOWN {}회 연속 - 전에는 OK 였습니다({}). "
@@ -194,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
 
     rows = []
     for name, status, evidence in results:
-        v, reason = verdict(state["items"][name], args.unknown_streak)
+        v, reason = verdict(state["items"][name], args.unknown_streak, name)
         rows.append({
             "name": name, "status": status, "verdict": v,
             "reason": reason, "evidence": evidence,
@@ -211,7 +235,7 @@ def main(argv: list[str] | None = None) -> int:
         for r in rows:
             print("{:<38} {:<8} {}".format(r["name"], r["status"], r["verdict"]))
             print("    {}".format(r["evidence"]))
-            if r["verdict"] in ("수정필요", "신호"):
+            if r["verdict"] in ("수정필요", "신호", "관측불가로 선언됨"):
                 print("    -> {}".format(r["reason"]))
         if not rows:
             print("(결과 없음)")

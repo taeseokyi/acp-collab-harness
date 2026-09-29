@@ -40,7 +40,7 @@
 ```bash
 python3 tools/aimem_lint.py AIMEM.md     # 통과 시 exit 0
 python3 -m unittest discover -s tests    # 98건
-python3 -m tools.envcheck               # 환경 점검
+PYTHONPATH=tools python3 -m envcheck     # 환경 점검
 git config core.hooksPath .githooks      # 훅 활성화
 ```
 

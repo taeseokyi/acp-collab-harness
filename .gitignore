@@ -4,3 +4,7 @@ __pycache__/
 .venv/
 node_modules/
 .aimem.lock
+
+# envcheck 러너의 누적 판정 상태 - 이력 자산이 아니라 상태 파일.
+# 테스트마다 타임스탬프 25줄이 바뀌어 실제 diff 를 가린다 (REV 106, 태석님 승인).
+.aimem/envcheck-state.json
