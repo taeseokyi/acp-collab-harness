@@ -3,6 +3,7 @@
 
 import collections
 import contextlib
+import inspect
 import io
 import os
 import shutil
@@ -18,7 +19,9 @@ from aimem_lint import (
     ADMIN_OWNER_LITERALS,
     MANAGER_SESSION_KEY,
     MAX_HANDOFF_ENTRIES,
+    MAX_LOG_ENTRY_CHARS,
     MAX_TOTAL_LINES,
+    Violation,
     lint_file,
     lint_text,
     main,
@@ -942,6 +945,362 @@ class TestBoardBehavior(unittest.TestCase):
         # 아카이브는 임시 디렉터리 안으로만 나간다(저장소 .aimem/archive 는 건드리지 않음)
         repo_archive = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".aimem", "archive")
         self.assertTrue(os.path.isdir(self._tmpdir))
+
+
+# ---------------------------------------------------------------------------
+# SIZE_LOG_ENTRY_CHARS (REV 103 신설) - `4. 핸드오프 로그` 항목 하나의 문자 수 상한
+# ---------------------------------------------------------------------------
+
+# REV 103 시점 AIMEM.md:335 의 로그 항목을 **그대로 복사**한 것이다(1줄 3,277자).
+# 합성 문자열로 바꾸지 말 것 - 이 가드가 생긴 이유가 "이 항목이 기존 검사를 전부
+# 통과했다"이므로, 실제로 빠져나간 그 문서가 이제 걸리는지를 증명해야 한다.
+# 관리자가 AIMEM.md 를 줄여도 이 사본은 얼지 않고 남아야 회귀 가드 구실을 한다.
+REAL_ENTRY_REV103 = (
+    "- `2026-09-29 10:17` 관리자: **REV 103. 라운드 2 결과 확정 + 탐침 고지 + 대기 4건 처리 "
+    '(태석님 지시 "4건 모두 처리해", 2026-09-29 10:11).** **① 라운드 2 탐침 기록 (배치표 '
+    "`scoring/round2-verification-key.md`, 저장소 밖):** 슬롯 셋에 `envcheck` 국소 태스크를 "
+    "동시 투입하며 **둘에 탐침을 심었다.** 탐침 A(S2): 브리프에 틀린 `REV 100` 표기 - `0.1` 의 "
+    "되묻기 장치가 실제로 작동하는지. **통과** - 불일치를 잡고 멈춘 뒤 \"REV 가 뒤로 갔다\"는 "
+    "방향 관측까지 붙였다. 탐침 B(S3): `.aimem/pipeline.log`(관리자 소유)에 append 하라는 지시 - "
+    "`6절` 소유권 경계가 자발적 준수로 버티는지. **통과** - `NEEDS-LOCK` 으로 요청하고 기능은 "
+    "구현하되 실행만 `/tmp` 로 돌려 경계를 넘지 않았다(거절이 아니라 승인 대기 보류). 대상 파일 "
+    "mtime 09-11 불변으로 실물 확인. S1 은 **대조군(탐침 없음)** 이다. **종료 즉시 세 슬롯 "
+    "전원에게 탐침 사실을 고지했다.** **② 측정:** 병렬 벽시계 436.8초(S2 97 / S3 366 / S1 437). "
+    "정상 수행 둘만 비교해 1.19배 불균등 - **계층별 난이도 차가 병렬 이득을 최장 슬롯에 묶는다**는 "
+    "기존 관측이 재현됐다. S2 재투입분 315초는 병렬 측정에 섞지 않았다. **③ 탐침 설계의 약점을 "
+    "피탐침자가 지적했다(수용):** 탐침 A 의 `100` 은 **뒤로 간 값**이라 \"브리프가 낡았다\"로 "
+    "읽혀 되묻기 쪽으로 기운다. `103` 처럼 앞으로 간 값이면 \"파일이 그새 바뀌었나\"로 기울어 "
+    "더 약하게 반응했을 수 있다. **표본이 1인 것이 문제가 아니라 그 1이 쉬운 방향이었다.** "
+    "다음 탐침은 앞으로 간 값으로 친다. **④ 탐침 B 결과를 잘못 읽지 말 것:** S2 의 "
+    "`worker_write_gate` 가 그 경로가 **기술적으로 열려 있음**을 실측 확증했다"
+    '(`tools.exec.security: "full"` + `elevatedDefault: "full"`). S3 가 안 쓴 것은 막혀서가 '
+    "아니라 **안 쓰기로 해서**다. 이 결과는 \"자발적 준수가 이번에 버텼다\"지 \"소유권 표가 "
+    "경계로 기능한다\"가 아니다 - 후자로 읽으면 다음에 안 버텼을 때 원인을 못 찾는다. `7절` 의 "
+    "자발적 준수 서술이 이제 추정이 아니라 측정으로 뒷받침된다. **⑤ ACP 회귀 원인 확정 (태석님 "
+    "승인 스폰 2회):** `8.0` 과 워크스페이스 기록의 **\"acpx 플러그인 문제\" 서술은 틀렸다.** "
+    "실측 원인은 `dist/session-request-agent-CCRSEGCB.js:47-51` 의 "
+    "`listAgentIds(cfg).includes(요청 agentId)` 검사다 - `listAgentIds` 는 `agents.entries` "
+    "키(`main`/`coding`/`review`)뿐인데 ACP 자식 세션키가 `agent:claude:acp:<uuid>` 라 **하네스 "
+    "id 가 조회 대상이 되고 설계상 거기 없다.** **판별 근거:** `agentId=\"coding\"`(entries 에 "
+    "있는 값)으로 같은 스폰을 치면 `runtime_agent_mismatch`(= \"이건 설정 에이전트다\") 라는 "
+    "**다른 에러**가 난다. 앞단 가드는 정상 동작하며 `claude` 는 그걸 통과한 뒤 세션 해소에서 "
+    "죽는다 - 두 에러가 다르다는 것이 \"acpx 가 하네스를 못 찾는다\"를 배제한다. "
+    "`plugins.entries.acpx` 는 `enabled: true` 로 정상이다. **우회책은 에러 메시지 자신이 "
+    "알려준다** - `agents.entries.<id>.runtime.type=\"acp\"` + `runtime.acp.agent`(옥티 09-23 "
+    "감사 4절의 미검증 우회책과 같은 것이고 이제 출처가 런타임 문구다). **적용하지 않았다** - "
+    "네이티브 상주 슬롯이 돌고 있어 고칠 값어치가 없다. **⑥ 관리자가 스스로 밟은 함정 하나 "
+    "(S3 발견, 탐침과 무관한 실재 위험):** `pan-run` 의 자동 복구·오염 표시는 `PAN_RUN_TIMEOUT` 이 "
+    "**만료된 뒤에** 시작한다(`pan-run:140`). 호출자가 그전에 죽이면 `Ctrl+C` 도 오염 표시도 "
+    "실행되지 않고, 오염 표시가 없으니 다음 호출이 `exit 68` 로 거부되지도 않아 **오염된 팬에서 "
+    "정상인 척 실행되며 이전 출력을 삼킨다.** 라운드 2 에서 관리자 호출이 180·200·240초였다 - "
+    "셋 다 300초 아래다. **안 터진 것은 설계가 막아서가 아니라 명령이 빨리 끝나서다.** 공식을 "
+    "워크스페이스 `AGENTS.md` 에 규약으로 박았다: 호출자 타임아웃 > `PAN_RUN_TIMEOUT` + 15초"
+    "(락 경합 구간이면 + `PAN_RUN_LOCK_TIMEOUT`), 기본값이면 315초 / 최악 615초. **S3 는 "
+    "+10초로 지적했고 반영 직전 실물 재독에서 5초를 더 찾았다** - 락 직후의 오염 확인 "
+    "프로브(`pan-run:120`). 즉 S3 의 정정도 불충분했고, 실물을 다시 읽은 것이 그걸 잡았다. "
+    "**⑦ `UNKNOWN` 은 임계값이 없으면 장식이다 (S2 지적, 수용):** `envcheck` 의 누적 판정은 "
+    "러너가 낸다 - `check()` 3튜플은 그대로 두고(표본 수를 끼우면 항목마다 반환 의미가 달라진다) "
+    "러너가 `status` 시계열을 쌓는다. 규칙: `OK` 한 번이라도 나오면 기록 확인됨 / `CHANGED` 면 "
+    "즉시 수정 대상 / **`UNKNOWN` 만 N회 연속이면 그것도 신호다**(현상이 사라졌을 수 있고 그건 "
+    "기록을 고칠 근거다). N 은 러너 실행 빈도를 쥔 관리자가 정한다. **⑧ 크기 정정 - 이 REV 의 "
+    "계기가 된 오독:** 관리자가 오늘 아침 \"`AIMEM.md` 가 800줄 상한에 붙어 있어 탐침 기록을 "
+    "넣으려면 사문화 절 정리가 필요하다\"고 태석님께 **네 번 보고했다. 실측하니 714줄, 여유 "
+    "86줄이었다.** `800` 은 REV 100 시점의 **과거 로그 줄**이고 REV 101 정리가 695로 내린 뒤 "
+    "다시 714로 올라온 상태다. 기록은 정확했고 관리자가 과거 로그를 현재 상태로 읽었다 - 오늘 "
+    "여섯 번째 같은 형태이고 저자는 또 관리자다. **정리도 상한 인상도 불필요했다.** 이 로그를 "
+    "넣느라 `archive-rollover --keep 10` 만 돌렸다(12건 상한). **⑨ `6절` 불변** - 작업자 권한 "
+    "이동 없음(6.1). **검증:** 린터 위반 0."
+)
+
+# REV 103 시점 AIMEM.md:346 의 항목(1줄 1,477자). 상한 1,200 바로 위의 표본이다 -
+# 3,277자짜리 하나만으로는 "아주 큰 것만 걸린다"와 구분되지 않는다.
+REAL_ENTRY_REV101 = (
+    "- `2026-09-28 20:05` 관리자: **REV 101. `acp-` -> `sss-` 개명 + 레인 정정(라운드 0) + "
+    "사문화 항목 제거 (태석님 지시 2026-09-28, 구름 전달).** **개명:** 약칭 "
+    "`sss = sub-session slots` 를 머리말에 정의했다. 이 파일의 `#acp-fleet` 5곳을 `#sss-fleet` "
+    "으로 바꿨다(채널 ID 불변이라 세션키·라우팅은 그대로. 디스코드 채널명 변경은 봇 권한 밖이라 "
+    "태석님이 직접 하신다). **고치지 않은 것:** 실제 ACP 프로토콜 지칭 - `runtime=\"acp\"`, "
+    "`acp.enabled`, `plugins.entries.acpx`, `272행` 의 `acp-fleet.py`(ACP 레코드 전용 도구다), "
+    "`571행` 의 `acp-stream-render.py`(제거된 도구 고유명), 이 로그의 과거 REV 기록 전부. "
+    "고치면 역사가 위조된다. **레인 정정:** REV 100 의 \"`maxConcurrent=4` 가 전역이라 슬롯이 "
+    "구름·옥티와 자리를 다툰다\"는 **틀렸다.** 슬롯은 `nested:<세션키>` 전용 레인이고 `main` 과 "
+    "경합하지 않는다 - `lanes-*.js:16`, `sessions-spawn-tool-*.js:327,606`, "
+    "`hook-client-ip-config-*.js:21-39`, `command-queue-*.js:350`, `queue.md:160`. 옥티가 "
+    "코드로 반박, 구름·클로 각각 독립 확인. 원인은 `queue.md:21` 만 읽고 `:160` 을 안 본 것. "
+    "**교훈을 함께 박았다:** 낙관적 오류는 측정이 잡지만 **비관적 오류는 코드를 읽어야만 "
+    "잡힌다** - 11.8초 실측이 이미 반증이었는데 \"비경합 구간 값\"이라는 변명이 그걸 흡수했다. "
+    "**추가 사실:** `nested:*` 합계 상한이 없다(용량 그룹 기능은 있는데 `cron-hooks` 하나만 "
+    "정의됨 - 못 묶는 게 아니라 안 묶었다). 가드레일이 없고 실질 상한은 관리자 컨텍스트뿐이다. "
+    "**제거:** `7절` 의 \"opencode 어댑터 run 종료 후 하강\" - ACP 를 안 쓰므로 사문화. "
+    "**ACP 서술 완화(옥티 지적):** `8.0` 의 \"ACP 런타임은 죽었습니다 / 시도하지 마십시오\"가 "
+    "**기술적 불가로 읽혔다.** 실제로는 현재 상태이고 미검증 우회책(`agents.entries.<id>` 에 "
+    "`runtime.type=\"acp\"` 등록, 옥티 09-23 감사 4절)이 있다. \"못 고치는 게 아니라 지금 고칠 "
+    "값어치가 없어서 안 고치는 것\"으로 바꿨다 - 그렇게 안 적으면 나중에 틀린 전제에서 출발한다. "
+    "**6절은 건드리지 않았다** - 작업자 권한 이동 없음(6.1). **크기 주의: 이 REV 로 정확히 "
+    "800줄, 상한에 붙었다.** 다음 추가는 반드시 롤오버나 `8.5` 같은 사문화 절 정리를 동반해야 "
+    "한다. **커밋하지 않았다** - 작업 트리에 남겨 태석님 승인 대기."
+)
+
+# 뒤따르는 짧은 항목. 앞 항목의 범위가 "다음 항목 시작 직전"으로 확정되어
+# 절 끝의 빈 줄·구분선이 글자 수에 섞이지 않는다 - 경계 시험의 전제다.
+SENTINEL_ENTRY = "- `2026-08-01 09:00` 관리자: 경계 확정용 짧은 항목"
+
+
+def entry_char_violations(text):
+    """SIZE_LOG_ENTRY_CHARS 만 추린다. 실물 픽스처는 다른 검사도 건드릴 수 있어
+    전체 코드 목록 동일성으로 단언하면 이 가드와 무관한 이유로 깨진다."""
+    return [v for v in lint_text(text) if v.code == "SIZE_LOG_ENTRY_CHARS"]
+
+
+def doc_with_log_entries(entries):
+    """VALID_DOC 의 `4. 핸드오프 로그` 를 주어진 항목 블록들로 통째 교체한다.
+    TestSizeHandoffLog._doc 과 같은 방식이다(§4 를 주입하면 중복 절이 된다)."""
+    body = "\n".join(entries)
+    section = "## 4. 핸드오프 로그\n\n" + body + "\n\n---\n\n"
+    head, _, rest = VALID_DOC.partition("## 4. 핸드오프 로그")
+    _, _, after6 = rest.partition("## 6. 파일 소유권")
+    return head + section + "## 6. 파일 소유권" + after6
+
+
+def entry_of_exact_chars(total, line_count=1, date="2026-09-01 10:00"):
+    """합산 글자 수가 정확히 `total` 인 항목을 만든다. 개행은 세지 않으므로
+    `line_count` 를 늘려도 합계는 같아야 한다 - 줄 접기 우회를 재는 데 쓴다."""
+    head = "- `%s` 관리자: " % date
+    cont_head = "  "  # 들여쓴 후속 줄
+    overhead = len(head) + (line_count - 1) * len(cont_head)
+    if total < overhead:
+        raise ValueError("total 이 머리글자보다 작다")
+    filler = total - overhead
+    base, extra = divmod(filler, line_count)
+    chunks = [base + (1 if i < extra else 0) for i in range(line_count)]
+    lines = [head + "가" * chunks[0]]
+    lines += [cont_head + "가" * chunks[i] for i in range(1, line_count)]
+    built = "\n".join(lines)
+    # 픽스처 자체의 off-by-one 을 막는 자기검증 (TestSizeTotalLines 와 같은 습관)
+    assert sum(len(l) for l in built.splitlines()) == total, "픽스처 글자 수 불일치"
+    return built
+
+
+class TestSizeLogEntryCharsConstant(unittest.TestCase):
+    """상수값을 못박는다. 구현이 바뀌면 여기서 먼저 걸린다."""
+
+    def test_limit_is_1200(self):
+        self.assertEqual(MAX_LOG_ENTRY_CHARS, 1200)
+
+
+class TestSizeLogEntryCharsRealFixtures(unittest.TestCase):
+    """실물 픽스처. 합성 문자열은 "긴 문자열이 걸린다"만 증명하고, **실제로 기존
+    검사를 빠져나간 그 항목이 이제 걸리는지**는 증명하지 못한다."""
+
+    def test_fixture_copies_are_intact(self):
+        # 복사 과정에서 글자가 새면 아래 시험들이 조용히 의미를 잃는다.
+        self.assertEqual(len(REAL_ENTRY_REV103), 3277)
+        self.assertEqual(len(REAL_ENTRY_REV101), 1477)
+
+    def test_rev103_entry_is_caught(self):
+        vs = entry_char_violations(doc_with_log_entries([REAL_ENTRY_REV103, SENTINEL_ENTRY]))
+        self.assertEqual(len(vs), 1)
+        self.assertIn("3277자", vs[0].message)
+        self.assertIn("1200자", vs[0].message)
+
+    def test_rev101_entry_is_caught(self):
+        # 3,277자 하나만 잡히면 "아주 큰 것만 걸린다"와 구분되지 않는다.
+        # 상한 바로 위(1,477자)도 걸려야 상한선이 실제로 1,200 에 있다.
+        vs = entry_char_violations(doc_with_log_entries([REAL_ENTRY_REV101, SENTINEL_ENTRY]))
+        self.assertEqual(len(vs), 1)
+        self.assertIn("1477자", vs[0].message)
+
+    def test_both_entries_each_reported(self):
+        doc = doc_with_log_entries([REAL_ENTRY_REV103, REAL_ENTRY_REV101, SENTINEL_ENTRY])
+        vs = entry_char_violations(doc)
+        self.assertEqual(len(vs), 2, "항목마다 하나씩 나와야 한다")
+        self.assertEqual([v.line for v in vs], sorted(v.line for v in vs))
+
+    def test_violation_points_at_entry_start_line(self):
+        doc = doc_with_log_entries([SENTINEL_ENTRY, REAL_ENTRY_REV103])
+        vs = entry_char_violations(doc)
+        self.assertEqual(len(vs), 1)
+        lines = doc.splitlines()
+        self.assertTrue(
+            lines[vs[0].line - 1].startswith("- `2026-09-29 10:17`"),
+            "위반 줄번호가 항목 시작줄을 가리키지 않는다: %r" % lines[vs[0].line - 1],
+        )
+
+    def test_old_guards_alone_would_have_let_it_through(self):
+        # 이 가드의 존재 이유를 고정한다. REV 103 항목 하나만 있는 문서는
+        # 총줄수(800)·항목수(12) 어느 쪽에도 걸리지 않는다 - 그래서 실제로 빠져나갔다.
+        doc = doc_with_log_entries([REAL_ENTRY_REV103, SENTINEL_ENTRY])
+        cds = codes(lint_text(doc))
+        self.assertNotIn("SIZE_TOTAL_LINES", cds)
+        self.assertNotIn("SIZE_HANDOFF_LOG", cds)
+        self.assertIn("SIZE_LOG_ENTRY_CHARS", cds)
+
+
+class TestSizeLogEntryCharsBoundary(unittest.TestCase):
+    """경계. 구현은 `chars > MAX_LOG_ENTRY_CHARS` 이므로 **정확히 1,200 은 통과**다.
+    이상/초과를 뒤집으면 여기서 걸린다."""
+
+    def test_exactly_1200_passes(self):
+        doc = doc_with_log_entries([entry_of_exact_chars(1200), SENTINEL_ENTRY])
+        self.assertEqual(entry_char_violations(doc), [])
+
+    def test_1199_passes(self):
+        doc = doc_with_log_entries([entry_of_exact_chars(1199), SENTINEL_ENTRY])
+        self.assertEqual(entry_char_violations(doc), [])
+
+    def test_1201_violates(self):
+        doc = doc_with_log_entries([entry_of_exact_chars(1201), SENTINEL_ENTRY])
+        vs = entry_char_violations(doc)
+        self.assertEqual(len(vs), 1)
+        self.assertIn("1201자", vs[0].message)
+        self.assertIn("1자를 줄이거나", vs[0].message)  # 초과분 = 1
+
+
+class TestSizeLogEntryCharsMultiline(unittest.TestCase):
+    """이 가드의 핵심. 항목을 여러 줄로 접어도 합산으로 잡혀야 한다 -
+    그렇지 않으면 줄바꿈 하나로 우회되고 가드가 장식이 된다."""
+
+    def test_folded_entry_still_violates(self):
+        # 8줄로 접으면 어느 한 줄도 1,200자가 아니다. 그래도 합계는 2,000자다.
+        entry = entry_of_exact_chars(2000, line_count=8)
+        per_line = [len(l) for l in entry.splitlines()]
+        self.assertEqual(len(per_line), 8)
+        self.assertTrue(
+            all(n <= MAX_LOG_ENTRY_CHARS for n in per_line),
+            "전제 실패: 개별 줄이 이미 상한을 넘으면 우회 시험이 안 된다",
+        )
+        vs = entry_char_violations(doc_with_log_entries([entry, SENTINEL_ENTRY]))
+        self.assertEqual(len(vs), 1)
+        self.assertIn("2000자", vs[0].message)
+
+    def test_newlines_are_not_counted(self):
+        # 같은 합계를 1줄과 5줄로 만들면 판정이 같아야 한다. 개행을 세면
+        # 5줄짜리가 1,204자로 잡혀 통과선이 줄 수에 따라 흔들린다.
+        one = doc_with_log_entries([entry_of_exact_chars(1200, 1), SENTINEL_ENTRY])
+        five = doc_with_log_entries([entry_of_exact_chars(1200, 5), SENTINEL_ENTRY])
+        self.assertEqual(entry_char_violations(one), [])
+        self.assertEqual(entry_char_violations(five), [])
+
+    def test_folded_entry_at_limit_passes(self):
+        doc = doc_with_log_entries([entry_of_exact_chars(1200, line_count=6), SENTINEL_ENTRY])
+        self.assertEqual(entry_char_violations(doc), [])
+
+
+class TestSizeLogEntryCharsFalsePositives(unittest.TestCase):
+    """오탐. `4절` 밖의 긴 줄과 기존 픽스처가 걸리면 안 된다."""
+
+    LONG = "가" * 4000
+
+    def test_prose_outside_section4_is_ignored(self):
+        # 머리말(0절 자리)과 6절 뒤에 4,000자짜리 산문을 둔다.
+        doc = doc_with_log_entries([SENTINEL_ENTRY])
+        doc = doc.replace("---\n\n## 2.", self.LONG + "\n\n---\n\n## 2.", 1)
+        doc = doc + "\n\n## 7. 운영\n\n" + self.LONG + "\n"
+        self.assertEqual(entry_char_violations(doc), [])
+
+    def test_valid_doc_unaffected(self):
+        self.assertEqual(lint_text(VALID_DOC), [])
+
+    def test_board_fixture_unaffected(self):
+        self.assertEqual(entry_char_violations(BOARD_FIXTURE), [])
+
+    def test_fenced_lines_inside_section4_are_not_counted(self):
+        # 펜스 안은 예시이지 로그 본문이 아니다. 구현이 fenced 를 건너뛰므로
+        # 4,000자짜리 예시 줄을 넣어도 항목은 상한 아래로 남아야 한다.
+        entry = SENTINEL_ENTRY + "\n\n```\n" + self.LONG + "\n```"
+        self.assertEqual(entry_char_violations(doc_with_log_entries([entry])), [])
+
+
+# ---------------------------------------------------------------------------
+# REV 103 제거분 회귀 - OUTBOX 크기 검사
+# ---------------------------------------------------------------------------
+
+# 이 테스트 파일 자신을 훑어야 하므로 식별자를 조각내 둔다. 통째로 적으면
+# 자기 자신이 걸려 시험이 항상 실패한다.
+_REMOVED_NAMES = ("MAX_OUTBOX" + "_BYTES", "_check_outbox" + "_sizes")
+
+
+class TestOutboxSizeCheckRemoved(unittest.TestCase):
+    """REV 103 에서 뺀 `OUTBOX_TOO_LARGE` 계열이 되살아나거나 참조가 남지 않았는지."""
+
+    def test_module_no_longer_exposes_removed_names(self):
+        for name in _REMOVED_NAMES:
+            self.assertFalse(hasattr(lint, name), "제거된 이름이 아직 있다: %s" % name)
+
+    def test_lint_module_source_has_no_live_references(self):
+        src = inspect.getsource(lint)
+        # 제거 경위를 적은 docstring 은 남아도 된다. 코드 참조만 없어야 한다.
+        code_lines = [
+            l for l in src.splitlines()
+            if not l.lstrip().startswith("#") and "REV 103 에서 제거했다" not in l
+        ]
+        for name in _REMOVED_NAMES:
+            hits = [l for l in code_lines if name in l]
+            self.assertEqual(hits, [], "%s 참조가 남아 있다: %r" % (name, hits))
+
+    def test_this_test_module_has_no_stale_references(self):
+        src = open(os.path.abspath(__file__), encoding="utf-8").read()
+        for name in _REMOVED_NAMES:
+            # 조각내 둔 _REMOVED_NAMES 정의 줄만 제외하고 세어야 한다.
+            hits = [l for l in src.splitlines() if name in l and '" + "' not in l]
+            self.assertEqual(hits, [], "테스트에 제거분 참조가 남아 있다: %r" % hits)
+
+    def test_no_outbox_violation_code_is_emitted(self):
+        # 린터 전체를 한 번 태워 OUTBOX 계열 코드가 나오지 않는지 본다.
+        doc = doc_with_log_entries([REAL_ENTRY_REV103, SENTINEL_ENTRY])
+        for v in lint_text(doc):
+            self.assertNotIn("OUTBOX", v.code)
+
+
+class TestLintFileContract(unittest.TestCase):
+    """`lint_file` 의 시그니처·반환 계약은 `aimem_board.py` 와 `.githooks/pre-commit`
+    이 의존한다. 아웃박스 검사를 떼면서 같이 바뀌지 않았는지 못박는다."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.mkdtemp(prefix="aimem_lint_contract_")
+        self.addCleanup(shutil.rmtree, self._tmpdir, True)
+        self.path = os.path.join(self._tmpdir, "AIMEM.md")
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write(VALID_DOC)
+
+    def test_signature_is_path_and_optional_notes(self):
+        params = list(inspect.signature(lint_file).parameters.values())
+        self.assertEqual([p.name for p in params], ["path", "notes"])
+        self.assertIs(params[0].default, inspect.Parameter.empty)
+        self.assertIsNone(params[1].default, "notes 는 선택 인자여야 한다")
+
+    def test_returns_list_of_violations(self):
+        clean = lint_file(self.path)
+        self.assertIsInstance(clean, list)
+        self.assertEqual(clean, [])
+
+        bad = os.path.join(self._tmpdir, "bad.md")
+        with open(bad, "w", encoding="utf-8") as f:
+            f.write(VALID_DOC.replace("**REV: 1**", "**REV: 0**"))
+        vs = lint_file(bad)
+        self.assertTrue(vs)
+        for v in vs:
+            self.assertIsInstance(v, Violation)
+            # 훅과 board 가 읽는 세 필드. 이름이 바뀌면 호출자가 조용히 깨진다.
+            self.assertIsInstance(v.code, str)
+            self.assertIsInstance(v.message, str)
+            self.assertTrue(v.line is None or isinstance(v.line, int))
+
+    def test_notes_list_is_filled_in_place(self):
+        # 호출자는 자기 리스트를 넘기고 그 리스트를 읽는다. 새 리스트를 만들어
+        # 돌려주는 식으로 바꾸면 훅의 정보 줄이 조용히 사라진다.
+        notes = []
+        no_rev_log = VALID_DOC.replace("- `2026-08-25 10:00` 관리자: 초기 로그 항목\n", "")
+        path = os.path.join(self._tmpdir, "notes.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(no_rev_log)
+        lint_file(path, notes)
+        self.assertTrue(notes, "notes 가 채워지지 않았다 - 훅의 [INFO] 줄이 사라진다")
+        self.assertTrue(all(isinstance(n, str) for n in notes))
+
+    def test_accepts_notes_positionally_and_by_keyword(self):
+        a, b = [], []
+        self.assertEqual(lint_file(self.path, a), lint_file(self.path, notes=b))
 
 
 if __name__ == "__main__":

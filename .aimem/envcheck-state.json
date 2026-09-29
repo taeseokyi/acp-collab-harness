@@ -1,0 +1,85 @@
+{
+  "items": {
+    "runtime.python_env": {
+      "ever_ok": true,
+      "ever_ok_at": "2026-09-29T12:14:18+09:00",
+      "first_seen": "2026-09-29T12:14:18+09:00",
+      "last_evidence": "설정이 고정한 환경 = /home/tsyi/miniconda3/envs/openclaw\nsys.executable = /home/tsyi/miniconda3/envs/openclaw/bin/python3.11\npython 버전 = 3.11.14\nwhich python3 -> /home/tsyi/miniconda3/envs/openclaw/bin/python3.11\nCONDA_PREFIX = /home/tsyi/miniconda3/envs/openclaw\n패키지 가용: bs4=있음, requests=있음\n/home/tsyi/.openclaw/openclaw.json:315 \"pathPrepend\": [ \"/home/tsyi/miniconda3/envs/openclaw/bin\"\n고정 환경·버전·패키지 모두 기대와 일치.",
+      "last_seen": "2026-09-29T12:14:18+09:00",
+      "last_status": "OK",
+      "runs": 1,
+      "unknown_streak": 0
+    },
+    "runtime.worker_write_gate": {
+      "ever_ok": true,
+      "ever_ok_at": "2026-09-29T12:14:18+09:00",
+      "first_seen": "2026-09-29T12:14:18+09:00",
+      "last_evidence": "-- 실효 설정값 (런타임 설정에서 직접 읽음) --\ntools.exec.mode = None, tools.exec.security = 'full', tools.exec.ask = None (ask 미설정 -> 문서상 기본 'off')\n/home/tsyi/.openclaw/openclaw.json:314 \"security\": \"full\",\nagents.defaults.elevatedDefault = 'full'\n/home/tsyi/.openclaw/openclaw.json:233 \"elevatedDefault\": \"full\",\ntools.elevated.enabled = True\nplugins.entries.acpx.config.permissionMode = 'approve-all'\n-- 그 값이 실제로 무엇을 건너뛰게 하는지 (설치된 문서) --\nexec.mode full 의 의미: /home/tsyi/.local/share/pnpm/global/5/node_modules/openclaw/docs/tools/exec-approvals.md:188 | `full`      | Run host exec without approval prompts....\nexec.security full 의 의미: /home/tsyi/.local/share/pnpm/global/5/node_modules/openclaw/docs/tools/exec-approvals.md:198 - `full` - allow everything (equivalent to elevated).\nexec.ask 기본값: /home/tsyi/.local/share/pnpm/global/5/node_modules/openclaw/docs/tools/exec-approvals.md:209 Default is `off`. The per-call `ask` tool parameter (see\nsecurity/ask 쌍은 은퇴 표면: /home/tsyi/.local/share/pnpm/global/5/node_modules/openclaw/docs/tools/exec-approvals.md:190 Doctor migrates the retired persisted `tools.exec.security` / `tools.exec.ask`\nelevatedDefault full 이 건너뛰는 것: /home/tsyi/.local/share/pnpm/global/5/node_modules/openclaw/docs/tools/elevated.md:70 `node`. In `full` mode, exec approvals are skipped when the resolved exec\nelevated 전역 게이트: /home/tsyi/.local/share/pnpm/global/5/node_modules/openclaw/docs/tools/elevated.md:85 - **Global gate**: `tools.elevated.enabled` (must be `true`)\n서브에이전트 권한 상속: /home/tsyi/.local/share/pnpm/global/5/node_modules/openclaw/docs/tools/subagents.md:292 ...ted without changing that behavior. The new dashboard child inherits the requester's effective tool-policy ceiling before its first turn. Session listing and addressing obey...\n-- 판정 --\n실효 기전은 `tools.exec`(승인 프롬프트 없이 호스트 exec 실행)와 `agents.defaults.elevatedDefault: full`(exec 승인 생략)이다. 서브에이전트는 호출자의 실효 도구 정책 상한을 물려받으므로 작업자 쪽에서도 같다. 즉 작업자의 쓰기를 막는 기술적 장치는 없다.\n`acpx.permissionMode`('approve-all')는 설정에 남아 있으나 ACP 플러그인 경로의 값이다. 위 exec/elevated 두 값만으로 이미 승인이 생략되므로, acpx 를 잠가도 이 경로는 닫히지 않는다. (acpx 가 네이티브 슬롯에 관여하지 않는다는 점까지는 이 검사가 증명하지 않는다 - 증명한 것은 exec/elevated 가 단독으로 충분하다는 것이다.)",
+      "last_seen": "2026-09-29T12:14:18+09:00",
+      "last_status": "OK",
+      "runs": 1,
+      "unknown_streak": 0
+    },
+    "runtime.wsl_dns_first_lookup": {
+      "ever_ok": false,
+      "ever_ok_at": null,
+      "first_seen": "2026-09-29T12:14:18+09:00",
+      "last_evidence": "uname release = 6.18.33.2-microsoft-standard-WSL2\n/etc/resolv.conf 자동생성 표시 = True, nameserver 172.26.96.1\none.one.one.one: 1차 성공 -> 1.0.0.1\ndns.google: 1차 성공 -> 8.8.4.4\nexample.com: 1차 성공 -> 104.20.23.154\n집계: 조회 대상 3개, 1차 실패 0건, 그 중 재시도 회복 0건 (호스트당 최대 2회, 총 최대 6회)\n판정 근거: 기록이 말하는 것은 '간헐적' 실패다. 전부 1차 성공한 것은 부재의 증거가 아니라 이번 표본에서 재현되지 않았다는 뜻일 뿐이므로 UNKNOWN 이다.",
+      "last_seen": "2026-09-29T12:14:18+09:00",
+      "last_status": "UNKNOWN",
+      "runs": 1,
+      "unknown_streak": 1
+    },
+    "sessions.acp.can_create_sessions": {
+      "ever_ok": false,
+      "ever_ok_at": null,
+      "first_seen": "2026-09-29T12:14:18+09:00",
+      "last_evidence": "/home/tsyi/.openclaw/openclaw.json: acp.enabled=True acp.backend='acpx' acp.defaultAgent='opencode' acp.allowedAgents=['opencode', 'codex', 'claude']\n/home/tsyi/.openclaw/openclaw.json: agents.entries=['coding', 'main', 'review']\n`openclaw plugins list` (rc=0): │ ACPX Runtime                   │ acpx              │ openclaw │ enabled  │ ~/.openclaw/npm/projec...law/  │ 2026.9.2 │\ndist/acp-spawn-BQ1IfNF1.js:1072  error: `agentId \"${requested}\" is an OpenClaw config agent, not an ACP harness. Use runtime=\"subagent\" or omit runtim...\ndist/session-request-agent-CCRSEGCB.js:48  if (normalizedRequestedAgentId && !configuredAgentIds.includes(normalizedRequestedAgentId)) return {\nacp.allowedAgents 중 agents.entries 에 없는 id: ['opencode', 'codex', 'claude'] - ACP 전용 해석기는 외부 하네스 id 를 허용하지만, 세션 생성 경로의 일반 해석기는 agents.entries 밖의 id 를 거부한다. 두 해석기가 어긋난다.\n판정 불가: 설정과 백엔드는 정상으로 보이고, 실패를 확증하려면 실제 스폰이 필요하다. 부작용 금지라 하지 않는다.",
+      "last_seen": "2026-09-29T12:14:18+09:00",
+      "last_status": "UNKNOWN",
+      "runs": 1,
+      "unknown_streak": 1
+    },
+    "sessions.sessions_send.child_queue_lane": {
+      "ever_ok": true,
+      "ever_ok_at": "2026-09-29T12:14:18+09:00",
+      "first_seen": "2026-09-29T12:14:18+09:00",
+      "last_evidence": "dist/lanes-CI0_P-yC.js:8  const NESTED_LANE_PREFIX = `${NESTED_LANE}:`;\ndist/lanes-CI0_P-yC.js:19  return `${NESTED_LANE_PREFIX}${trimmed}`;\ndist/sessions-spawn-tool-B_wY577u.js:606  lane: resolveNestedAgentLaneForSession(params.targetSessionKey),\ndist/sessions-spawn-tool-B_wY577u.js:510  sourceTool: \"sessions_send\",\ndist/command-queue-C3Fv2rcU.js:350  maxConcurrent: 1,\ndist/command-queue-C3Fv2rcU.js:150  \"nested:\",\n/home/tsyi/.openclaw/openclaw.json: queue=None (레인 상한 덮어쓰기 없음) / agents.defaults.maxConcurrent=4\n판정: sessions_send 로 구동되는 자식 턴은 대상 세션키로 만든 `nested:<세션키>` 레인에 들어간다. 그 레인은 생성 시 maxConcurrent=1 이고 설정에 덮어쓰기가 없다. `nested:` 접두사는 용량 그룹에 편입될 수 없으므로 agents.defaults.maxConcurrent(4) 와 경합하지 않는다. 기록과 일치한다.",
+      "last_seen": "2026-09-29T12:14:18+09:00",
+      "last_status": "OK",
+      "runs": 1,
+      "unknown_streak": 0
+    },
+    "terminal.pan_run.exit_codes": {
+      "ever_ok": true,
+      "ever_ok_at": "2026-09-29T12:14:18+09:00",
+      "first_seen": "2026-09-29T12:14:18+09:00",
+      "last_evidence": "실측 exit 코드 [64, 65, 66, 67, 68, 124] / 헤더 주석 문서화 [64, 65, 66, 67, 68, 124] | pan-run:32 \"[ -n \"$PANE\" ] || { echo \"pan-run: 사용법: pan-run <팬번호 0|1|2> <명령>\" >&2; exit 64; }\" ; pan-run:46 \"|| { echo \"pan-run: $SESSION 세션 없음. agents-session-start 실행 필요\" >&2; exit 65; }\" ; pan-run:63 \"exit 66 ;;\" ; pan-run:115 \"exit 67\" ; pan-run:126 \"exit 68\" ; pan-run:171 \"exit 124\"",
+      "last_seen": "2026-09-29T12:14:18+09:00",
+      "last_status": "OK",
+      "runs": 1,
+      "unknown_streak": 0
+    },
+    "terminal.pan_run.recovery_reachability": {
+      "ever_ok": false,
+      "ever_ok_at": null,
+      "first_seen": "2026-09-29T12:14:18+09:00",
+      "last_evidence": "복구 경로는 실행 타임아웃 만료 후에만 진입한다: pan-run:140 \"if timeout \"$TIMEOUT\" tmux wait-for \"$CH\" 2>/dev/null; then\" ; 재시도 pan-run:151 \"for attempt in 1 2; do\" ; 유휴 프로브 5초 pan-run:105 \"timeout \"${1:-5}\" tmux wait-for \"$probe\" 2>/dev/null\" ; 기본값 PAN_RUN_TIMEOUT=300초 pan-run:69 \"TIMEOUT=\"${PAN_RUN_TIMEOUT:-300}\"\" / PAN_RUN_LOCK_TIMEOUT=300초 pan-run:70 \"LOCK_TIMEOUT=\"${PAN_RUN_LOCK_TIMEOUT:-300}\"\" ; => 복구가 끝나려면 호출자가 pan-run 을 최소 310초(락 무경합) ~ 610초(락 최대 대기) 동안 죽이지 않아야 한다. | 호출자 상한: bash-tools.exec-runtime-CbUMPDGW.js:450 resolveExecTimeoutMs - timeoutSec 미지정 시 undefined 반환 (해당 경로에서는 호출자 상한 없음: True)",
+      "last_seen": "2026-09-29T12:14:18+09:00",
+      "last_status": "UNKNOWN",
+      "runs": 1,
+      "unknown_streak": 1
+    },
+    "terminal.tmux.pane_layout": {
+      "ever_ok": true,
+      "ever_ok_at": "2026-09-29T12:14:18+09:00",
+      "first_seen": "2026-09-29T12:14:18+09:00",
+      "last_evidence": "$ tmux list-panes -t agents -F #{pane_index}|#{pane_title} -> 0='[0] 구름 (main)'; 1='[1] 클로 (coding)'; 2='[2] 옥티 (review)' | 기대 제목 {0: '[0] 구름', 1: '[1] 클로', 2: '[2] 옥티'} ; pan-run:41 \"SESSION=\"agents\"\"",
+      "last_seen": "2026-09-29T12:14:18+09:00",
+      "last_status": "OK",
+      "runs": 1,
+      "unknown_streak": 0
+    }
+  },
+  "last_run": "2026-09-29T12:14:18+09:00"
+}

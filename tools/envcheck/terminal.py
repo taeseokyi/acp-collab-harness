@@ -45,9 +45,13 @@ DIST_DIR = Path(
 )
 EXEC_RUNTIME_GLOB = "bash-tools.exec-runtime-*.js"
 
-# 누적 로그. 기본값은 이 모듈 기준 상대경로로 풀어 저장소 절대경로를
-# 소스에 박지 않는다. 환경변수로 덮어쓸 수 있다.
-DEFAULT_LOG = Path(__file__).resolve().parents[2] / ".aimem" / "pipeline.log"
+# 누적 로그는 기본적으로 남기지 않는다. `ENVCHECK_PIPELINE_LOG` 가 설정된
+# 경우에만 그 경로에 append 한다.
+#
+# 이 모듈은 S3 소유이고 누적 판정은 통합 러너(관리자 소유)의 책임이다.
+# 기본 경로를 두면 러너를 거치지 않은 호출이 남의 소유 파일에 조용히
+# 쓰게 되므로, 기본값 자체를 없앤다. 모듈은 관측만 하고 상태를 남기지 않는다.
+LOG_ENV = "ENVCHECK_PIPELINE_LOG"
 
 
 def _pan_run_path() -> Path | None:
@@ -338,13 +342,20 @@ def _check_pane_layout(script: Path) -> Result:
     return (name, status, evidence)
 
 
-def _log_path() -> Path:
-    override = os.environ.get("ENVCHECK_PIPELINE_LOG")
-    return Path(override) if override else DEFAULT_LOG
+def _log_path() -> Path | None:
+    override = os.environ.get(LOG_ENV, "").strip()
+    return Path(override) if override else None
 
 
 def _append_log(name: str, status: str, observed: dict[int, str]) -> None:
-    """팬 구성은 시간에 따라 변하므로 판정 이력을 누적한다."""
+    """판정 이력을 누적한다 - 단, 경로가 명시적으로 주어졌을 때만.
+
+    팬 구성은 시간에 따라 변하므로 이력이 쓸모 있지만, 어디에 남길지는
+    호출자가 정한다. 경로가 없으면 아무 파일도 만들지 않는다.
+    """
+    path = _log_path()
+    if path is None:
+        return
     stamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
     line = "{} | envcheck.{} | {} | panes={}\n".format(
         stamp,
@@ -352,7 +363,6 @@ def _append_log(name: str, status: str, observed: dict[int, str]) -> None:
         status,
         ",".join("{}:{}".format(k, observed[k]) for k in sorted(observed)) or "none",
     )
-    path = _log_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fh:
@@ -380,3 +390,11 @@ def check() -> list[Result]:
         _check_recovery_reachability(script),
         _check_pane_layout(script),
     ]
+
+
+if __name__ == "__main__":
+    for item_name, item_status, item_evidence in check():
+        print(f"[{item_status}] {item_name}")
+        for line in item_evidence.splitlines():
+            print(f"    {line}")
+        print()

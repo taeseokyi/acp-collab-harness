@@ -12,7 +12,6 @@ import functools
 import re
 import sys
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 REV_RE = re.compile(r"\*\*REV:\s*(-?\d+)\*\*")
@@ -44,12 +43,10 @@ PROTECTED_PATHS = {"AIMEM.md", "CLAUDE.md", "AGENTS.md"}
 # 롤오버 직후 로그를 한두 건 써도 바로 막히지 않게 한다.
 MAX_TOTAL_LINES = 800
 MAX_HANDOFF_ENTRIES = 12
-# 아웃박스 파일당 크기 상한(bytes, T-028). AIMEM.md 총줄수(작업자가 매 턴 읽는 비용)와 달리
-# 아웃박스는 매 턴 읽히지 않으므로 비용은 저장소 누적 = 바이트다 - 줄수가 아니라 바이트로 잰다.
-# 24KiB 근거: 롤오버 직후 각 ~8KB 의 3배 여유(여러 라운드 보고를 쌓을 수 있음)이면서, 실측된
-# 부풀음 S1 72KB/S2 39KB/S3 29KB 셋 다 이 선 위라 그 누적을 잡는다. 롤오버 집행은 관리자 몫이며
-# 자동 롤오버는 하지 않는다(파괴적 동작 결합 금지 - handoff-add 와 같은 원칙).
-MAX_OUTBOX_BYTES = 24 * 1024
+# 4절 항목 **하나**의 문자 수 상한. 항목 수(MAX_HANDOFF_ENTRIES)와 총줄수(MAX_TOTAL_LINES)를
+# 둘 다 지켜도 한 항목이 통째로 부풀면 문서가 커진다 - REV 103 항목이 1줄 3,277자로 둘 다
+# 통과했다. 규약의 "6줄 이내 권고"는 줄 수라서 이걸 못 막는다. 그래서 문자로 잰다.
+MAX_LOG_ENTRY_CHARS = 1200
 # 4절 핸드오프 로그 항목 경계. aimem_board.py 의 archive-rollover 와 **같은 기준**이어야 두
 # 도구가 같은 수를 센다. aimem_board 를 import 하지는 않는다(훅이 린터만 단독 실행하므로).
 HANDOFF_ENTRY_RE = re.compile(r"^- `(\d{4})-(\d{2})-\d{2}")
@@ -550,6 +547,23 @@ def lint_text(text: str, notes: Optional[List[str]] = None) -> List[Violation]:
                 f"'4. 핸드오프 로그' 항목이 {entry_count}건으로 상한 {MAX_HANDOFF_ENTRIES}건을 초과함. "
                 f"`python3 tools/aimem_board.py archive-rollover --keep 10` 로 오래된 것부터 아카이브하십시오",
             ))
+        # 항목당 문자 수. 경계 판정은 **HANDOFF_ENTRY_RE 하나로만** 한다(T-013 단일화 유지) -
+        # 항목은 시작줄부터 다음 항목 시작줄 직전(없으면 절 끝)까지이고, 이어지는 들여쓰기
+        # 줄도 그 항목에 포함해 합산한다. 개행은 세지 않는다(줄을 접는 것으로 우회 못 하게).
+        entry_starts = [
+            i for i in range(h_start, h_end)
+            if not fenced[i] and HANDOFF_ENTRY_RE.match(lines[i])
+        ]
+        for idx, start in enumerate(entry_starts):
+            stop = entry_starts[idx + 1] if idx + 1 < len(entry_starts) else h_end
+            chars = sum(len(lines[i]) for i in range(start, stop) if not fenced[i])
+            if chars > MAX_LOG_ENTRY_CHARS:
+                violations.append(Violation(
+                    "SIZE_LOG_ENTRY_CHARS", start + 1,
+                    f"핸드오프 로그 항목 하나가 {chars}자 > {MAX_LOG_ENTRY_CHARS}자. "
+                    f"{chars - MAX_LOG_ENTRY_CHARS}자를 줄이거나 본문을 절로 옮기십시오 "
+                    f"(로그는 '무엇이 바뀌었나' 한 줄, 근거·경위는 해당 절에)",
+                ))
 
     # 1. REV 선언 - 정확히 한 번, 양의 정수 (펜스 안 예시는 세지 않는다)
     rev_matches = [
@@ -648,41 +662,17 @@ def lint_text(text: str, notes: Optional[List[str]] = None) -> List[Violation]:
     return violations
 
 
-def _check_outbox_sizes(outbox_dir: Path) -> List[Violation]:
-    """아웃박스 파일당 크기 상한(T-028). `outbox_dir` 이 없으면 검사 없음(빈 리스트).
-
-    AIMEM.md 본문 검사가 아니라 형제 디렉터리의 저장소 상태 검사라, 순수 함수 lint_text 가 아니라
-    경로를 아는 lint_file 경로에서 돈다. 파일별로 독립 판정한다 - 한 슬롯 아웃박스가 부풀어도
-    다른 슬롯 보고에는 영향이 없다. 안정 정렬(파일명)로 위반 순서를 결정적으로 만든다.
-    """
-    violations: List[Violation] = []
-    try:
-        entries = sorted(p for p in outbox_dir.iterdir() if p.is_file() and p.suffix == ".md")
-    except OSError:
-        return violations
-    for p in entries:
-        try:
-            size = p.stat().st_size
-        except OSError:
-            continue
-        if size > MAX_OUTBOX_BYTES:
-            violations.append(Violation(
-                "OUTBOX_TOO_LARGE", None,
-                f"아웃박스 '{p.name}' 이 {size // 1024}KB 로 상한 {MAX_OUTBOX_BYTES // 1024}KB 초과 - "
-                f"오래된 보고를 .aimem/archive/outbox-<슬롯>-YYYY-MM.md 로 롤오버하십시오(관리자 집행)",
-            ))
-    return violations
-
-
 def lint_file(path: str, notes: Optional[List[str]] = None) -> List[Violation]:
+    """파일을 읽어 lint_text 에 넘긴다. 시그니처·반환 계약은 호출자(aimem_board.py,
+    .githooks/pre-commit)가 의존하므로 바꾸지 않는다.
+
+    아웃박스 크기 검사(OUTBOX_TOO_LARGE, T-028)는 REV 103 에서 제거했다 - `.aimem/outbox/` 는
+    `8.0`(2026-09-22)부터 과거 기록이고 쓰는 주체가 없다. 쓰는 사람이 없는 대상의 페일세이프는
+    코드만 무겁게 한다. 아웃박스 운용이 되살아나면 이 자리에 다시 붙인다.
+    """
     with open(path, "r", encoding="utf-8") as f:
         text = f.read()
-    violations = lint_text(text, notes)
-    # 아웃박스 검사는 AIMEM.md 와 같은 트리의 `.aimem/outbox/` 를 본다. 경로 기준은 AIMEM.md 의
-    # 부모 디렉터리다(리포 루트 가정 대신 대상 파일 위치에 상대적 - 테스트 tmp 사본에서도 맞음).
-    outbox_dir = Path(path).resolve().parent / ".aimem" / "outbox"
-    violations.extend(_check_outbox_sizes(outbox_dir))
-    return violations
+    return lint_text(text, notes)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
