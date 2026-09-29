@@ -29,14 +29,18 @@
 | ---- | ---- |
 | `tools/aimem_lint.py` | `AIMEM.md` 구조 불변식 검사기. 표준 라이브러리만 |
 | `tools/aimem_board.py` | 보드·명부·큐·소유권 표 갱신 CLI. 락 + lint 롤백 안전망 |
-| `tools/aimem_pipeline.py` | 큐를 읽어 슬롯에 자동 배정하는 무인 드라이버 |
-| `tools/fleet.py` | 슬롯 시작/종료 도우미 |
-| `.githooks/pre-commit` | 커밋 전 린터 자동 실행 |
-| `skills/acp-slot-lifecycle/` | 슬롯 개설·종료 절차 (OpenClaw 스킬) |
+| `tools/fleet.py` | 슬롯 브리핑·상태·거두기 도우미 (관리자 전용) |
+| `tools/envcheck/` | 실행 환경 계층 점검 러너. 누적 판정은 `.aimem/envcheck-state.json` |
+| `.githooks/pre-commit` | 커밋 전 린터 + 단위 테스트 자동 실행 |
+
+내린 도구는 `.aimem/archive/retired-tools/` 에 있습니다.
+`aimem_pipeline.py` (무인 배정 드라이버) 는 REV 105 에서 내렸습니다 - 게이트 판정이
+사문화된 `0.6-3` 에 걸려 있었습니다.
 
 ```bash
 python3 tools/aimem_lint.py AIMEM.md     # 통과 시 exit 0
-python3 -m unittest discover -s tests    # 34건
+python3 -m unittest discover -s tests    # 98건
+python3 -m tools.envcheck               # 환경 점검
 git config core.hooksPath .githooks      # 훅 활성화
 ```
 
