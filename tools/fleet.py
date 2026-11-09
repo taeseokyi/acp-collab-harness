@@ -7,6 +7,7 @@
   python3 tools/fleet.py status              # REV / 슬롯 / 열린 태스크 / 미커밋
   python3 tools/fleet.py brief --slot S1 ... # 브리프 머리말 + 쓰기 경로 6절 대조
   python3 tools/fleet.py close               # 거두기 전 점검
+  python3 tools/fleet.py children            # ACP 자식 세션 + 실행 모델(하네스 설정 기준)
 
 2026-09-22 (REV 91) 에 `open` / `prepare` 를 폐기했습니다. 둘 다 상주 슬롯을
 여는 절차(`8.5`)의 도우미였고, 지금은 관리자가 일회성 자식을 직접 띄웁니다.
@@ -118,6 +119,69 @@ def cmd_close(args):
     return 1
 
 
+HARNESSES = ("claude", "codex", "opencode")
+
+
+def harness_model(harness):
+    """하네스가 실제로 쓰는 모델을 **하네스 설정**에서 읽습니다 (`8.0` 정본).
+
+    `sessions_list` 의 `model` 은 OpenClaw 기본 모델이 찍힌 표기라 ACP 자식에서는
+    실행 모델이 아닙니다. 그래서 여기서는 그 값을 아예 읽지 않습니다.
+    """
+    home = pathlib.Path.home()
+    try:
+        if harness == "claude":
+            cfg = json.loads((home / ".openclaw" / "openclaw.json").read_text(encoding="utf-8"))
+            m = cfg.get("agents", {}).get("entries", {}).get("claude", {}).get("model")
+            if isinstance(m, dict):
+                m = m.get("primary")
+            return (m, "openclaw.json agents.entries.claude.model") if m else ("(하네스 기본)", "항목에 model 없음")
+        if harness == "codex":
+            import tomllib
+            cfg = tomllib.loads((home / ".codex" / "config.toml").read_text(encoding="utf-8"))
+            m = cfg.get("model")
+            p = cfg.get("model_provider")
+            return (f"{p}/{m}" if p and m else m or "(하네스 기본)", "~/.codex/config.toml")
+        if harness == "opencode":
+            text = (home / ".config" / "opencode" / "opencode.jsonc").read_text(encoding="utf-8")
+            mm = re.search(r'^\s*"model"\s*:\s*"([^"]+)"', text, re.M)
+            return (mm.group(1) if mm else "(하네스 기본)", "~/.config/opencode/opencode.jsonc")
+    except (OSError, ValueError) as e:
+        return ("(읽기 실패)", str(e)[:60])
+    return ("(알 수 없는 하네스)", "-")
+
+
+def cmd_children(args):
+    """ACP 자식 세션을 하네스 · 실행 모델 · 상태로 보여 줍니다. 읽기 전용입니다."""
+    try:
+        res = sh("openclaw", "sessions", "--all-agents", "--limit", "all", "--json")
+    except OSError:
+        sys.exit("openclaw 바이너리를 찾지 못했습니다")
+    if res.returncode != 0:
+        sys.exit("세션 조회 실패: " + (res.stderr or res.stdout).strip()[:200])
+    try:
+        payload = json.loads(res.stdout)
+    except ValueError:
+        sys.exit("세션 조회 결과가 JSON 이 아닙니다")
+    sessions = payload.get("sessions", []) if isinstance(payload, dict) else payload
+    kids = [s for s in sessions if isinstance(s, dict) and ":acp:" in s.get("key", "")]
+    models = {h: harness_model(h) for h in HARNESSES}
+    print("실행 모델 정본 = 하네스 설정 (sessions_list.model 은 표기일 뿐, 읽지 않음):")
+    for h in HARNESSES:
+        m, src = models[h]
+        print(f"  {h:<9} {m:<28} <- {src}")
+    print()
+    if not kids:
+        print("ACP 자식 세션 없음")
+        return 0
+    print(f"ACP 자식 세션 {len(kids)}건:")
+    for s in kids:
+        h = s.get("agentId") or s.get("key", "").split(":")[1]
+        m = models.get(h, ("?", ""))[0]
+        print(f"  {s.get('label') or '(라벨 없음)':<18} {h:<9} {m:<28} {s.get('status') or '?':<8} {s.get('key')}")
+    return 0
+
+
 def owned_paths(slot):
     """6절 소유권 표에서 그 슬롯이 쓸 수 있는 경로 패턴을 모읍니다."""
     pats = []
@@ -181,6 +245,7 @@ def main():
     p = argparse.ArgumentParser(description="작업자 운영 도우미 (관리자 전용)")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status", help="AIMEM REV / 슬롯 / 열린 태스크 / 미커밋 한눈에")
+    sub.add_parser("children", help="ACP 자식 세션 + 실행 모델(하네스 설정 기준) + 상태")
     c = sub.add_parser("close", help="거두기 전 점검 - 정리할 것을 짚어 줍니다")
     c.add_argument("--slot", help="특정 슬롯만 점검")
     b = sub.add_parser("brief", help="브리프 머리말 - 슬롯/토큰/REV 자동, 쓰기 경로를 6절과 대조")
@@ -188,7 +253,8 @@ def main():
     b.add_argument("--write", nargs="*", default=[], help="이 지시에서 쓸 경로")
     b.add_argument("--task", help="지시 본문")
     a = p.parse_args()
-    return {"status": cmd_status, "close": cmd_close, "brief": cmd_brief}[a.cmd](a) or 0
+    return {"status": cmd_status, "close": cmd_close, "brief": cmd_brief,
+            "children": cmd_children}[a.cmd](a) or 0
 
 
 if __name__ == "__main__":

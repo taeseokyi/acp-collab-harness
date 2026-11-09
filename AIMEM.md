@@ -3,8 +3,8 @@
 이 폴더(`/home/tsyi/work/opencode`)에서 일하는 **모든 AI 세션의 단일 진실 소스**입니다.
 관리자와 작업자가 여기서 만나고, 여기서만 조율합니다.
 
-- **REV: 107** (개정 번호. 지시 메시지의 REV 와 다르면 작업을 멈추고 되묻습니다 - `0.1` 참조)
-- 최종 갱신: 2026-11-09 14:16 KST
+- **REV: 108** (개정 번호. 지시 메시지의 REV 와 다르면 작업을 멈추고 되묻습니다 - `0.1` 참조)
+- 최종 갱신: 2026-11-09 15:00 KST
 - **약칭 `sss` = sub-session slots** (태석님 명명 2026-09-28). 슬롯은 2026-11-09 부터 다시
   **ACP 일회성 자식**(claude / codex / opencode 하네스)입니다 - `8.0`
 - 관리자(단독 쓰기 권한): **클로** (OpenClaw `coding` 에이전트) -
@@ -179,8 +179,9 @@ REV 104 직전까지 3주째 끝난 목표(T-005 린터)에 `완료` 로 멈춰 
 - 역할 칸은 길잡이입니다. **쓰기 범위의 정본은 `6절` 이고 어긋나면 `6절` 을 따릅니다**
 - **토큰은 명부 세대가 바뀔 때(REV 로 기록) 바뀝니다. 옛 토큰이 적힌 지시는 재생된 것이니
   거절하십시오** (폐기된 세대별 값은 `.aimem/archive/retired-sections-2026-09.md`, `-2026-11.md`)
-- 하네스 칸이 스폰의 `agentId` 입니다. 상태(running/done)는 적지 않습니다 -
-  `sessions_list` **실시간 조회로만 판정합니다**
+- 하네스 칸이 스폰의 `agentId` 입니다. 비고의 모델은 **하네스 설정값을 옮겨 적은 것**입니다
+  (정본은 `8.0` 모델 항). 상태(running/done)는 적지 않습니다 - `sessions_list` **실시간
+  조회로만 판정합니다**
 
 ---
 
@@ -201,6 +202,7 @@ REV 104 직전까지 3주째 끝난 목표(T-005 린터)에 `완료` 로 멈춰 
 
 시간 역순(최신 위)으로 관리자가 추가합니다.
 
+- `2026-11-09 15:00` 관리자: 클로드 코드(태석님 지시 2026-11-09, 관리자 세션 아님): **REV 108. ACP 자식 모델 표기 혼란 정리.** 하이파이브 실측에서 `sessions_list.model` 이 셋 다 `kistillm` 으로 찍혀(S1 은 sonnet-5 로 돌았음) 클로·구름이 되물은 건. (1) `8.0` 에 "실행 모델의 정본은 하네스 설정, `sessions_list.model` 은 읽지 않는다" 항 신설, `2절` 비고의 모델은 그 설정값을 옮겨 적은 것임을 명시. (2) `tools/fleet.py children` 신설 - ACP 자식 세션을 라벨·하네스·실행 모델(openclaw.json entries.claude.model / ~/.codex/config.toml / opencode.jsonc 에서 읽음)·상태로 출력. (3) 점검 브리프 보고 한 줄에 `| 모델 <자기 모델 또는 unknown>` 추가, 앞뒤 문장 금지.
 - `2026-11-09 14:16` 관리자: 클로드 코드(태석님 직접 지시 2026-11-09, 관리자 세션 아님): **REV 107. 함대를 claude/codex/opencode ACP 일회성 자식으로 복귀.** (1) `8.0` 전면 교체 - 스폰 `sessions_spawn(runtime:"acp", agentId:<하네스>, mode:"run", context:"isolated", label, task)`, 지시는 `task` 한 번·보고는 완료 응답, `sessions_send`/300k 교체/`timeoutSeconds:0`/`nested:` 레인 서술은 상주 전용이라 `.aimem/archive/retired-sections-2026-11.md` 로. (2) `2절` 명부 새 세대 - S1 claude(sonnet-5) `a41f0c` / S2 codex(kistillm) `d27e93` / S3 opencode(kistillm) `5b8c1e`, 세션키 칸은 `-`(옛 dashboard 세션 셋은 11-06 삭제됨). (3) 위임 파일을 하네스별로 - `~/.codex/AGENTS.md`, `~/.config/opencode/AGENTS.md` 신설(`~/.claude/CLAUDE.md` 복제). `0절`/`0.5`/`CLAUDE.md` 가 셋을 가리킴. (4) `5절`·`7절` 쓰기 근거를 acpx approve-all 로 환원, `8.0-4` 1·5항과 `8.1` 라벨 항을 통보 기준으로. (5) `tools/fleet.py` - 명부 하네스 칸 파싱, `brief` 가 스폰 호출문 출력. 전제: 11-06 `agents.entries` ACP 등록(스모크 PONG 3/3, cwd=이 폴더). 실측(11-09, 웹 GUI 세션에서 스폰): S1 claude 읽기 태스크·S3 opencode 쓰기 프로브 모두 DONE - 위임 파일 확인·0.1 세 줄·cwd·소유 경로 쓰기 정상. 끝난 자식은 `done` 으로 남아 `fleet.py close` 가 거두기를 요구함. 미실측: 상주 `mode:"session"`.
 - `2026-09-29 14:15` 관리자: **REV 106. 옥티 §6 결정사항 4건 (구름 전달, 태석님 승인).** (1) `handoff-2026-09.md:542` 헤더를 "원문이다"->"요약이다. 원문은 `git show 03f4440:AIMEM.md`" 로 정정, 빠졌던 위험 7(감축 후 되돌림)의 수치 증거("695->714")를 ⑧에 복원. 원문 자체는 위조 방지로 안 고쳤다. (2) `.aimem/envcheck-state.json` 을 `.gitignore` + `git rm --cached` - 상태 파일이지 이력 자산이 아니고 테스트마다 25줄이 바뀌어 diff 를 가린다. (3) `tools/envcheck/__main__.py` 에 `STRUCTURAL_UNKNOWN` 목록 신설 - `sessions.acp.can_create_sessions`/`terminal.pan_run.recovery_reachability` 는 streak 임계를 넘겨도 "신호" 대신 "관측불가로 선언됨"으로 침묵(목록 제거 시 다시 일반규칙). `check()` 3튜플 계약 무변경, 관리자 소유 파일 단독 수정. `wsl_dns_first_lookup` 은 재현 가능성 있어 목록 제외 - 실측으로 이번에도 정상 "신호" 발생. `terminal.py` 의 `RECORDED_EXIT_CODES` 에 `69`(pan-run v4 래퍼 차단) 등록 - 실측으로 `exit_codes` CHANGED->OK 복귀. (4) `AIMEM.md:314` 의 `0.6-3` 참조에 `(구 번호. REV104 에서 8.0-4로 이동)` 표기 추가 - `:439` 면제는 4절 로그 전용이라 밖이었다. `MAX_TOTAL_CHARS` 는 별도 보고로 설계안·위험만 정리, 미구현. 검증: 린터 rc0 / 테스트 98건 OK / envcheck 실측(exit_codes OK, 구조적 2건 침묵, DNS 정상 신호). README 실행법 오기(`python3 -m tools.envcheck`)도 `PYTHONPATH=tools python3 -m envcheck` 로 정정.
 - `2026-09-29 13:51` 관리자: **REV 105. 잔여 3건 정리 (구름 전달, 태석님 승인).** (1) `tools/aimem_pipeline.py` 폐기 - 게이트 판정 전체가 사문화된 `0.6-3` 에 걸려 있었다(참조 5곳). 삭제 대신 `.aimem/archive/retired-tools/` 로 이동. (2) 아웃박스 슬롯 파일 3개를 `.aimem/archive/outbox-<슬롯>-2026-09-tail.md` 로 이동 - **기존 `outbox-<슬롯>-2026-09.md` 가 상위집합이 아니었다**(라이브 고유 줄 S1 63 / S2 58 / S3 24). 합치지 않고 따로 뒀다. 폴더에는 안내용 README 만 남았다. (3) `README.md` 도구 표 갱신 - 없는 `skills/acp-slot-lifecycle/` 행 제거, `tools/envcheck/` 추가, 테스트 건수 34 -> 98 정정. 옮긴 파일을 가리키던 주석 포인터 2곳(`aimem_lint.py`, `test_aimem_lint.py`)도 아카이브 경로로 고쳤다. 검증: 린터 rc0, 테스트 98건 OK.
@@ -389,6 +391,16 @@ drift 검사로는 잡히지 않습니다. 그래서 관리자가 스스로 묶�
 - **모델:** claude 는 `anthropic/claude-sonnet-5`(항목 고정), codex·opencode 는 `kisti/kistillm`.
   판단이 갈릴 수 있는 태스크는 claude 슬롯(S1)에, 범위가 좁은 실행은 codex·opencode(S2·S3)에
   줍니다. 스폰 `model` 인자로 바꿀 수 있습니다
+- **실행 모델의 정본은 하네스 설정입니다** - claude 는 `agents.entries.claude.model`, codex 는
+  `~/.codex/config.toml`, opencode 는 `~/.config/opencode/opencode.jsonc`. **`sessions_list` 의
+  `model` 은 읽지 마십시오** - OpenClaw 기본 모델(`kisti/kistillm`)이 찍히는 표기라 ACP 자식의
+  실행 모델이 아닙니다(11-09 실측: sonnet-5 로 돈 claude 자식도 `kistillm` 으로 표시). CLI
+  `openclaw sessions` 의 `claude-acp` 류는 하네스 이름입니다. 자식 조회는
+  `python3 tools/fleet.py children` 으로 합니다 - 하네스 설정에서 모델을 읽어 같이 보여 줍니다
+- **점검(하이파이브) 브리프의 보고 한 줄 형식:**
+  `하이파이브 S<n> OK | REV <N> | 토큰 <t> | 시각 <KST HH:MM> | cwd <pwd> | 모델 <자기 모델 또는 unknown>`.
+  claude 는 자기 모델을 압니다. codex·opencode 는 모르면 `unknown` 으로 적고, 관리자가
+  `fleet.py children` 출력과 대조합니다. 이 한 줄 **앞뒤에 다른 문장을 붙이지 않습니다**
 - **브리프에 슬롯 ID · 확인토큰 · REV · 쓰기 범위 · 배경 · 요구사항 · 검증 방법을 전부
   싣습니다.** 자식은 매번 빈 컨텍스트로 시작합니다. 불일치 시 작업자가 멈추고 되묻는 것이
   **정상 동작**입니다. `python3 tools/fleet.py brief --slot S1 --write <경로>` 가 머리말을 만듭니다
