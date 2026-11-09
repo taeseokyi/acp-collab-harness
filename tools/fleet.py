@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """작업자 운영 도우미 (관리자 전용).
 
-`AIMEM.md` `8.0` 의 일회성 자식 체제를 전제합니다. 판단은 사람이 하고,
-이 도구는 옮겨 적는 일과 대조만 합니다.
+`AIMEM.md` `8.0` 의 **ACP 일회성 자식** 체제(2026-11-09, claude/codex/opencode)를
+전제합니다. 판단은 사람이 하고, 이 도구는 옮겨 적는 일과 대조만 합니다.
 
   python3 tools/fleet.py status              # REV / 슬롯 / 열린 태스크 / 미커밋
   python3 tools/fleet.py brief --slot S1 ... # 브리프 머리말 + 쓰기 경로 6절 대조
@@ -10,6 +10,7 @@
 
 2026-09-22 (REV 91) 에 `open` / `prepare` 를 폐기했습니다. 둘 다 상주 슬롯을
 여는 절차(`8.5`)의 도우미였고, 지금은 관리자가 일회성 자식을 직접 띄웁니다.
+2026-11-09 (REV 107) 부터 자식은 ACP 하네스이고 `brief` 가 스폰 호출문을 같이 찍습니다.
 """
 import argparse
 import json
@@ -35,12 +36,12 @@ def read_rev():
 
 
 def roster():
-    """2절 명부에서 슬롯 -> (확인토큰, 세션키) 를 읽습니다."""
+    """2절 명부에서 슬롯 -> (확인토큰, 하네스, 세션키) 를 읽습니다."""
     out = {}
     for line in AIMEM.read_text(encoding="utf-8").splitlines():
-        m = re.match(r"\|\s*(S\d)\s*\|\s*`([0-9a-f]+)`\s*\|[^|]*\|[^|]*\|\s*([^|]*?)\s*\|", line)
+        m = re.match(r"\|\s*(S\d)\s*\|\s*`([0-9a-f]+)`\s*\|\s*([^|]*?)\s*\|[^|]*\|\s*([^|]*?)\s*\|", line)
         if m:
-            out[m.group(1)] = (m.group(2), m.group(3).strip())
+            out[m.group(1)] = (m.group(2), m.group(3).strip(), m.group(4).strip())
     return out
 
 
@@ -59,8 +60,8 @@ def cmd_status(args):
     print(f"AIMEM.md  REV {rev} / {lines}줄")
     print()
     print("슬롯:")
-    for slot, (token, key) in sorted(roster().items()):
-        print(f"  {slot}  {token}  {key or '(비어 있음)'}")
+    for slot, (token, harness, key) in sorted(roster().items()):
+        print(f"  {slot}  {token}  {harness:<9} {key or '(비어 있음)'}")
     open_rows = [r for r in board_rows() if r[3] not in ("DONE", "상태")]
     print()
     print(f"열린 태스크 {len(open_rows)}건" if open_rows else "열린 태스크 없음")
@@ -87,7 +88,8 @@ def cmd_close(args):
     if dirty:
         problems.append("미커밋이 있습니다. 커밋해야 작업자의 git 앵커가 살아납니다:\n    "
                         + "\n    ".join(dirty.splitlines()))
-    # 거두지 않은 일회성 자식이 남아 있는지 (`8.0`). 조회에 실패하면 조용히 넘어갑니다 -
+    # 거두지 않은 ACP 일회성 자식이 남아 있는지 (`8.0`. 정상이면 턴 끝에 사라집니다).
+    # 조회에 실패하면 조용히 넘어갑니다 -
     # 게이트웨이가 안 떠 있어도 나머지 점검은 쓸모가 있습니다.
     try:
         res = sh("openclaw", "gateway", "call", "sessions.list", "--json")
@@ -145,9 +147,11 @@ def cmd_brief(args):
     r = roster()
     if slot not in r:
         sys.exit(f"{slot} 가 2절 명부에 없습니다")
-    token, _key = r[slot]
+    token, harness, _key = r[slot]
     # 세션키는 요구하지 않습니다. 일회성 자식은 매번 새 세션이고 명부의 세션키 칸은
     # 비어 있는 것이 정상입니다 (`8.0`). 대조에 쓰는 것은 슬롯 ID / 확인토큰 / REV 입니다.
+    if harness not in ("claude", "codex", "opencode"):
+        sys.exit(f"{slot} 의 하네스 칸이 ACP 하네스가 아닙니다: {harness!r} (2절을 고치십시오)")
     rev = read_rev()
     pats = owned_paths(slot)
 
@@ -159,7 +163,9 @@ def cmd_brief(args):
         print(f"  {slot} 소유: {', '.join(pats) or '(없음)'}", file=sys.stderr)
         return 2
 
-    print(f"슬롯 {slot} / 확인토큰 {token} / AIMEM REV {rev}")
+    print(f"# 스폰: sessions_spawn(runtime:\"acp\", agentId:\"{harness}\", mode:\"run\", "
+          f"context:\"isolated\", label:\"{slot} ...\", task:<아래 본문>)")
+    print(f"슬롯 {slot} / 확인토큰 {token} / 하네스 {harness} / AIMEM REV {rev}")
     if args.task:
         print(f"쓰기는 {', '.join(args.write)} 에만 하십시오." if args.write else "")
         print()
