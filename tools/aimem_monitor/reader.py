@@ -83,7 +83,7 @@ def _parse_aimem(lines: list[str], errors: list, need_rev: bool = True) -> dict:
     rev = int(m.group(1)) if m else None
     if m is None and lines and need_rev:
         errors.append("AIMEM.md 에서 REV 행을 찾지 못했습니다")
-    m = re.search(r"^- 최종 갱신:\s*(.+?)\s*$", text, re.M)
+    m = re.search(r"^- (?:최종 갱신|Last updated):\s*(.+?)\s*$", text, re.M)
     updated = m.group(1) if m else ""
 
     goal_text, goal_status = "", ""
@@ -91,7 +91,7 @@ def _parse_aimem(lines: list[str], errors: list, need_rev: bool = True) -> dict:
     i = 0
     while i < len(body):
         ln = body[i]
-        gm = re.match(r"^- \*\*목표[^:]*:\*\*\s*(.*)$", ln)
+        gm = re.match(r"^- \*\*(?:목표|Goal)[^:]*:\*\*\s*(.*)$", ln)
         if gm and not goal_text:
             parts = [gm.group(1).strip()]
             i += 1
@@ -100,7 +100,7 @@ def _parse_aimem(lines: list[str], errors: list, need_rev: bool = True) -> dict:
                 i += 1
             goal_text = " ".join(p for p in parts if p)
             continue
-        sm = re.match(r"^- \*\*상태:\*\*\s*(.*)$", ln)
+        sm = re.match(r"^- \*\*(?:상태|Status):\*\*\s*(.*)$", ln)
         if sm and not goal_status:
             goal_status = sm.group(1).strip()
         i += 1
@@ -108,8 +108,16 @@ def _parse_aimem(lines: list[str], errors: list, need_rev: bool = True) -> dict:
             "goal": {"text": goal_text, "status": goal_status}}
 
 
-def _parse_log(lines: list[str]) -> list[dict]:
-    body = _section(lines, r"4\.\s")
+def _parse_log(lines: list[str], root: pathlib.Path | None = None) -> list[dict]:
+    """핸드오프 로그. `.aimem/handoff.md` 가 있으면 그 파일(REV 129, 정본), 없으면 AIMEM.md 4절(옛 자리)을 읽는다."""
+    hf = (root / ".aimem" / "handoff.md") if root else None
+    if hf is not None and hf.is_file():
+        try:
+            body = hf.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            body = _section(lines, r"4\.\s")
+    else:
+        body = _section(lines, r"4\.\s")
     entries, cur = [], None
     for ln in body:
         m = re.match(r"^- `([^`]+)`\s*(.*)$", ln)
@@ -532,7 +540,7 @@ def collect(root: pathlib.Path | None = None) -> dict:
                  for c in _table_rows(_section(lines, r"3\."), 6, errors, "3절 작업 보드")]
         queue = [{"order": c[0], "task": c[1], "slots": c[2], "handoff": c[3], "note": c[4]}
                  for c in _table_rows(_section(lines, r"4\.5"), 5, errors, "4.5 대기 큐")]
-        log = _parse_log(lines)
+        log = _parse_log(lines, root)
 
     runs = _collect_runs(root, now, errors)
     eta = median_durations(runs)

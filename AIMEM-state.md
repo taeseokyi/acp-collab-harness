@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T16:22:20 / REV 127
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T16:51:23 / REV 129
 
 ## 2. 세션 명부
 
@@ -18,6 +18,32 @@
 
 ## 4. 이벤트 로그 (최신 50)
 
+- `2026-11-10T16:47:15` Claude Code [archive] REV 129: 핸드오프 로그 9건 → .aimem/archive/handoff-<YYYY-MM>.md (최신 4건 유지)
+- `2026-11-10 16:47` Claude Code [handoff] REV 129: - `2026-11-10 16:47` Claude Code: **REV 129. Handoff log moved out of AIMEM.md (Taeseok: "manage the handoff log differently, keep the document light").** Entries now live in `.aimem/handoff.md`; Section 4 states only the method. New `aimem_db.py handoff add|list|rollover`: `add` prepends to the fil
+- `2026-11-10T16:45:07` Claude Code [ownership] REV 128: .aimem/handoff.md -> 관리자
+- `2026-11-10 16:34` 관리자 [handoff] REV 128: - `2026-11-10 16:34` Claude Code (Taeseok: "write AIMEM.md in English, clear and declarative, usable by any LLM"): **REV 128. AIMEM.md rewritten in English.** Every section, rule and log entry translated into declarative English; section numbers (`0.1`, `4.5`, `8.0-8`, …) kept so briefs, `CLAUDE.md`
+- `2026-11-10 16:21` 관리자 [handoff] REV 127: - `2026-11-10 16:21` Claude Code (Taeseok: "fix the same-second comparison defect"): **REV 127. Fixed the same-second comparison defect in `archive`.** Noted but left open at REV 119 - `archive_plan` compared the cutoff with `<`, so `--days 0` skipped rows finished in the same second and had to be r
+- `2026-11-10 17:55` 관리자 [handoff] REV 126: - `2026-11-10 17:55` Claude Code (Taeseok: "make the briefs and AIMEM.md consistent and systematic"): **REV 126. One set of round routines.** New `8.0-8 Manager Round Routine and Control` - start (read state; assign unassigned slot roles; **classify NEW requests: in scope → split, otherwise PLANNED 
+- `2026-11-10 17:40` 관리자 [handoff] REV 125: - `2026-11-10 17:40` Claude Code (Taeseok: "monitor from the phone too, install as a Chrome app"): **REV 125. Installable PWA.** `static/manifest.webmanifest` (standalone, icons 192/512/maskable) + `sw.js` (app shell only, stale-while-revalidate; **`/api/*` and login are never cached**) + head tags 
+- `2026-11-10 17:10` 관리자 [handoff] REV 124: - `2026-11-10 17:10` Claude Code (Taeseok: "roles and remarks follow the Manager's intent" / "the Manager must know what I add" / "slot management is the Manager's responsibility"): **REV 124. Slot control sorted out.** (1) The web changes **harness and model only** - sending role or remark returns 
+- `2026-11-10 16:40` 관리자 [handoff] REV 123: - `2026-11-10 16:40` Claude Code (Taeseok: "how does archiving work" → instruction to do 1+2): **REV 123. Archiving: one tool, two trigger points.** (1) `aimem_db.py archive` split into `archive_plan/apply`, and it now also moves **request files and graphs (with side files and inputs)** - today's ma
+- `2026-11-10 16:10` 관리자 [handoff] REV 122: - `2026-11-10 16:10` Claude Code (Taeseok: "add/remove slot harnesses, choose models - from the openclaw-configured models"): **REV 122. Slot management via web and CLI.** (1) New `aimem_db.py slot add|set|remove|list` - DB `slots` is the source of truth, `fleet_slots.json` mirrored, `events` record
+- `2026-11-10 15:30` 관리자 [handoff] REV 121: - `2026-11-10 15:30` Claude Code (Taeseok: "details in markdown"): **REV 121. Markdown rendering in detail views.** A renderer inside `app.js` with no external library (Section 1 bans CDNs) - headings, paragraphs (line breaks preserved as `<br>`), lists (indented nesting, `-` vs `1.` separated), cod
+- `2026-11-10 15:00` 관리자 [handoff] REV 120: - `2026-11-10 15:00` Claude Code (Taeseok: "details with line breaks, in full"): **REV 120. Removed truncation in detail views; guaranteed line breaks.** Four truncations removed - (1) handoff log 400 chars (`reader` LOG_MAX in two paths + `aimem_db.state_dict` `substr(body,1,400)`) → full text (mea
+- `2026-11-10 14:30` 관리자 [handoff] REV 119: - `2026-11-10 14:30` Claude Code (Taeseok: "remove all finished work"): **REV 119. First clean-up of board, queue and request tree.** (1) All 31 lingering REVIEW tasks belonged to DONE requests or finished graphs (G-004~007 100%; G-003 and G-005 resolved in later rounds), so they were closed as DONE
+- `2026-11-10 14:20` 관리자 [handoff] REV 118: - `2026-11-10 14:20` Claude Code (Taeseok's instruction): **REV 118. Detail views reachable from all three monitor tabs.** Places that had no detail: idle slot rows, board rows without a run (Manager's own work), the queue, graph nodes (tasks), request subtasks without a run, past Manager sessions, 
+- `2026-11-10 13:50` 관리자 [handoff] REV 117: - `2026-11-10 13:50` Claude Code (Taeseok's instruction): **REV 117. Five monitor design-vs-function checks + shared CA and Windows proxy.** (1) For closed requests (DONE/REJECTED) the request status decides progress and ETA (`reader._estimate`, front end shows "closed") - 10 DONE requests had shown
+- `2026-11-10 11:40` 관리자 [handoff] REV 116: - `2026-11-10 11:40` Claude Code (Taeseok's instruction, fleet stopped): **REV 116. Direct monitor UI work + clearing handled items.** (1) UI: numbered titles → bullets, type scale 15/14/13/12, width 1680 + fixed request sidebar, underline tabs with counts, Manager session line (`/api/state.managers
+- `2026-11-10 10:40` 관리자 [handoff] REV 115: - `2026-11-10 10:40` Manager (R6): **REV 115. Four slots back + `fleet_graph` cut down three times + tab UI.** (1) **S2 (codex, kistillm) returned.** KISTI recovered in the morning (smoke 28 s), test-path ownership reverted S4→**S2**, and `tests/test_fleet*.py` was **registered** as S2-owned (Taeseo
+- `2026-11-09 21:50` 관리자 [handoff] REV 114: - `2026-11-09 21:50` Manager (R5): **REV 114. DB phase 2 complete + second public-surface pass.** (1) **Four operating-state tables removed** (Sections 2, 3, 4.5, 6; 772→705 lines). Order respected - removed **after** `reader` (T-069, S1), `fleet.py` (T-070, Manager) and `aimem_board` (T-071, S1) re
+- `2026-11-09 19:45` 관리자 [handoff] REV 113: - `2026-11-09 19:45` Manager (R4): **REV 113. External exposure (HTTPS + access control) + linter phase 2.** (1) **Request `407b` (exposure):** the Manager added TLS (`--tls`, self-signed cert in `.aimem/tls/`) and access control (32-byte token → hmac-signed session cookie `HttpOnly;Secure;SameSite=
+- `2026-11-09 19:01` 관리자 [handoff] REV 112: - `2026-11-09 19:01` Manager: Claude Code (approved by Taeseok 2026-11-09 18:20, applied while Manager and workers were stopped): **REV 112. Unified identifier scheme (`8.0-5` created).** Request `Q-<YYMMDD>-<4 chars>` / task `T-0xx` / graph `G-00x` / run `<T>-<S#>-a<n>-<HHMMSS>` / round `R<n>` (rec
+- `2026-11-09 18:05` 관리자 [handoff] REV 111: - `2026-11-09 18:05` Manager (R3): **REV 111 (2/2). Took over the round R2 cut short by ending its turn, and split web request `8d8d`.** **Why it broke:** R2 set up a background watcher and ended its turn saying "I will continue when notified" - **a one-shot ACP session never wakes again.** Rule pin
+- `2026-11-09 17:35` 관리자 [handoff] REV 111: - `2026-11-09 17:35` Manager (R2): **REV 111 (1/2). First round run as a task DAG + two web requests split.** Graph `R-002`, 6 nodes (N1 ETA overrun / N2 linter board slots / N3 light mode + readability / N4 test reinforcement / N5 cross-review / N6 Strata reskin). **When a dependency clears, the ne
+- `2026-11-09 17:10` 관리자 [handoff] REV 110: - `2026-11-09 17:10` Manager: **REV 110. Fleet monitoring web UI, first pass (Taeseok's order 2026-11-09).** First live round under the Claude ACP Manager regime. 7 rows registered in `Section 6` (`tools/aimem_monitor/**`, `tests/test_aimem_monitor*.py`, `.aimem/requests/**`; approved by Taeseok, `6
+- `2026-11-09 16:40` 관리자 [handoff] REV 109: - `2026-11-09 16:40` Manager: Claude Code (Taeseok's instruction 2026-11-09, not a Manager session): **REV 109. Manager becomes an Opus 5.5 Claude ACP session; workers become one-shot harness CLI processes.** (1) Header, `0.5`, `Section 2`, `Section 5`, `Section 7`, `8.0` revised - the Manager is id
+- `2026-11-09 15:00` 관리자 [handoff] REV 108: - `2026-11-09 15:00` Manager: Claude Code (Taeseok's instruction 2026-11-09, not a Manager session): **REV 108. Cleared up the ACP child model-label confusion.** In the high-five check `sessions_list.model` showed `kistillm` for all three (S1 actually ran on sonnet-5), so Clo and Gureum asked back. 
+- `2026-11-10T16:34:02` Claude Code [rev] REV 128: REV 128: AIMEM.md rewritten in English (declarative protocol text, same section numbers); Korean-only regexes in linter/reader/migrate widened to accept the English labels
 - `2026-11-10T16:21:30` 클로드 코드 [rev] REV 127: REV 127: archive 같은 초 비교 결함 수정 - archive_plan 기준 시각을 포함 비교(<=)로, 회귀 테스트 추가
 - `2026-11-10T16:11:46` 클로드 코드 [rev] REV 126: REV 126: 8.0-8 관리자 라운드 루틴과 통제권 신설, 브리프 정비, 8.0-5 중복 번호 해소
 - `2026-11-10T15:43:45` 클로드 코드 [rev] REV 125: REV 125: PWA 설치형(매니페스트·서비스 워커·아이콘), API 캐시 금지
@@ -42,44 +68,6 @@
 - `2026-11-10T14:24:21` 클로드 코드(태석 지시 2026-11-10 정리) [queue] REV 118: queue -4 작업자 허용목록 - 브리프가 `PYTHONPATH=... python3` 로 시작하면 아직 막힌다
 - `2026-11-10T14:24:20` 클로드 코드(태석 지시 2026-11-10 정리) [queue] REV 118: queue -8 `fleet_graph.step()` - `running` 인데 `attempts` 가 빈 노드에서 `IndexError`
 - `2026-11-10T14:24:20` 클로드 코드(태석 지시 2026-11-10 정리) [archive] REV 118: DONE 0일 경과 54건 -> board-*.md: T-036, T-037, T-038, T-040, T-041, T-042, T-043, T-044, T-045, T-046, T-047, T-048, T-049, T-050, T-051, T-052, T-053, T-054, T-055, T-056, T-057, T-058, T-059, T-060, T-061, T-062, T-063, T-064, T-065, T-066, T-067, T-068, T-069, T-070, T-071, T-072, T-073, T-074, T-07
-- `2026-11-10T14:24:20` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-093 DONE
-- `2026-11-10T14:24:20` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-092 DONE
-- `2026-11-10T14:24:20` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-088 DONE
-- `2026-11-10T14:24:20` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-087 DONE
-- `2026-11-10T14:24:20` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-085 DONE
-- `2026-11-10T14:24:19` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-081 DONE
-- `2026-11-10T14:24:19` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-080 DONE
-- `2026-11-10T14:24:19` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-079 DONE
-- `2026-11-10T14:24:19` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-077 DONE
-- `2026-11-10T14:24:19` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-076 DONE
-- `2026-11-10T14:24:19` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-075 DONE
-- `2026-11-10T14:24:19` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-073 DONE
-- `2026-11-10T14:24:19` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-072 DONE
-- `2026-11-10T14:24:19` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-071 DONE
-- `2026-11-10T14:24:19` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-070 DONE
-- `2026-11-10T14:24:19` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-069 DONE
-- `2026-11-10T14:24:19` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-067 DONE
-- `2026-11-10T14:24:19` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-066 DONE
-- `2026-11-10T14:24:19` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-064 DONE
-- `2026-11-10T14:24:19` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-061 DONE
-- `2026-11-10T14:24:19` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-060 DONE
-- `2026-11-10T14:24:18` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-058 DONE
-- `2026-11-10T14:24:18` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-055 DONE
-- `2026-11-10T14:24:18` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-052 DONE
-- `2026-11-10T14:24:18` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-050 DONE
-- `2026-11-10T14:24:18` 클로드 코드(태석 지시 2026-11-10 정리) [task] REV 118: T-045 DONE
-- `2026-11-10 11:40` 관리자 [handoff] REV 116: - `2026-11-10 11:40` 클로드 코드(태석님 지시, 함대 정지 중): **REV 116. 모니터 UI 직접 정비 + 처리한 항목 정리.** (1) UI: 제목 번호→불릿, 글자 체계 15/14/13/12, 폭 1680 + 작업 요청 고정 사이드바, 밑줄 탭·건수, 관리자 세션 줄(`/api/state.managers`, 30초 배경 캐시), 슬롯별 '지금', 실행 20건+더 보기+보고 배지, 보드 '최근 실행' 열·필터, 끝난·멈춘 그래프와 DONE 요청 접기, 요청 본문 4줄 접기·전문 조회(`GET /api/requ
-- `2026-11-10 10:40` 관리자 [handoff] REV 115: - `2026-11-10 10:40` 관리자(R6): **REV 115. 네 슬롯 복귀 + `fleet_graph` 를 세 번 깎아 냄 + 탭 UI.** (1) **S2(codex·kistillm) 복귀.** KISTI 가 아침에 정상화돼(스모크 28초) 테스트 경로 소유권을 S4→**S2** 로 환원했고, `tests/test_fleet*.py` 를 S2 소유로 **등재**했다(태석님 R6 브리프 승인 → `9절` 2번 해소). **함대 생명선에 테스트가 생겼다** - `fleet.py` 의 DB 우선·마크다운 폴백 10건(T-0
-- `2026-11-10T10:41:23` 관리자(R6) [handoff] REV 115: `2026-11-10 10:40` 관리자(R6): **REV 115.** 네 슬롯 복귀(S2 codex 환원) + `fleet_graph` 잠금·타임아웃·BLOCKED 판정을 넣고 S4 가 3회 적대 검수(결함 10건 → 7건 수정) + 상세 패널 마무리 + 탭 UI(Q-549a) + 유료 모델 대체 금지 정책(Q-7201) + `requests[].detail` 절단·토큰 `O_NOFOLLOW`. 작업자 16건 5,219초. 테스트 195→238. 커밋하지 않음.
-- `2026-11-09 21:50` 관리자 [handoff] REV 114: - `2026-11-09 21:50` 관리자(R5): **REV 114. DB 2단계 완료 + 공개면 2차.** (1) **운영 상태 표 4개를 내렸다**(2·3·4.5·6절, 772→705줄). 순서를 지켰다 - `reader`(T-069,S1)·`fleet.py`(T-070,관리자)·`aimem_board`(T-071,S1)가 DB 를 읽게 된 **뒤에** 내렸고 원문은 `retired-sections-2026-11.md` 로 먼저 옮겼다. **린터 `STATE_TABLE_IN_AIMEM` 4→0, rc 0**(완료 판정). 큐
-- `2026-11-09T21:48:23` 관리자(R5) [handoff] REV 114: REV 114: DB 2단계 완료(AIMEM.md 상태 표 4개 제거, 린터 STATE_TABLE_IN_AIMEM 4->0) + 공개면 2차(root/token/kisti.url 키·값 제거, 요청 분당 제한). 자세한 것은 AIMEM.md 4절.
-- `2026-11-09T19:42:03` 관리자(R4) [handoff] REV 113: REV 113: 외부 공개(HTTPS+접근제어) + 린터 2단계. 자세한 것은 AIMEM.md 4절.
-- `2026-11-09 19:45` 관리자 [handoff] REV 113: - `2026-11-09 19:45` 관리자(R4): **REV 113. 외부 공개(HTTPS+접근제어) 구현 + 린터 2단계 전환.** (1) **요청 `407b` 공개:** `server.py` 에 TLS(`--tls`, 자체 인증서 `.aimem/tls/`)와 접근 제어(32바이트 토큰 → hmac 서명 세션 쿠키 `HttpOnly;Secure;SameSite=Strict`, Bearer 병행, 면제 7경로, 실패 지연, HSTS·CSP·nosniff, CSRF(Content-Type+Origin), 본문 64KB, 요청파일 
-- `2026-11-09 19:01` 관리자 [handoff] REV 112: - `2026-11-09 19:01` 관리자: 클로드 코드(태석님 승인 2026-11-09 18:20, 관리자·작업자 정지 중 적용): **REV 112. 식별자 체계 통일 (`8.0-5` 신설).** 요청 `Q-<YYMMDD>-<4자>` / 태스크 `T-0xx` / 그래프 `G-00x` / 실행 `<T>-<S#>-a<n>-<HHMMSS>` / 라운드 `R<n>` 은 기록 전용. `fleet.py spawn --task-id/--attempt` 가 실행 id·라벨을 만들고, `fleet_graph.py` 가 노드 id(=태스크 id
-- `2026-11-09 18:05` 관리자 [handoff] REV 111: - `2026-11-09 18:05` 관리자(R3): **REV 111 (2/2). R2 가 턴을 끝내 끊긴 라운드를 이어받고 웹 요청 `8d8d` 를 분담.** **왜 끊겼나:** R2 는 백그라운드 감시를 걸고 "알림이 오면 잇겠다"며 턴을 끝냈다 - **일회성 ACP 세션은 다시 깨어나지 않는다.** 규칙을 `8.0-6` 에 박았다. (1) **S4 적대적 검수가 관리자 코드에서 결함 5건**(그래프 노드 한 줄이 `/api/state`+`/api/health` 를 무응답으로 끊음 / 302 리다이렉트에 `Bearer` 키가 
-- `2026-11-09 17:35` 관리자 [handoff] REV 111: - `2026-11-09 17:35` 관리자(R2): **REV 111 (1/2). 태스크 DAG 로 라운드를 돌린 첫 사례 + 웹 요청 2건 분담.** 그래프 `R-002` 6노드(N1 ETA초과 / N2 린터 보드슬롯 / N3 밝은모드+가독성 / N4 테스트보강 / N5 교차검수 / N6 Strata 재스킨). **의존이 풀리면 관리자 턴 없이 다음이 뜬다** - N1 이 17:24:46 에 끝나자 같은 초에 N2 가 떴다. **유실을 루프가 거둔다** - N3 1차가 `lost` 되자 같은 초에 2차를 띄웠고 직전 run id
-- `2026-11-09 17:10` 관리자 [handoff] REV 110: - `2026-11-09 17:10` 관리자: **REV 110. 함대 모니터링 웹 UI 1차 (태석님 주문 2026-11-09).** Claude ACP 관리자 체제의 첫 실전 라운드. `6절` 에 `tools/aimem_monitor/**`·`tests/test_aimem_monitor*.py`·`.aimem/requests/**` 7행 등재(태석님 승인, `6.1`). **계약을 관리자가 못박고**(`__init__.py` 의 `STATE_KEYS`/`PROGRESS_WEIGHTS`) 의존 없는 3건을 **한 턴에 병렬 spa
-- `2026-11-09 16:40` 관리자 [handoff] REV 109: - `2026-11-09 16:40` 관리자: 클로드 코드(태석님 지시 2026-11-09, 관리자 세션 아님): **REV 109. 관리자를 Opus 5.5 Claude ACP 세션으로, 작업자를 하네스 CLI 일회성 프로세스로.** (1) 서문·`0.5`·`2절`·`5절`·`7절`·`8.0` 개정 - 관리자 식별은 세션키 접두사 `agent:claude:acp:`(린터 핀 교체, `tools/aimem_lint.py`·테스트 픽스처 갱신), 구 관리자 클로는 읽기만. (2) `tools/fleet.py` 에 `spawn / ru
 
 ## 4.5 대기 큐
 
@@ -109,6 +97,7 @@
 | `.aimem/briefs/**` | 관리자 | 관리자 세션 브리프와 참조 자료(예: `strata-tokens.css`). 작업자는 읽기만 |
 | `.aimem/envcheck-state.json` | 관리자 | 러너의 누적 판정 상태. **러너만 씁니다. `.gitignore` 대상 - 이력 자산이 아니라 상태 파일(REV 106)** |
 | `.aimem/graph/**` | 관리자 | 그래프 파일·로그·노드 브리프. `fleet_graph` 와 관리자만 씁니다. **`.gitignore` 대상**입니다(`.aimem/runs/` 와 같은 성격 - 실행 기록). 노드 입력은 `inputs/` 아래 |
+| `.aimem/handoff.md` | 관리자 | 핸드오프 로그 정본 파일 (REV 129). handoff add/rollover 로만 쓴다; AIMEM.md 4절은 방법만 |
 | `.aimem/outbox/README.md` | 관리자 | 아웃박스 사용법 |
 | `.aimem/requests/**` | 관리자 | 웹에서 들어온 작업 요청. 생성은 **서버만** 하고, 분담(`status`/`subtasks`/`graph`)은 관리자가 채웁니다 |
 | `.aimem/tls/**` | 관리자 | 외부 공개용 자체 인증서·개인키(0600)·접근 토큰. **`.gitignore` 대상, 절대 커밋 금지** (REV 113) |

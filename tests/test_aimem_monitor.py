@@ -901,3 +901,34 @@ class ClosedRequestContractTests(unittest.TestCase):
         state = {"requests": [row], "slots": [], "kisti": {}, "errors": []}
         out = server.scrub_public(state, root=pathlib.Path("/nonexistent"))
         self.assertEqual(set(out["requests"][0].keys()), set(REQUEST_ROW_KEYS))
+
+
+@unittest.skipIf(reader is None, "reader.py 아직 없음")
+class EnglishAimemLabelsTest(unittest.TestCase):
+    """REV 128: AIMEM.md 가 영어로 바뀌어도 reader 가 REV·갱신 시각·목표·상태를 읽는다 (한국어 라벨도 그대로 받는다)."""
+
+    def test_parse_english_header_and_goal(self):
+        lines = ["# AIMEM.md - Shared Working Memory", "", "- **REV: 128** (revision number)",
+                 "- Last updated: 2026-11-10 19:00 KST", "", "## 1. Current Goal", "",
+                 "- **Goal (round 4):** one screen", "  for the fleet", "- **Status:** operating", "",
+                 "## 2. Session Roster", ""]
+        errors = []
+        a = reader._parse_aimem(lines, errors)
+        self.assertEqual((a["rev"], a["updated"], a["goal"]["text"], a["goal"]["status"]),
+                         (128, "2026-11-10 19:00 KST", "one screen for the fleet", "operating"))
+        self.assertEqual(errors, [])
+
+
+@unittest.skipIf(reader is None, "reader.py 아직 없음")
+class HandoffFileFallbackTest(unittest.TestCase):
+    """REV 129: DB 가 없을 때 로그는 .aimem/handoff.md 를 먼저 읽고, 그 파일이 없으면 AIMEM.md 4절을 읽는다."""
+
+    def test_handoff_file_preferred_over_section_4(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / ".aimem").mkdir()
+            (root / "AIMEM.md").write_text("# A\n\n- **REV: 1** (x)\n\n## 4. Handoff Log\n\n- `2026-01-01 00:00` old: in aimem\n\n## 4.5 Q\n", encoding="utf-8")
+            lines = (root / "AIMEM.md").read_text(encoding="utf-8").splitlines()
+            self.assertEqual([e["text"] for e in reader._parse_log(lines, root)], ["old: in aimem"])
+            (root / ".aimem" / "handoff.md").write_text("# Handoff Log (live)\n\nintro\n\n- `2026-11-10 19:00` new: in file\n  continued\n", encoding="utf-8")
+            self.assertEqual(reader._parse_log(lines, root), [{"when": "2026-11-10 19:00", "text": "new: in file continued"}])

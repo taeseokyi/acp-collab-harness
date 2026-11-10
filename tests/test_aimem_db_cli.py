@@ -34,7 +34,9 @@ class AimemDbCliTest(unittest.TestCase):
         self.root = pathlib.Path(self.tmp.name)
         (self.root / ".aimem" / "requests").mkdir(parents=True)
         patches = [mock.patch.object(aimem_db, "ROOT", self.root),
-                   mock.patch.object(aimem_db, "DB", self.root / ".aimem" / "aimem.db")]
+                   mock.patch.object(aimem_db, "DB", self.root / ".aimem" / "aimem.db"),
+                   mock.patch.object(aimem_db, "AIMEM", self.root / "AIMEM.md"),
+                   mock.patch.object(aimem_db, "HANDOFF", self.root / ".aimem" / "handoff.md")]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -218,3 +220,84 @@ class ArchiveRequestsGraphsTest(AimemDbCliTest):
         self.assertIn("요청 <- Q-1", out)
         self.assertIn("그래프 <- G-1", out)
         self.assertTrue((self.root / ".aimem" / "requests" / "Q-1-old.json").exists())
+
+
+class MigrateEnglishHandoffTest(AimemDbCliTest):
+    """REV 128: `migrate` 가 영어 제목 `## 4. Handoff Log` 아래의 항목도 events(kind=handoff) 로 적재한다."""
+
+    def test_english_section_4_is_imported(self):
+        (self.root / "AIMEM.md").write_text(
+            "# AIMEM.md\n\n- **REV: 5** (x)\n\n## 4. Handoff Log\n\n"
+            "- `2026-11-10 19:00` Claude Code: **REV 5. English entry.** body\n\n## 4.5 Waiting Queue\n", encoding="utf-8")
+        aimem_db.migrate(verbose=False)
+        row = self.row("SELECT at, rev FROM events WHERE kind='handoff'")
+        self.assertEqual((row["at"], row["rev"]), ("2026-11-10 19:00", 5))
+
+
+class HandoffLogTest(AimemDbCliTest):
+    """REV 129: 핸드오프 로그는 .aimem/handoff.md + events 에 쌓이고, 상한(12)을 넘으면 4건만 남기고 아카이브로 롤오버한다."""
+
+    def test_add_writes_file_and_event_and_bumps_rev(self):
+        new, rolled = aimem_db.handoff_add("**REV 2. first.** body", actor="t", bump=True, when="2026-11-10 19:00")
+        self.assertEqual((new, rolled), (1, 0))   # 빈 DB 의 REV 는 0 → 1
+        text = aimem_db.HANDOFF.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("# Handoff Log (live)"))
+        self.assertIn("- `2026-11-10 19:00` t: **REV 2. first.** body", text)
+        row = self.row("SELECT at, rev, body FROM events WHERE kind='handoff'")
+        self.assertEqual((row["at"], row["rev"]), ("2026-11-10 19:00", 1))
+        self.assertEqual(aimem_db.handoff_entries()[0], "- `2026-11-10 19:00` t: **REV 2. first.** body")
+
+    def test_add_refuses_long_entry_unless_allowed(self):
+        with self.assertRaises(ValueError):
+            aimem_db.handoff_add("x" * (aimem_db.HANDOFF_ENTRY_MAX + 1), actor="t")
+        self.assertFalse(aimem_db.HANDOFF.exists())
+        aimem_db.handoff_add("x" * (aimem_db.HANDOFF_ENTRY_MAX + 1), actor="t", allow_long=True)
+        self.assertEqual(len(aimem_db.handoff_entries()), 1)
+
+    def test_newest_first_and_auto_rollover_keeps_four(self):
+        for i in range(1, 14):   # 13건: 12 상한을 넘기는 순간 롤오버
+            new, rolled = aimem_db.handoff_add(f"entry {i}", actor="t", when=f"2026-11-{i:02d} 10:00")
+        self.assertEqual(rolled, 9)
+        left = aimem_db.handoff_entries()
+        self.assertEqual(len(left), 4)
+        self.assertTrue(left[0].startswith("- `2026-11-13 10:00`"))      # 최신이 맨 위
+        self.assertTrue(left[-1].startswith("- `2026-11-10 10:00`"))
+        arch = (self.root / ".aimem" / "archive" / "handoff-2026-11.md").read_text(encoding="utf-8")
+        for i in range(1, 10):
+            self.assertIn(f"entry {i}", arch)
+        self.assertNotIn("entry 10", arch)
+        self.assertIsNotNone(self.row("SELECT 1 FROM events WHERE kind='archive' AND body LIKE '핸드오프 로그 9건%'"))
+
+    def test_archive_plan_includes_handoff_rollover(self):
+        for i in range(1, 14):
+            aimem_db.handoff_rollover_plan  # noqa - 상한을 넘겨도 add 가 바로 롤오버하므로 직접 파일을 만들어 본다
+        entries = [f"- `2026-11-{i:02d} 10:00` t: e{i}" for i in range(13, 0, -1)]
+        aimem_db._write_handoff(entries)
+        plan = aimem_db.archive_plan(14)
+        self.assertEqual(len(plan["handoff"]), 9)
+        self.assertEqual(plan["total"], 9)
+        out = aimem_db.archive_apply(plan, actor="t")
+        self.assertEqual(out["handoff"], 9)
+        self.assertEqual(len(aimem_db.handoff_entries()), 4)
+        # 두 번째 archive 는 옮길 것이 없다
+        self.assertEqual(aimem_db.archive_plan(14)["total"], 0)
+
+    def test_migrate_imports_handoff_file(self):
+        aimem_db._write_handoff(["- `2026-11-10 19:00` t: **REV 7. from file.** x"])
+        aimem_db.migrate(verbose=False)
+        row = self.row("SELECT at, rev FROM events WHERE kind='handoff'")
+        self.assertEqual((row["at"], row["rev"]), ("2026-11-10 19:00", 7))
+        aimem_db.migrate(verbose=False)   # 멱등
+        with aimem_db.connect() as con:
+            self.assertEqual(con.execute("SELECT count(*) FROM events WHERE kind='handoff'").fetchone()[0], 1)
+
+    def test_sync_rev_updates_last_updated_line(self):
+        aimem_db.AIMEM.write_text("# AIMEM.md\n\n- **REV: 1** (x)\n- Last updated: 2000-01-01 00:00 KST\n", encoding="utf-8")
+        with aimem_db.connect() as con:
+            con.execute("INSERT INTO meta(key,value) VALUES('rev','9') ON CONFLICT(key) DO UPDATE SET value=excluded.value"); con.commit()
+        self.assertEqual(aimem_db.sync_rev_in_aimem(), 9)
+        text = aimem_db.AIMEM.read_text(encoding="utf-8")
+        self.assertIn("- **REV: 9**", text)
+        self.assertNotIn("2000-01-01", text)
+        self.assertRegex(text, r"- Last updated: \d{4}-\d{2}-\d{2} \d{2}:\d{2} KST")
+        self.assertIsNone(aimem_db.sync_rev_in_aimem())   # 이미 맞으면 손대지 않는다

@@ -859,3 +859,35 @@ class TestLintFileContract(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+
+class TestEnglishManagerDeclaration(unittest.TestCase):
+    """REV 128: AIMEM.md 가 영어다. `Manager (sole write authority)` 선언도 한국어 선언과 같은 검사를 켠다."""
+    EN_DOC = VALID_DOC.replace("- 관리자(단독 쓰기 권한): **클로** `agent:claude:acp:`\n",
+                               "- Manager (sole write authority): **a Claude ACP session** `agent:claude:acp:`\n")
+
+    def test_english_declaration_passes_with_pinned_key(self):
+        self.assertNotEqual(self.EN_DOC, VALID_DOC)
+        self.assertEqual(lint_text(self.EN_DOC), [])
+
+    def test_english_declaration_gates_key_mismatch(self):
+        swapped = self.EN_DOC.replace(MANAGER_SESSION_KEY, "agent:coding:discord:channel:9999999999")
+        self.assertEqual(codes(lint_text(swapped)), ["MANAGER_KEY_MISMATCH"])
+
+
+class TestHandoffInAimem(unittest.TestCase):
+    """REV 129: 4절에 로그 항목이 남아 있으면 위반. 항목은 .aimem/handoff.md 에 둔다 (관리자 선언이 있을 때만 검사)."""
+
+    def test_entry_in_section_4_fires(self):
+        text = VALID_DOC.replace("## 4. 핸드오프 로그\n\n스냅샷: `AIMEM-state.md`\n",
+                                 "## 4. 핸드오프 로그\n\n스냅샷: `AIMEM-state.md`\n\n- `2026-11-10 19:00` 관리자: 로그 항목\n")
+        self.assertEqual(codes(lint_text(text)), ["HANDOFF_IN_AIMEM"])
+
+    def test_entry_inside_fence_is_ignored(self):
+        text = VALID_DOC.replace("## 4. 핸드오프 로그\n\n스냅샷: `AIMEM-state.md`\n",
+                                 "## 4. 핸드오프 로그\n\n스냅샷: `AIMEM-state.md`\n\n```\n- `2026-11-10 19:00` 예시\n```\n")
+        self.assertEqual(lint_text(text), [])
+
+    def test_not_checked_without_declaration(self):
+        text = NO_DECL_DOC.replace("## 4. 핸드오프 로그\n", "## 4. 핸드오프 로그\n\n- `2026-11-10 19:00` 관리자: 로그\n")
+        self.assertEqual(lint_text(text), [])

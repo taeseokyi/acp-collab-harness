@@ -1782,7 +1782,7 @@ function openArchivePanel() {
       if (!r.ok) { const e = document.createElement('p'); e.className = 'hint is-error'; e.textContent = r.body.error || '실패'; out.appendChild(e); return; }
       const plan = r.body.plan || {};
       const h = document.createElement('p');
-      h.textContent = (dry ? '옮길 것: ' : '옮김: ') + `태스크 ${(plan.tasks || []).length}건 · 요청 ${(plan.requests || []).length}건 · 그래프 ${(plan.graphs || []).length}개 (기준 ${fmtDateTime(plan.cutoff)})`;
+      h.textContent = (dry ? '옮길 것: ' : '옮김: ') + `태스크 ${(plan.tasks || []).length}건 · 요청 ${(plan.requests || []).length}건 · 그래프 ${(plan.graphs || []).length}개 · 핸드오프 로그 ${(plan.handoff || []).length}건 (기준 ${fmtDateTime(plan.cutoff)})`;
       out.appendChild(h);
       const list = (title, items, fmt) => {
         if (!items.length) return;
@@ -1795,6 +1795,7 @@ function openArchivePanel() {
       list('태스크', plan.tasks || [], (t) => `${t.id} · ${plainText(t.title)} · ${show(t.slot)}`);
       list('요청', plan.requests || [], (q) => `${q.id} · ${show(q.title)} · ${show(q.status)}`);
       list('그래프', plan.graphs || [], (g) => `${g.id} · ${plainText(g.request)} · 파일 ${g.files}`);
+      list('핸드오프 로그', plan.handoff || [], (e) => `${e.at} · ${plainText(e.head)}`);
       apply.disabled = !dry || !(plan.total > 0);
     };
     const run = async (dry) => {

@@ -39,7 +39,8 @@ VALID_STATUSES = {"TODO", "ASSIGNED", "IN-PROGRESS", "REVIEW", "DONE", "BLOCKED"
 # REV 109: 관리자는 Claude ACP 세션(하네스 claude). 세션키는 `agent:claude:acp:<uuid>` 로 나므로
 # 못박는 것은 그 접두사다. 서문 관리자 선언에 이 접두사가 없으면 뿌리가 바뀐 것으로 본다.
 MANAGER_SESSION_KEY = "agent:claude:acp:"
-MANAGER_DECL_RE = re.compile(r"관리자\(단독 쓰기 권한\)")
+# AIMEM.md 가 영어로 바뀌어도(REV 128) 같은 선언을 알아보도록 두 표기를 받는다.
+MANAGER_DECL_RE = re.compile(r"관리자\(단독 쓰기 권한\)|Manager \(sole write authority\)")
 
 # 크기 상한 (`5절`). 작업자가 매 턴 전문을 읽으므로 크기는 곧 턴당 비용이다. 총량만 강제한다.
 MAX_TOTAL_LINES = 800
@@ -253,8 +254,22 @@ def lint_text(text: str, notes: Optional[List[str]] = None) -> List[Violation]:
                 )
             )
         _check_state_sections(lines, fenced, violations)
+        _check_handoff_entries(lines, fenced, violations)
 
     return violations
+
+
+def _check_handoff_entries(lines: List[str], fenced: List[bool], violations: List[Violation]) -> None:
+    """REV 129: 4절은 관리 방법만 적는다. 로그 항목(`- \`YYYY-MM-DD\``)이 남아 있으면 문서가 다시 무거워지는 길이다 -
+    항목은 `.aimem/handoff.md` (`aimem_db.py handoff add`) 에 쌓이고 오래된 것은 `handoff rollover` 가 아카이브로 보낸다."""
+    for s, e in _section_spans(lines, fenced, 4):
+        hits = [i for i in range(s, e) if not fenced[i] and HANDOFF_ENTRY_RE.match(lines[i])]
+        if hits:
+            violations.append(Violation(
+                "HANDOFF_IN_AIMEM", hits[0] + 1,
+                f"4절에 핸드오프 로그 항목 {len(hits)}건이 남아 있음. 항목은 `.aimem/handoff.md` 에 둔다 - "
+                f"`python3 tools/aimem_db.py handoff add --body '…'`; 이 줄들은 거기로 옮기십시오",
+            ))
 
 
 def _manager_decl_line(lines: List[str], fenced: List[bool]) -> Optional[int]:

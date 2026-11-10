@@ -1141,7 +1141,8 @@ def archive_action(payload, by, root=ROOT):
                "tasks": [{"id": t["id"], "title": t["title"], "slot": t["slot"], "updated": t["updated"]} for t in plan["tasks"]],
                "requests": [{"id": r["id"], "title": r["title"], "status": r["status"], "when": r["when"]} for r in plan["requests"]],
                "graphs": [{"id": g["id"], "request": g["request"], "when": g["when"], "counts": g["counts"],
-                           "files": 1 + len(g["side_files"]) + len(g["inputs"])} for g in plan["graphs"]]}
+                           "files": 1 + len(g["side_files"]) + len(g["inputs"])} for g in plan["graphs"]],
+               "handoff": [{"at": e[3:19], "head": e[21:101]} for e in plan.get("handoff") or []]}   # 핸드오프 롤오버 대상 (REV 129)
     if dry:
         return 200, {"ok": True, "dry_run": True, "plan": summary}
     try:
