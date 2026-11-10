@@ -27,7 +27,7 @@ class SlotActionTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = pathlib.Path(self.tmp.name).resolve()
-        (self.root / ".aimem").mkdir()
+        (self.root / ".aimem" / "requests").mkdir(parents=True)
         for target, attr, value in ((aimem_db, "ROOT", self.root), (aimem_db, "DB", self.root / ".aimem" / "aimem.db"),
                                     (server, "ROOT", self.root), (server, "openclaw_models", lambda *a, **k: MODELS),
                                     (server, "_slot_running", lambda slot, root: None)):
@@ -39,8 +39,20 @@ class SlotActionTest(unittest.TestCase):
 
     def test_add_set_remove_via_api(self):
         code, body = server.slot_action("add", None, {"harness": "claude", "model": "anthropic/claude-opus-5-5", "role": "판단형"}, "웹(test)", self.root)
+        self.assertEqual(code, 400)                                       # 역할·비고는 관리자 몫 - 웹은 거절
+        self.assertIn("관리자가 정합니다", body["error"])
+        code, body = server.slot_action("add", None, {"harness": "claude", "model": "anthropic/claude-opus-5-5"}, "웹(test)", self.root)
         self.assertEqual(code, 201, body)
         self.assertEqual(body["slot"]["slot"], "S1")
+        self.assertEqual(body["slot"]["role"], aimem_db.SLOT_ROLE_UNASSIGNED)   # 표식으로 들어간다
+        self.assertIn("웹에서 추가", body["slot"]["note"])
+        self.assertTrue(body["notice"])                                   # 관리자 통지 요청이 생긴다
+        reqs = list((self.root / ".aimem" / "requests").glob("*.json"))
+        self.assertEqual(len(reqs), 1)
+        import json as _json
+        q = _json.loads(reqs[0].read_text(encoding="utf-8"))
+        self.assertEqual((q["status"], q["requester"]), ("NEW", server.SLOT_NOTICE_REQUESTER))
+        self.assertIn("S1 추가됨", q["title"])
         self.assertNotIn("token", body["slot"])                       # 확인토큰은 공개면에 나가지 않는다
         code, body = server.slot_action("add", None, {"harness": "codex"}, "웹(test)", self.root)
         self.assertEqual((code, body["slot"]["slot"], body["slot"]["model"]), (201, "S2", None))
@@ -52,6 +64,9 @@ class SlotActionTest(unittest.TestCase):
         code, body = server.slot_action("remove", "S2", {}, "웹(test)", self.root)
         self.assertEqual(code, 200)
         self.assertEqual([s["slot"] for s in aimem_db.slot_list()], ["S1"])
+        titles = [__import__("json").loads(f.read_text(encoding="utf-8"))["title"] for f in (self.root / ".aimem" / "requests").glob("*.json")]
+        self.assertTrue(any("S2 삭제됨" in t for t in titles))
+        self.assertTrue(any("S2 변경됨" in t for t in titles))
 
     def test_model_must_be_configured_and_fit_harness(self):
         code, body = server.slot_action("add", None, {"harness": "claude", "model": "openai/gpt-9"}, "웹", self.root)
@@ -65,7 +80,7 @@ class SlotActionTest(unittest.TestCase):
 
     def test_guards(self):
         self.assertEqual(server.slot_action("add", None, {"harness": "gemini"}, "웹", self.root)[0], 400)
-        self.assertEqual(server.slot_action("set", "S9", {"role": "x"}, "웹", self.root)[0], 404)
+        self.assertEqual(server.slot_action("set", "S9", {"model": "sonnet"}, "웹", self.root)[0], 404)
         self.assertEqual(server.slot_action("remove", "S9", {}, "웹", self.root)[0], 404)
         self.assertEqual(server.slot_action("add", None, "not-a-dict", "웹", self.root)[0], 400)
         other = pathlib.Path(self.tmp.name) / "elsewhere"
@@ -75,7 +90,8 @@ class SlotActionTest(unittest.TestCase):
         with mock.patch.object(server, "_slot_running", lambda slot, root: "T-1-S1-a1-000000"):
             self.assertEqual(server.slot_action("remove", "S1", {}, "웹", self.root)[0], 409)
             self.assertEqual(server.slot_action("set", "S1", {"harness": "codex"}, "웹", self.root)[0], 409)
-            self.assertEqual(server.slot_action("set", "S1", {"role": "바꿈"}, "웹", self.root)[0], 200)   # 역할은 도는 중에도
+            self.assertEqual(server.slot_action("set", "S1", {"role": "바꿈"}, "웹", self.root)[0], 400)   # 역할은 웹에서 못 바꾼다
+            self.assertEqual(server.slot_action("set", "S1", {"model": "sonnet"}, "웹", self.root)[0], 200)  # 모델은 도는 중에도
 
     def test_models_for_harness_mapping(self):
         self.assertEqual(server._models_for_harness("anthropic/claude-opus-5-5"), ["claude"])
@@ -118,7 +134,7 @@ if __name__ == "__main__":
 
 class ArchiveActionTest(SlotActionTest):
     def test_archive_action_dry_run_and_apply(self):
-        rdir = self.root / ".aimem" / "requests"; rdir.mkdir()
+        rdir = self.root / ".aimem" / "requests"; rdir.mkdir(exist_ok=True)
         (rdir / "Q-9.json").write_text('{"id":"Q-9","status":"DONE","title":"t","created":"2026-01-01 10:00","updated":"2026-01-02 10:00"}', encoding="utf-8")
         code, body = server.archive_action({"days": 14, "dry_run": True}, "웹", self.root)
         self.assertEqual(code, 200)

@@ -1280,8 +1280,36 @@ def _model_allowed(model, harness):
     return True, ""
 
 
+SLOT_NOTICE_REQUESTER = "슬롯 관리(웹)"
+
+
+def _notify_manager_slot_change(action, row, by, changes, root):
+    """웹에서 바꾼 슬롯을 **라운드 관리자가 모르면 안 된다**(태석님 2026-11-10) - 요청 트리에 NEW 요청으로 남겨
+    관리자가 분담하는 그 경로로 받게 한다. 실패해도 슬롯 변경 자체는 되돌리지 않는다(요청은 통지 수단)."""
+    slot = row.get("slot") if isinstance(row, dict) else row
+    if action == "add":
+        title = f"슬롯 {slot} 추가됨({row.get('harness')}, 모델 {row.get('model') or '하네스 기본'}) - 역할·비고 배정 필요"
+        detail = (f"{by} 이(가) 웹 함대 현황에서 슬롯을 추가했습니다.\n\n- 슬롯: {slot}\n- 하네스: {row.get('harness')}\n- 모델: {row.get('model') or '(하네스 기본)'}\n"
+                  f"- 역할: {row.get('role')}\n\n관리자 할 일: 라운드 시작 때 이 라운드 의도에 맞춰 `python3 tools/aimem_db.py slot set --slot {slot} --role \"…\" --note \"…\"` 로 역할·비고를 정하고, "
+                  f"배정 방침을 보고에 한 줄 적은 뒤 이 요청을 DONE 으로 닫으십시오. 하네스·모델은 태석님 결정이니 바꾸지 않습니다.")
+    elif action == "set":
+        title = f"슬롯 {slot} 변경됨({', '.join(changes) if changes else '변경 없음'}) - 확인 필요"
+        detail = (f"{by} 이(가) 웹에서 슬롯 {slot} 의 하네스/모델을 바꿨습니다: {', '.join(changes) if changes else '(바뀐 것 없음)'}.\n\n"
+                  f"관리자 할 일: 이 슬롯에 배정된 태스크·역할이 새 하네스/모델과 맞는지 보고, 필요하면 `slot set --role/--note` 로 역할·비고를 고친 뒤 이 요청을 DONE 으로 닫으십시오.")
+    else:
+        title = f"슬롯 {slot} 삭제됨 - 배정·소유권 정리 확인"
+        detail = (f"{by} 이(가) 웹에서 슬롯 {slot} 을(를) 명부에서 지웠습니다. 소유권 {row.get('ownership_removed', 0)}행이 같이 내려갔습니다"
+                  + (f", 미완 태스크 {', '.join(row.get('open_tasks') or [])} 는 강제로 남겨졌습니다" if row.get("open_tasks") else "") +
+                  ".\n\n관리자 할 일: 이 슬롯을 전제로 한 큐·그래프·브리프가 있으면 다른 슬롯으로 돌리고, 이 요청을 DONE 으로 닫으십시오.")
+    try:
+        ok, res = create_request({"title": title, "detail": detail, "requester": SLOT_NOTICE_REQUESTER}, root)
+        return res.get("id") if ok else None
+    except Exception:  # noqa: BLE001 - 통지 실패가 슬롯 변경을 막지 않는다
+        return None
+
+
 def slot_action(action, slot, payload, by, root=ROOT):
-    """(HTTP 코드, 응답). action: add | set | remove. 운영 저장소에서만 쓴다."""
+    """(HTTP 코드, 응답). action: add | set | remove. 운영 저장소에서만 쓴다. 성공하면 관리자용 NEW 요청을 남긴다."""
     if pathlib.Path(root).resolve() != ROOT:
         return 403, {"ok": False, "error": "운영 저장소가 아닙니다"}
     if not isinstance(payload, dict):
@@ -1289,14 +1317,21 @@ def slot_action(action, slot, payload, by, root=ROOT):
     db = _aimem_db(root)
     try:
         p_slot, harness, model, role, note = _slot_payload_fields(payload)
+        # 역할·비고는 **라운드 관리자의 몫**이다(8.0-1 "슬롯은 좁게, 전체 그림은 관리자만", 태석님 2026-11-10).
+        # 웹(사람)은 하네스·모델 - 어떤 엔진을 몇 개 둘지 - 만 바꾼다. 역할·비고를 보내면 거절한다.
+        if role is not None or note is not None:
+            return 400, {"ok": False, "error": "역할·비고는 라운드 관리자가 정합니다 - 웹에서는 하네스·모델만 바꿉니다 (관리자 CLI: aimem_db.py slot set --role/--note)"}
         if action == "add":
             if not harness or harness not in SLOT_HARNESSES:
                 return 400, {"ok": False, "error": f"하네스는 {'/'.join(SLOT_HARNESSES)} 중 하나"}
             ok, why = _model_allowed(model, harness)
             if not ok:
                 return 400, {"ok": False, "error": why}
-            row = db.slot_add(p_slot or None, harness, model or None, role or "", note or "", by)
-            return 201, {"ok": True, "slot": {k: v for k, v in row.items() if k != "token"}}
+            stamp = datetime.datetime.now().strftime("%m-%d %H:%M")
+            row = db.slot_add(p_slot or None, harness, model or None, db.SLOT_ROLE_UNASSIGNED,
+                              f"{stamp} 웹에서 추가({by}). 역할·비고는 관리자가 라운드 시작 때 정한다", by)
+            notice = _notify_manager_slot_change("add", row, by, [], root)
+            return 201, {"ok": True, "slot": {k: v for k, v in row.items() if k != "token"}, "notice": notice}
         if action == "set":
             cur = next((r for r in db.slot_list() if r["slot"] == slot), None)
             if cur is None:
@@ -1312,14 +1347,16 @@ def slot_action(action, slot, payload, by, root=ROOT):
                 ok, why = _model_allowed(model, new_harness)
                 if not ok:
                     return 400, {"ok": False, "error": why}
-            row, changes = db.slot_set(slot, harness, None if clear else model, role, note, by, clear_model=clear)
-            return 200, {"ok": True, "slot": {k: v for k, v in row.items() if k != "token"}, "changes": changes}
+            row, changes = db.slot_set(slot, harness, None if clear else model, None, None, by, clear_model=clear)
+            notice = _notify_manager_slot_change("set", row, by, changes, root) if changes else None
+            return 200, {"ok": True, "slot": {k: v for k, v in row.items() if k != "token"}, "changes": changes, "notice": notice}
         if action == "remove":
             running = _slot_running(slot, root)
             if running:
                 return 409, {"ok": False, "error": f"{slot} 에 작업자가 돌고 있습니다 ({running}) - 끝난 뒤 삭제하십시오"}
             res = db.slot_remove(slot, by, force=bool(payload.get("force")))
-            return 200, {"ok": True, **res}
+            notice = _notify_manager_slot_change("remove", res, by, [], root)
+            return 200, {"ok": True, **res, "notice": notice}
     except ValueError as e:
         msg = str(e)
         code = 409 if "끝나지 않은 태스크" in msg else (404 if "명부에 없습니다" in msg else 400)
@@ -1360,6 +1397,13 @@ def fleet_action(action, by, root=ROOT):
         ok = k.get("ok") is not False
         detail = k.get("error") or (f"응답 정상 · busy {k.get('busy')} · 대기 {k.get('queued')}" if ok else "")
         extra.append(ctl._check("KISTI LLM 서버 (S2 kistillm)", ok, detail, required=False))
+        try:   # 역할 미배정 슬롯 - 관리자가 라운드 시작 때 정해야 할 것이 있음을 준비 점검표에 보인다
+            db = _aimem_db(root)
+            pend = [s["slot"] for s in db.slot_list() if (s.get("role") or "") == db.SLOT_ROLE_UNASSIGNED]
+            extra.append(ctl._check("슬롯 역할 미배정 (관리자가 라운드 시작 때 정함)", not pend,
+                                    ("없음" if not pend else ", ".join(pend) + " - 관리자 브리프 (0) 대상"), required=False))
+        except Exception:  # noqa: BLE001
+            pass
     try:
         out = {"prepare": lambda: ctl.prepare(by, extra), "run": lambda: ctl.resume(by),
                "pause": lambda: ctl.pause(by), "stop": lambda: ctl.stop(by),

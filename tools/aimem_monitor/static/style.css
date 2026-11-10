@@ -1285,3 +1285,5 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 
 .archive-out { margin-top: var(--st-s-3); }
 #board-filter .btn-link { margin-left: auto; }
+
+.slot-ro { padding: 6px 8px; color: var(--st-ink-muted); background: var(--st-surface-2); border-radius: var(--st-r-sm); font-size: var(--st-fs-sm); overflow-wrap: anywhere; }

@@ -1523,8 +1523,16 @@ function openSlotForm(existing) {
     const modelNote = document.createElement('div'); modelNote.className = 'hint'; modelNote.textContent = '모델 목록을 읽는 중…';
     modelWrap.appendChild(modelNote);
     field('모델 (openclaw 설정)', modelWrap);
-    const roleIn = document.createElement('input'); roleIn.value = existing ? show(existing.role, '') : ''; roleIn.placeholder = '예: 병렬 작업자 (속도)'; field('역할', roleIn);
-    const noteIn = document.createElement('input'); noteIn.value = existing ? show(existing.note, '') : ''; noteIn.placeholder = '비고'; field('비고', noteIn);
+    // 역할·비고는 라운드 관리자가 정한다(8.0-1) - 여기서는 보여만 준다
+    if (!isNew) {
+      const roleRo = document.createElement('div'); roleRo.className = 'slot-ro'; roleRo.textContent = show(existing.role, '-'); field('역할 (관리자 지정)', roleRo);
+      const noteRo = document.createElement('div'); noteRo.className = 'slot-ro'; noteRo.textContent = show(existing.note, '-'); field('비고 (관리자 지정)', noteRo);
+    }
+    const gov = document.createElement('p'); gov.className = 'hint';
+    gov.textContent = isNew
+      ? '역할·비고는 여기서 적지 않습니다 - 새 슬롯은 "(미배정)" 으로 들어가고, 라운드 관리자가 다음 라운드 시작 때 역할을 정해 적습니다. 여기서는 어떤 엔진(하네스·모델)을 둘지만 정합니다.'
+      : '여기서 바꿀 수 있는 것은 하네스·모델입니다. 역할·비고는 라운드 관리자가 브리프 의도에 따라 정합니다(aimem_db.py slot set --role/--note).';
+    form.appendChild(gov);
     const actions = document.createElement('div'); actions.className = 'slot-actions';
     const save = document.createElement('button'); save.type = 'submit'; save.className = 'btn-primary'; save.textContent = isNew ? '추가' : '저장';
     const msg = document.createElement('div'); msg.className = 'slot-msg';
@@ -1539,7 +1547,7 @@ function openSlotForm(existing) {
           const r2 = await slotRequest(`/api/slots/${existing.slot}/remove`, { force: true });
           Object.assign(r, r2);
         }
-        if (r.ok) { closeDetail(); state.slotMsg = { ok: true, text: `${existing.slot} 삭제됨` }; await refresh(); }
+        if (r.ok) { closeDetail(); state.slotMsg = { ok: true, text: `${existing.slot} 삭제됨` + (r.body.notice ? ` · 관리자 통지 요청 ${r.body.notice} 생성` : '') }; await refresh(); }
         else { del.disabled = false; msg.textContent = r.body.error || '실패'; msg.classList.add('is-error'); }
       });
       actions.appendChild(del);
@@ -1558,11 +1566,16 @@ function openSlotForm(existing) {
     loadModels().then(rebuildModels);
     form.addEventListener('submit', async (e) => {
       e.preventDefault(); save.disabled = true; msg.textContent = ''; msg.classList.remove('is-error');
-      const payload = { harness: harnessSel.value, model: modelSel ? modelSel.value : '', role: roleIn.value.trim(), note: noteIn.value.trim() };
+      const payload = { harness: harnessSel.value, model: modelSel ? modelSel.value : '' };
       let r;
       if (isNew) { if (slotIn.value.trim()) payload.slot = slotIn.value.trim().toUpperCase(); r = await slotRequest('/api/slots', payload); }
       else r = await slotRequest(`/api/slots/${existing.slot}/set`, payload);
-      if (r.ok) { closeDetail(); state.slotMsg = { ok: true, text: isNew ? `${(r.body.slot || {}).slot} 추가됨` : `${existing.slot} 저장됨` + (r.body.changes && r.body.changes.length ? ' (' + r.body.changes.join(', ') + ')' : ' - 바뀐 것 없음') }; await refresh(); }
+      if (r.ok) {
+        closeDetail();
+        const notice = r.body.notice ? ` · 관리자 통지 요청 ${r.body.notice} 생성` : '';
+        state.slotMsg = { ok: true, text: (isNew ? `${(r.body.slot || {}).slot} 추가됨` : `${existing.slot} 저장됨` + (r.body.changes && r.body.changes.length ? ' (' + r.body.changes.join(', ') + ')' : ' - 바뀐 것 없음')) + notice };
+        await refresh();
+      }
       else { save.disabled = false; msg.textContent = r.body.error || '실패'; msg.classList.add('is-error'); }
     });
     body.appendChild(form);

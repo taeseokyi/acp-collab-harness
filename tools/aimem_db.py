@@ -712,6 +712,9 @@ def cmd_queue(a):
 # ---------------------------------------------------------------- slots (2026-11-10, 태석님 지시 "슬롯 하네스 추가·삭제 + 모델 지정")
 HARNESSES = ("claude", "codex", "opencode")
 SLOT_RE = re.compile(r"S\d{1,3}\Z")
+#: 웹에서 사람이 추가한 슬롯의 역할 표식 - **역할·비고는 라운드 관리자가 정한다**(8.0-1, 태석님 2026-11-10).
+#: 관리자는 라운드 시작 때 events(kind=slot)와 이 표식을 보고 `slot set --role/--note` 로 채운다.
+SLOT_ROLE_UNASSIGNED = "(미배정 - 관리자가 다음 라운드에 정함)"
 
 
 def _slots_json_path():
