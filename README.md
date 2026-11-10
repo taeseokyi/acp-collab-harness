@@ -53,52 +53,51 @@ git config core.hooksPath .githooks      # 훅 활성화
 3. 위임을 사용자 지침 파일(`~/.claude/CLAUDE.md` 등 에이전트가 쓸 수 없는 위치)에 한 번 적습니다
 4. 슬롯을 열고, 관리자가 브리프(슬롯 ID·REV·토큰·소유 경로·검증 방법)를 보냅니다
 
-## 함대 모니터를 외부에 공개하기 (HTTPS + 접근 제어)
+## 함대 모니터 (HTTPS + 접근 제어)
 
-기본은 **로컬 전용**입니다 - `PYTHONPATH=tools python3 -m aimem_monitor` 는 `127.0.0.1:18799`
-에 인증 없이 뜹니다. 외부 공개는 `--tls` 로만 합니다.
-
-### 1. 자체 인증서 만들기 (WSL 쪽, 한 번)
+**평소에도 HTTPS 로 띄웁니다** (2026-11-10 전환). 같은 포트로 들어온 `http://` 는 https 로 301 됩니다.
 
 ```bash
-mkdir -p .aimem/tls && chmod 700 .aimem/tls
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -days 825 -nodes \
-  -keyout .aimem/tls/server.key -out .aimem/tls/server.crt -subj /CN=aimem-fleet \
-  -addext "subjectAltName=DNS:aimem-fleet,DNS:localhost,IP:127.0.0.1,IP:$(hostname -I | awk '{print $1}')" \
-  -addext "keyUsage=critical,digitalSignature,keyEncipherment" -addext "extendedKeyUsage=serverAuth"
-chmod 600 .aimem/tls/server.key
+tools/aimem_monitor/monitorctl.sh start          # https://<주소>:18799/  (--tls --host 0.0.0.0, 인증 켬)
+tools/aimem_monitor/monitorctl.sh restart | stop | status
+tools/aimem_monitor/monitorctl.sh start local    # 개발 확인용 http 127.0.0.1, 인증 없음 - 공개 경로에 두지 말 것
 ```
 
-**`.aimem/tls/` 는 `.gitignore` 대상입니다.** 개인키와 접근 토큰이 들어 있으니 커밋하지 마십시오.
-WSL IP 는 재부팅마다 바뀝니다 - 바뀌면 인증서를 다시 만들어야 SAN 이 맞습니다.
+pid 는 `.aimem/monitor.pid`, 로그는 `.aimem/monitor.log`. 내릴 때는 pid 로만 죽입니다(`pkill -f` 금지).
 
-### 2. 크롬에 인증서 설치 (윈도우 쪽)
+### 접근 제어
 
-1. `\\wsl$\<배포판>\home\<사용자>\work\opencode\.aimem\tls\server.crt` 를 윈도우로 복사
-2. 더블클릭 → **인증서 설치** → **로컬 컴퓨터** → **모든 인증서를 다음 저장소에 저장** →
-   **신뢰할 수 있는 루트 인증 기관**
-3. 크롬을 완전히 닫았다 다시 엽니다. `https://aimem-fleet:18799/` 또는 `https://<WSL IP>:18799/`
+- `/login` 에서 **접근 토큰**을 넣으면 `HttpOnly; Secure; SameSite=Strict` 세션 쿠키(12시간). 도구는
+  `Authorization: Bearer <토큰>`. `/login`·`/api/login`·`/api/logout`·`/api/authinfo`·`/auth/github/*`·
+  `/favicon.ico` 를 뺀 **모든 경로**가 401 입니다. 화면 오른쪽 위에 로그인한 주체와 **로그아웃**이 있습니다
+- 관리 명령 (`PYTHONPATH=tools python3 -m aimem_monitor admin ...`):
 
-설치하지 않으면 크롬이 `NET::ERR_CERT_AUTHORITY_INVALID` 를 띄웁니다(`curl -k` 는 그래도 됩니다).
+| 명령 | 하는 일 |
+| ---- | ------- |
+| `status` | 토큰·설정 파일·KISTI 키·GitHub·인증서 만료·개인키 권한 점검 (비밀값은 찍지 않음) |
+| `token show` | 로그인할 토큰 보기 |
+| `token rotate` | 새 토큰. **발급된 세션이 전부 무효**(쿠키 서명 키가 토큰) - 기기 분실 시. 뒤에 `restart` |
+| `github list` / `allow <계정>` / `deny <계정>` | GitHub 로그인 허용 목록 (`.aimem/tls/allowed-github-logins`, 없으면 전원 거부) |
+| `cert info` / `cert renew [--ip 공인IP] [--dns 도메인]` | 자체 인증서 보기·재발급 (EC P-256, 825일, 옛 것은 `.bak`) |
+| `audit [-n 30]` | 감사 로그 `.aimem/access.log` - 로그인 성공·실패, 로그아웃, 요청 생성·수정, 함대 제어, 토큰 교체 |
 
-### 3. 띄우기
+- **비밀은 셸이 아니라 파일에서 읽습니다** - `.aimem/tls/monitor.env`(0600; `KISTI_API_KEY`,
+  `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`). KISTI 키가 없으면 `~/.openclaw/.env` 에서 읽습니다.
+  그룹·기타가 읽을 수 있는 파일은 읽지 않습니다. **`.aimem/tls/` 는 git 제외**입니다
+- HSTS 는 **도메인 이름으로 들어온 요청에만** 보냅니다. `localhost`·IP 로 들어오면 보내지 않습니다 -
+  HSTS 는 포트가 아니라 호스트 전체에 걸려, 같은 PC 의 다른 `http://localhost:*` 서비스를 깨뜨릴 수 있습니다
 
-```bash
-PYTHONPATH=tools python3 -m aimem_monitor --tls --host 0.0.0.0
-```
+### 인증서 신뢰 (윈도우 크롬, 한 번)
 
-- `--tls` 는 **인증을 함께 켭니다.** `.aimem/tls/access-token` 이 없으면 32바이트 hex 를
-  0600 으로 만들고 **그때 한 번만** stderr 에 찍습니다
-- 브라우저는 `/login` 에서 토큰을 넣습니다 → `HttpOnly; Secure; SameSite=Strict` 세션 쿠키(12시간)
-- 도구는 `Authorization: Bearer <토큰>` 으로도 됩니다
-- `/login`·`/api/login`·`/api/logout`·`/api/authinfo`·`/auth/github/*`·`/favicon.ico` 를 뺀
-  **모든 경로**가 401 입니다
-- 토큰을 회수하려면 **토큰 파일을 새 값으로 갈아 끼우고 서버를 다시 띄우십시오** -
-  발급된 세션 쿠키가 전부 무효가 됩니다(쿠키 서명 키가 그 토큰입니다)
+1. 외부 주소로도 들어올 거라면 먼저 그 주소를 넣어 다시 만듭니다: `admin cert renew --ip <공인 IP>` 또는 `--dns <도메인>`
+   (WSL IP 는 재부팅마다 바뀔 수 있습니다 - 바뀌면 `cert renew` 후 `restart`)
+2. `\\wsl$\<배포판>\home\<사용자>\work\opencode\.aimem\tls\server.crt` 를 윈도우로 복사 → 더블클릭 →
+   **인증서 설치** → **로컬 컴퓨터** → **신뢰할 수 있는 루트 인증 기관**
+3. 크롬을 완전히 닫았다 다시 엽니다. 설치 전에는 `NET::ERR_CERT_AUTHORITY_INVALID` 경고가 뜹니다(진행은 가능)
 
-### 4. 윈도우에서 들어오게 하기 (WSL2, 태석님이 직접 실행)
+### 외부에서 들어오게 하기 (WSL2 + 공유기, 태석님이 직접)
 
-WSL2 는 NAT 뒤에 있어 윈도우 쪽 포워딩이 필요합니다. **관리자 권한 PowerShell**에서:
+**관리자 권한 PowerShell**:
 
 ```powershell
 netsh interface portproxy add v4tov4 listenport=18799 listenaddress=0.0.0.0 `
@@ -107,15 +106,15 @@ New-NetFirewallRule -DisplayName "AIMEM fleet monitor" -Direction Inbound `
     -LocalPort 18799 -Protocol TCP -Action Allow
 ```
 
-되돌리기: `netsh interface portproxy delete v4tov4 listenport=18799 listenaddress=0.0.0.0`.
-**이 두 명령은 저장소 밖(호스트 설정)이라 작업자도 관리자도 실행하지 않습니다.**
+그 뒤 공유기에서 외부 포트 → 윈도우 PC 18799 로 포워딩합니다. 되돌리기:
+`netsh interface portproxy delete v4tov4 listenport=18799 listenaddress=0.0.0.0`.
+**저장소 밖(호스트·공유기 설정)이라 작업자도 관리자도 실행하지 않습니다.**
 
-### 5. GitHub 로그인 (선택)
+### GitHub 로그인 (선택)
 
-`GITHUB_CLIENT_ID` 와 `GITHUB_CLIENT_SECRET` 이 **둘 다** 있을 때만 켜집니다.
-OAuth 앱의 콜백 URL 은 `https://<호스트>:18799/auth/github/callback`,
-허용 계정은 `.aimem/tls/allowed-github-logins` 에 한 줄 하나씩 적습니다
-(**파일이 없으면 전원 거부**입니다).
+GitHub > Settings > Developer settings > OAuth Apps > New OAuth App - 콜백 URL
+`https://<외부 주소>:18799/auth/github/callback`. 받은 두 값을 `.aimem/tls/monitor.env` 에 적고
+`admin github allow <내 계정>` → `restart`. 로그인 화면에 **GitHub 로 로그인** 버튼이 생깁니다.
 
 ## 알려진 한계
 

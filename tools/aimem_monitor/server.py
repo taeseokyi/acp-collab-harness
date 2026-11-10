@@ -42,6 +42,7 @@ import collections
 import datetime
 import hmac
 import http.cookies
+import ipaddress
 import http.server
 import json
 import os
@@ -49,6 +50,7 @@ import pathlib
 import posixpath
 import re
 import secrets
+import socket
 import ssl
 import sys
 import threading
@@ -241,9 +243,46 @@ class TLSThreadingHTTPServer(http.server.ThreadingHTTPServer):
     ssl_context = None
     handshake_timeout = 10
 
+    def _redirect_plain_http(self, request):
+        """첫 바이트가 TLS 핸드셰이크(0x16)가 아니면 평문 HTTP 로 보고 https 로 301 을 줍니다. 처리했으면 True.
+
+        HTTPS 로 바꾼 뒤 예전 `http://...:18799` 즐겨찾기로 들어오면 브라우저에 알 수 없는 오류만
+        보였습니다. 요청줄의 Host 만 읽어 같은 주소의 https 로 보냅니다 - 본문·쿠키는 읽지 않고,
+        이 평문 응답에는 아무 데이터도 싣지 않습니다.
+        """
+        try:
+            first = request.recv(1, socket.MSG_PEEK)
+        except OSError:
+            return False
+        if not first or first == b"\x16":
+            return False
+        try:
+            head = request.recv(4096).decode("latin-1", "replace")
+        except OSError:
+            return True
+        m = re.search(r"(?im)^host:\s*([A-Za-z0-9.\-\[\]:]{1,255})\s*$", head)
+        line0 = head.split("\r\n", 1)[0].split(" ")
+        path = line0[1] if len(line0) >= 3 and line0[1].startswith("/") else "/"
+        path = re.sub(r"[^A-Za-z0-9/._~%?&=#:+,-]", "", path)[:512] or "/"
+        if m:
+            body = b""
+            resp = (f"HTTP/1.1 301 Moved Permanently\r\nLocation: https://{m.group(1)}{path}\r\n"
+                    "Content-Length: 0\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n")
+        else:
+            body = "이 포트는 HTTPS 전용입니다.\n".encode("utf-8")
+            resp = (f"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\n"
+                    f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n")
+        try:
+            request.sendall(resp.encode("latin-1") + body)
+        except OSError:
+            pass
+        return True
+
     def finish_request(self, request, client_address):
         try:
             request.settimeout(self.handshake_timeout)
+            if self._redirect_plain_http(request):
+                return
             tls = self.ssl_context.wrap_socket(request, server_side=True)
         except (OSError, ssl.SSLError, ValueError) as e:
             # 인증서를 믿지 않는 클라이언트, 평문 요청, 끊긴 연결 - 전부 여기로 옵니다.
@@ -312,6 +351,86 @@ class LoginGuard:
     def reset(self, ip):
         with self._lock:
             self._fails.pop(ip, None)
+
+
+# -- 설정 파일 / 감사 로그 (접근 제어 보강, 2026-11-10) -------------------------
+
+MONITOR_ENV_FILE = ".aimem/tls/monitor.env"      # 0600. KISTI_API_KEY / GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET
+OPENCLAW_ENV_FILE = pathlib.Path.home() / ".openclaw" / ".env"
+AUDIT_LOG = ".aimem/access.log"                   # git 제외. 로그인·쓰기 동작만 (폴링은 적지 않음)
+_ENV_KEYS = (KISTI_API_KEY_ENV, GITHUB_CLIENT_ID_ENV, GITHUB_CLIENT_SECRET_ENV)
+_audit_lock = threading.Lock()
+
+
+def _parse_env(text):
+    out = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k = k.strip().removeprefix("export ").strip()
+        v = v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+            v = v[1:-1]
+        out[k] = v
+    return out
+
+
+def load_monitor_env(root=ROOT, openclaw_env=OPENCLAW_ENV_FILE):
+    """비밀값을 **셸 환경이 아니라 파일에서** 읽습니다. 이미 환경에 있으면 덮지 않습니다.
+
+    서버를 다시 띄울 때마다 `KISTI_API_KEY` 가 빠져 KISTI 카드가 오류를 내던 것(2026-11-10 실측)과,
+    GitHub 비밀을 셸 히스토리에 남기지 않으려는 것이 이유입니다. 그룹·기타가 읽을 수 있는 파일은
+    **읽지 않습니다**(비밀 파일 권한 검사). 돌려주는 값: [(키, 출처)] - 값은 돌려주지 않습니다.
+    """
+    loaded = []
+    sources = [(pathlib.Path(root) / MONITOR_ENV_FILE, _ENV_KEYS)]
+    if openclaw_env is not None:
+        sources.append((pathlib.Path(openclaw_env), (KISTI_API_KEY_ENV,)))   # 오픈클로 쪽은 KISTI 키만
+    for path, keys in sources:
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        if st.st_mode & 0o077:
+            print(f"  경고: {path} 권한이 {oct(st.st_mode & 0o777)} 라 읽지 않습니다 (chmod 600)", file=sys.stderr)
+            continue
+        try:
+            env = _parse_env(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        for k in keys:
+            if env.get(k) and not os.environ.get(k):
+                os.environ[k] = env[k]
+                loaded.append((k, str(path)))
+    return loaded
+
+
+def audit(root, event, ip="-", subject=None, detail=""):
+    """감사 로그 한 줄. 토큰·비밀은 절대 넣지 않습니다(호출자가 detail 에 넣지 않음)."""
+    fields = [datetime.datetime.now().isoformat(timespec="seconds"), event, ip, subject or "-", str(detail)[:300]]
+    line = "\t".join(str(f).translate(_LOG_SAFE) for f in fields)   # 칸 안의 제어문자만 가린다
+    try:
+        p = pathlib.Path(root) / AUDIT_LOG
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with _audit_lock:
+            fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+    except OSError:
+        pass
+
+
+def subject_label(subject):
+    """화면에 보일 이름. `token` -> '접근 토큰', `gh:login` -> 'GitHub login'."""
+    if not subject:
+        return None
+    if subject == SESSION_SUBJECT_TOKEN:
+        return "접근 토큰"
+    if subject.startswith(SESSION_SUBJECT_GITHUB_PREFIX):
+        return "GitHub " + subject[len(SESSION_SUBJECT_GITHUB_PREFIX):]
+    return subject
 
 
 def _reader():
@@ -1204,7 +1323,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         for k, v in SECURITY_HEADERS.items():
             self.send_header(k, v)
-        if self.tls:
+        if self._want_hsts():
             self.send_header(*HSTS_HEADER)
         for k, v in extra:
             self.send_header(k, v)
@@ -1213,6 +1332,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     # -- 인증 ----------------------------------------------------------------
+    def _want_hsts(self):
+        """HSTS 는 **이름(도메인)으로 들어온 요청에만** 보냅니다 (2026-11-10, HTTPS 전환 부작용 점검).
+
+        HSTS 는 포트가 아니라 **호스트 전체**에 걸립니다. 인증서를 신뢰 저장소에 넣고
+        `https://localhost:18799` 로 한 번 들어오면 브라우저가 1년 동안 `http://localhost:<아무 포트>`
+        를 https 로 바꿔, 같은 PC 의 다른 로컬 http 서비스(오픈클로 웹 등)가 깨질 수 있습니다.
+        IP 주소는 브라우저가 어차피 HSTS 를 적용하지 않으므로 같이 뺍니다.
+        """
+        if not self.tls:
+            return False
+        host = (self.headers.get("Host") or "").strip().lower() if self.headers else ""
+        if host.startswith("["):
+            return False                     # IPv6 리터럴
+        host = host.rsplit(":", 1)[0] if ":" in host else host
+        if not host or host == "localhost" or host.endswith(".localhost"):
+            return False
+        try:
+            ipaddress.ip_address(host)
+            return False
+        except ValueError:
+            return True
+
+    def _audit(self, event, detail=""):
+        audit(self.root, event, self._client_ip(), self._subject(), detail)
+
     def _client_ip(self):
         # `X-Forwarded-For` 를 **믿지 않습니다.** 믿으면 헤더 한 줄로 실패 제한을 우회합니다.
         return self.client_address[0] if self.client_address else "?"
@@ -1266,7 +1410,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         for k, v in SECURITY_HEADERS.items():
             self.send_header(k, v)
-        if self.tls:
+        if self._want_hsts():
             self.send_header(*HSTS_HEADER)
         for k, v in extra:
             self.send_header(k, v)
@@ -1365,9 +1509,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/login":
             return self._static("login.html")
         if path == "/api/authinfo":
+            subj = self._subject()
             return self._json(200, {"ok": True, "github_enabled": github_enabled(),
                                     "tls": bool(self.tls), "auth_required": bool(self.require_auth),
-                                    "authenticated": bool(self._subject())})
+                                    "authenticated": bool(subj), "who": subject_label(subj)})
         if path == "/auth/github/start":
             return self._github_start()
         if path == GITHUB_CALLBACK_PATH:
@@ -1440,6 +1585,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/login":
             return self._login()
         if path == "/api/logout":
+            self._audit("logout")
             return self._send(200, json.dumps({"ok": True}, ensure_ascii=False),
                               extra=[self._cookie_header(SESSION_COOKIE, "", 0)])
         edit = _REQ_EDIT_RE.match(path)
@@ -1469,7 +1615,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if sent:
                 return None
             who = self._subject()
-            code, result = fleet_action(fleet_act.group(1), f"웹({who})" if who else "웹", self.root)
+            code, result = fleet_action(fleet_act.group(1), f"웹({subject_label(who)})" if who else "웹", self.root)
+            self._audit("fleet-" + fleet_act.group(1), f"{code} mode={result.get('mode')}")
             return self._json(code, result)
         # 속도 제한 (S4 유출 검수 3번). **본문을 읽기 전에** 겁니다 - 막을 요청의
         # 64KB 를 굳이 받아들일 이유가 없습니다. 대신 연결은 끊습니다(본문 미소진).
@@ -1497,6 +1644,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return None
         if edit:
             code, result = update_request(edit.group(1), payload, self.root)
+            self._audit("request-edit", f"{edit.group(1)} {code}")
             ok = code == 200
             if ok and self.fail_rate is not None:
                 self.fail_rate.refund(ip)
@@ -1504,6 +1652,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.rate.refund(ip)
             return self._json(code, result)
         ok, result = create_request(payload, self.root)
+        self._audit("request-create", f"{result.get('id', '-')} {'ok' if ok else 'rejected'}")
         if ok:
             if self.fail_rate is not None:
                 self.fail_rate.refund(ip)    # 성공했으니 실패 버킷의 자리는 돌려준다
@@ -1529,11 +1678,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if self.guard:
                 self.guard.reset(ip)
             self.log_message("로그인 성공 %s", ip)
+            audit(self.root, "login-ok", ip, SESSION_SUBJECT_TOKEN, "토큰")
             return self._send(200, json.dumps({"ok": True, "redirect": "/"}, ensure_ascii=False),
                               extra=[self._issue_session(SESSION_SUBJECT_TOKEN)])
         if self.guard:
             self.guard.fail(ip)
         self.log_message("로그인 실패 %s", ip)   # 토큰 값은 절대 적지 않습니다
+        audit(self.root, "login-fail", ip, None, "토큰 불일치")
         return self._json(401, {"ok": False, "error": "토큰이 맞지 않습니다"})
 
     # -- GitHub OAuth (선택. 환경변수가 둘 다 있을 때만) ----------------------
@@ -1577,10 +1728,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         allowed = github_allowed_logins(self.root)
         if not login or login.lower() not in allowed:
             self.log_message("GitHub 로그인 거절 %s (%s)", login or "?", self._client_ip())
+            audit(self.root, "github-denied", self._client_ip(), None, login or "?")
             return self._send(403, json.dumps(
                 {"ok": False, "error": f"허용 목록에 없는 계정입니다: {login or '?'}"}, ensure_ascii=False), extra=[clear])
         subject = SESSION_SUBJECT_GITHUB_PREFIX + re.sub(r"[^A-Za-z0-9_-]", "", login)[:60]
         self.log_message("GitHub 로그인 성공 %s", subject)
+        audit(self.root, "login-ok", self._client_ip(), subject, "GitHub")
         # 세션 쿠키는 SameSite=Strict 라 **GitHub 에서 바로 넘어오는 이동에는 실리지 않습니다.**
         # 그래서 우리 출처의 작은 페이지를 거쳐 들어갑니다(같은 사이트 이동이라 쿠키가 실립니다).
         html = ("<!doctype html><meta charset=utf-8><title>로그인 완료</title>"
@@ -1620,6 +1773,8 @@ def serve(host=HOST, port=PORT, root=ROOT, once=False, tls=False, auth=None):
     반대로 `--tls` 없이 띄우면 옛 동작 그대로(로컬 http, 인증 없음)입니다.
     """
     require_auth = bool(tls) if auth is None else bool(auth)
+    for k, src in load_monitor_env(root):
+        print(f"  {k} 를 {src} 에서 읽었습니다", file=sys.stderr)
     token, created = (None, False)
     if require_auth:
         token, created = ensure_access_token(root)
@@ -1658,7 +1813,12 @@ def serve(host=HOST, port=PORT, root=ROOT, once=False, tls=False, auth=None):
 
 def main(argv=None):
     import argparse
-    p = argparse.ArgumentParser(description="AIMEM 함대 모니터 웹 서버 (읽기 전용 + 요청 생성·NEW 요청 수정)")
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["admin"]:
+        # 접근 제어 관리 명령 (`admin.py`). --root 는 저장소 기본값을 씁니다.
+        from . import admin   # noqa: PLC0415
+        return admin.main(argv[1:], ROOT)
+    p = argparse.ArgumentParser(description="AIMEM 함대 모니터 웹 서버 (읽기 + 요청 생성·수정 + 함대 제어). 관리: admin --help")
     p.add_argument("--host", default=HOST, help="기본 127.0.0.1. 외부 공개는 0.0.0.0 + --tls")
     p.add_argument("--port", type=int, default=PORT, help=f"기본 {PORT}")
     p.add_argument("--root", default=str(ROOT), help="저장소 루트")

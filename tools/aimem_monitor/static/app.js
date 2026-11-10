@@ -1726,6 +1726,11 @@ function demoCreateRequest(payload) {
 async function fetchState() {
   if (DEMO) return demoState();
   const res = await fetch('/api/state', { headers: { Accept: 'application/json' } });
+  if (res.status === 401) {
+    // 세션 만료·토큰 교체 - 로그인 화면으로 (인증이 켜진 서버에서만 생긴다)
+    location.href = '/login';
+    throw new Error('로그인이 필요합니다');
+  }
   if (!res.ok) {
     throw new Error(`GET /api/state ${res.status} ${res.statusText || ''}`.trim());
   }
@@ -1869,7 +1874,28 @@ function initTheme() {
   });
 }
 
+async function initAuth() {
+  if (DEMO) return;
+  try {
+    const res = await fetch('/api/authinfo', { headers: { Accept: 'application/json' } });
+    const info = await res.json();
+    if (!info || !info.auth_required) return;      // 인증이 꺼진 로컬 서버 - 표시하지 않는다
+    $('auth-who').textContent = info.who ? info.who : '';
+    $('auth-box').hidden = false;
+    $('logout').addEventListener('click', async () => {
+      try {
+        await fetch('/api/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      } finally {
+        location.href = '/login';
+      }
+    });
+  } catch (err) {
+    /* authinfo 를 못 읽어도 화면은 그대로 */
+  }
+}
+
 function init() {
+  initAuth();
   const demoBanner = $('demo-banner');
   demoBanner.hidden = !DEMO;
   initTheme();

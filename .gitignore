@@ -33,3 +33,9 @@ USER.md
 .aimem/relay/
 .aimem/graph/*.runner.log
 .aimem/fleet-mode.log
+
+# 모니터 서버 운영 파일 (monitorctl.sh, 2026-11-10) - pid·로그·감사 로그
+.aimem/monitor.pid
+.aimem/monitor.mode
+.aimem/monitor.log
+.aimem/access.log

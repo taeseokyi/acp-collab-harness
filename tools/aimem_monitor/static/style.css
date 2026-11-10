@@ -1148,6 +1148,11 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .req-edit-btn { font-size: var(--st-fs-sm); padding: 3px 12px; }
 .req-edit { margin-top: var(--st-s-2); padding: var(--st-s-3); border: 1px solid var(--st-line); border-radius: var(--st-r-sm); background: var(--st-surface); }
 
+/* 로그인 표시 */
+.auth-box { display: inline-flex; align-items: center; gap: var(--st-s-2); }
+.auth-box[hidden] { display: none; }
+.auth-who { font-size: var(--st-fs-sm); color: var(--st-ink-soft); white-space: nowrap; }
+
 /* 함대 제어 */
 .mode-pill { font-size: var(--st-fs-xs); font-weight: var(--st-fw-bold); padding: 2px 10px; border-radius: var(--st-r-pill); }
 .mode-pill:empty { display: none; }
