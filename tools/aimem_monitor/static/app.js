@@ -1144,6 +1144,16 @@ function fleetMsgText(m) {
   return name + ' 완료';
 }
 
+function focusRequestForm() {
+  const sec = document.getElementById('request-form-section');
+  const title = document.getElementById('req-title');
+  if (!sec || !title) return;
+  sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  sec.classList.add('flash');
+  setTimeout(() => sec.classList.remove('flash'), 1600);
+  title.focus({ preventScroll: true });
+}
+
 function renderFleetControl(data) {
   const box = $('fleet-control');
   const pill = $('fleet-mode-pill');
@@ -1204,17 +1214,46 @@ function renderFleetControl(data) {
   rb.title = brief.file
     ? `새 관리자 라운드를 띄웁니다 (유료 Opus). 브리프: ${briefName}` + (md !== 'ready' ? ' - 먼저 준비를 누르십시오' : '')
     : '확정된 다음 라운드 브리프가 없습니다' + (brief.drafts && brief.drafts.length ? ` (초안: ${brief.drafts.join(', ')})` : '');
-  rb.addEventListener('click', () => fleetAction('round',
-    `새 관리자 라운드 R${brief.round} 를 띄웁니다 (유료 Opus 세션).\n브리프: ${briefName}\n계속할까요?`));
+  rb.addEventListener('click', () => {
+    const reqs = (data && Array.isArray(data.requests)) ? data.requests : [];
+    const nNew = reqs.filter((q) => String(q.status || '').toUpperCase() === 'NEW').length;
+    const todo = brief.standard
+      ? (nNew ? `할 일: 새 작업 요청 ${nNew}건` : "할 일: 새 작업 요청이 없습니다 - 관리자는 점검만 하고 끝냅니다. 시킬 일이 있으면 취소하고 '할 일 쓰기' 로 먼저 넣으십시오")
+      : `브리프: ${briefName}`;
+    fleetAction('round', `새 관리자 라운드 R${brief.round} 를 띄웁니다 (유료 Opus 세션).\n${todo}\n계속할까요?`);
+  });
   row.appendChild(rb);
   box.appendChild(row);
 
   const hint = document.createElement('div');
   hint.className = 'fc-hint';
-  hint.textContent = brief.file
-    ? (brief.standard ? `다음 라운드 R${brief.round}: 표준 브리프 - 할 일은 요청 탭의 NEW 요청` : `다음 라운드 브리프: ${brief.file}`)
-      + (brief.workspace ? ` · 결과물 ${brief.workspace}/` : '')
-    : '다음 라운드 브리프: 확정본 없음' + (brief.drafts && brief.drafts.length ? ` (초안 ${brief.drafts.join(', ')})` : '');
+  if (brief.file && brief.standard) {
+    // 라운드가 할 일 = '작업 요청' 폼으로 넣은 NEW 요청. 폼은 넓은 화면에선 오른쪽, 좁은 화면에선 맨 아래라
+    // 잘 안 보인다(2026-11-10 태석님) - 여기서 바로 가는 버튼과 지금 쌓인 건수를 보인다.
+    const reqs = (data && Array.isArray(data.requests)) ? data.requests : [];
+    const fresh = reqs.filter((q) => String(q.status || '').toUpperCase() === 'NEW');
+    const txt = document.createElement('span');
+    txt.textContent = `R${brief.round} 가 할 일 = 새 작업 요청 ${fresh.length}건`
+      + (fresh.length ? ` (${fresh.slice(0, 3).map((q) => show(q.title)).join(' / ')}${fresh.length > 3 ? ' …' : ''})` : ' - 요청이 없으면 관리자는 점검만 하고 끝냅니다')
+      + ' ';
+    hint.appendChild(txt);
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'fc-btn fc-write';
+    go.textContent = '할 일 쓰기';
+    go.title = "'작업 요청' 폼으로 갑니다. 제목과 본문을 적고 '요청 보내기' 를 누른 뒤 라운드를 실행하십시오";
+    go.addEventListener('click', focusRequestForm);
+    hint.appendChild(go);
+    if (brief.workspace) {
+      const ws = document.createElement('span');
+      ws.textContent = ` · 결과물 ${brief.workspace}/`;
+      hint.appendChild(ws);
+    }
+  } else {
+    hint.textContent = brief.file
+      ? `다음 라운드 브리프: ${brief.file}` + (brief.workspace ? ` · 결과물 ${brief.workspace}/` : '')
+      : '다음 라운드 브리프: 확정본 없음' + (brief.drafts && brief.drafts.length ? ` (초안 ${brief.drafts.join(', ')})` : '');
+  }
   box.appendChild(hint);
 
   const relay = f.relay;
