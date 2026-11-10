@@ -393,16 +393,237 @@ function openPanel(title, build) {
   if (close) close.focus();
 }
 
+// ---- 마크다운 렌더러 (2026-11-10, 태석님 지시 "상세는 마크다운으로")
+// 외부 라이브러리 없이(1절: CDN 금지) 작업자·관리자 보고와 요청 본문에 실제로 나오는 문법만 다룬다:
+// 제목 / 문단 / 목록(중첩) / 코드 펜스 / 인용 / 표 / 구분선 / 인라인 코드·굵게·기울임·링크(http[s]만).
+// **HTML 은 해석하지 않는다** - 모든 텍스트는 textContent 로만 들어간다(XSS 없음). 문단 안 줄바꿈은
+// 입력 그대로 <br> 로 살린다(태석님 549a "줄바꿈 유지").
+// 인라인은 정규식 하나로 풀지 않는다 - 백틱이 많은 긴 보고(관리자 단계 3,900자)에서 백트래킹으로 화면이
+// 멈췄다(2026-11-10 실측). 왼쪽에서 오른쪽으로 한 번 훑는 선형 스캐너다.
+const MD_LINK = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/y;
+const MD_AUTOLINK = /https?:\/\/[^\s<>()\[\]`'"]*[^\s<>()\[\]`'".,;:!?]/y;
+
+function mdInline(text, parent) {
+  let buf = '';
+  const flush = () => { if (buf) { parent.appendChild(document.createTextNode(buf)); buf = ''; } };
+  const n = text.length;
+  let i = 0;
+  const closes = (mark, from) => {   // mark 가 from 이후 같은 줄 안에 다시 나오는 위치 (앞뒤 공백 규칙 포함)
+    let k = text.indexOf(mark, from);
+    while (k !== -1 && (k === from || /\s/.test(text[k - 1]))) k = text.indexOf(mark, k + 1);
+    return k;
+  };
+  while (i < n) {
+    const ch = text[i];
+    if (ch === '`') {
+      let run = 1;
+      while (text[i + run] === '`') run += 1;
+      const fence = '`'.repeat(run);
+      const k = text.indexOf(fence, i + run);
+      if (k !== -1) {
+        flush();
+        const code = document.createElement('code');
+        code.textContent = text.slice(i + run, k).trim();
+        parent.appendChild(code);
+        i = k + run;
+        continue;
+      }
+      buf += fence; i += run; continue;
+    }
+    if (ch === '*' && text[i + 1] === '*') {
+      const k = closes('**', i + 2);
+      if (k !== -1 && !/\s/.test(text[i + 2] || ' ')) {
+        flush();
+        const el = document.createElement('strong');
+        mdInline(text.slice(i + 2, k), el);
+        parent.appendChild(el);
+        i = k + 2;
+        continue;
+      }
+      buf += '**'; i += 2; continue;
+    }
+    if ((ch === '*' || ch === '_') && !/\w/.test(text[i - 1] || ' ') && !/\s/.test(text[i + 1] || ' ')) {
+      let k = text.indexOf(ch, i + 1);
+      while (k !== -1 && (/\s/.test(text[k - 1]) || /\w/.test(text[k + 1] || ' '))) k = text.indexOf(ch, k + 1);
+      if (k !== -1 && k > i + 1) {
+        flush();
+        const el = document.createElement('em');
+        mdInline(text.slice(i + 1, k), el);
+        parent.appendChild(el);
+        i = k + 1;
+        continue;
+      }
+    }
+    if (ch === '[') {
+      MD_LINK.lastIndex = i;
+      const m = MD_LINK.exec(text);
+      if (m) {
+        flush();
+        const a = document.createElement('a');
+        a.href = m[2]; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        mdInline(m[1], a);
+        parent.appendChild(a);
+        i += m[0].length;
+        continue;
+      }
+    }
+    if (ch === 'h' && text.startsWith('http', i) && !/\w/.test(text[i - 1] || ' ')) {
+      MD_AUTOLINK.lastIndex = i;
+      const m = MD_AUTOLINK.exec(text);
+      if (m) {
+        flush();
+        const a = document.createElement('a');
+        a.href = m[0]; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = m[0];
+        parent.appendChild(a);
+        i += m[0].length;
+        continue;
+      }
+    }
+    buf += ch; i += 1;
+  }
+  flush();
+}
+
+const MD_LIST = /^(\s*)(?:([-*+])|(\d{1,3})[.)])\s+(.*)$/;
+const MD_TABLE_SEP = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+const isTableRow = (l) => /^\s*\|.*\|\s*$/.test(l);
+const splitCells = (l) => {
+  let t = l.trim();
+  if (t.startsWith('|')) t = t.slice(1);
+  if (t.endsWith('|')) t = t.slice(0, -1);
+  return t.split('|').map((c) => c.trim());
+};
+
+function renderMarkdown(src) {
+  const root = document.createElement('div');
+  root.className = 'md';
+  const lines = String(src === null || src === undefined ? '' : src).replace(/\r\n?/g, '\n').split('\n');
+  let i = 0;
+  const para = [];
+  const flushPara = () => {
+    if (!para.length) return;
+    const p = document.createElement('p');
+    para.forEach((ln, k) => { if (k) p.appendChild(document.createElement('br')); mdInline(ln, p); });
+    root.appendChild(p);
+    para.length = 0;
+  };
+  while (i < lines.length) {
+    const ln = lines[i];
+    if (!ln.trim()) { flushPara(); i += 1; continue; }
+    let m;
+    if ((m = /^\s*(`{3,}|~{3,})\s*(\S*)\s*$/.exec(ln))) {              // 코드 펜스
+      flushPara();
+      const fence = m[1]; const buf = []; i += 1;
+      while (i < lines.length && !new RegExp('^\\s*' + fence[0] + '{' + fence.length + ',}\\s*$').test(lines[i])) { buf.push(lines[i]); i += 1; }
+      i += 1;
+      const pre = document.createElement('pre'); const code = document.createElement('code');
+      if (m[2]) code.dataset.lang = m[2];
+      code.textContent = buf.join('\n'); pre.appendChild(code); root.appendChild(pre); continue;
+    }
+    if ((m = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(ln))) {              // 제목
+      flushPara();
+      const h = document.createElement('h' + m[1].length); mdInline(m[2], h); root.appendChild(h); i += 1; continue;
+    }
+    if (isTableRow(ln) && i + 1 < lines.length && MD_TABLE_SEP.test(lines[i + 1])) {   // 표
+      flushPara();
+      const head = splitCells(ln);
+      const align = splitCells(lines[i + 1]).map((c) => (/^:-+:$/.test(c) ? 'center' : /-+:$/.test(c) ? 'right' : ''));
+      const wrap = document.createElement('div'); wrap.className = 'md-table';
+      const table = document.createElement('table');
+      const thead = document.createElement('thead'); const tr = document.createElement('tr');
+      head.forEach((c, k) => { const th = document.createElement('th'); if (align[k]) th.style.textAlign = align[k]; mdInline(c, th); tr.appendChild(th); });
+      thead.appendChild(tr); table.appendChild(thead);
+      const tbody = document.createElement('tbody'); i += 2;
+      while (i < lines.length && isTableRow(lines[i])) {
+        const r = document.createElement('tr');
+        const cells = splitCells(lines[i]);
+        head.forEach((_, k) => { const td = document.createElement('td'); if (align[k]) td.style.textAlign = align[k]; mdInline(cells[k] === undefined ? '' : cells[k], td); r.appendChild(td); });
+        tbody.appendChild(r); i += 1;
+      }
+      table.appendChild(tbody); wrap.appendChild(table); root.appendChild(wrap); continue;
+    }
+    if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(ln)) {                       // 구분선
+      flushPara(); root.appendChild(document.createElement('hr')); i += 1; continue;
+    }
+    if (/^\s{0,3}>/.test(ln)) {                                              // 인용
+      flushPara();
+      const buf = [];
+      while (i < lines.length && /^\s{0,3}>/.test(lines[i])) { buf.push(lines[i].replace(/^\s{0,3}>\s?/, '')); i += 1; }
+      const bq = document.createElement('blockquote'); bq.appendChild(renderMarkdown(buf.join('\n'))); root.appendChild(bq); continue;
+    }
+    if ((m = MD_LIST.exec(ln))) {                                            // 목록 (들여쓰기로 중첩)
+      flushPara();
+      const items = [];
+      while (i < lines.length) {
+        const mm = MD_LIST.exec(lines[i]);
+        if (mm) { items.push({ indent: mm[1].replace(/\t/g, '  ').length, ordered: mm[3] !== undefined, text: mm[4] }); i += 1; }
+        else if (items.length && lines[i].trim() && /^\s{2,}/.test(lines[i])) { items[items.length - 1].text += '\n' + lines[i].trim(); i += 1; }   // 이어지는 줄
+        else break;
+      }
+      const stack = [];
+      const newList = (ordered) => document.createElement(ordered ? 'ol' : 'ul');
+      for (const it of items) {
+        while (stack.length && it.indent < stack[stack.length - 1].indent) stack.pop();
+        if (stack.length && it.indent === stack[stack.length - 1].indent && it.ordered !== stack[stack.length - 1].ordered) {
+          stack.pop();   // 같은 깊이에서 `-` ↔ `1.` 이 바뀌면 새 목록
+          if (!stack.length) { const list = newList(it.ordered); root.appendChild(list); stack.push({ indent: it.indent, list, ordered: it.ordered }); }
+          else { const list = newList(it.ordered); (stack[stack.length - 1].list.lastElementChild || stack[stack.length - 1].list).appendChild(list); stack.push({ indent: it.indent, list, ordered: it.ordered }); }
+        } else if (!stack.length || it.indent > stack[stack.length - 1].indent) {
+          const list = newList(it.ordered);
+          if (stack.length) { const parentLi = stack[stack.length - 1].list.lastElementChild; (parentLi || stack[stack.length - 1].list).appendChild(list); }
+          else root.appendChild(list);
+          stack.push({ indent: it.indent, list, ordered: it.ordered });
+        }
+        const li = document.createElement('li');
+        it.text.split('\n').forEach((t, k) => { if (k) li.appendChild(document.createElement('br')); mdInline(t, li); });
+        stack[stack.length - 1].list.appendChild(li);
+      }
+      continue;
+    }
+    para.push(ln);
+    i += 1;
+  }
+  flushPara();
+  return root;
+}
+
+// 마크다운 블록 + '원문' 토글. update(text) 로 내용을 갈아끼울 수 있다(요청 전문이 늦게 올 때).
+function mdBlock(text, emptyText) {
+  const box = document.createElement('div');
+  box.className = 'md-block';
+  const bar = document.createElement('div');
+  bar.className = 'md-bar';
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'btn-link md-toggle';
+  bar.appendChild(toggle);
+  const view = document.createElement('div');
+  box.appendChild(bar);
+  box.appendChild(view);
+  let raw = false;
+  let current = text;
+  const paint = () => {
+    view.textContent = '';
+    const t = show(current, '');
+    if (!t) { view.appendChild(emptyP(emptyText || '없음')); bar.hidden = true; return; }
+    bar.hidden = false;
+    toggle.textContent = raw ? '마크다운으로 보기' : '원문 보기';
+    if (raw) { const pre = document.createElement('pre'); pre.className = 'detail-pre'; pre.textContent = t; view.appendChild(pre); }
+    else view.appendChild(renderMarkdown(t));
+  };
+  toggle.addEventListener('click', () => { raw = !raw; paint(); });
+  paint();
+  box.update = (t) => { current = t; paint(); };
+  return box;
+}
+
 function addTextSection(parent, title, text) {
   const section = document.createElement('section');
   section.className = 'detail-section';
   const h3 = document.createElement('h3');
   h3.textContent = title;
   section.appendChild(h3);
-  const div = document.createElement('div');
-  div.className = 'req-detail';            // 입력한 줄바꿈 그대로(pre-wrap), 마크업 해석 없음
-  div.textContent = show(text, '없음');
-  section.appendChild(div);
+  section.appendChild(mdBlock(text, '없음'));   // 마크다운으로, '원문 보기' 토글 포함
   parent.appendChild(section);
 }
 
@@ -583,9 +804,7 @@ function openRequestDetail(req) {
   if (label) label.textContent = show(req.title, '요청 상세');
   const body = $('detail-body');
   body.textContent = '';
-  const wrap = document.createElement('div');
-  wrap.className = 'req-detail';
-  wrap.textContent = show(req.detail, '본문 없음');   // 텍스트 그대로 둔다 (마크업 해석 없음)
+  const wrap = mdBlock(req.detail, '본문 없음');   // 마크다운(HTML 은 해석하지 않음) + '원문 보기'
   body.appendChild(wrap);
   if (req.detail_truncated === true) {
     const len = Number(req.detail_len);
@@ -604,7 +823,7 @@ function openRequestDetail(req) {
     const seq = state.detailSeq;
     fetchRequestFull(req).then((full) => {
       if (seq !== state.detailSeq || !state.detailOpen) return;   // 그사이 다른 상세를 열었다
-      wrap.textContent = show(full.detail, '본문 없음');
+      wrap.update(full.detail);
       const note = body.querySelector('.detail-note');
       if (note) note.remove();
     }).catch(() => { /* 600자 미리보기와 안내문을 그대로 둔다 */ });
@@ -662,16 +881,20 @@ function detailMetaItem(label, value) {
   return item;
 }
 
-function addDetailSection(parent, title, text) {
+function addDetailSection(parent, title, text, plain = false) {
   const section = document.createElement('section');
   section.className = 'detail-section';
   const h3 = document.createElement('h3');
   h3.textContent = title;
   section.appendChild(h3);
-  const pre = document.createElement('pre');
-  pre.className = 'detail-pre';
-  pre.textContent = show(text, '없음');
-  section.appendChild(pre);
+  if (plain) {                       // stderr 같은 기계 출력은 그대로
+    const pre = document.createElement('pre');
+    pre.className = 'detail-pre';
+    pre.textContent = show(text, '없음');
+    section.appendChild(pre);
+  } else {
+    section.appendChild(mdBlock(text, '없음'));
+  }
   parent.appendChild(section);
 }
 
@@ -715,7 +938,7 @@ function renderDetail(detail) {
 
   addDetailSection(body, '보고 본문', detail.report);
   addDetailSection(body, '지시 본문', detail.brief);
-  addDetailSection(body, 'stderr 꼬리', detail.stderr_tail);
+  addDetailSection(body, 'stderr', detail.stderr_tail, true);
 }
 
 async function serverErrorReason(res) {
@@ -1062,9 +1285,10 @@ function detailRows(parent, title, rows) {
         b.textContent = r.head;
         li.appendChild(b);
       }
-      const s = document.createElement('span');
+      const s = document.createElement(r.md ? 'div' : 'span');
       s.className = 'mgr-body';
-      s.textContent = r.body;
+      if (r.md) s.appendChild(renderMarkdown(r.body));   // 관리자 글은 마크다운(표·목록·코드)
+      else s.textContent = r.body;
       li.appendChild(s);
       ol.appendChild(li);
     }
@@ -1125,7 +1349,7 @@ async function openManagerDetail(cur, all = false) {
   const stepSec = detailRows(body, (all ? `전체 단계 ${steps.length}개` : `최근 단계 ${steps.length}개`) + ` (최신이 위, 전체 ${show(d.steps_total)}) - 명령 출력은 싣지 않습니다`,
     steps.map((x) => (x.kind === 'tool'
       ? { cls: 'is-tool', head: x.desc || '명령', body: x.text }
-      : { cls: 'is-text', head: '관리자', body: x.text })));
+      : { cls: 'is-text', head: '관리자', body: x.text, md: true })));
   if (!all && Number(d.steps_total) > steps.length) {
     stepSec.appendChild(linkButton(`전체 ${show(d.steps_total)}단계·기록 전부 보기`, () => openManagerDetail(cur, true)));
   }
@@ -1135,7 +1359,7 @@ async function openManagerDetail(cur, all = false) {
   })));
   detailRows(body, all ? '이 라운드의 기록 전부 (aimem.db events, 최신이 위)' : '이 라운드의 기록 (aimem.db events, 최신이 위, 최근 30건)', (d.events || []).map((e) => ({
     head: `${fmtDateTime(e.at)} · ${show(e.kind)} · REV ${show(e.rev)}`,
-    body: show(e.actor) + ': ' + show(e.body),
+    body: show(e.actor) + ': ' + show(e.body), md: true,
   })));
 }
 
@@ -2345,3 +2569,6 @@ function initTabs() {
 }
 
 initTabs();
+
+// 테스트(Playwright)에서 렌더러만 부를 수 있게 - 상태·데이터는 노출하지 않는다
+window.__aimemMd = { renderMarkdown };
