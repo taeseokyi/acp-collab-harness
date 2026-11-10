@@ -11,17 +11,21 @@
 라우트:
     GET  /                 -> static/index.html
     GET  /static/<파일>    -> static/ 아래 파일 (경로 탈출 차단)
-    GET  /api/state        -> reader.collect() + 서버가 붙이는 kisti / graphs
+    GET  /api/state        -> reader.collect() + 서버가 붙이는 kisti / graphs / managers
     GET  /api/health       -> {"ok": true, "rev": N}  (reader 가 없어도 응답한다)
     GET  /api/runs/<id>    -> reader.run_detail(). 상세 패널용 (브리프·보고·rc·경과)
     POST /api/requests     -> .aimem/requests/<id>.json 생성
+    GET  /api/requests/<id> -> 요청 하나의 전문 (목록은 600자로 잘림)
+    POST /api/requests/<id>/edit -> NEW·미분담 요청의 제목·본문 수정 (Q-261110-549a)
+    POST /api/fleet/<동작> -> 함대 제어 prepare|run|pause|stop|round (tools/fleet_ctl.py)
     GET  /login            -> static/login.html (인증 면제)
     GET  /api/authinfo     -> {github_enabled, tls, auth_required, authenticated} (면제)
     POST /api/login        -> 토큰 -> 세션 쿠키 / POST /api/logout -> 쿠키 삭제
     GET  /auth/github/*    -> 선택적 GitHub 로그인 (환경변수가 있을 때만)
 
-**쓰기는 요청 파일 생성 하나뿐입니다.** 그 외 모든 경로는 읽기 전용입니다
-(태석님 기술 제약 2026-11-09). 요청 파일은 관리자가 분담하며 손으로 채웁니다 -
+**쓰기는 셋뿐입니다:** 요청 파일 생성, NEW·미분담 요청의 제목·본문 수정(태석님 승인
+2026-11-10), 함대 제어(`/api/fleet/<동작>` → `tools/fleet_ctl.py`, `.aimem/fleet-mode.json`).
+그 외 모든 경로는 읽기 전용입니다 (원래 제약: 태석님 2026-11-09 "요청 파일 생성 하나뿐"). 요청 파일은 관리자가 분담하며 손으로 채웁니다 -
 서버는 `status: "NEW"` / `subtasks: []` 로만 만듭니다.
 
 **기본은 로컬 전용입니다** - `127.0.0.1` 바인드, 인증 없음. 옛 동작 그대로입니다.
@@ -395,7 +399,8 @@ def _empty_state(root, errors):
     """
     state = _blank_keys(root)
     state.update({"kisti": kisti_status(), "graphs": collect_graphs(root, errors),
-                  "errors": errors})
+                  "managers": manager_status(root), "errors": errors})
+    state["fleet"] = fleet_state(root, state["managers"])
     return scrub_public(state, root)
 
 
@@ -547,6 +552,8 @@ def collect_state(root=ROOT):
         state.setdefault(k, v)
     state["kisti"] = kisti_status()
     state["graphs"] = collect_graphs(root, state["errors"])
+    state["managers"] = manager_status(root)
+    state["fleet"] = fleet_state(root, state["managers"])
     return scrub_public(state, root)
 
 
@@ -758,6 +765,144 @@ def kisti_status(now=None, cache_sec=KISTI_CACHE_SEC, sync=False):
     return out
 
 
+# -- 관리자 세션 (`fleet.py children` 의 관리자 행) -----------------------------
+#
+# 관리자는 S1~S4 와 별개인 Opus ACP 세션이라 `runs` 에 나오지 않습니다. 관리자가
+# 계획·검증 중이면 작업자가 0개라 화면이 멈춘 것처럼 보였습니다 (요청 Q-261110-549a).
+# `openclaw sessions` 는 한 번에 4초 걸리므로 kisti 와 같은 **배경 갱신 + 캐시** 입니다.
+
+MANAGER_CACHE_SEC = 30
+MANAGER_TIMEOUT_SEC = 25
+MANAGER_MAX = 6
+ACPX_SESSIONS = pathlib.Path.home() / ".openclaw" / "acpx" / "sessions"
+_mgr_lock = threading.Lock()
+_mgr_cache = {"at": None, "value": None, "refreshing": False}
+
+
+def _ms_iso(ms):
+    try:
+        return datetime.datetime.fromtimestamp(int(ms) / 1000).isoformat(timespec="seconds")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _fetch_managers():
+    """`openclaw sessions --agent claude` 에서 ACP 관리자 세션만 골라 요약합니다. 키 원문은 내보내지 않습니다."""
+    import subprocess
+    res = subprocess.run(["openclaw", "sessions", "--agent", "claude", "--json"],
+                         capture_output=True, text=True, timeout=MANAGER_TIMEOUT_SEC)
+    if res.returncode != 0:
+        raise RuntimeError((res.stderr or res.stdout or "").strip()[:160] or f"rc {res.returncode}")
+    payload = json.loads(res.stdout)
+    sessions = payload.get("sessions", []) if isinstance(payload, dict) else payload
+    out = []
+    for s in sessions:
+        if not isinstance(s, dict) or ":acp:" not in str(s.get("key", "")):
+            continue
+        sid = str(s.get("key", "")).rsplit(":", 1)[-1]
+        record_kb = None
+        try:
+            hits = [f for f in ACPX_SESSIONS.glob(f"*{sid}*") if f.is_file()]
+            if hits:
+                record_kb = max(f.stat().st_size for f in hits) // 1024
+        except OSError:
+            pass
+        out.append({
+            "label": str(s.get("label") or "(라벨 없음)")[:80],
+            "status": str(s.get("status") or "unknown")[:20],
+            "started": _ms_iso(s.get("sessionStartedAt")),
+            "updated": _ms_iso(s.get("updatedAt")),
+            "id": sid[:8],
+            "record_kb": record_kb,
+        })
+    out.sort(key=lambda m: m.get("started") or "", reverse=True)
+    return out[:MANAGER_MAX]
+
+
+def _refresh_managers():
+    try:
+        value = {"ok": True, "sessions": _fetch_managers(), "error": None}
+    except Exception as e:  # noqa: BLE001 - 배경 스레드
+        value = {"ok": False, "sessions": [], "error": f"{type(e).__name__}: {str(e)[:120]}"}
+    with _mgr_lock:
+        old = _mgr_cache["value"]
+        if not value["ok"] and old and old.get("sessions"):
+            value["sessions"] = old["sessions"]   # 실패해도 지난 목록은 남긴다 (stale 로 표시)
+        _mgr_cache.update({"at": datetime.datetime.now(), "value": value, "refreshing": False})
+
+
+def manager_status(root=ROOT):
+    """캐시를 즉시 돌려주고, 낡았으면 배경 갱신 하나를 띄웁니다. 실제 저장소가 아니면(테스트) 부르지 않습니다."""
+    if pathlib.Path(root).resolve() != ROOT:
+        return {"ok": True, "sessions": [], "pending": False, "age_sec": None, "error": None}
+    now = datetime.datetime.now()
+    with _mgr_lock:
+        at, val = _mgr_cache["at"], _mgr_cache["value"]
+        fresh = val is not None and at is not None and (now - at).total_seconds() < MANAGER_CACHE_SEC
+        start = not fresh and not _mgr_cache["refreshing"]
+        if start:
+            _mgr_cache["refreshing"] = True
+    if start:
+        threading.Thread(target=_refresh_managers, daemon=True, name="manager-refresh").start()
+    if val is None:
+        return {"ok": True, "sessions": [], "pending": True, "age_sec": None, "error": None}
+    out = dict(val)
+    # `at` 은 함대 제어 직후 강제 갱신을 위해 None 으로 비워질 수 있습니다 (값은 남김) - 그때는 갱신 중
+    out.update({"pending": at is None, "age_sec": int((now - at).total_seconds()) if at else None})
+    return out
+
+
+# -- 함대 제어 (`tools/fleet_ctl.py`) -----------------------------------------
+#
+# 준비 / 실행 / 일시 중지 / 완전 중지 / 라운드 실행 (태석님 지시 2026-11-10). 상태 판정과 동작은
+# 전부 `fleet_ctl` 이 합니다 - 서버는 부르기만 합니다 (CLI 와 화면이 같은 규칙을 쓰게).
+
+FLEET_ACTIONS = ("prepare", "run", "pause", "stop", "round")
+_REQ_FLEET_RE = re.compile(r"\A/api/fleet/(prepare|run|pause|stop|round)\Z")
+
+
+def _fleet_ctl(root):
+    tools_dir = str(pathlib.Path(root) / "tools")
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    import fleet_ctl  # noqa: PLC0415
+    return fleet_ctl
+
+
+def fleet_state(root=ROOT, managers=None):
+    if pathlib.Path(root).resolve() != ROOT:
+        return {"mode": "running", "label": "실행", "default": True, "can": {a: False for a in FLEET_ACTIONS}}
+    try:
+        sessions = (managers or {}).get("sessions") or []
+        return _fleet_ctl(root).public_state([s.get("label") for s in sessions],
+                                             any(s.get("status") == "running" for s in sessions))
+    except Exception as e:  # noqa: BLE001 - 제어 상태를 못 읽어도 화면은 떠야 한다
+        return {"mode": None, "error": f"{type(e).__name__}: {str(e)[:120]}", "can": {a: False for a in FLEET_ACTIONS}}
+
+
+def fleet_action(action, by, root=ROOT):
+    """(HTTP 코드, 응답). 판정은 fleet_ctl 이 하고, 막힌 동작은 409 로 돌려줍니다."""
+    if action not in FLEET_ACTIONS:
+        return 404, {"ok": False, "error": f"없는 동작입니다: {action}"}
+    ctl = _fleet_ctl(root)
+    extra = []
+    if action == "prepare":
+        k = kisti_status()
+        extra.append(ctl._check("KISTI LLM 서버 (S2 kistillm)", k.get("ok") is not False and not k.get("pending"),
+                                k.get("error") or k.get("phase") or "", required=False))
+    try:
+        out = {"prepare": lambda: ctl.prepare(by, extra), "run": lambda: ctl.resume(by),
+               "pause": lambda: ctl.pause(by), "stop": lambda: ctl.stop(by),
+               "round": lambda: ctl.launch_round(by)}[action]()
+    except Exception as e:  # noqa: BLE001
+        return 500, {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+    with _mgr_lock:
+        _mgr_cache["at"] = None   # 관리자 목록을 다음 폴링에 새로 읽게
+    if action == "prepare":
+        return 200, out            # 점검 실패도 결과(checks)를 보여 줘야 하므로 200
+    return (200 if out.get("ok") else 409), out
+
+
 # -- 태스크 그래프 (`tools/fleet_graph.py`) ----------------------------------
 
 def collect_graphs(root=ROOT, errors=None):
@@ -915,6 +1060,94 @@ def create_request(payload, root=ROOT):
     except OSError as e:
         return False, {"ok": False, "error": f"요청 파일을 쓰지 못했습니다: {e}"}
     return True, {"ok": True, "id": rid, "path": str(target.relative_to(root))}
+
+
+#: 수정 경로의 요청 id. 새 체계(Q-YYMMDD-xxxx)와 옛 체계(YYYYMMDD-HHMMSS-xxxx)만 받습니다 -
+#: 이 정규식이 경로 탈출을 막는 1차 방어입니다 (파일은 glob 으로 찾고 내용의 id 를 다시 대조).
+_REQ_EDIT_RE = re.compile(r"\A/api/requests/(Q-\d{6}-[0-9a-f]{4}|\d{8}-\d{6}-[0-9a-f]{4})/edit\Z")
+
+
+_REQ_GET_RE = re.compile(r"\A/api/requests/(Q-\d{6}-[0-9a-f]{4}|\d{8}-\d{6}-[0-9a-f]{4})\Z")
+
+
+def _find_request(req_id, root):
+    """(경로, 레코드) 또는 (None, None). 파일 이름이 아니라 **내용의 id** 로 대조합니다."""
+    for f in (root / ".aimem" / "requests").glob(f"{req_id}*.json"):
+        if f.is_symlink() or not f.is_file():
+            continue
+        try:
+            obj = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(obj, dict) and obj.get("id") == req_id:
+            return f, obj
+    return None, None
+
+
+def request_detail(req_id, root=ROOT):
+    """요청 하나의 **전문**. `/api/state` 는 본문을 600자로 자르므로(REV 115) '전체 보기'와
+    웹 수정이 이것을 씁니다. 상세 응답과 같은 가림(경로·확인토큰)을 겁니다."""
+    try:
+        f, rec = _find_request(req_id, root)
+    except OSError as e:
+        return 500, {"ok": False, "error": f"요청 디렉터리를 읽지 못했습니다: {e}"}
+    if f is None:
+        return 404, {"ok": False, "error": f"그런 요청이 없습니다: {req_id}"}
+    mask = _detail_masker(root)
+    out = {k: rec.get(k) for k in ("id", "created", "edited", "requester", "title", "detail", "status")}
+    out["subtasks"] = len(rec.get("subtasks") or [])
+    out["editable"] = rec.get("status") == REQUEST_STATES[0] and not rec.get("subtasks")
+    out["ok"] = True
+    return 200, mask_deep(out, mask)
+
+
+def update_request(req_id, payload, root=ROOT):
+    """**아직 관리자가 분담하지 않은(NEW·서브태스크 없음) 요청**의 제목·본문만 고칩니다.
+
+    태석님 요청 `Q-261110-549a` (2026-11-10): "요청분담트리에 관리자 분담 대기 중인 작업
+    요청은 수정할 수 있게". 서버 쓰기는 원래 "요청 파일 생성 하나뿐"이었고, 이것이 두 번째
+    쓰기입니다 - 범위를 **같은 요청 파일, NEW 상태, 제목·본문 두 필드**로 묶었습니다.
+    요청자·상태·분담은 바꾸지 않습니다. 분담이 시작된 요청은 409 로 거절합니다(관리자가
+    이미 읽고 쪼갠 내용이 웹에서 바뀌면 분담 근거가 사라집니다).
+    """
+    if not isinstance(payload, dict):
+        return 400, {"ok": False, "error": "JSON 객체가 아닙니다"}
+    title = _meaningful(payload.get("title"))
+    if not title:
+        return 400, {"ok": False, "error": "제목(title)은 비워 둘 수 없습니다"}
+    if len(title) > MAX_TITLE:
+        return 400, {"ok": False, "error": f"제목이 {MAX_TITLE}자를 넘습니다 ({len(title)}자)"}
+    raw_detail = payload.get("detail")
+    if raw_detail is not None and not isinstance(raw_detail, str):
+        return 400, {"ok": False, "error": "본문(detail)은 문자열이어야 합니다"}
+    detail = str(raw_detail or "").strip()
+    if len(detail) > MAX_DETAIL:
+        return 400, {"ok": False, "error": f"본문이 {MAX_DETAIL}자를 넘습니다 ({len(detail)}자)"}
+    try:
+        target, record = _find_request(req_id, root)
+    except OSError as e:
+        return 500, {"ok": False, "error": f"요청 디렉터리를 읽지 못했습니다: {e}"}
+    if target is None:
+        return 404, {"ok": False, "error": f"그런 요청이 없습니다: {req_id}"}
+    if record.get("status") != REQUEST_STATES[0] or record.get("subtasks"):
+        return 409, {"ok": False, "error": "관리자가 이미 분담을 시작한 요청은 웹에서 고칠 수 없습니다 "
+                                           f"(상태 {record.get('status')})"}
+    record["title"] = title
+    record["detail"] = detail
+    record["edited"] = datetime.datetime.now().isoformat(timespec="seconds")
+    tmp = target.with_name(target.name + ".tmp")
+    try:
+        with open(tmp, "x", encoding="utf-8") as fh:
+            json.dump(record, fh, ensure_ascii=False, indent=1)
+            fh.write("\n")
+        os.replace(tmp, target)
+    except OSError as e:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return 500, {"ok": False, "error": f"요청 파일을 쓰지 못했습니다: {e}"}
+    return 200, {"ok": True, "id": req_id, "edited": record["edited"]}
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -1155,6 +1388,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json(404, {"ok": False, "error": f"그런 실행 기록이 없습니다: {rid}",
                                         "detail": d})
             return self._json(200, d)
+        m = _REQ_GET_RE.match(path)
+        if m:
+            code, body = request_detail(m.group(1), self.root)
+            return self._json(code, body)
         if path in ("/", "/index.html"):
             return self._static("index.html")
         if path.startswith("/static/"):
@@ -1205,7 +1442,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/logout":
             return self._send(200, json.dumps({"ok": True}, ensure_ascii=False),
                               extra=[self._cookie_header(SESSION_COOKIE, "", 0)])
-        if path != "/api/requests":
+        edit = _REQ_EDIT_RE.match(path)
+        fleet_act = _REQ_FLEET_RE.match(path)
+        if path != "/api/requests" and not edit and not fleet_act:
             return self._json(404, {"ok": False, "error": f"없는 경로입니다: {path}"})
         # CSRF (S4 검수 4번). 세션 쿠키가 `SameSite=Strict` 라 1차 방어는 되지만,
         # 쿠키 정책 하나에만 기대지 않습니다. `<form enctype="text/plain">` 으로는
@@ -1223,6 +1462,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(403, json.dumps({"ok": False, "error": "Origin 이 Host 와 다릅니다"},
                                                   ensure_ascii=False),
                                   extra=[("Connection", "close")])
+        if fleet_act:
+            # 함대 제어는 속도 제한을 걸지 않습니다 - '완전 중지' 가 한도에 막히면 안 됩니다.
+            # CSRF(위 두 검사)와 인증(`_auth_gate`)은 그대로 거칩니다.
+            payload, sent = self._read_json_body()
+            if sent:
+                return None
+            who = self._subject()
+            code, result = fleet_action(fleet_act.group(1), f"웹({who})" if who else "웹", self.root)
+            return self._json(code, result)
         # 속도 제한 (S4 유출 검수 3번). **본문을 읽기 전에** 겁니다 - 막을 요청의
         # 64KB 를 굳이 받아들일 이유가 없습니다. 대신 연결은 끊습니다(본문 미소진).
         # 버킷이 둘인 이유는 `REQUEST_FAIL_MAX` 주석을 보십시오.
@@ -1247,6 +1495,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if self.rate is not None:
                 self.rate.refund(ip)
             return None
+        if edit:
+            code, result = update_request(edit.group(1), payload, self.root)
+            ok = code == 200
+            if ok and self.fail_rate is not None:
+                self.fail_rate.refund(ip)
+            elif not ok and self.rate is not None:
+                self.rate.refund(ip)
+            return self._json(code, result)
         ok, result = create_request(payload, self.root)
         if ok:
             if self.fail_rate is not None:
@@ -1402,7 +1658,7 @@ def serve(host=HOST, port=PORT, root=ROOT, once=False, tls=False, auth=None):
 
 def main(argv=None):
     import argparse
-    p = argparse.ArgumentParser(description="AIMEM 함대 모니터 웹 서버 (읽기 전용 + 요청 파일 생성)")
+    p = argparse.ArgumentParser(description="AIMEM 함대 모니터 웹 서버 (읽기 전용 + 요청 생성·NEW 요청 수정)")
     p.add_argument("--host", default=HOST, help="기본 127.0.0.1. 외부 공개는 0.0.0.0 + --tls")
     p.add_argument("--port", type=int, default=PORT, help=f"기본 {PORT}")
     p.add_argument("--root", default=str(ROOT), help="저장소 루트")

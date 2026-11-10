@@ -49,6 +49,12 @@ SERVER_KEYS = {
     "kisti": "{ok, fetched, age_sec, stale, pending, dropped, busy, queued, phase, "
              "prompt_tokens, generated, max_tokens, reasoning_recoveries, thinking_budget, error}",
     "graphs": "[{id, request, created, updated, percent, eta_seconds, eta_at, counts, nodes:[...], source}]",
+    # 관리자 ACP 세션 (요청 Q-261110-549a, 2026-11-10). `openclaw sessions` 배경 갱신 30초 캐시.
+    # 세션 키 원문은 싣지 않고 uuid 앞 8자(id)만 싣습니다.
+    "managers": "{ok, pending, age_sec, error, sessions:[{label, status, started, updated, id, record_kb}]}",
+    # 함대 제어 상태 (`tools/fleet_ctl.public_state`, 2026-11-10). can = 지금 누를 수 있는 동작
+    "fleet": "{mode, label, at, by, note, default, running_runs, graphs, brief, prepare, relay, "
+             "can:{prepare, run, pause, stop, round}}",
 }
 
 #: 공개면에서 **절대 나가면 안 되는** 것 (REV 114, S4 유출 검수 5번).

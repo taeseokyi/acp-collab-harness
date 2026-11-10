@@ -4,14 +4,14 @@
  "requester": "태석 (폼의 요청자 칸이 비어 \"(익명)\" 으로 저장됐다 - REV 111 에서 서버가 빈 값을 거부하도록 고쳤다)",
  "title": "상세 조회 UI 추가",
  "detail": "작업이나 라벨을 클릭하면 상세내용이 나오면 좋겔어.",
- "status": "IN-PROGRESS",
+ "status": "DONE",
  "subtasks": [
   {
    "id": "T-050",
    "title": "reader.run_detail() - 실행 상세(브리프·보고·rc·경과·경로) 16키 계약",
    "slot": "S1",
    "harness": "claude",
-   "status": "REVIEW",
+   "status": "DONE",
    "run_id": "20261109-174829-S1"
   },
   {
@@ -27,7 +27,7 @@
    "title": "상세 조회 계약 테스트 (16키·경로탈출·404/400·S4 결함 회귀)",
    "slot": "S2",
    "harness": "codex",
-   "status": "REVIEW",
+   "status": "DONE",
    "run_id": "20261109-174918-S2"
   },
   {
@@ -35,7 +35,7 @@
    "title": "프런트 상세 패널 (실행 행·보드 행·요청 서브태스크 클릭) + 요청자 기본값",
    "slot": "S3",
    "harness": "opencode",
-   "status": "REVIEW",
+   "status": "DONE",
    "run_id": null
   },
   {
@@ -43,7 +43,7 @@
    "title": "교차검수 - 만든 슬롯이 아닌 슬롯이 검수 (8.0-1)",
    "slot": "S4",
    "harness": "claude",
-   "status": "TODO",
+   "status": "DONE",
    "run_id": null
   }
  ],

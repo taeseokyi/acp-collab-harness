@@ -1,0 +1,172 @@
+"""`tools/fleet_ctl.py` - 함대 모드(준비/실행/일시 중지/완전 중지)와 그것을 지키는 쪽 (2026-11-10).
+
+실제 `.aimem` 은 건드리지 않습니다 - `fleet.RUNS` 와 `fleet_graph.GRAPHS` 를 임시 디렉터리로
+갈아끼우면 모드 파일(`RUNS.parent/fleet-mode.json`)도 따라갑니다. 작업자는 띄우지 않습니다.
+"""
+import argparse
+import contextlib
+import datetime as dt
+import io
+import json
+import pathlib
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tools"))
+
+import fleet  # noqa: E402
+import fleet_ctl  # noqa: E402
+import fleet_graph  # noqa: E402
+
+
+class FleetCtlTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = pathlib.Path(tmp.name)
+        self.runs = self.tmp / "runs"
+        self.graphs = self.tmp / "graph"
+        self.runs.mkdir()
+        self.graphs.mkdir()
+        for module, attr, value in ((fleet, "RUNS", self.runs), (fleet_graph, "GRAPHS", self.graphs),
+                                    (fleet_graph, "_LOGGED_ONCE", set())):
+            p = mock.patch.object(module, attr, value)
+            p.start()
+            self.addCleanup(p.stop)
+        p = mock.patch.dict("os.environ", {fleet_ctl.FORCE_ENV: ""})
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _now(self):
+        return dt.datetime.now().isoformat(timespec="seconds")
+
+    def graph(self, nodes):
+        g = {"id": "G-901", "request": "ctl test", "created": self._now(), "concurrency": 3, "nodes": nodes}
+        (self.graphs / "G-901.json").write_text(json.dumps(g, ensure_ascii=False), encoding="utf-8")
+        return g
+
+    def node(self, nid, status="todo", attempts=None):
+        return {"id": nid, "title": nid, "slot": "S2", "task": "t", "deps": [], "write": [],
+                "max_attempts": 2, "status": status, "attempts": list(attempts or [])}
+
+    # -------------------------------------------------------------- 모드 파일
+    def test_missing_file_means_running(self):
+        self.assertEqual(fleet_ctl.mode(), "running")
+        self.assertTrue(fleet_ctl.spawn_allowed()[0])
+
+    def test_set_mode_round_trip_and_validation(self):
+        rec = fleet_ctl.set_mode("paused", "test", "n")
+        self.assertEqual((rec["mode"], rec["prev"]), ("paused", "running"))
+        self.assertEqual(fleet_ctl.mode(), "paused")
+        self.assertTrue((self.tmp / "fleet-mode.json").exists())
+        with self.assertRaises(ValueError):
+            fleet_ctl.set_mode("bogus")
+
+    def test_corrupt_file_falls_back_to_running(self):
+        (self.tmp / "fleet-mode.json").write_text("{not json", encoding="utf-8")
+        self.assertEqual(fleet_ctl.mode(), "running")
+
+    def test_spawn_allowed_only_when_running(self):
+        for m in ("ready", "paused", "stopped"):
+            fleet_ctl.set_mode(m, "test")
+            ok, why = fleet_ctl.spawn_allowed()
+            self.assertFalse(ok, m)
+            self.assertIn(fleet_ctl.MODE_LABEL[m], why)
+        fleet_ctl.set_mode("running", "test")
+        self.assertTrue(fleet_ctl.spawn_allowed()[0])
+
+    def test_force_env_overrides(self):
+        fleet_ctl.set_mode("paused", "test")
+        with mock.patch.dict("os.environ", {fleet_ctl.FORCE_ENV: "1"}):
+            ok, why = fleet_ctl.spawn_allowed()
+        self.assertTrue(ok)
+        self.assertIn(fleet_ctl.FORCE_ENV, why)
+
+    # -------------------------------------------------------------- fleet.py spawn
+    def test_fleet_spawn_refuses_when_paused(self):
+        fleet_ctl.set_mode("paused", "test")
+        args = argparse.Namespace(slot="S2", harness=None, write=[], task="x", task_file=None)
+        with mock.patch.object(fleet, "roster") as roster:
+            with self.assertRaises(SystemExit) as cm:
+                fleet.cmd_spawn(args)
+        self.assertIn("일시 중지", str(cm.exception.code))
+        roster.assert_not_called()   # 명부도 읽기 전에 거절
+
+    # -------------------------------------------------------------- fleet_graph
+    def test_step_paused_reaps_but_does_not_spawn(self):
+        g = self.graph([self.node("A")])
+        fleet_ctl.set_mode("paused", "test")
+        with mock.patch.object(fleet_graph, "_spawn_node") as spawn:
+            fleet_graph.step(g)
+        spawn.assert_not_called()
+        self.assertEqual(g["nodes"][0]["status"], "todo")
+
+    def test_step_running_spawns(self):
+        g = self.graph([self.node("A")])
+        fleet_ctl.set_mode("running", "test")
+        with mock.patch.object(fleet_graph, "_spawn_node") as spawn:
+            fleet_graph.step(g)
+        spawn.assert_called_once()
+
+    def test_step_stopped_halts_running_without_counting_attempt(self):
+        att = {"run_id": "T-1-S2-a1-000000", "started": self._now()}
+        g = self.graph([self.node("A", "running", [att]), self.node("B")])
+        fleet_ctl.set_mode("stopped", "test")
+        with mock.patch.object(fleet_graph, "_kill_run", return_value=(123, "killed")) as kill, \
+                mock.patch.object(fleet_graph, "_spawn_node") as spawn:
+            fleet_graph.step(g)
+        kill.assert_called_once_with("T-1-S2-a1-000000", with_outcome=True)
+        spawn.assert_not_called()
+        a = g["nodes"][0]
+        self.assertEqual(a["status"], "todo")
+        self.assertEqual(a["attempts"], [])                       # 재시도 횟수로 세지 않음
+        self.assertEqual(a["stopped_attempts"][0]["state"], "stopped")
+        self.assertTrue((self.runs / "T-1-S2-a1-000000.lost").exists())
+
+    def test_halt_refused_kill_goes_blocked(self):
+        att = {"run_id": "T-2-S2-a1-000000", "started": self._now()}
+        g = self.graph([self.node("A", "running", [att])])
+        fleet_graph._LAST_REFUSAL["T-2-S2-a1-000000"] = "세션 리더 아님"
+        with mock.patch.object(fleet_graph, "_kill_run", return_value=(5, "refused")):
+            self.assertTrue(fleet_graph.halt_running(g))
+        self.assertEqual(g["nodes"][0]["status"], "blocked")
+        self.assertFalse((self.runs / "T-2-S2-a1-000000.lost").exists())
+
+    def test_run_loop_exits_3_on_stop(self):
+        self.graph([self.node("A")])
+        fleet_ctl.set_mode("stopped", "test")
+        a = argparse.Namespace(id="G-901", timeout=30, poll=0, concurrency=None)
+        with mock.patch.object(fleet_graph, "_validate_or_report", return_value=True), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = fleet_graph.cmd_run(a)
+        self.assertEqual(rc, 3)
+        self.assertIn("완전 중지", out.getvalue())
+
+    # -------------------------------------------------------------- 브리프 선택
+    def test_latest_brief_ignores_drafts_and_used_rounds(self):
+        repo = self.tmp / "repo"
+        briefs = repo / ".aimem" / "briefs"
+        briefs.mkdir(parents=True)
+        for name in ("manager-round6-2026-11-10.md", "manager-round7-2026-11-10.md", "manager-round8-draft.md"):
+            (briefs / name).write_text("x", encoding="utf-8")
+        with mock.patch.object(fleet, "ROOT", repo), \
+                mock.patch.object(fleet_ctl, "_used_rounds", return_value={6}):
+            b = fleet_ctl.latest_brief()
+        self.assertEqual((b["round"], b["file"]), (7, "manager-round7-2026-11-10.md"))
+        self.assertIn("manager-round8-draft.md", b["drafts"])
+        with mock.patch.object(fleet, "ROOT", repo), \
+                mock.patch.object(fleet_ctl, "_used_rounds", return_value={6, 7}):
+            self.assertIsNone(fleet_ctl.latest_brief()["file"])   # 이미 띄운 라운드는 다시 쓰지 않는다
+
+    def test_launch_round_requires_ready(self):
+        fleet_ctl.set_mode("stopped", "test")
+        out = fleet_ctl.launch_round("test")
+        self.assertFalse(out["ok"])
+        self.assertIn("준비", out["error"])
+
+
+if __name__ == "__main__":
+    unittest.main()

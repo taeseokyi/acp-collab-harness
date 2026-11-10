@@ -479,6 +479,13 @@ def run_report(run_id):
 def cmd_spawn(args):
     """작업자 1명을 백그라운드로 띄웁니다. 즉시 돌아오고 run id 를 찍습니다."""
     import datetime, shlex, subprocess as sp
+    # 함대 모드 (fleet_ctl, 2026-11-10): '실행' 이 아니면 띄우지 않습니다 - 일시 중지·완전 중지·준비
+    import fleet_ctl  # noqa: PLC0415 - fleet_ctl 이 이 모듈을 import 하므로 지연
+    allowed, why = fleet_ctl.spawn_allowed()
+    if not allowed:
+        sys.exit(why)
+    if why:
+        print(f"주의: {why}", file=sys.stderr)
     r = roster()
     if args.slot not in r:
         sys.exit(_roster_miss(args.slot))

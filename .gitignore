@@ -26,3 +26,10 @@ USER.md
 # 외부 공개용 TLS 자료와 접근 토큰 (요청 Q-261109-407b, 태석님 19:05).
 # **절대 커밋하지 않습니다** - 개인키(0600)와 접근 토큰이 들어 있습니다.
 .aimem/tls/
+
+# 함대 제어 운영 상태 (tools/fleet_ctl.py, 2026-11-10) - 모드·준비 점검·라운드 전달 기록. 재생성 가능
+.aimem/fleet-mode.json
+.aimem/fleet-prepare.json
+.aimem/relay/
+.aimem/graph/*.runner.log
+.aimem/fleet-mode.log

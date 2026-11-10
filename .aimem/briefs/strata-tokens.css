@@ -40,7 +40,7 @@
   --st-accent-hover:#0c8a60;
   --st-accent-ink:#ffffff;
   --st-accent-tint:#ecfdf5;
-  --st-accent-text:#0c8a60;      /* accent used as text on light */
+  --st-accent-text:#0b8058; /* 원본 #0c8a60 은 #ecfdf5 위 4.14:1 - 4.5:1 미달이라 앱 값으로 정정 (큐 7, 2026-11-10) */
   --st-focus:#405de6;
 
   --st-info:#0f97ff;     --st-info-tint:#e8f4ff;    --st-info-text:#0668c2;

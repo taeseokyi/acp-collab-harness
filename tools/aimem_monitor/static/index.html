@@ -4,11 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AIMEM 함대 모니터</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%2310b981'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">AIMEM 함대 모니터</div>
+    <div class="brand">AIMEM 함대 모니터 <span id="brand-rev" class="brand-rev"></span> <span id="fleet-mode-pill" class="mode-pill"></span></div>
     <div class="controls">
       <label class="toggle"><input type="checkbox" id="autoRefresh" checked> 자동 새로고침</label>
       <span id="refresh-status" class="refresh-status">마지막 갱신 -</span>
@@ -20,66 +21,78 @@
   <div id="demo-banner" class="banner banner-demo" hidden>데모 모드 (?demo=1): 더미 데이터로 표시 중. 작업 요청 POST 는 브라우저 안에서만 흉내 냅니다.</div>
   <div id="errors" class="banner banner-errors" hidden></div>
 
-  <main class="wrap">
+  <div class="layout">
+    <main class="wrap">
 
-    <div class="tabs" role="tablist" aria-label="화면 전환">
-      <button type="button" role="tab" id="tab-fleet"    aria-controls="panel-fleet"    aria-selected="true"  tabindex="0">함대</button>
-      <button type="button" role="tab" id="tab-board"    aria-controls="panel-board"    aria-selected="false" tabindex="-1">보드·큐</button>
-      <button type="button" role="tab" id="tab-requests" aria-controls="panel-requests" aria-selected="false" tabindex="-1">요청 트리</button>
-    </div>
+      <div class="tabs" role="tablist" aria-label="화면 전환">
+        <button type="button" role="tab" id="tab-fleet"    aria-controls="panel-fleet"    aria-selected="true"  tabindex="0">함대 <span class="tab-count" id="tab-count-fleet"></span></button>
+        <button type="button" role="tab" id="tab-board"    aria-controls="panel-board"    aria-selected="false" tabindex="-1">보드·큐 <span class="tab-count" id="tab-count-board"></span></button>
+        <button type="button" role="tab" id="tab-requests" aria-controls="panel-requests" aria-selected="false" tabindex="-1">요청 트리 <span class="tab-count" id="tab-count-requests"></span></button>
+      </div>
 
-    <div id="panel-fleet" role="tabpanel" aria-labelledby="tab-fleet">
-      <section class="card" id="fleet-section">
-        <h2>1. 함대 현황</h2>
-        <div id="aimem-meta" class="meta-grid"></div>
-        <div class="tablewrap" id="slots-table-wrap"></div>
+      <div id="panel-fleet" role="tabpanel" aria-labelledby="tab-fleet">
+        <section class="card" id="fleet-section">
+          <h2>함대 현황</h2>
+          <div id="fleet-control" class="fleet-control"></div>
+          <div id="manager-card" class="manager-card"></div>
+          <div id="aimem-meta" class="meta-grid"></div>
+          <div class="tablewrap" id="slots-table-wrap"></div>
+        </section>
+
+        <section class="card" id="kisti-section">
+          <h2>KISTI LLM 서버 <span class="hint">S2·S3 작업자</span></h2>
+          <div id="kisti-card"></div>
+        </section>
+
+        <section class="card" id="runs-section">
+          <h2>작업자 실행 상태 <span class="hint">최신이 위</span></h2>
+          <div class="tablewrap" id="runs-table-wrap"></div>
+          <div id="runs-more" class="more-row"></div>
+        </section>
+      </div>
+
+      <div id="panel-board" role="tabpanel" aria-labelledby="tab-board" hidden>
+        <section class="card" id="board-section">
+          <h2>작업 보드</h2>
+          <div id="board-filter" class="filter-row"></div>
+          <div class="tablewrap" id="board-table-wrap"></div>
+        </section>
+        <section class="card" id="queue-section">
+          <h2>대기 큐</h2>
+          <div class="tablewrap" id="queue-table-wrap"></div>
+        </section>
+      </div>
+
+      <div id="panel-requests" role="tabpanel" aria-labelledby="tab-requests" hidden>
+        <section class="card" id="graphs-section">
+          <h2>태스크 그래프 <span class="hint">끝난 그래프는 접혀 있습니다</span></h2>
+          <div id="graphs-list"></div>
+        </section>
+        <section class="card" id="requests-section">
+          <h2>요청별 분담 트리 <span class="hint">끝난 요청은 접혀 있습니다</span></h2>
+          <div id="requests-list"></div>
+        </section>
+      </div>
+    </main>
+
+    <aside class="side">
+      <section class="card" id="request-form-section">
+        <h2>작업 요청</h2>
+        <form id="request-form" autocomplete="off">
+          <label for="req-title">제목 <span class="required">*</span></label>
+          <input id="req-title" name="title" type="text" required placeholder="한 줄 제목">
+          <label for="req-detail">본문 <span class="hint">줄바꿈은 그대로 보존됩니다</span></label>
+          <textarea id="req-detail" name="detail" rows="8" placeholder="요청 내용"></textarea>
+          <label for="req-requester">요청자 <span class="required">*</span></label>
+          <input id="req-requester" name="requester" type="text" value="태석" required>
+          <div class="form-row">
+            <button type="submit" id="request-submit" class="btn-primary">요청 보내기</button>
+            <span id="form-msg" class="form-msg" role="status" aria-live="polite"></span>
+          </div>
+        </form>
       </section>
-
-      <section class="card" id="kisti-section">
-        <h2>KISTI LLM 서버 (S2·S3 작업자)</h2>
-        <div id="kisti-card"></div>
-      </section>
-
-      <section class="card" id="runs-section">
-        <h2>2. 작업자 실행 상태 <span class="hint">(최신이 위)</span></h2>
-        <div class="tablewrap" id="runs-table-wrap"></div>
-      </section>
-    </div>
-
-    <div id="panel-board" role="tabpanel" aria-labelledby="tab-board" hidden>
-      <section class="card" id="board-section">
-        <h2>3. 보드와 큐</h2>
-        <h3>3절 작업 보드</h3>
-        <div class="tablewrap" id="board-table-wrap"></div>
-        <h3>4.5 대기 큐</h3>
-        <div class="tablewrap" id="queue-table-wrap"></div>
-      </section>
-    </div>
-
-    <div id="panel-requests" role="tabpanel" aria-labelledby="tab-requests" hidden>
-      <section class="card" id="requests-section">
-        <h2>5. 요청별 분담 트리</h2>
-        <div id="graphs-list"></div>
-        <div id="requests-list"></div>
-      </section>
-    </div>
-
-    <section class="card" id="request-form-section">
-      <h2>4. 작업 요청</h2>
-      <form id="request-form" autocomplete="off">
-        <label for="req-title">제목 <span class="required">*</span></label>
-        <input id="req-title" name="title" type="text" required placeholder="한 줄 제목">
-        <label for="req-detail">본문</label>
-        <textarea id="req-detail" name="detail" rows="4" placeholder="요청 내용"></textarea>
-        <label for="req-requester">요청자 <span class="required">*</span></label>
-        <input id="req-requester" name="requester" type="text" value="태석" required>
-        <div class="form-row">
-          <button type="submit" id="request-submit">요청 보내기</button>
-          <span id="form-msg" class="form-msg" role="status" aria-live="polite"></span>
-        </div>
-      </form>
-    </section>
-  </main>
+    </aside>
+  </div>
 
   <div id="detail-overlay" class="detail-overlay" hidden>
     <section id="run-detail-panel" class="detail-panel" role="dialog" aria-modal="true" aria-labelledby="detail-label">

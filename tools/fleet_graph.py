@@ -650,13 +650,60 @@ def _check_timeout(g, n, att):
     return True
 
 
-def step(g, concurrency=None):
+def _fleet_mode():
+    """`fleet_ctl` 의 함대 모드. 읽지 못하면 `running`(옛 동작)으로 봅니다."""
+    try:
+        import fleet_ctl  # noqa: PLC0415 - fleet_ctl 이 이 모듈을 import 하므로 지연
+        return fleet_ctl.mode()
+    except Exception:  # noqa: BLE001
+        return "running"
+
+
+def halt_running(g, why="완전 중지"):
+    """완전 중지: running 노드의 작업자를 죽이고 노드를 `todo` 로 되돌립니다. 바꿨으면 True.
+
+    끊긴 시도는 `attempts` 에서 빼서 `stopped_attempts` 로 옮깁니다 - 사람이 멈춘 것이라
+    **재시도 횟수로 세지 않습니다.** '실행' 으로 이어 가면 그 노드부터 다시 뜹니다.
+    `_kill_run` 이 `refused` 면(작업자가 살아 있을 수 있음) 노드를 `blocked` 로 두고 사람에게 넘깁니다.
+    """
+    changed = False
+    for n in g["nodes"]:
+        if n.get("status") != "running" or not n.get("attempts"):
+            continue
+        att = n["attempts"][-1]
+        pid, outcome = _kill_run(att["run_id"], with_outcome=True)
+        if outcome == "refused":
+            att.update({"kill_outcome": "refused", "kill_reason": _LAST_REFUSAL.get(att["run_id"])})
+            n["status"] = "blocked"
+            _log(g, f"halt {n['id']} - 죽이지 못했습니다 ({_LAST_REFUSAL.get(att['run_id'])}). 사람이 확인해야 합니다")
+        else:
+            _mark_lost(att["run_id"])
+            att.update({"ended": _now(), "state": "stopped", "kill_outcome": outcome, "stopped_by": why})
+            n.setdefault("stopped_attempts", []).append(n["attempts"].pop())
+            n["status"] = "todo"
+            _log(g, f"halt {n['id']} ({att['run_id']}, {outcome}) - {why}. 재시도 횟수로 세지 않음")
+        changed = True
+    if changed:
+        _save(g)
+    return changed
+
+
+def step(g, concurrency=None, allow_spawn=None):
     """한 틱: 끝난 실행을 거두어 검증하고, 실패면 재시도(한정), 준비된 노드를 띄웁니다.
+
+    `allow_spawn` 이 None 이면 함대 모드(`fleet_ctl`)로 정합니다 - `running` 일 때만 띄우고,
+    `paused`/`ready` 는 거두기만, `stopped` 는 running 노드를 정리(`halt_running`)하고 끝냅니다.
 
     `validate_graph` 는 여기서 돌리지 않습니다 - 수십 분 도는 루프의 매 틱마다 명부·소유권을
     다시 읽게 됩니다. `cmd_run`/`cmd_step` 이 시작 전에 한 번 돌립니다.
     """
     conc = concurrency or int(g.get("concurrency", 3))
+    if allow_spawn is None:
+        m = _fleet_mode()
+        if m == "stopped":
+            halt_running(g, "완전 중지")
+            return all(n.get("status") in TERMINAL for n in g["nodes"])
+        allow_spawn = m == "running"
     changed = False
     # 1) 거두기 (+ 노드별 타임아웃, + 보고 첫 줄 BLOCKED 판정)
     for n in g["nodes"]:
@@ -702,10 +749,10 @@ def step(g, concurrency=None):
             n["status"] = "blocked"
             _log(g, f"blocked {n['id']} (의존 실패)")
             changed = True
-    # 3) 띄우기 (fan-out, 동시성 상한, **슬롯 바쁨 검사**)
+    # 3) 띄우기 (fan-out, 동시성 상한, **슬롯 바쁨 검사**) - 함대가 '실행' 일 때만
     running = sum(1 for n in g["nodes"] if n.get("status") == "running")
     busy = _busy_slots(g)
-    for n in _ready(g):
+    for n in (_ready(g) if allow_spawn else []):
         if running >= conc:
             break
         slot = n.get("slot")
@@ -803,17 +850,28 @@ def cmd_run(a):
         if not _validate_or_report(g):
             return 2
         deadline = time.time() + a.timeout
+        halted = False
         while time.time() < deadline:
             if step(g, a.concurrency):
+                break
+            if _fleet_mode() == "stopped":
+                halted = True
                 break
             time.sleep(a.poll)
         g = _load(a.id)
         p = progress(g)
+        m = _fleet_mode()
+        if m != "running":
+            # 관리자에게: 사람이 멈췄다. 체크포인트(보드·event·큐)를 남기고 PARTIAL 로 보고하라 (AIMEM 8.0)
+            print(f"함대 모드: {m} - 사람이 {'완전 중지' if m == 'stopped' else '일시 중지/준비'} 했습니다. "
+                  f"새 노드를 띄우지 않았습니다. 체크포인트를 남기고 PARTIAL 로 보고하십시오")
         print(f"{g['id']}: {p['percent']}%  남은 ETA {p['eta_seconds']}s  상태 {p['counts']}")
         for n in g["nodes"]:
             last = n["attempts"][-1] if n.get("attempts") else {}
             print(f"  {n['id']:<6} {n.get('status','todo'):<8} {n['slot']:<3} 시도 {len(n.get('attempts',[]))}  "
                   f"run {last.get('run_id','-')}  rc {last.get('rc','-')}/{last.get('verify_rc','-')}  {n.get('title','')}")
+        if halted:
+            return 3
         return 0 if all(n.get("status") == "done" for n in g["nodes"]) else 1
 
 

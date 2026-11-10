@@ -152,6 +152,13 @@ const state = {
   detailBound: false,
   detailSeq: 0,
   detailReturnFocus: null,
+  runsShowAll: false,
+  boardFilter: 'open',
+  graphOpen: new Set(),
+  graphKnown: new Set(),
+  editing: null,
+  fleetBusy: null,
+  fleetMsg: null,
 };
 
 function $(id) {
@@ -357,6 +364,14 @@ function requestFullViewLabel(req) {
   return '전체 보기 (' + len + '자)';
 }
 
+async function fetchRequestFull(req) {
+  if (DEMO || req.detail_truncated !== true) return req;
+  const res = await fetch('/api/requests/' + encodeURIComponent(req.id), { headers: { Accept: 'application/json' } });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.ok) throw new Error(body.error || ('HTTP ' + res.status));
+  return Object.assign({}, req, { title: body.title, detail: body.detail, detail_truncated: false });
+}
+
 function openRequestDetail(req) {
   if (!req) return;
   state.detailReturnFocus = document.activeElement;  // T-083 포커스 저장 그대로
@@ -384,6 +399,15 @@ function openRequestDetail(req) {
   overlay.hidden = false;
   const close = $('detail-close');
   if (close) close.focus();
+  if (req.detail_truncated === true && !DEMO) {
+    const seq = state.detailSeq;
+    fetchRequestFull(req).then((full) => {
+      if (seq !== state.detailSeq || !state.detailOpen) return;   // 그사이 다른 상세를 열었다
+      wrap.textContent = show(full.detail, '본문 없음');
+      const note = body.querySelector('.detail-note');
+      if (note) note.remove();
+    }).catch(() => { /* 600자 미리보기와 안내문을 그대로 둔다 */ });
+  }
 }
 
 function bindDetailControls() {
@@ -583,25 +607,306 @@ function metaItem(label, value) {
   return item;
 }
 
+// 마크다운 강조·코드 표시(**, `)를 걷어 내고 사람이 읽는 문장으로 (마크업 해석은 하지 않음)
+function plainText(value) {
+  return show(value, '').replace(/\*\*/g, '').replace(/`/g, '').trim();
+}
+
+// 보고 첫 줄에서 DONE / PARTIAL / BLOCKED / NEEDS-* 를 읽는다 (fleet_graph 판정과 같은 방향, 표시용)
+function reportStatus(head) {
+  const s = show(head, '').replace(/^[\s*#>_`\-·]+/, '');
+  const m = /^(?:상태|status|report status)?\s*[:：]?\s*\**\s*(DONE|PARTIAL|BLOCKED|NEEDS-[A-Z]+|REJECT(?:ED)?)\b/i.exec(s);
+  return m ? m[1].toUpperCase() : null;
+}
+
+function reportBadge(head) {
+  const st = reportStatus(head);
+  if (!st) {
+    const span = document.createElement('span');
+    span.className = 'hint';
+    span.textContent = '-';
+    return span;
+  }
+  const cls = st === 'DONE' ? 'done' : st === 'PARTIAL' ? 'partial' : st.startsWith('NEEDS') ? 'needs' : 'blocked';
+  return badge(st, cls);
+}
+
 function renderMeta(data) {
   const box = $('aimem-meta');
   box.textContent = '';
   const aimem = data.aimem || {};
   const goal = aimem.goal || {};
+
+  const rev = document.createElement('div');
+  rev.className = 'meta-stat';
+  rev.textContent = show(aimem.rev);
+  box.appendChild(metaItem('AIMEM REV', rev));
+  box.appendChild(metaItem('최종 갱신', show(aimem.updated)));
+
   const goalWrap = document.createElement('div');
   goalWrap.className = 'goal-value';
   const goalText = document.createElement('span');
-  goalText.textContent = show(goal.text, '-');
+  goalText.textContent = plainText(goal.text) || '-';
   goalWrap.appendChild(goalText);
-  const goalStatus = document.createElement('span');
-  goalStatus.className = 'goal-status';
-  goalStatus.textContent = show(goal.status);
-  goalWrap.appendChild(goalStatus);
+  if (goal.status) {
+    const goalStatus = document.createElement('span');
+    goalStatus.className = 'goal-status';
+    goalStatus.textContent = plainText(goal.status);
+    goalWrap.appendChild(goalStatus);
+  }
+  const goalItem = metaItem('현재 목표', goalWrap);
+  goalItem.classList.add('meta-goal');
+  box.appendChild(goalItem);
 
-  box.appendChild(metaItem('AIMEM REV', aimem.rev));
-  box.appendChild(metaItem('최종 갱신', aimem.updated));
-  box.appendChild(metaItem('줄 수', aimem.lines));
-  box.appendChild(metaItem('현재 목표', goalWrap));
+  const brandRev = $('brand-rev');
+  if (brandRev) brandRev.textContent = aimem.rev ? 'REV ' + aimem.rev : '';
+}
+
+const MODE_BADGE = { running: 'running', paused: 'partial', stopped: 'blocked', ready: 'done' };
+const FLEET_BUTTONS = [
+  { act: 'prepare', label: '준비', title: '관리자·작업자를 띄울 수 있는지 점검합니다. 통과하면 준비 상태 (작업자는 띄우지 않음)' },
+  { act: 'run', label: '실행', title: '진행 중이던 라운드만 이어 돌립니다. 새 관리자 라운드는 띄우지 않습니다' },
+  { act: 'pause', label: '일시 중지', title: '새 작업자 투입을 멈춥니다. 돌고 있는 작업자는 끝까지 둡니다' },
+  { act: 'stop', label: '완전 중지', title: '돌고 있는 작업자와 그래프 실행기를 즉시 종료합니다', danger: true,
+    confirm: '돌고 있는 작업자와 그래프 실행기를 지금 종료합니다.\n중간 산출물이 반쯤 남을 수 있습니다. 계속할까요?' },
+];
+
+async function fleetAction(act, confirmText) {
+  if (confirmText && !window.confirm(confirmText)) return;
+  state.fleetBusy = act;
+  state.fleetMsg = null;
+  if (state.data) renderFleetControl(state.data);
+  try {
+    let body;
+    if (DEMO) {
+      body = { ok: true, note: '데모 모드 - 실제로 바꾸지 않습니다' };
+    } else {
+      const res = await fetch('/api/fleet/' + act, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: '{}',
+      });
+      body = await res.json().catch(() => ({ ok: false, error: 'HTTP ' + res.status }));
+    }
+    state.fleetMsg = { act, ok: body.ok !== false, body };
+  } catch (err) {
+    state.fleetMsg = { act, ok: false, body: { error: err && err.message ? err.message : String(err) } };
+  } finally {
+    state.fleetBusy = null;
+    // 5초 폴링이 도는 중이면 refresh() 가 건너뛴다 - 끝나기를 기다렸다가 새로 읽는다
+    for (let i = 0; i < 50 && state.busy; i += 1) await new Promise((r) => setTimeout(r, 100));
+    await refresh();
+  }
+}
+
+function fleetMsgText(m) {
+  const b = m.body || {};
+  const name = { prepare: '준비', run: '실행', pause: '일시 중지', stop: '완전 중지', round: '라운드 실행' }[m.act] || m.act;
+  if (m.act === 'prepare' && Array.isArray(b.checks)) {
+    const bad = b.checks.filter((c) => !c.ok && c.required).map((c) => c.name);
+    return b.ok ? '준비 점검 통과 - 준비 상태입니다' : `준비 점검에서 막혔습니다: ${bad.join(', ')} (아래 목록)`;
+  }
+  if (!m.ok) return `${name} 실패: ${b.error || '알 수 없는 오류'}`;
+  if (m.act === 'stop') {
+    const k = (b.killed || []).length;
+    return `완전 중지 - 작업자 ${k}개 종료` + ((b.halted_graphs || []).length ? `, 그래프 ${b.halted_graphs.join(', ')} 정리` : '') + '. ' + (b.note || '');
+  }
+  if (m.act === 'run') return '실행 - ' + ((b.resumed_graphs || []).length ? `그래프 ${b.resumed_graphs.join(', ')} 이어 돌림. ` : '') + (b.note || '');
+  if (m.act === 'round') return `라운드 R${b.round} 실행 - 클로에게 전달했습니다 (${b.brief}). 관리자 세션이 뜨면 위에 나타납니다`;
+  return name + ' 완료';
+}
+
+function renderFleetControl(data) {
+  const box = $('fleet-control');
+  const pill = $('fleet-mode-pill');
+  const f = data.fleet || {};
+  const md = f.mode;
+  if (pill) {
+    pill.textContent = md ? '함대: ' + show(f.label) : '';
+    pill.className = 'mode-pill' + (md ? ' mode-' + md : '');
+    pill.title = f.note ? `${show(f.label)} - ${f.note} (${fmtDateTime(f.at)}, ${show(f.by)})` : '';
+  }
+  if (!box) return;
+  box.textContent = '';
+  if (!md) {
+    box.appendChild(emptyP('함대 제어 상태를 읽지 못했습니다' + (f.error ? ': ' + f.error : '')));
+    return;
+  }
+  const head = document.createElement('div');
+  head.className = 'fc-head';
+  const title = document.createElement('span');
+  title.className = 'manager-title';
+  title.textContent = '함대';
+  head.appendChild(title);
+  head.appendChild(badge(show(f.label), MODE_BADGE[md] || 'neutral'));
+  const meta = document.createElement('span');
+  meta.className = 'fc-meta';
+  const bits = [];
+  if (f.at) bits.push(fmtDateTime(f.at) + ' · ' + show(f.by));
+  if (f.default) bits.push('상태 파일 없음(기본값)');
+  if (f.running_runs) bits.push(`작업자 ${f.running_runs}개 실행 중`);
+  if (Array.isArray(f.graphs) && f.graphs.length) bits.push('미완 그래프 ' + f.graphs.map((g) => g.id + (g.runner ? '(실행기)' : '')).join(', '));
+  meta.textContent = bits.join(' · ');
+  head.appendChild(meta);
+  box.appendChild(head);
+
+  const can = f.can || {};
+  const row = document.createElement('div');
+  row.className = 'fc-buttons';
+  for (const b of FLEET_BUTTONS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'fc-btn' + (b.danger ? ' fc-danger' : '');
+    btn.textContent = state.fleetBusy === b.act ? b.label + '…' : b.label;
+    btn.title = b.title;
+    btn.disabled = !!state.fleetBusy || !can[b.act];
+    btn.addEventListener('click', () => fleetAction(b.act, b.confirm));
+    row.appendChild(btn);
+  }
+  const sep = document.createElement('span');
+  sep.className = 'fc-sep';
+  row.appendChild(sep);
+  const brief = f.brief || {};
+  const rb = document.createElement('button');
+  rb.type = 'button';
+  rb.className = 'fc-btn btn-primary';
+  rb.textContent = state.fleetBusy === 'round' ? '라운드 실행…' : (brief.round ? `라운드 실행 ▸ R${brief.round}` : '라운드 실행');
+  rb.disabled = !!state.fleetBusy || !can.round;
+  rb.title = brief.file
+    ? `새 관리자 라운드를 띄웁니다 (유료 Opus). 브리프: ${brief.file}` + (md !== 'ready' ? ' - 먼저 준비를 누르십시오' : '')
+    : '확정된 다음 라운드 브리프가 없습니다' + (brief.drafts && brief.drafts.length ? ` (초안: ${brief.drafts.join(', ')})` : '');
+  rb.addEventListener('click', () => fleetAction('round',
+    `새 관리자 라운드 R${brief.round} 를 띄웁니다 (유료 Opus 세션).\n브리프: ${brief.file}\n계속할까요?`));
+  row.appendChild(rb);
+  box.appendChild(row);
+
+  const hint = document.createElement('div');
+  hint.className = 'fc-hint';
+  hint.textContent = brief.file
+    ? `다음 라운드 브리프: ${brief.file}`
+    : '다음 라운드 브리프: 확정본 없음' + (brief.drafts && brief.drafts.length ? ` (초안 ${brief.drafts.join(', ')})` : '');
+  box.appendChild(hint);
+
+  const relay = f.relay;
+  if (relay && relay.state && relay.state !== 'spawned') {
+    const r = document.createElement('div');
+    r.className = 'fc-hint';
+    const last = Array.isArray(relay.log) && relay.log.length ? relay.log[relay.log.length - 1] : '';
+    r.textContent = `R${relay.round} 전달: ${relay.state}${relay.nudged ? ' (재촉 1회)' : ''} - ${last}`;
+    box.appendChild(r);
+  }
+
+  if (state.fleetMsg) {
+    const msg = document.createElement('div');
+    msg.className = 'fc-msg ' + (state.fleetMsg.ok ? 'ok' : 'err');
+    msg.textContent = fleetMsgText(state.fleetMsg);
+    box.appendChild(msg);
+  }
+
+  const prep = f.prepare;
+  if (prep && Array.isArray(prep.checks)) {
+    const det = document.createElement('details');
+    det.className = 'fold-group';
+    if (state.fleetMsg && state.fleetMsg.act === 'prepare') det.open = true;
+    const sum = document.createElement('summary');
+    const failed = prep.checks.filter((c) => !c.ok);
+    sum.textContent = `준비 점검 ${fmtDateTime(prep.at)} - ${prep.ok ? '통과' : '막힘'}` + (failed.length ? ` (${failed.length}건 미통과)` : '');
+    det.appendChild(sum);
+    const ul = document.createElement('ul');
+    ul.className = 'fc-checks';
+    for (const c of prep.checks) {
+      const li = document.createElement('li');
+      li.className = c.ok ? 'ok' : (c.required ? 'err' : 'warn');
+      li.textContent = `${c.ok ? '✓' : (c.required ? '✗' : '!')} ${c.name}` + (c.detail ? ` - ${c.detail}` : '') + (c.required ? '' : ' (참고)');
+      ul.appendChild(li);
+    }
+    det.appendChild(ul);
+    box.appendChild(det);
+  }
+}
+
+function managerActivity(data) {
+  const runs = Array.isArray(data.runs) ? data.runs : [];
+  const running = runs.filter((r) => r && r.state === 'running');
+  const graphs = Array.isArray(data.graphs) ? data.graphs : [];
+  const live = graphs.filter((g) => !graphFinished(g) && !graphStale(g));
+  if (live.length) {
+    return `그래프 ${live.map((g) => g.id).join(', ')} 실행 중 · 작업자 ${running.length}개 가동`;
+  }
+  if (running.length) return `작업자 ${running.length}개 가동 중 (그래프 밖 단건 실행)`;
+  return '직접 작업 중 (계획·검증·보고 작성) - 이 동안 작업자는 0개입니다';
+}
+
+function renderManager(data) {
+  const box = $('manager-card');
+  if (!box) return;
+  box.textContent = '';
+  const m = data.managers || {};
+  const sessions = Array.isArray(m.sessions) ? m.sessions : [];
+  const head = document.createElement('div');
+  head.className = 'manager-head';
+  const title = document.createElement('span');
+  title.className = 'manager-title';
+  title.textContent = '관리자';
+  head.appendChild(title);
+
+  const cur = sessions.find((s) => s.status === 'running') || sessions[0];
+  if (m.pending && !sessions.length) {
+    head.appendChild(badge('조회 중', 'pending'));
+    box.appendChild(head);
+    return;
+  }
+  if (!cur) {
+    head.appendChild(badge('없음', 'neutral'));
+    const p = document.createElement('span');
+    p.className = 'manager-what';
+    p.textContent = m.error ? '세션 조회 실패: ' + m.error : '관리자 세션 기록 없음';
+    head.appendChild(p);
+    box.appendChild(head);
+    return;
+  }
+  const isRun = cur.status === 'running';
+  head.appendChild(isRun ? badge('실행 중', 'running') : badge(cur.status === 'done' ? '끝남' : show(cur.status), cur.status === 'failed' ? 'blocked' : 'neutral'));
+  const label = document.createElement('span');
+  label.className = 'manager-label';
+  label.textContent = show(cur.label);
+  head.appendChild(label);
+  box.appendChild(head);
+
+  const what = document.createElement('div');
+  what.className = 'manager-what';
+  what.textContent = isRun ? managerActivity(data) : '실행 중인 관리자 없음 - 함대는 다음 라운드 대기(정지) 상태입니다';
+  box.appendChild(what);
+
+  const meta = document.createElement('div');
+  meta.className = 'manager-meta';
+  const st = Date.parse(String(cur.started || ''));
+  const up = Date.parse(String(cur.updated || ''));
+  const parts = ['시작 ' + fmtDateTime(cur.started)];
+  if (Number.isFinite(st)) {
+    const end = isRun ? Date.now() : (Number.isFinite(up) ? up : Date.now());
+    parts.push((isRun ? '경과 ' : '소요 ') + fmtElapsed((end - st) / 1000));
+  }
+  if (cur.record_kb !== null && cur.record_kb !== undefined) {
+    parts.push('대화 기록 ' + (cur.record_kb >= 1024 ? (cur.record_kb / 1024).toFixed(1) + 'MB' : cur.record_kb + 'KB'));
+  }
+  const others = sessions.length - 1;
+  if (others > 0) parts.push(`지난 세션 ${others}개`);
+  if (m.error) parts.push('갱신 실패(지난 값)');
+  meta.textContent = parts.join(' · ');
+  meta.title = sessions.map((s) => `${s.label} - ${s.status} - ${fmtDateTime(s.started)}`).join('\n');
+  box.appendChild(meta);
+}
+
+function runningBySlot(data) {
+  const map = new Map();
+  for (const r of (Array.isArray(data.runs) ? data.runs : [])) {
+    if (r && r.state === 'running' && r.slot) {
+      const prev = map.get(r.slot);
+      if (!prev || String(r.started || '') > String(prev.started || '')) map.set(r.slot, r);
+    }
+  }
+  return map;
 }
 
 function renderSlots(data) {
@@ -612,6 +917,8 @@ function renderSlots(data) {
     wrap.appendChild(emptyP('슬롯 명부 없음'));
     return;
   }
+  const running = runningBySlot(data);
+  const runIds = [];
   const rows = slots.map((s) => {
     const modelCell = document.createElement('div');
     modelCell.className = 'model-cell';
@@ -626,33 +933,46 @@ function renderSlots(data) {
       source.title = s.model_source;
       modelCell.appendChild(source);
     }
-    return [
-      mono(s.slot),
-      show(s.harness),
-      modelCell,
-      show(s.role),
-      show(s.note),
-    ];
+    const r = running.get(s.slot);
+    runIds.push(r ? r.id : null);
+    const now = document.createElement('div');
+    now.className = 'slot-state';
+    now.appendChild(r ? badge('실행 중', 'running') : badge('대기', 'idle'));
+    if (r) {
+      const sub = document.createElement('span');
+      sub.className = 'sub';
+      sub.textContent = show(r.label) + ' · ' + fmtElapsed(r.elapsed_sec);
+      sub.title = show(r.label, '');
+      now.appendChild(sub);
+    }
+    return [mono(s.slot), now, show(s.harness), modelCell, show(s.role), plainText(s.note) || '-'];
   });
-  wrap.appendChild(newTable(['슬롯', '하네스', '모델', '역할', '비고'], rows, null, {
-    widths: ['60px', '90px', '240px', '180px', '260px'],
-    ellipsis: [2, 3, 4],
+  const rowClasses = runIds.map((id) => (id ? 'row-running' : ''));
+  wrap.appendChild(newTable(['슬롯', '지금', '하네스', '모델', '역할', '비고'], rows, rowClasses, {
+    widths: ['64px', '230px', '100px', '250px', '180px', null],
+    ellipsis: [3, 4, 5],
+    rowRunIds: runIds,
   }));
 }
 
+const RUNS_PAGE = 20;
+
 function renderRuns(data) {
   const wrap = $('runs-table-wrap');
+  const more = $('runs-more');
   wrap.textContent = '';
-  const runs = Array.isArray(data.runs) ? data.runs.slice() : [];
-  runs.sort((a, b) => {
+  if (more) more.textContent = '';
+  const all = Array.isArray(data.runs) ? data.runs.slice() : [];
+  all.sort((a, b) => {
     const byStart = String(b.started || '').localeCompare(String(a.started || ''));
     if (byStart !== 0) return byStart;
     return String(b.id || '').localeCompare(String(a.id || ''));
   });
-  if (!runs.length) {
+  if (!all.length) {
     wrap.appendChild(emptyP('실행 기록 없음'));
     return;
   }
+  const runs = state.runsShowAll ? all : all.slice(0, RUNS_PAGE);
   const rowClasses = runs.map((r) => {
     if (r.state === 'running') return 'row-running';
     if (r.state === 'lost') return 'row-lost';
@@ -664,29 +984,39 @@ function renderRuns(data) {
     if (r.rc !== null && r.rc !== undefined && Number(r.rc) !== 0) rc.className = 'warn-text';
     const head = document.createElement('span');
     head.className = 'report-head';
-    head.textContent = show(r.report_head);
+    head.textContent = plainText(r.report_head) || '-';
     head.title = show(r.report_head, '');
-    const runIdCell = document.createElement('span');
-    runIdCell.className = 'mono run-id-cell';
-    runIdCell.textContent = show(r.id);
     return [
       mono(r.slot),
-      runIdCell,
-      show(r.harness),
+      mono(r.id),
       show(r.label),
       statusBadge(r.state),
+      reportBadge(r.report_head),
       rc,
       fmtElapsed(r.elapsed_sec),
       head,
     ];
   });
-  wrap.appendChild(newTable(['슬롯', 'run id', '하네스', '라벨', '상태', 'rc', '경과', '보고 머리말'], rows, rowClasses, {
-    widths: ['60px', '190px', '80px', '180px', '100px', '60px', '100px', '390px'],
+  wrap.appendChild(newTable(['슬롯', 'run id', '라벨', '상태', '보고', 'rc', '경과', '보고 머리말'], rows, rowClasses, {
+    widths: ['52px', '196px', '230px', '80px', '108px', '40px', '92px', null],
     num: [5, 6],
-    center: [4],
-    ellipsis: [3, 7],
+    center: [3, 4],
+    ellipsis: [2, 7],
     rowRunIds: runs.map((r) => r.id),
   }));
+  if (more && all.length > RUNS_PAGE) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-link';
+    btn.textContent = state.runsShowAll
+      ? `최근 ${RUNS_PAGE}건만 보기`
+      : `이전 실행 ${all.length - RUNS_PAGE}건 더 보기 (전체 ${all.length}건)`;
+    btn.addEventListener('click', () => {
+      state.runsShowAll = !state.runsShowAll;
+      if (state.data) renderRuns(state.data);
+    });
+    more.appendChild(btn);
+  }
 }
 
 function resolveBoardRunId(taskId, data) {
@@ -708,25 +1038,69 @@ function resolveBoardRunId(taskId, data) {
   return best ? best.id : null;
 }
 
+const BOARD_FILTERS = [
+  { key: 'open', label: '미완료', test: (b) => !['DONE', 'REJECTED'].includes(String(b.status || '').toUpperCase()) },
+  { key: 'done', label: '완료', test: (b) => String(b.status || '').toUpperCase() === 'DONE' },
+  { key: 'all', label: '전체', test: () => true },
+];
+
 function renderBoard(data) {
   const wrap = $('board-table-wrap');
+  const filterBox = $('board-filter');
   wrap.textContent = '';
-  const board = Array.isArray(data.board) ? data.board : [];
+  const all = Array.isArray(data.board) ? data.board : [];
+  if (filterBox) {
+    filterBox.textContent = '';
+    for (const f of BOARD_FILTERS) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip';
+      chip.setAttribute('aria-pressed', String(state.boardFilter === f.key));
+      chip.textContent = `${f.label} ${all.filter(f.test).length}`;
+      chip.addEventListener('click', () => {
+        state.boardFilter = f.key;
+        if (state.data) renderBoard(state.data);
+      });
+      filterBox.appendChild(chip);
+    }
+  }
+  const filter = BOARD_FILTERS.find((f) => f.key === state.boardFilter) || BOARD_FILTERS[0];
+  const board = all.filter(filter.test).slice().reverse();   // 최신 태스크가 위
   if (!board.length) {
-    wrap.appendChild(emptyP('보드 없음'));
+    wrap.appendChild(emptyP(all.length ? '이 필터에 해당하는 작업 없음' : '보드 없음'));
     return;
   }
-  const rows = board.map((b) => [
-    mono(b.id),
-    show(b.task),
-    show(b.slot),
-    statusBadge(b.status),
-    show(b.handoff),
-    show(String(b.artifact || '-').replace(/`/g, '')),
-  ]);
+  const runIndex = new Map((Array.isArray(data.runs) ? data.runs : []).map((r) => [r.id, r]));
   const rowRunIds = board.map((b) => resolveBoardRunId(b.id, data));
-  const table = newTable(['ID', '작업', '슬롯', '상태', '핸드오프', '산출물'], rows, null, {
-    widths: ['80px', '220px', '80px', '100px', '100px', '260px'],
+  const rows = board.map((b, i) => {
+    const run = rowRunIds[i] ? runIndex.get(rowRunIds[i]) : null;
+    const last = document.createElement('div');
+    last.className = 'slot-state';
+    if (!run) {
+      last.textContent = '-';
+    } else {
+      const line = document.createElement('span');
+      line.className = 'run-line';
+      line.appendChild(statusBadge(run.state));
+      line.appendChild(document.createTextNode(' '));
+      line.appendChild(reportBadge(run.report_head));
+      last.appendChild(line);
+      const sub = document.createElement('span');
+      sub.className = 'sub';
+      sub.textContent = fmtDateTime(run.started).slice(5) + ' · ' + fmtElapsed(run.elapsed_sec);
+      last.appendChild(sub);
+    }
+    return [
+      mono(b.id),
+      plainText(b.task) || '-',
+      show(b.slot),
+      statusBadge(b.status),
+      last,
+      plainText(b.artifact) || '-',
+    ];
+  });
+  const table = newTable(['ID', '작업', '슬롯', '보드 상태', '최근 실행', '산출물'], rows, null, {
+    widths: ['76px', '380px', '76px', '100px', '170px', null],
     center: [3],
     ellipsis: [1, 5],
     rowRunIds,
@@ -745,13 +1119,13 @@ function renderQueue(data) {
   }
   const rows = queue.map((q) => [
     show(q.order),
-    show(q.task),
+    plainText(q.task) || '-',
     show(q.slots),
     show(q.handoff),
-    show(q.note),
+    plainText(q.note) || '-',
   ]);
   wrap.appendChild(newTable(['순서', '작업', '슬롯', '핸드오프', '비고'], rows, null, {
-    widths: ['60px', '240px', '100px', '100px', '400px'],
+    widths: ['56px', '420px', '96px', '96px', null],
     num: [0],
     ellipsis: [1, 4],
   }));
@@ -827,80 +1201,133 @@ function fmtGraphEta(value) {
   return show(value) + 's';
 }
 
-function renderGraphs(data) {
-  const list = $('graphs-list');
-  list.textContent = '';
-  const graphs = Array.isArray(data.graphs) ? data.graphs : [];
-  if (!graphs.length) {
-    list.appendChild(emptyP('진행 중인 태스크 그래프가 없습니다'));
-    return;
+function graphFinished(g) {
+  const nodes = Array.isArray(g.nodes) ? g.nodes : [];
+  if (!nodes.length) return Number(g.percent) >= 100;
+  return nodes.every((n) => ['done', 'failed', 'blocked', 'skipped'].includes(String(n.status || '').toLowerCase()));
+}
+
+function foldButton(open, label, onToggle) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'fold-btn';
+  btn.setAttribute('aria-expanded', String(open));
+  btn.setAttribute('aria-label', (open ? '접기: ' : '펼치기: ') + label);
+  btn.textContent = open ? '▾' : '▸';
+  btn.addEventListener('click', onToggle);
+  return btn;
+}
+
+const GRAPH_STALE_SEC = 2 * 3600;
+
+function graphStale(g) {
+  const t = Date.parse(String(g.updated || g.created || ''));
+  return Number.isFinite(t) && (Date.now() - t) / 1000 > GRAPH_STALE_SEC;
+}
+
+function graphStateBadge(g, finished) {
+  const counts = g.counts || {};
+  if (finished) {
+    return (counts.failed || counts.blocked) ? badge('부분 완료', 'partial') : badge('완료', 'done');
   }
+  const t = Date.parse(String(g.updated || g.created || ''));
+  if (Number.isFinite(t) && (Date.now() - t) / 1000 > GRAPH_STALE_SEC) {
+    const span = badge('멈춤', 'stale');
+    span.title = '진행 중으로 남아 있지만 ' + fmtElapsed((Date.now() - t) / 1000) + ' 동안 갱신이 없습니다 (실행자가 끝난 그래프)';
+    return span;
+  }
+  return badge('진행 중', 'running');
+}
 
-  for (const g of graphs) {
-    const block = document.createElement('div');
-    block.className = 'graph-block';
+function graphBlock(g) {
+  const key = show(g.id, '');
+  const finished = graphFinished(g);
+  if (!state.graphKnown.has(key)) {
+    state.graphKnown.add(key);
+    if (!finished && !graphStale(g)) state.graphOpen.add(key);   // 진행 중인 그래프만 펼친 채로 시작
+  }
+  const open = state.graphOpen.has(key);
 
-    const head = document.createElement('div');
-    head.className = 'graph-head';
-    const id = document.createElement('span');
-    id.className = 'graph-id';
-    id.textContent = show(g.id);
-    head.appendChild(id);
-    head.appendChild(document.createTextNode(' · '));
-    const req = document.createElement('span');
-    req.className = 'graph-title';
-    req.textContent = show(g.request);
-    req.title = show(g.request, '');
-    head.appendChild(req);
-    head.appendChild(document.createTextNode(' · '));
-    const pct = document.createElement('span');
-    pct.className = 'graph-meta';
-    pct.textContent = fmtGraphPct(g.percent);
-    head.appendChild(pct);
-    head.appendChild(document.createTextNode(' · '));
-    const eta = document.createElement('span');
-    eta.className = 'graph-meta';
-    eta.textContent = 'ETA ' + fmtGraphEta(g.eta_seconds);
-    head.appendChild(eta);
-    block.appendChild(head);
+  const block = document.createElement('div');
+  block.className = 'graph-block' + (open ? '' : ' is-folded');
 
-    const counts = g.counts || {};
-    const meta = document.createElement('div');
-    meta.className = 'graph-counts';
-    meta.textContent = '완료 ' + show(counts.done, '-') +
-      ' · 진행 ' + show(counts.running, '-') +
-      ' · 대기 ' + show(counts.todo, '-') +
-      (g.eta_at ? ' · 도착 ' + fmtDateTime(g.eta_at) : '');
-    block.appendChild(meta);
+  const head = document.createElement('div');
+  head.className = 'graph-head';
+  head.appendChild(foldButton(open, key, () => {
+    if (state.graphOpen.has(key)) state.graphOpen.delete(key);
+    else state.graphOpen.add(key);
+    if (state.data) renderGraphs(state.data);
+  }));
+  const id = document.createElement('span');
+  id.className = 'graph-id';
+  id.textContent = key || '-';
+  head.appendChild(id);
+  const req = document.createElement('span');
+  req.className = 'graph-title elide';
+  req.textContent = plainText(g.request) || '-';
+  req.title = show(g.request, '');
+  head.appendChild(req);
+  const pct = document.createElement('span');
+  pct.className = 'graph-meta';
+  pct.textContent = fmtGraphPct(g.percent) + (finished ? '' : ' · ETA ' + fmtGraphEta(g.eta_seconds));
+  head.appendChild(pct);
+  head.appendChild(graphStateBadge(g, finished));
+  block.appendChild(head);
 
+  const counts = g.counts || {};
+  const meta = document.createElement('div');
+  meta.className = 'graph-counts';
+  const parts = [];
+  for (const [k, label] of [['done', '완료'], ['running', '진행'], ['todo', '대기'], ['failed', '실패'], ['blocked', '막힘']]) {
+    if (counts[k]) parts.push(`${label} ${counts[k]}`);
+  }
+  if (g.updated) parts.push('갱신 ' + fmtDateTime(g.updated));
+  if (!finished && g.eta_at) parts.push('도착 예상 ' + fmtDateTime(g.eta_at));
+  meta.textContent = parts.join(' · ') || '-';
+  block.appendChild(meta);
+
+  if (open) {
     const nodes = Array.isArray(g.nodes) ? g.nodes : [];
     if (!nodes.length) {
       block.appendChild(emptyP('그래프 노드 없음'));
     } else {
       const rows = nodes.map((n) => [
         mono(n.id),
-        show(n.title),
+        plainText(n.title) || '-',
         show(n.slot),
-        show(n.harness),
         statusBadge(n.status),
         Array.isArray(n.deps) && n.deps.length ? n.deps.join(', ') : '-',
         show(n.attempts) + '/' + show(n.max_attempts),
-        show(n.last_run),
+        mono(n.last_run),
       ]);
-      block.appendChild(newTable(
-        ['노드ID', '제목', '슬롯', '하네스', '상태', '의존', '시도', 'run'],
-        rows,
-        null,
-        {
-          widths: ['70px', '260px', '70px', '90px', '100px', '120px', '80px', '220px'],
-          num: [6],
-          center: [4],
-          ellipsis: [1, 5, 7],
-        },
-      ));
+      const runIds = nodes.map((n) => n.last_run || null);
+      const tw = document.createElement('div');
+      tw.className = 'tablewrap';
+      const table = newTable(['노드', '제목', '슬롯', '상태', '의존', '시도', '마지막 실행'], rows, null, {
+        widths: ['76px', '360px', '64px', '90px', '130px', '60px', null],
+        num: [5],
+        center: [3],
+        ellipsis: [1, 4, 6],
+        rowRunIds: runIds,
+      });
+      markUnopenableRows(table, runIds);
+      tw.appendChild(table);
+      block.appendChild(tw);
     }
-    list.appendChild(block);
   }
+  return block;
+}
+
+function renderGraphs(data) {
+  const list = $('graphs-list');
+  list.textContent = '';
+  const graphs = (Array.isArray(data.graphs) ? data.graphs.slice() : [])
+    .sort((a, b) => String(b.updated || b.created || '').localeCompare(String(a.updated || a.created || '')));
+  if (!graphs.length) {
+    list.appendChild(emptyP('태스크 그래프가 없습니다'));
+    return;
+  }
+  for (const g of graphs) list.appendChild(graphBlock(g));
 }
 
 function progressOf(req) {
@@ -926,8 +1353,85 @@ function etaText(req) {
   return parts.length ? parts.join(' · ') : '-';
 }
 
+const REQ_CLOSED = new Set(['DONE', 'REJECTED']);
+
+function canEditRequest(req) {
+  return String(req.status || '').toUpperCase() === 'NEW'
+    && !(Array.isArray(req.subtasks) && req.subtasks.length);
+}
+
+async function saveRequestEdit(req, form) {
+  const msg = form.querySelector('.form-msg');
+  const title = form.querySelector('input').value.trim();
+  const detail = form.querySelector('textarea').value;
+  if (!title) { msg.textContent = '제목은 비워 둘 수 없습니다'; msg.className = 'form-msg error'; return; }
+  const buttons = form.querySelectorAll('button');
+  buttons.forEach((b) => { b.disabled = true; });
+  msg.textContent = '저장 중…'; msg.className = 'form-msg';
+  try {
+    if (DEMO) {
+      req.title = title; req.detail = detail;
+    } else {
+      const res = await fetch('/api/requests/' + encodeURIComponent(req.id) + '/edit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ title, detail }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.ok) throw new Error(body.error || ('HTTP ' + res.status));
+    }
+    state.editing = null;
+    await refresh();
+  } catch (err) {
+    msg.textContent = '저장 실패: ' + (err && err.message ? err.message : String(err));
+    msg.className = 'form-msg error';
+    buttons.forEach((b) => { b.disabled = false; });
+  }
+}
+
+function requestEditForm(req) {
+  const form = document.createElement('form');
+  form.className = 'req-edit';
+  form.autocomplete = 'off';
+  const tl = document.createElement('label');
+  tl.textContent = '제목';
+  const ti = document.createElement('input');
+  ti.type = 'text'; ti.required = true; ti.value = show(req.title, '');
+  const dl = document.createElement('label');
+  dl.textContent = '본문';
+  const ta = document.createElement('textarea');
+  ta.rows = 8; ta.value = show(req.detail, '');
+  const row = document.createElement('div');
+  row.className = 'form-row';
+  const save = document.createElement('button');
+  save.type = 'submit'; save.className = 'btn-primary'; save.textContent = '저장';
+  const cancel = document.createElement('button');
+  cancel.type = 'button'; cancel.textContent = '취소';
+  cancel.addEventListener('click', () => { state.editing = null; if (state.data) renderRequests(state.data); });
+  const msg = document.createElement('span');
+  msg.className = 'form-msg'; msg.setAttribute('role', 'status');
+  row.append(save, cancel, msg);
+  form.append(tl, ti, dl, ta, row);
+  form.addEventListener('submit', (e) => { e.preventDefault(); saveRequestEdit(req, form); });
+  if (req.detail_truncated === true) {
+    // 목록의 본문은 600자로 잘려 있다 - 잘린 채 저장하면 뒷부분이 사라지므로 전문을 받아 온 뒤에만 저장을 연다
+    ta.disabled = true; save.disabled = true;
+    msg.textContent = '전문을 불러오는 중…';
+    fetchRequestFull(req).then((full) => {
+      ti.value = show(full.title, ''); ta.value = show(full.detail, '');
+      ta.disabled = false; save.disabled = false; msg.textContent = '';
+    }).catch((err) => {
+      msg.textContent = '전문을 불러오지 못해 수정할 수 없습니다: ' + (err && err.message ? err.message : err);
+      msg.className = 'form-msg error';
+    });
+  }
+  return form;
+}
+
 function renderRequests(data) {
   const list = $('requests-list');
+  // 편집 중에는 5초 폴링이 폼을 지우지 않게 다시 그리지 않는다
+  if (state.editing && list.querySelector('.req-edit')) return;
   list.textContent = '';
   const requests = Array.isArray(data.requests) ? data.requests : [];
   if (!requests.length) {
@@ -939,11 +1443,17 @@ function renderRequests(data) {
     runs.set(r.id, r);
   }
 
-  requests.forEach((req, index) => {
+  const ordered = requests.slice().sort((a, b) => {
+    const ca = REQ_CLOSED.has(String(a.status || '').toUpperCase()) ? 1 : 0;
+    const cb = REQ_CLOSED.has(String(b.status || '').toUpperCase()) ? 1 : 0;
+    if (ca !== cb) return ca - cb;
+    return String(b.created || '').localeCompare(String(a.created || ''));
+  });
+  ordered.forEach((req, index) => {
     const key = show(req.id, '') || ('request-' + index);
     if (!state.known.has(key)) {
       state.known.add(key);
-      state.expanded.add(key);
+      if (!REQ_CLOSED.has(String(req.status || '').toUpperCase())) state.expanded.add(key);   // 끝난 요청은 접힌 채 시작
     }
     const open = state.expanded.has(key);
 
@@ -955,7 +1465,7 @@ function renderRequests(data) {
 
     const toggle = document.createElement('button');
     toggle.type = 'button';
-    toggle.className = 'req-toggle';
+    toggle.className = 'req-toggle fold-btn';
     toggle.setAttribute('aria-expanded', String(open));
     toggle.textContent = open ? '▾' : '▸';
     toggle.addEventListener('click', () => {
@@ -973,17 +1483,36 @@ function renderRequests(data) {
     metaLine.className = 'req-meta';
     metaLine.textContent = `요청 ${fmtDateTime(req.created)} · 요청자 ${show(req.requester)}`;
     titleWrap.appendChild(metaLine);
-    if (req.detail) {
+    if (state.editing === key) {
+      titleWrap.appendChild(requestEditForm(req));
+    } else if (req.detail && open) {
       const detail = document.createElement('div');
       detail.className = 'req-detail';
-      detail.textContent = show(req.detail);
-      detail.title = show(req.detail, '');
+      detail.textContent = show(req.detail);   // 입력한 줄바꿈 그대로 (pre-wrap), 마크업 해석 없음
+      // 항상 4줄로 접어 두고, 실제로 잘렸는지(높이)나 서버가 잘랐는지(detail_truncated)로 '전체 보기' 를 켠다
+      detail.classList.add('is-clamped');
+      detail.addEventListener('click', () => openRequestDetail(req));
+      detail.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openRequestDetail(req); }
+      });
       titleWrap.appendChild(detail);
-      const fullLabel = requestFullViewLabel(req);
+      const fullLabel = requestFullViewLabel(req) || '전체 보기';
       if (fullLabel !== null) {
         const full = document.createElement('button');
         full.type = 'button';
         full.className = 'req-full';
+        const markLong = () => {
+          const long = req.detail_truncated === true || detail.scrollHeight > detail.clientHeight + 2;
+          full.classList.toggle('is-on', long);
+          if (long) {
+            detail.title = '클릭하면 전체 내용을 봅니다';
+            detail.tabIndex = 0;
+            detail.setAttribute('role', 'button');
+          } else {
+            detail.classList.remove('is-clamped');
+          }
+        };
+        requestAnimationFrame(markLong);
         full.textContent = fullLabel;
         full.addEventListener('click', () => openRequestDetail(req));
         titleWrap.appendChild(full);
@@ -993,6 +1522,19 @@ function renderRequests(data) {
     const badges = document.createElement('div');
     badges.className = 'req-badges';
     badges.appendChild(statusBadge(req.status));
+    if (canEditRequest(req) && state.editing !== key) {
+      const edit = document.createElement('button');
+      edit.type = 'button';
+      edit.className = 'req-edit-btn';
+      edit.textContent = '수정';
+      edit.title = '관리자가 분담하기 전(NEW)에만 고칠 수 있습니다';
+      edit.addEventListener('click', () => {
+        state.editing = key;
+        state.expanded.add(key);
+        if (state.data) renderRequests(state.data);
+      });
+      badges.appendChild(edit);
+    }
 
     top.appendChild(toggle);
     top.appendChild(titleWrap);
@@ -1000,6 +1542,16 @@ function renderRequests(data) {
     article.appendChild(top);
 
     const pct = progressOf(req);
+    if (!open) {
+      article.classList.add('is-folded');
+      const line = document.createElement('div');
+      line.className = 'req-meta';
+      const subs = Array.isArray(req.subtasks) ? req.subtasks.length : 0;
+      line.textContent = (pct === null ? '' : fmtPct(pct) + ' · ') + '서브태스크 ' + subs + '건';
+      titleWrap.appendChild(line);
+      list.appendChild(article);
+      return;
+    }
     const progressRow = document.createElement('div');
     progressRow.className = 'req-progress';
     const bar = document.createElement('div');
@@ -1069,7 +1621,7 @@ function renderRequests(data) {
         null,
         {
           className: 'subtasks',
-          widths: ['80px', '240px', '70px', '90px', '100px', '100px', '260px'],
+          widths: ['76px', '320px', '64px', '90px', '100px', '90px', null],
           num: [5],
           center: [4],
           ellipsis: [1, 6],
@@ -1077,7 +1629,10 @@ function renderRequests(data) {
         },
       );
       markUnopenableRows(subTable, subRunIds);
-      body.appendChild(subTable);
+      const tw = document.createElement('div');
+      tw.className = 'tablewrap';
+      tw.appendChild(subTable);
+      body.appendChild(tw);
     }
     article.appendChild(body);
     list.appendChild(article);
@@ -1106,8 +1661,35 @@ function renderErrors(data) {
   box.appendChild(ul);
 }
 
+function setTabCount(id, n, hot) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = n ? String(n) : '';
+  el.classList.toggle('is-hot', !!hot && n > 0);
+}
+
+function renderTabCounts(data) {
+  const runs = Array.isArray(data.runs) ? data.runs : [];
+  const running = runs.filter((r) => r && r.state === 'running').length;
+  setTabCount('tab-count-fleet', running, true);
+  const queue = Array.isArray(data.queue) ? data.queue.length : 0;
+  setTabCount('tab-count-board', queue, false);
+  const reqs = Array.isArray(data.requests) ? data.requests : [];
+  const active = reqs.filter((r) => !REQ_CLOSED.has(String(r.status || '').toUpperCase())).length;
+  setTabCount('tab-count-requests', active, true);
+  const f = $('tab-count-fleet');
+  if (f) f.title = '실행 중인 작업자';
+  const b = $('tab-count-board');
+  if (b) b.title = '대기 큐 항목';
+  const q = $('tab-count-requests');
+  if (q) q.title = '끝나지 않은 요청';
+}
+
 function renderAll(data) {
   renderErrors(data);
+  renderTabCounts(data);
+  renderFleetControl(data);
+  renderManager(data);
   renderMeta(data);
   renderSlots(data);
   renderKisti(data);

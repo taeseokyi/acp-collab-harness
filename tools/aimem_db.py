@@ -14,6 +14,7 @@ AIMEM.md 는 **규약 본문**만 남기고, 운영 상태(명부·보드·큐·
 import argparse
 import datetime as dt
 import json
+import os
 import pathlib
 import re
 import sqlite3
@@ -418,37 +419,135 @@ def render():
 
 
 # ----------------------------------------------------------------- 쓰기 명령 (관리자용, 2단계에서 마크다운 편집을 대체)
+def _upsert(con, table, key_col, key, fields, defaults):
+    """있으면 **준 필드만** 고치고, 없으면 기본값을 채워 넣습니다.
+
+    옛 구현은 `INSERT ... ON CONFLICT DO UPDATE` 한 문장이었는데, 갱신인데도 INSERT 쪽
+    NOT NULL 검사가 먼저 걸려 `request set --id X --detail ...`(상태 생략)이 실패했고,
+    `task set` 은 상태를 생략하면 기존 상태를 `TODO` 로 **덮었습니다** (2026-11-10 실측).
+    """
+    given = {k: v for k, v in fields.items() if v is not None}
+    row = con.execute(f"SELECT 1 FROM {table} WHERE {key_col}=?", (key,)).fetchone()
+    if row:
+        if given:
+            sets = ", ".join(f"{k}=?" for k in given)
+            con.execute(f"UPDATE {table} SET {sets} WHERE {key_col}=?", (*given.values(), key))
+        return "갱신"
+    full = dict(defaults)
+    full.update(given)
+    full[key_col] = key
+    cols = ", ".join(full)
+    con.execute(f"INSERT INTO {table}({cols}) VALUES({', '.join('?' * len(full))})", tuple(full.values()))
+    return "생성"
+
+
 def cmd_task(a):
     with connect() as con:
         now = _now()
         if a.action == "set":
-            con.execute("""INSERT INTO tasks(id,request_id,title,slot,status,artifacts,created,updated) VALUES(?,?,?,?,?,?,?,?)
-                ON CONFLICT(id) DO UPDATE SET request_id=COALESCE(excluded.request_id,tasks.request_id),
-                title=COALESCE(excluded.title,tasks.title), slot=COALESCE(excluded.slot,tasks.slot),
-                status=COALESCE(excluded.status,tasks.status), artifacts=COALESCE(excluded.artifacts,tasks.artifacts), updated=excluded.updated""",
-                        (a.id, a.request, a.title, a.slot, a.status or "TODO", a.artifacts, now, now))
+            if not a.id:
+                sys.exit("task set 에는 --id 가 필요합니다")
+            what = _upsert(con, "tasks", "id", a.id,
+                           {"request_id": a.request, "title": a.title, "slot": a.slot, "status": a.status,
+                            "artifacts": a.artifacts, "updated": now},
+                           {"status": "TODO", "created": now})
             con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
                         (now, a.actor, rev(con), "task", f"{a.id} {a.status or ''} {a.slot or ''} {a.title or ''}".strip()))
-            con.commit(); print(f"task {a.id} 갱신")
+            con.commit(); print(f"task {a.id} {what}")
         elif a.action == "list":
             for r in con.execute("SELECT id,request_id,slot,status,title FROM tasks ORDER BY id"):
                 print(f"  {r['id']:<7} {r['status']:<11} {r['slot'] or '-':<4} {r['request_id'] or '-':<22} {r['title'] or ''}")
     return 0
 
 
+def _sync_request_file(req_id, status=None, title=None, detail=None):
+    """`migrate` 는 `.aimem/requests/*.json` 을 다시 적재합니다 - DB 만 고치면 다음 migrate 가
+    옛 값으로 되돌립니다. 그래서 요청 파일도 같은 값으로 맞춥니다 (있을 때만)."""
+    d = ROOT / ".aimem" / "requests"
+    if not d.exists():
+        return False
+    for f in d.glob("*.json"):
+        try:
+            obj = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(obj, dict) or obj.get("id") != req_id:
+            continue
+        for k, v in (("status", status), ("title", title), ("detail", detail)):
+            if v is not None:
+                obj[k] = v
+        tmp = f.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        os.replace(tmp, f)
+        return True
+    return False
+
+
 def cmd_request(a):
     with connect() as con:
         now = _now()
         if a.action == "set":
-            con.execute("""INSERT INTO requests(id,title,detail,requester,status,created,updated) VALUES(?,?,?,?,?,?,?)
-                ON CONFLICT(id) DO UPDATE SET title=COALESCE(excluded.title,requests.title), detail=COALESCE(excluded.detail,requests.detail),
-                requester=COALESCE(excluded.requester,requests.requester), status=COALESCE(excluded.status,requests.status), updated=excluded.updated""",
-                        (a.id, a.title, a.detail, a.requester, a.status, now, now))
+            if not a.id:
+                sys.exit("request set 에는 --id 가 필요합니다")
+            what = _upsert(con, "requests", "id", a.id,
+                           {"title": a.title, "detail": a.detail, "requester": a.requester,
+                            "status": a.status, "updated": now},
+                           {"status": "NEW", "created": now})
             con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)", (now, a.actor, rev(con), "request", f"{a.id} {a.status or ''} {a.title or ''}".strip()))
-            con.commit(); print(f"request {a.id} 갱신")
+            con.commit()
+            synced = _sync_request_file(a.id, a.status, a.title, a.detail)
+            print(f"request {a.id} {what}" + (" (요청 파일도 맞춤)" if synced else ""))
         elif a.action == "list":
             for r in con.execute("SELECT id,status,requester,title FROM requests ORDER BY created"):
                 print(f"  {r['id']:<26} {r['status']:<12} {r['requester'] or '':<16} {r['title'] or ''}")
+    return 0
+
+
+def cmd_archive(a):
+    """`8.0` 「끝난 작업의 보관·폐기」 구현 (REV 115 결정, 요청 Q-261110-549a, 큐 12).
+
+    `DONE` 으로 바뀐 지 `--days`(기본 14)일이 지난 태스크를 `.aimem/archive/board-<YYYY-MM>.md`
+    에 **먼저 덧붙이고**, 파일에 들어간 것을 확인한 뒤에 DB 에서 내립니다(`아카이브 수명주기`).
+    `--dry-run` 은 무엇을 옮길지만 보여 줍니다.
+    """
+    cutoff = (dt.datetime.now() - dt.timedelta(days=a.days)).isoformat(timespec="seconds")
+    with connect() as con:
+        rows = con.execute("SELECT id,title,slot,status,inherited,artifacts,updated FROM tasks "
+                           "WHERE status='DONE' AND COALESCE(updated,created,'') < ? ORDER BY id", (cutoff,)).fetchall()
+        if not rows:
+            print(f"archive: {a.days}일 지난 DONE 태스크 없음 (기준 {cutoff})")
+            return 0
+        by_month = {}
+        for r in rows:
+            by_month.setdefault((r["updated"] or cutoff)[:7], []).append(r)
+        for month, rs in sorted(by_month.items()):
+            print(f"archive: {month} <- {', '.join(r['id'] for r in rs)}")
+        if a.dry_run:
+            return 0
+        arch = ROOT / ".aimem" / "archive"
+        arch.mkdir(parents=True, exist_ok=True)
+        cell = lambda v: str(v or "-").replace("|", "\\|").replace("\n", " ")
+        for month, rs in sorted(by_month.items()):
+            f = arch / f"board-{month}.md"
+            if not f.exists():
+                y, m = month.split("-")
+                f.write_text(f"# 작업 보드 아카이브 - {int(y)}년 {int(m)}월\n\n"
+                             "`DONE` 이 된 지 14일이 지나 내린 행입니다 (`aimem_db.py archive`, `8.0` 보관·폐기).\n\n"
+                             "| ID    | 태스크 | 담당 슬롯 | 상태 | 이어받음 | 산출물 |\n"
+                             "| ----- | ------ | --------- | ---- | -------- | ------ |\n", encoding="utf-8")
+            with f.open("a", encoding="utf-8") as fh:
+                for r in rs:
+                    fh.write(f"| {r['id']} | {cell(r['title'])} | {cell(r['slot'])} | DONE | {cell(r['inherited'])} | {cell(r['artifacts'])} |\n")
+            text = f.read_text(encoding="utf-8")
+            missing = [r["id"] for r in rs if f"| {r['id']} |" not in text]
+            if missing:
+                sys.exit(f"archive: {f.name} 에 {missing} 가 안 들어갔습니다 - DB 에서 내리지 않습니다")
+        ids = [r["id"] for r in rows]
+        con.execute(f"DELETE FROM tasks WHERE id IN ({','.join('?' * len(ids))})", ids)
+        con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
+                    (_now(), a.actor, rev(con), "archive", f"DONE {a.days}일 경과 {len(ids)}건 -> board-*.md: {', '.join(ids)}"))
+        con.commit()
+        print(f"archive: {len(ids)}건 옮김")
     return 0
 
 
@@ -526,6 +625,8 @@ def main():
     q = sub.add_parser("request"); q.add_argument("action", choices=["set", "list"]); q.add_argument("--id"); q.add_argument("--title")
     q.add_argument("--detail"); q.add_argument("--requester"); q.add_argument("--status", choices=["NEW","PLANNED","IN-PROGRESS","DONE","REJECTED"]); q.add_argument("--actor", default="관리자")
     o = sub.add_parser("ownership"); o.add_argument("action", choices=["set", "list"]); o.add_argument("--path"); o.add_argument("--owner"); o.add_argument("--note"); o.add_argument("--actor", default="관리자")
+    r = sub.add_parser("archive", help="DONE 이 된 지 N일 지난 태스크를 .aimem/archive/board-<YYYY-MM>.md 로 옮긴다 (8.0)")
+    r.add_argument("--days", type=int, default=14); r.add_argument("--dry-run", action="store_true"); r.add_argument("--actor", default="관리자")
     u = sub.add_parser("queue", help="4.5 대기 큐 (관리자만 씁니다)")
     u.add_argument("action", choices=["list", "add", "drop"])
     u.add_argument("--task"); u.add_argument("--slot-hint", dest="slot_hint"); u.add_argument("--inherited")
@@ -539,7 +640,7 @@ def main():
             p.error("queue drop 에는 --pos 가 필요합니다")
     return {"init": cmd_init, "migrate": lambda a: migrate(), "render": lambda a: render(), "state": cmd_state,
             "check": cmd_check, "event": cmd_event, "task": cmd_task, "request": cmd_request,
-            "ownership": cmd_ownership, "queue": cmd_queue}[a.cmd](a) or 0
+            "ownership": cmd_ownership, "queue": cmd_queue, "archive": cmd_archive}[a.cmd](a) or 0
 
 
 if __name__ == "__main__":
