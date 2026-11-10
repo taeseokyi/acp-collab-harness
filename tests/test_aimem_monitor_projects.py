@@ -102,6 +102,46 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(self.record(res)["project"], "베타")
         self.assertEqual(server.request_detail(rid, self.root)[1]["project"], "베타")
 
+    def _project(self):
+        d = self.root / "projects" / "알파"
+        (d / "src").mkdir(parents=True)
+        (d / "README.md").write_text("# 알파\n", encoding="utf-8")
+        (d / "PROGRESS.md").write_text("## R7\n- 남은 일\n", encoding="utf-8")
+        (d / "src" / "main.py").write_text(f"ROOT = '{self.root}'\n", encoding="utf-8")
+        (d / "src" / "logo.bin").write_bytes(b"\x00\x01\x02")
+        (d / ".env").write_text("SECRET=1", encoding="utf-8")
+        (d / "node_modules").mkdir()
+        (d / "node_modules" / "x.js").write_text("x", encoding="utf-8")
+        (self.root / "outside.txt").write_text("밖", encoding="utf-8")
+        (d / "link.txt").symlink_to(self.root / "outside.txt")
+        return d
+
+    def test_project_files_lists_deliverables_only(self):
+        self._project()
+        code, out = server.project_files("알파", self.root)
+        self.assertEqual(code, 200)
+        self.assertEqual([f["path"] for f in out["files"]], ["README.md", "PROGRESS.md", "src/logo.bin", "src/main.py"])
+        self.assertEqual(server.project_files("없음", self.root)[0], 404)
+        self.assertEqual(server.project_files("../x", self.root)[0], 400)
+
+    def test_project_file_reads_text_inside_the_folder_only(self):
+        self._project()
+        code, out = server.project_file("알파", "src/main.py", self.root)
+        self.assertEqual((code, out["binary"], out["truncated"]), (200, False, False))
+        self.assertNotIn(str(self.root), out["text"])                    # 저장소 절대 경로는 가려서 나간다
+        code, out = server.project_file("알파", "src/logo.bin", self.root)
+        self.assertEqual((code, out["binary"], out["text"]), (200, True, ""))
+        for bad, want in (("../outside.txt", 400), ("/etc/passwd", 400), ("src/../../outside.txt", 400), (".env", 400),
+                          ("link.txt", 404), ("src", 404), ("없는.md", 404), ("", 400), ("src\\main.py", 400)):
+            self.assertEqual(server.project_file("알파", bad, self.root)[0], want, bad)
+
+    def test_project_file_is_capped(self):
+        d = self._project()
+        (d / "big.txt").write_text("가" * 100_000, encoding="utf-8")       # 300KB
+        code, out = server.project_file("알파", "big.txt", self.root)
+        self.assertEqual((code, out["truncated"]), (200, True))
+        self.assertLessEqual(len(out["text"].encode("utf-8")), server.PROJECT_FILE_MAX_BYTES + 3)
+
     def test_contract_carries_project(self):
         self.assertIn("project", REQUEST_ROW_KEYS)
         self.assertIn("projects", SERVER_KEYS)

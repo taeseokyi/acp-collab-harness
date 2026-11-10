@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T21:40:42 / REV 145
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T21:47:54 / REV 146
 
 ## 2. 세션 명부
 
@@ -18,6 +18,7 @@
 
 ## 4. 이벤트 로그 (최신 50)
 
+- `2026-11-10 21:47` 클로드 코드 [handoff] REV 146: **REV 146. 웹에서 프로젝트 결과물을 보고, 요청 수정 화면에서 프로젝트를 바꾼다.** (1) `GET /api/projects/<이름>/files` · `/file?path=` - `projects/<이름>/` 의 파일 목록(최대 500, README·PROGRESS 먼저, 숨김·링크·의존성 폴더 제외)과 본문(텍스트만, 200KB 까지, 상세 응답과 같은 가림). 경로는 폴더 안 상대 경로만 - 절대 경로·`..`·숨김 조각·심볼릭 링크 거절. (2) 함대 탭 프로젝트 카드에 '결과물 보기' → 상세 패널에서 목록, 행을
 - `2026-11-10 21:40` 클로드 코드 [handoff] REV 145: **REV 145. 프로젝트 구조 종합 검토 - 라운드 흐름 결함 5건과 화면 가독성 정비.** (1) 웹 요청 폼은 파일만 만들고 `request list` 는 DB 만 읽어 표준 브리프 라운드의 관리자가 NEW 를 못 봤다 → `aimem_db.load_request_files` 를 `request list/set`·`task set` 앞에서 부른다. (2) `request set --project` 추가(파일 없으면 만든다). (3) 관리자가 안 뜬 라운드는 `round.json` 에 `state: failed` → 프로젝트 
 - `2026-11-10 21:02` Claude Code [handoff] REV 144: **REV 144. 작업자 실행 상태에 프로젝트 구분.** 태석님 지시. 식별자는 그대로 두고, 작업자를 띄울 때 실행 기록(`.aimem/runs/<id>.json`)에 `project`·`round` 를 따로 적는다 - 프로젝트는 그래프 노드의 `"project"` 또는 태스크→요청(`task set --request`)에서, 라운드는 가장 최근에 띄운 라운드(`fleet.current_round()`). 그래프 파일에도 `round`. 웹 '작업자 실행 상태' 표에 **프로젝트 칸**(`이름 · R<n>`, 없으면 '함대'),
 - `2026-11-10 21:00` Claude Code [handoff] REV 143: **REV 143. 프로젝트별 진행 상황을 함대 화면에.** 태석님 지시(식별자에는 붙이지 않는다 - 알아볼 수만 있으면 된다 / 대신 각 프로젝트가 얼마나 진행됐는지, 몇 라운드를 거쳤는지). 식별자 체계(`8.0-3-1`)는 그대로. (1) 함대 탭 '프로젝트' 카드: 프로젝트마다 진행률 막대(그 프로젝트 요청들의 평균 - 완료 100, 진행 중은 요청 진행율, 거절 제외, 아카이브된 완료 포함), 요청 완료/진행/대기 건수, 거친 라운드 수와 목록, 마지막 라운드 시각, `PROGRESS.md` 최근 항목(펼침). `/api/
@@ -67,7 +68,6 @@
 - `2026-11-10 13:50` Claude Code (Taeseok's instruction) [handoff] REV 117: **REV 117. Five monitor design-vs-function checks + shared CA and Windows proxy.** (1) For closed requests (DONE/REJECTED) the request status decides progress and ETA (`reader._estimate`, front end shows "closed") - 10 DONE requests had shown 0~90% progress and remaining ETA. The `REVIEW` closing ru
 - `2026-11-10 11:40` Claude Code (Taeseok's instruction, fleet stopped) [handoff] REV 116: **REV 116. Direct monitor UI work + clearing handled items.** (1) UI: numbered titles → bullets, type scale 15/14/13/12, width 1680 + fixed request sidebar, underline tabs with counts, Manager session line (`/api/state.managers`, 30-second background cache), per-slot "now", 20 runs + more + report b
 - `2026-11-10 10:40` Manager (R6) [handoff] REV 115: **REV 115. Four slots back + `fleet_graph` cut down three times + tab UI.** (1) **S2 (codex, kistillm) returned.** KISTI recovered in the morning (smoke 28 s), test-path ownership reverted S4→**S2**, and `tests/test_fleet*.py` was **registered** as S2-owned (Taeseok approved in the R6 brief → `Secti
-- `2026-11-09 21:50` Manager (R5) [handoff] REV 114: **REV 114. DB phase 2 complete + second public-surface pass.** (1) **Four operating-state tables removed** (Sections 2, 3, 4.5, 6; 772→705 lines). Order respected - removed **after** `reader` (T-069, S1), `fleet.py` (T-070, Manager) and `aimem_board` (T-071, S1) read the DB, with the originals moved
 
 ## 4.5 대기 큐
 

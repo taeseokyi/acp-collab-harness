@@ -1315,3 +1315,9 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .slots-table { min-width: 900px; }
 .fc-hint-where { margin-top: 2px; overflow-wrap: anywhere; }
 .fc-prep-old > summary { color: var(--st-ink-muted); }
+
+/* REV 146: 프로젝트 결과물 보기, 요청 수정 폼의 프로젝트 칸 */
+.proj-head .proj-view { margin-left: auto; font-size: 13px; padding: 2px 10px; }
+.proj-file-text { margin: var(--st-s-2) 0 0; padding: var(--st-s-3); border: 1px solid var(--st-line); border-radius: var(--st-r-sm);
+  background: var(--st-surface-2); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.req-edit .hint { font-weight: 400; }

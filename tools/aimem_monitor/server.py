@@ -16,6 +16,7 @@
     GET  /api/runs/<id>    -> reader.run_detail(). 상세 패널용 (브리프·보고·rc·경과)
     POST /api/requests     -> .aimem/requests/<id>.json 생성
     GET  /api/requests/<id> -> 요청 하나의 전문 (목록은 600자로 잘림)
+    GET  /api/projects/<이름>/files, /file?path= -> 프로젝트 결과물 목록·본문 (텍스트, 가림 적용)
     GET  /api/managers/<id8> -> 관리자 세션 상세 (최근 단계·라운드 전달·이벤트·그래프, 도구 출력 제외)
     POST /api/requests/<id>/edit -> NEW·미분담 요청의 제목·본문 수정 (Q-261110-549a)
     POST /api/fleet/<동작> -> 함대 제어 prepare|run|pause|stop|round (tools/fleet_ctl.py)
@@ -1742,6 +1743,93 @@ def list_projects(root=ROOT, requests=None):
     return out
 
 
+PROJECT_FILES_MAX = 500            # 목록 상한 (넘으면 truncated)
+PROJECT_FILE_MAX_BYTES = 200_000   # 한 파일 본문 상한 (넘으면 앞부분만, truncated)
+_PROJECT_SKIP_DIRS = {"node_modules", "__pycache__", ".git", ".venv", "dist", "build"}
+_PROJECT_FIRST = {"README.md": 0, "PROGRESS.md": 1}
+
+
+def _project_dir(name, root):
+    """(폴더, 오류응답). 이름은 폴더 하나의 이름이어야 하고, 폴더는 심볼릭 링크가 아니어야 합니다."""
+    if not isinstance(name, str) or not _PROJECT_RE.match(name):
+        return None, (400, {"ok": False, "error": "프로젝트 이름이 올바르지 않습니다"})
+    d = pathlib.Path(root) / PROJECTS_DIR / name
+    if d.is_symlink() or not d.is_dir():
+        return None, (404, {"ok": False, "error": f"프로젝트 폴더가 아직 없습니다: {PROJECTS_DIR}/{name}/"})
+    return d, None
+
+
+def project_files(name, root=ROOT):
+    """`GET /api/projects/<이름>/files` - `projects/<이름>/` 의 결과물 목록 (REV 146: 웹에서 결과물을 본다).
+
+    심볼릭 링크·숨김 항목·의존성 폴더는 건너뜁니다. README.md, PROGRESS.md 가 맨 앞, 나머지는 경로순.
+    """
+    d, err = _project_dir(name, root)
+    if err:
+        return err
+    files, truncated = [], False
+    for cur, dirs, names in os.walk(d, followlinks=False):
+        dirs[:] = sorted(x for x in dirs if not x.startswith(".") and x not in _PROJECT_SKIP_DIRS
+                         and not (pathlib.Path(cur) / x).is_symlink())
+        for fn in sorted(names):
+            f = pathlib.Path(cur) / fn
+            if fn.startswith(".") or f.is_symlink() or not f.is_file():
+                continue
+            if len(files) >= PROJECT_FILES_MAX:
+                truncated = True
+                break
+            try:
+                st = f.stat()
+            except OSError:
+                continue
+            files.append({"path": f.relative_to(d).as_posix(), "size": st.st_size,
+                          "modified": datetime.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")})
+        if truncated:
+            break
+    files.sort(key=lambda x: (_PROJECT_FIRST.get(x["path"], 2), x["path"]))
+    return 200, {"ok": True, "name": name, "path": f"{PROJECTS_DIR}/{name}/", "files": files, "truncated": truncated}
+
+
+def project_file(name, rel, root=ROOT):
+    """`GET /api/projects/<이름>/file?path=<상대 경로>` - 결과물 파일 하나의 본문 (텍스트만, 상한까지).
+
+    경로는 프로젝트 폴더 **안**이어야 합니다: 절대 경로·`..`·숨김 조각·심볼릭 링크를 거절하고, 풀어낸 실제 경로가
+    폴더 밖이면 거절합니다. 본문은 상세 응답과 같은 가림(저장소 절대 경로·확인 토큰)을 거쳐 나갑니다.
+    """
+    d, err = _project_dir(name, root)
+    if err:
+        return err
+    if not isinstance(rel, str) or not rel or len(rel) > 400 or "\x00" in rel or "\\" in rel:
+        return 400, {"ok": False, "error": "파일 경로(path)가 올바르지 않습니다"}
+    parts = rel.split("/")
+    if rel.startswith("/") or any(x in ("", ".", "..") or x.startswith(".") for x in parts):
+        return 400, {"ok": False, "error": "파일 경로는 프로젝트 폴더 안의 상대 경로여야 합니다"}
+    f = d.joinpath(*parts)
+    try:
+        inside = f.resolve() == d.resolve().joinpath(*parts)     # 중간에 링크가 끼면 달라진다
+    except OSError:
+        inside = False
+    if not inside or f.is_symlink() or not f.is_file():
+        return 404, {"ok": False, "error": f"그런 파일이 없습니다: {rel[:120]}"}
+    try:
+        st = f.stat()
+        with open(f, "rb") as fh:
+            raw = fh.read(PROJECT_FILE_MAX_BYTES + 1)
+    except OSError as e:
+        return 500, {"ok": False, "error": f"파일을 읽지 못했습니다: {type(e).__name__}"}
+    truncated = len(raw) > PROJECT_FILE_MAX_BYTES
+    raw = raw[:PROJECT_FILE_MAX_BYTES]
+    binary = b"\x00" in raw
+    text = "" if binary else raw.decode("utf-8", errors="replace")
+    out = {"ok": True, "name": name, "path": rel, "size": st.st_size,
+           "modified": datetime.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+           "binary": binary, "truncated": truncated, "text": text}
+    return 200, mask_deep(out, _detail_masker(root))
+
+
+_REQ_PROJECT_RE = re.compile(r"\A/api/projects/([^/]{1,400})/(files|file)\Z")
+
+
 def create_request(payload, root=ROOT):
     """요청 파일을 하나 만듭니다. (성공 여부, 결과 딕셔너리) 를 돌려줍니다.
 
@@ -2179,6 +2267,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         m = _REQ_GET_RE.match(path)
         if m:
             code, body = request_detail(m.group(1), self.root)
+            return self._json(code, body)
+        pm = _REQ_PROJECT_RE.match(path)
+        if pm:
+            pname = urllib.parse.unquote(pm.group(1))
+            if pm.group(2) == "files":
+                code, body = project_files(pname, self.root)
+            else:
+                q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                code, body = project_file(pname, (q.get("path") or [""])[0], self.root)
             return self._json(code, body)
         if path in ("/", "/index.html"):
             return self._static("index.html")

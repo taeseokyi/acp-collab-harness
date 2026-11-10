@@ -2231,18 +2231,20 @@ async function saveRequestEdit(req, form) {
   const msg = form.querySelector('.form-msg');
   const title = form.querySelector('input').value.trim();
   const detail = form.querySelector('textarea').value;
+  const projEl = form.querySelector('.req-edit-project');
+  const project = projEl ? projEl.value.trim() : '';
   if (!title) { msg.textContent = '제목은 비워 둘 수 없습니다'; msg.className = 'form-msg error'; return; }
   const buttons = form.querySelectorAll('button');
   buttons.forEach((b) => { b.disabled = true; });
   msg.textContent = '저장 중…'; msg.className = 'form-msg';
   try {
     if (DEMO) {
-      req.title = title; req.detail = detail;
+      req.title = title; req.detail = detail; if (projEl) req.project = project;
     } else {
       const res = await fetch('/api/requests/' + encodeURIComponent(req.id) + '/edit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ title, detail }),
+        body: JSON.stringify(projEl ? { title, detail, project } : { title, detail }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !body.ok) throw new Error(body.error || ('HTTP ' + res.status));
@@ -2264,6 +2266,17 @@ function requestEditForm(req) {
   tl.textContent = '제목';
   const ti = document.createElement('input');
   ti.type = 'text'; ti.required = true; ti.value = show(req.title, '');
+  // 프로젝트도 여기서 바꾼다 (REV 146) - 잘못 고른 프로젝트를 고치려고 요청을 다시 쓰지 않게
+  const pl = document.createElement('label');
+  pl.textContent = '프로젝트 ';
+  const ph = document.createElement('span');
+  ph.className = 'hint';
+  ph.textContent = '결과물이 쌓일 곳 · 비우면 함대 자체의 일';
+  pl.appendChild(ph);
+  const pi = document.createElement('input');
+  pi.type = 'text'; pi.className = 'req-edit-project'; pi.maxLength = 40;
+  pi.setAttribute('list', 'project-list'); pi.placeholder = '예: reefwiz-앱';
+  pi.value = show(req.project, '');
   const dl = document.createElement('label');
   dl.textContent = '본문';
   const ta = document.createElement('textarea');
@@ -2278,7 +2291,7 @@ function requestEditForm(req) {
   const msg = document.createElement('span');
   msg.className = 'form-msg'; msg.setAttribute('role', 'status');
   row.append(save, cancel, msg);
-  form.append(tl, ti, dl, ta, row);
+  form.append(tl, ti, pl, pi, dl, ta, row);
   form.addEventListener('submit', (e) => { e.preventDefault(); saveRequestEdit(req, form); });
   if (req.detail_truncated === true) {
     // 목록의 본문은 600자로 잘려 있다 - 잘린 채 저장하면 뒷부분이 사라지므로 전문을 받아 온 뒤에만 저장을 연다
@@ -2584,6 +2597,74 @@ function renderTabCounts(data) {
   if (q) q.title = '끝나지 않은 요청';
 }
 
+// ---- 프로젝트 결과물 보기 (REV 146) - `projects/<이름>/` 의 파일 목록과 본문을 상세 패널에서
+function fmtBytes(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '-';
+  if (v < 1024) return v + 'B';
+  if (v < 1024 * 1024) return (v / 1024).toFixed(v < 10240 ? 1 : 0) + 'KB';
+  return (v / 1048576).toFixed(1) + 'MB';
+}
+
+async function projectApi(name, tail) {
+  const res = await fetch('/api/projects/' + encodeURIComponent(name) + tail, { headers: { Accept: 'application/json' } });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.ok) throw new Error(body.error || ('HTTP ' + res.status));
+  return body;
+}
+
+function openProjectFiles(pr, filePath) {
+  const name = show(pr.name, '');
+  openPanel('프로젝트 ' + name + ' 결과물', (body) => {
+    const seq = state.detailSeq;                 // 늦게 온 응답이 다른 상세를 덮지 않게
+    const alive = () => state.detailOpen && state.detailSeq === seq;
+    const note = (text, cls) => { const p = document.createElement('p'); p.className = cls || 'empty'; p.textContent = text; return p; };
+    const showList = async () => {
+      body.replaceChildren(note('목록을 불러오는 중…'));
+      try {
+        const d = DEMO ? { path: `projects/${name}/`, files: [], truncated: false } : await projectApi(name, '/files');
+        if (!alive()) return;
+        body.replaceChildren();
+        const head = note(`${show(d.path, '')} · 파일 ${d.files.length}개` + (d.truncated ? ' (앞 500개만)' : '') + ' · 행을 누르면 본문', 'proj-meta');
+        body.appendChild(head);
+        if (!d.files.length) { body.appendChild(note('아직 파일이 없습니다')); return; }
+        const tw = document.createElement('div');
+        tw.className = 'tablewrap';
+        tw.appendChild(newTable(['파일', '크기', '고친 때'], d.files.map((f) => [mono(f.path), fmtBytes(f.size), fmtDateTime(f.modified)]), null, {
+          className: 'proj-files',
+          widths: [null, '76px', '150px'], num: [1], ellipsis: [0],
+          rowOpen: d.files.map((f) => ({ fn: () => showFile(f.path), title: '본문 보기: ' + f.path })),
+        }));
+        body.appendChild(tw);
+      } catch (err) {
+        if (alive()) body.replaceChildren(note('목록을 불러오지 못했습니다: ' + (err && err.message ? err.message : err), 'form-msg error'));
+      }
+    };
+    const showFile = async (path) => {
+      const back = linkButton('← 파일 목록', showList);
+      body.replaceChildren(back, note('불러오는 중…'));
+      try {
+        const d = await projectApi(name, '/file?path=' + encodeURIComponent(path));
+        if (!alive()) return;
+        const meta = note(`projects/${name}/${show(d.path, '')} · ${fmtBytes(d.size)} · ${fmtDateTime(d.modified)}`
+          + (d.truncated ? ' · 앞 200KB 만 보입니다' : ''), 'proj-meta');
+        body.replaceChildren(back, meta);
+        if (d.binary) { body.appendChild(note('텍스트가 아닌 파일이라 본문을 보이지 않습니다')); return; }
+        if (/\.(md|markdown)$/i.test(path)) body.appendChild(mdBlock(d.text, '빈 파일'));
+        else {
+          const pre = document.createElement('pre');
+          pre.className = 'proj-file-text';
+          pre.textContent = d.text || '(빈 파일)';
+          body.appendChild(pre);
+        }
+      } catch (err) {
+        if (alive()) body.replaceChildren(back, note('파일을 불러오지 못했습니다: ' + (err && err.message ? err.message : err), 'form-msg error'));
+      }
+    };
+    if (filePath) showFile(filePath); else showList();
+  });
+}
+
 function renderProjects(data) {
   const box = document.getElementById('projects-list');
   if (!box) return;
@@ -2619,6 +2700,12 @@ function renderProjects(data) {
       : '아직 라운드 없음');
     meta.textContent = bits.join(' · ');
     head.appendChild(meta);
+    if (pr.exists) {
+      const view = linkButton('결과물 보기', () => openProjectFiles(pr));
+      view.classList.add('proj-view');
+      view.title = `projects/${show(pr.name, '')}/ 의 파일 목록과 본문`;
+      head.appendChild(view);
+    }
     item.appendChild(head);
     const when = [];
     if (pr.last_round_at) when.push(`마지막 라운드 R${pr.last_round} ${fmtDateTime(pr.last_round_at)}`);
