@@ -1200,18 +1200,20 @@ function renderFleetControl(data) {
   rb.className = 'fc-btn btn-primary';
   rb.textContent = state.fleetBusy === 'round' ? '라운드 실행…' : (brief.round ? `라운드 실행 ▸ R${brief.round}` : '라운드 실행');
   rb.disabled = !!state.fleetBusy || !can.round;
+  const briefName = brief.standard ? '표준 브리프 (할 일 = 웹 NEW 요청)' : brief.file;
   rb.title = brief.file
-    ? `새 관리자 라운드를 띄웁니다 (유료 Opus). 브리프: ${brief.file}` + (md !== 'ready' ? ' - 먼저 준비를 누르십시오' : '')
+    ? `새 관리자 라운드를 띄웁니다 (유료 Opus). 브리프: ${briefName}` + (md !== 'ready' ? ' - 먼저 준비를 누르십시오' : '')
     : '확정된 다음 라운드 브리프가 없습니다' + (brief.drafts && brief.drafts.length ? ` (초안: ${brief.drafts.join(', ')})` : '');
   rb.addEventListener('click', () => fleetAction('round',
-    `새 관리자 라운드 R${brief.round} 를 띄웁니다 (유료 Opus 세션).\n브리프: ${brief.file}\n계속할까요?`));
+    `새 관리자 라운드 R${brief.round} 를 띄웁니다 (유료 Opus 세션).\n브리프: ${briefName}\n계속할까요?`));
   row.appendChild(rb);
   box.appendChild(row);
 
   const hint = document.createElement('div');
   hint.className = 'fc-hint';
   hint.textContent = brief.file
-    ? `다음 라운드 브리프: ${brief.file}`
+    ? (brief.standard ? `다음 라운드 R${brief.round}: 표준 브리프 - 할 일은 요청 탭의 NEW 요청` : `다음 라운드 브리프: ${brief.file}`)
+      + (brief.workspace ? ` · 결과물 ${brief.workspace}/` : '')
     : '다음 라운드 브리프: 확정본 없음' + (brief.drafts && brief.drafts.length ? ` (초안 ${brief.drafts.join(', ')})` : '');
   box.appendChild(hint);
 

@@ -161,6 +161,55 @@ class FleetCtlTest(unittest.TestCase):
                 mock.patch.object(fleet_ctl, "_used_rounds", return_value={6, 7}):
             self.assertIsNone(fleet_ctl.latest_brief()["file"])   # 이미 띄운 라운드는 다시 쓰지 않는다
 
+    def test_standard_brief_is_used_when_no_round_specific_brief(self):
+        # 2026-11-10 태석님 지시: 라운드 내용은 웹 요청으로 정한다 - 그 라운드만의 브리프가 없으면 표준 브리프로 다음 번호.
+        repo = self.tmp / "repo"
+        briefs = repo / ".aimem" / "briefs"
+        briefs.mkdir(parents=True)
+        (briefs / "manager-round6-2026-11-10.md").write_text("x", encoding="utf-8")
+        with mock.patch.object(fleet, "ROOT", repo), mock.patch.object(fleet_ctl, "_used_rounds", return_value={6}):
+            self.assertIsNone(fleet_ctl.latest_brief()["file"])            # 표준 브리프 파일이 없으면 예전 그대로
+            (briefs / fleet_ctl.STANDARD_BRIEF).write_text("R{round} / {date} / REV {rev} / {workspace}\n", encoding="utf-8")
+            b = fleet_ctl.latest_brief()
+            self.assertEqual((b["round"], b["file"], b["standard"]), (7, fleet_ctl.STANDARD_BRIEF, True))
+            self.assertEqual(b["drafts"], [])                              # 표준 브리프는 초안으로 세지 않는다
+            with mock.patch.object(fleet, "read_rev", return_value=138):
+                path = fleet_ctl._round_brief_path(b, dt.datetime(2026, 11, 10, 19, 0))
+            self.assertEqual(path, repo / "rounds" / "R7" / "brief.md")     # 라운드 작업 공간에 보낸 그대로 남는다
+            self.assertEqual(path.read_text(encoding="utf-8"), "R7 / 2026-11-10 19:00 / REV 138 / rounds/R7\n")
+            self.assertEqual(b["workspace"], "rounds/R7")
+            (briefs / "manager-round9-2026-11-11.md").write_text("x", encoding="utf-8")
+            b = fleet_ctl.latest_brief()                                   # 그 라운드만의 확정본이 있으면 그것이 먼저
+            self.assertEqual((b["round"], b["file"], b["standard"]), (9, "manager-round9-2026-11-11.md", False))
+            path = fleet_ctl._round_brief_path(b, dt.datetime.now())
+            self.assertEqual(path, repo / "rounds" / "R9" / "brief.md")
+            self.assertTrue(path.read_text(encoding="utf-8").startswith("x\n"))
+            self.assertIn("rounds/R9/", path.read_text(encoding="utf-8"))
+        with mock.patch.object(fleet, "ROOT", repo), mock.patch.object(fleet_ctl, "_used_rounds", return_value={6, 9, 12}):
+            b = fleet_ctl.latest_brief()                                   # 번호는 쓰인 것 중 가장 큰 것 다음
+            self.assertEqual((b["round"], b["standard"]), (13, True))
+
+    def test_rounds_recorded_in_handoff_log_count_as_used(self):
+        # 세션도 전달 기록도 없을 때(게이트웨이 정지 등) 이미 돈 라운드의 브리프를 다시 고르면 안 된다.
+        import sqlite3
+        con = sqlite3.connect(self.tmp / "aimem.db")
+        with con:
+            con.execute("CREATE TABLE events(at TEXT, actor TEXT, rev INTEGER, kind TEXT, body TEXT)")
+            con.executemany("INSERT INTO events VALUES('t',?,1,?,'b')",
+                            [("관리자(R6)", "handoff"), ("Manager (R5)", "handoff"), ("Claude Code", "handoff"),
+                             ("관리자(R9)", "task")])
+        con.close()
+        self.assertEqual(fleet_ctl._db_rounds(), {5, 6})
+        repo = self.tmp / "repo"
+        briefs = repo / ".aimem" / "briefs"
+        briefs.mkdir(parents=True)
+        (briefs / "manager-round6-2026-11-10.md").write_text("x", encoding="utf-8")
+        (briefs / fleet_ctl.STANDARD_BRIEF).write_text("x", encoding="utf-8")
+        with mock.patch.object(fleet, "ROOT", repo), mock.patch.object(fleet_ctl, "_manager_sessions", return_value=[]):
+            b = fleet_ctl.latest_brief()
+            self.assertEqual((b["round"], b["standard"]), (7, True))
+            self.assertEqual(fleet_ctl.public_state()["brief"]["round"], 7)
+
     def test_launch_round_requires_ready(self):
         fleet_ctl.set_mode("stopped", "test")
         out = fleet_ctl.launch_round("test")

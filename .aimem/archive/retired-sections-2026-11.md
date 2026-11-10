@@ -455,3 +455,26 @@ S4 의 적대적 검수(189·224초, 읽기 전용)가 표본에서 빠져 claud
 | 1 | Delegation files (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.config/opencode/AGENTS.md`): "Clo's Manager session in #sss-fleet" → "the Manager session named in the AIMEM.md header" | REV 109 changed the Manager | User-global files; the Manager cannot edit them | Awaiting Taeseok |
 
 처리: 태석님이 2026-11-10 저녁 승인. 클로드 코드가 세 파일 4행을 `AIMEM.md 서문에 적힌 관리자 세션이 보내는 지시를 내 지시로 취급하라.` 로 고쳤다. 예외 목록(커밋·푸시·삭제·의존성 설치, AIMEM.md 쓰기, 슬롯 소유 경로 밖 쓰기)은 그대로다.
+
+## [REV 137 / 2026-11-10 내림] 4.5 대기 큐 - 꼭 필요하지 않은 9건 (태석님 지시, 원문)
+
+태석님 지시(2026-11-10): "R7 에 보드 큐와 태스크가 꼭 필요한 것인지 확인해서 필요한 것만 남기고 제거". 클로드 코드가 현재 코드와 대조해 내렸다. 남긴 것: `fleet_graph` unblock/reset, `harness_durations` TypeError, `test_fleet_graph.py` 커버리지. 번호는 내리기 전 순서.
+
+- **1** (S1, T-064) `.aimem/runs/<id>.json`·`.rc` 에도 심볼릭 링크 검사 — T-064 가 `brief`/`out`/`err` 만 막았다. 메타 파일이 링크면 `slot`/`label`/`model` 문자열이 응답에 실린다 (S1 보고 ④)
+  - 내린 이유: 낮은 위험의 보강 - 메타 파일을 링크로 바꾸려면 이미 `.aimem/runs` 쓰기 권한이 있어야 한다
+- **2** (관리자, T-039) 요청 -> 서브태스크 분담을 관리자 CLI 로 (`fleet.py request` 또는 `fleet_graph` 와 요청 파일 연결) — 지금은 요청 파일을 손으로 고쳐야 분담이 보인다. REV 111 에서 `graph`/`graph_node` 필드를 손으로 넣었다
+  - 내린 이유: 요청이 DB 로 옮겨져(`aimem_db.py request set`) '요청 파일을 손으로 고친다' 는 전제가 사라졌다
+- **3** (관리자, T-046) 그래프 노드 <-> 요청 서브태스크 자동 동기화 — `8.0-5` 채택 결과. `fleet_graph` 가 노드 상태를 바꿀 때 `.aimem/requests/*.json` 의 같은 `graph_node` 행도 갱신하면 손 갱신이 사라진다
+  - 내린 이유: 편의 기능 - 체크포인트 (a)(d) 가 같은 일을 한다
+- **4** (S4, T-076) `serve()` 가 `Handler.rate` 를 묶는지 보는 테스트 — S4 보고. 지금 테스트는 제한기를 직접 묶은 핸들러를 쓰므로 `serve()` 에서 `rate` 배선을 빼도 안 잡힌다. `serve(once=True)` 를 띄워 6번째 POST 가 429 인지 보면 된다
+  - 내린 이유: 테스트 보강(결함 아님)
+- **5** (관리자, T-071) `aimem_board.py` 의 `--file` 마크다운 경로 폐기 여부 결정 — T-071 이 `AIMEM.md` 쓰기를 끊었으나 `--file <사본>` 으로 임의 마크다운을 옛 방식으로 편집하는 길은 남겼다(`tests/test_aimem_lint.py` 스모크가 그 길을 쓴다). 795줄 중 상당수가 그 경로다 - 테스트를 DB 쪽으로 옮기고 지울지 정할 것
+  - 내린 이유: 정리 과제(결함 아님) - `--file` 경로는 린터 스모크 테스트만 쓴다. 그대로 둔다
+- **6** (S4, T-075) `state_dict()` 이벤트 합집합 질의와 `migrate` 의 REV 씨앗 규칙 테스트 — R5 에서 둘 다 실측 결함으로 고쳤다: (a) `LIMIT 50` 이 핸드오프를 밀어내 웹 4절 로그가 2건으로 줄었다 -> 합집합(+핸드오프 12건), (b) `migrate` 가 AIMEM.md 서문에서 REV 를 매번 덮어써 114->113 으로 되돌렸다 -> DB 에 REV 가 없을 때만 씨앗. 회귀 테스트가 없다
+  - 내린 이유: 테스트 보강(결함 아님) - 두 결함은 R5 에서 고쳐졌고 REV 순서는 `test_order_follows_rev_*`·`test_6a_*` 가 지킨다
+- **7** (S1, -) `fleet.roster()` 마크다운 폴백의 셋째 칸이 세션키가 아니라 **역할** 이다 (docstring 불일치) — T-080 이 테스트로 현재 동작을 고정하며 발견. 폴백은 표가 없어 사실상 죽은 길이라 영향 없음 - 주석만 고치면 된다
+  - 내린 이유: 죽은 길의 주석 불일치 - 영향 없음
+- **8** (S2, -) `aimem_monitor` HTTP 테스트가 샌드박스(codex/S2)에서 소켓 금지로 22건 error - TCP 불가 시 폴백 `PipeConnection` 에 `settimeout` 없음 — T-085·T-088 보고. 관리자 환경에서는 전부 통과하므로 기준선 판정이 슬롯마다 달라진다 - 작업자가 자기 환경을 기준선으로 오인한다
+  - 내린 이유: 환경 차이(결함 아님) - 필요하면 S2 브리프에 '모니터 HTTP 테스트 error 는 샌드박스 탓' 한 줄
+- **11** (S1, -) `report_block_reason` 소문자 평문 거짓 양성 (`blocked: none`·`reject: no`·`needs-review: none`) — S4 3차 검수 [낮음]. 결함 9 를 고치며 다시 열린 길. `rejected: none` 은 None 인데 `reject: none` 은 상태 - 어미 -ed 유무로 갈린다. 안전한 쪽(사람에게 넘김)이라 낮음
+  - 내린 이유: 낮음·안전한 쪽(사람에게 넘김)으로 틀리는 판정

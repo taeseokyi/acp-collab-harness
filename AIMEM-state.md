@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T18:29:25 / REV 136
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T18:51:49 / REV 139
 
 ## 2. 세션 명부
 
@@ -18,6 +18,22 @@
 
 ## 4. 이벤트 로그 (최신 50)
 
+- `2026-11-10 18:51` Claude Code [handoff] REV 139: **REV 139. 라운드 내용은 웹 요청으로, 결과물은 라운드 작업 공간으로.** 태석님 지시. (1) 표준 브리프 `.aimem/briefs/manager-round-standard.md`: 그 라운드만의 확정 브리프가 없으면 '라운드 실행' 이 이 파일로 다음 번호 라운드를 띄운다 - 할 일은 NEW 요청 전부, 요청도 큐도 비었으면 보고만 하고 끝. 브리프를 매번 쓰지 않는다. (2) 라운드 작업 공간 `rounds/R<N>/`(git 포함): 띄울 때 만들고 보낸 브리프를 `brief.md` 로 남긴다. 종료 보고는 `RE
+- `2026-11-10T18:50:59` Claude Code [ownership] REV 138: rounds/** -> 관리자
+- `2026-11-10 18:39` Claude Code [handoff] REV 138: **REV 138. 남은 큐 3건을 끝내 대기 큐가 비었다.** 태석님 지시(필요하면 여기서 실행). (1) `fleet_graph.py unblock <그래프> <노드>`: 사람이 확인한 blocked/failed 노드를 다시 굴린다 - 작업자가 살아 있으면 거절, 죽이지 못해 막혔던 실행이 그 뒤 끝났으면 새로 띄우지 않고 거두게 하고, 그 밖엔 todo(한도를 다 썼으면 한 번 더), 의존 때문에 막힌 뒤쪽 노드도 푼다. `8.0-5` 명령 목록에 한 줄. (2) 깨진 run 메타: `fleet._run_state` 가 정수 
+- `2026-11-10T18:38:08` Claude Code [queue] REV 137: queue -1 `fleet_graph` 결함 11 - `refused` 로 `blocked` 가 된 노드를 아무도 거두지 않는다 (`unblock`/`reset` 명령 없음)
+- `2026-11-10T18:38:08` Claude Code [queue] REV 137: queue -2 `fleet_graph.harness_durations()` - 깨진 run 메타(`pid` 가 문자열) 하나로 `progress`/`status`/`list` 가 TypeError
+- `2026-11-10T18:38:08` Claude Code [queue] REV 137: queue -3 `tests/test_fleet_graph.py` 커버리지 구멍 - 결함 1·2·7·8·10 을 막는 테스트가 없다
+- `2026-11-10 18:32` Claude Code [handoff] REV 137: **REV 137. 대기 큐 12건 → 3건.** 태석님 지시(꼭 필요한 것만 남길 것). 현재 코드와 대조해 9건을 내렸다 - 원문과 건별 이유는 `retired-sections-2026-11.md` `[REV 137 내림] 4.5 대기 큐`. 남은 큐: (1) `fleet_graph` unblock/reset 명령 (2) `harness_durations` TypeError (3) `test_fleet_graph.py` 커버리지 구멍. 보드·요청·그래프는 이미 비어 있었다. R7 브리프 4-1 을 여기에 맞춤: 과제 4건(위 셋
+- `2026-11-10T18:31:47` Claude Code [queue] REV 136: queue -1 `.aimem/runs/<id>.json`·`.rc` 에도 심볼릭 링크 검사
+- `2026-11-10T18:31:47` Claude Code [queue] REV 136: queue -2 요청 -> 서브태스크 분담을 관리자 CLI 로 (`fleet.py request` 또는 `fleet_graph` 와 요청 파일 연결)
+- `2026-11-10T18:31:47` Claude Code [queue] REV 136: queue -3 그래프 노드 <-> 요청 서브태스크 자동 동기화
+- `2026-11-10T18:31:47` Claude Code [queue] REV 136: queue -4 `serve()` 가 `Handler.rate` 를 묶는지 보는 테스트
+- `2026-11-10T18:31:47` Claude Code [queue] REV 136: queue -5 `aimem_board.py` 의 `--file` 마크다운 경로 폐기 여부 결정
+- `2026-11-10T18:31:47` Claude Code [queue] REV 136: queue -6 `state_dict()` 이벤트 합집합 질의와 `migrate` 의 REV 씨앗 규칙 테스트
+- `2026-11-10T18:31:47` Claude Code [queue] REV 136: queue -7 `fleet.roster()` 마크다운 폴백의 셋째 칸이 세션키가 아니라 **역할** 이다 (docstring 불일치)
+- `2026-11-10T18:31:47` Claude Code [queue] REV 136: queue -8 `aimem_monitor` HTTP 테스트가 샌드박스(codex/S2)에서 소켓 금지로 22건 error - TCP 불가 시 폴백 `PipeConnection` 에 `settimeout` 없음
+- `2026-11-10T18:31:47` Claude Code [queue] REV 136: queue -11 `report_block_reason` 소문자 평문 거짓 양성 (`blocked: none`·`reject: no`·`needs-review: none`)
 - `2026-11-10 18:29` Claude Code [handoff] REV 136: **REV 136. 모니터 GitHub 로그인 - 기기 흐름.** 태석님 지시(reefwiz-esp32 가 쓰는 OAuth App 재사용). `monitor.env` 에 `GITHUB_CLIENT_ID` 만 있으면 기기 흐름(RFC 8628): `POST /api/github/device/start` 가 확인 코드를 받아 화면에 보이고, 사람이 github.com/login/device 에서 승인하면 `/api/github/device/poll` 이 계정을 허용 목록과 대조해 세션을 준다. 콜백 주소·시크릿 없음 - 접속 주소(내부
 - `2026-11-10 18:17` Claude Code [handoff] REV 135: **REV 135. 9절 1번 승인·처리 - 위임 파일 문구.** 태석님 승인(2026-11-10). 사용자 전역 위임 파일 셋(`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.config/opencode/AGENTS.md`)의 "디스코드 #sss-fleet 의 클로 관리자 세션" 을 "AIMEM.md 서문에 적힌 관리자 세션" 으로 고침. 예외 목록은 그대로. 9절 표는 비었고(원문은 `retired-sections-2026-11.md` `[REV 135 내림] 9절 1번`), `8.0` 의
 - `2026-11-10 18:14` Claude Code [handoff] REV 134: **REV 134. --expect-rev 기본화·로그 정렬 테스트·저장소 지침 영문화.** (1) `8.0-8` 종료 1번: `handoff add --bump` 에 `--expect-rev N` 을 항상 붙인다 - 거절되면 다시 읽고 판단, 숫자만 바꿔 재시도 금지. R7 브리프 4-2 도 같은 문구(브리프의 REV 표기 126→134, 핸드오프 정본 설명 갱신). (2) `tests/test_aimem_monitor_state.py` `test_6a_log_rev_first_then_when`: 모니터 로그가 REV 우선·같은
@@ -52,39 +68,11 @@
 - `2026-11-09 16:40` Manager: Claude Code (Taeseok's instruction 2026-11-09, not a Manager session) [handoff] REV 109: **REV 109. Manager becomes an Opus 5.5 Claude ACP session; workers become one-shot harness CLI processes.** (1) Header, `0.5`, `Section 2`, `Section 5`, `Section 7`, `8.0` revised - the Manager is identified by session-key prefix `agent:claude:acp:` (linter pin replaced; `tools/aimem_lint.py` and te
 - `2026-11-09 15:00` Manager: Claude Code (Taeseok's instruction 2026-11-09, not a Manager session) [handoff] REV 108: **REV 108. Cleared up the ACP child model-label confusion.** In the high-five check `sessions_list.model` showed `kistillm` for all three (S1 actually ran on sonnet-5), so Clo and Gureum asked back. (1) New `8.0` item: "the source of truth for the running model is the harness configuration; `session
 - `2026-11-10T16:34:02` Claude Code [rev] REV 128: REV 128: AIMEM.md rewritten in English (declarative protocol text, same section numbers); Korean-only regexes in linter/reader/migrate widened to accept the English labels
-- `2026-11-10T16:21:30` 클로드 코드 [rev] REV 127: REV 127: archive 같은 초 비교 결함 수정 - archive_plan 기준 시각을 포함 비교(<=)로, 회귀 테스트 추가
-- `2026-11-10T16:11:46` 클로드 코드 [rev] REV 126: REV 126: 8.0-8 관리자 라운드 루틴과 통제권 신설, 브리프 정비, 8.0-5 중복 번호 해소
-- `2026-11-10T15:43:45` 클로드 코드 [rev] REV 125: REV 125: PWA 설치형(매니페스트·서비스 워커·아이콘), API 캐시 금지
-- `2026-11-10T15:38:25` 클로드 코드 [rev] REV 124: REV 124: 슬롯 통제권 - 웹은 하네스·모델만, 역할·비고는 관리자, 웹 변경은 NEW 요청으로 관리자 통지
-- `2026-11-10T15:37:47` 웹(접근 토큰) [slot] REV 123: slot remove S5 (codex, 모델 -, 소유권 0행 내림)
-- `2026-11-10T15:37:41` 웹(접근 토큰) [slot] REV 123: slot add S5 codex 모델 (하네스 기본) - (미배정 - 관리자가 다음 라운드에 정함)
-- `2026-11-10T15:35:36` 웹(접근 토큰) [slot] REV 123: slot remove S5 (codex, 모델 -, 소유권 0행 내림)
-- `2026-11-10T15:35:36` 관리자(R7) [slot] REV 123: slot set S5: 역할, 비고
-- `2026-11-10T15:35:36` 웹(접근 토큰) [slot] REV 123: slot add S5 codex 모델 (하네스 기본) - (미배정 - 관리자가 다음 라운드에 정함)
-- `2026-11-10T15:19:32` 웹(접근 토큰) [archive] REV 123: 0일 경과 - 태스크 0건, 요청 1건, 그래프 1개 아카이브
-- `2026-11-10T15:19:10` 클로드 코드 [rev] REV 123: REV 123: archive 가 요청·그래프까지, 실행 지점 관리자 체크포인트 + 웹 '끝난 것 정리'
-- `2026-11-10T15:06:16` 클로드 코드 [rev] REV 122: REV 122: 슬롯 관리(추가·삭제·하네스·모델) 웹+CLI, 모델은 OpenClaw 설정 목록
-- `2026-11-10T15:05:22` 웹(접근 토큰) [slot] REV 121: slot remove S5 (codex, 모델 kisti/kistillm, 소유권 0행 내림)
-- `2026-11-10T15:05:18` 웹(접근 토큰) [slot] REV 121: slot add S5 codex 모델 kisti/kistillm - UI 시험 슬롯
-- `2026-11-10T15:04:48` 웹(접근 토큰) [slot] REV 121: slot remove S5 (codex, 모델 kisti/kistillm, 소유권 0행 내림)
-- `2026-11-10T15:04:47` 웹(접근 토큰) [slot] REV 121: slot set S5: 하네스 opencode→codex, 모델 exaone/k-exaone_v2.5→kisti/kistillm
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
-| 1 | `.aimem/runs/<id>.json`·`.rc` 에도 심볼릭 링크 검사 | S1 | T-064 가 `brief`/`out`/`err` 만 막았다. 메타 파일이 링크면 `slot`/`label`/`model` 문자열이 응답에 실린다 (S1 보고 ④) |
-| 2 | 요청 -> 서브태스크 분담을 관리자 CLI 로 (`fleet.py request` 또는 `fleet_graph` 와 요청 파일 연결) | 관리자 | 지금은 요청 파일을 손으로 고쳐야 분담이 보인다. REV 111 에서 `graph`/`graph_node` 필드를 손으로 넣었다 |
-| 3 | 그래프 노드 <-> 요청 서브태스크 자동 동기화 | 관리자 | `8.0-5` 채택 결과. `fleet_graph` 가 노드 상태를 바꿀 때 `.aimem/requests/*.json` 의 같은 `graph_node` 행도 갱신하면 손 갱신이 사라진다 |
-| 4 | `serve()` 가 `Handler.rate` 를 묶는지 보는 테스트 | S4 | S4 보고. 지금 테스트는 제한기를 직접 묶은 핸들러를 쓰므로 `serve()` 에서 `rate` 배선을 빼도 안 잡힌다. `serve(once=True)` 를 띄워 6번째 POST 가 429 인지 보면 된다 |
-| 5 | `aimem_board.py` 의 `--file` 마크다운 경로 폐기 여부 결정 | 관리자 | T-071 이 `AIMEM.md` 쓰기를 끊었으나 `--file <사본>` 으로 임의 마크다운을 옛 방식으로 편집하는 길은 남겼다(`tests/test_aimem_lint.py` 스모크가 그 길을 쓴다). 795줄 중 상당수가 그 경로다 - 테스트를 DB 쪽으로 옮기고 지울지 정할 것 |
-| 6 | `state_dict()` 이벤트 합집합 질의와 `migrate` 의 REV 씨앗 규칙 테스트 | S4 | R5 에서 둘 다 실측 결함으로 고쳤다: (a) `LIMIT 50` 이 핸드오프를 밀어내 웹 4절 로그가 2건으로 줄었다 -> 합집합(+핸드오프 12건), (b) `migrate` 가 AIMEM.md 서문에서 REV 를 매번 덮어써 114->113 으로 되돌렸다 -> DB 에 REV 가 없을 때만 씨앗. 회귀 테스트가 없다 |
-| 7 | `fleet.roster()` 마크다운 폴백의 셋째 칸이 세션키가 아니라 **역할** 이다 (docstring 불일치) | S1 | T-080 이 테스트로 현재 동작을 고정하며 발견. 폴백은 표가 없어 사실상 죽은 길이라 영향 없음 - 주석만 고치면 된다 |
-| 8 | `aimem_monitor` HTTP 테스트가 샌드박스(codex/S2)에서 소켓 금지로 22건 error - TCP 불가 시 폴백 `PipeConnection` 에 `settimeout` 없음 | S2 | T-085·T-088 보고. 관리자 환경에서는 전부 통과하므로 기준선 판정이 슬롯마다 달라진다 - 작업자가 자기 환경을 기준선으로 오인한다 |
-| 9 | `fleet_graph` 결함 11 - `refused` 로 `blocked` 가 된 노드를 아무도 거두지 않는다 (`unblock`/`reset` 명령 없음) | S1 | S4 3차 검수 [중간]. 작업자가 살아 있는 동안 슬롯이 계속 바쁨 → 같은 슬롯 노드가 영영 못 뜬다. 나중에 `.rc` 가 써져도 노드는 blocked 로 남는다 |
-| 10 | `fleet_graph.harness_durations()` - 깨진 run 메타(`pid` 가 문자열) 하나로 `progress`/`status`/`list` 가 TypeError | S1 | S4 3차 검수 [낮음]. `_busy_slots` 는 삼키는데 여기는 안 삼킨다 - 같은 호출을 두 곳이 다르게 방어한다 |
-| 11 | `report_block_reason` 소문자 평문 거짓 양성 (`blocked: none`·`reject: no`·`needs-review: none`) | S1 | S4 3차 검수 [낮음]. 결함 9 를 고치며 다시 열린 길. `rejected: none` 은 None 인데 `reject: none` 은 상태 - 어미 -ed 유무로 갈린다. 안전한 쪽(사람에게 넘김)이라 낮음 |
-| 12 | `tests/test_fleet_graph.py` 커버리지 구멍 - 결함 1·2·7·8·10 을 막는 테스트가 없다 | S2 | S4 3차 검수의 커버리지 표. 특히 `+09:00` 케이스는 `node_timeout_sec=10**9` 라 **옛 구현(tz 그냥 뗌)도 통과한다** - 겉으로는 tz 를 검사하는데 아무것도 검사하지 않는다. `_kill_run` 을 mock 하지 않는 테스트가 하나도 없다 |
 
 ## 6. 파일 소유권
 
@@ -108,6 +96,7 @@
 | `AIMEM.md` | 관리자(클로) | 작업자 쓰기 금지 |
 | `CLAUDE.md` | 관리자 | 부트스트랩. 자동 주입되는 유일한 파일 |
 | `README.md` | 관리자 | 저장소 소개 |
+| `rounds/**` | 관리자 | 라운드별 작업 공간 rounds/R<N>/ (REV 139). 관리자가 요청별 하위 폴더를 슬롯에 배정 |
 | `skills/**` | 관리자 | **현재 비어 있음** (REV 101 에서 `acp-slot-lifecycle` 제거). 되살아나면 이 행이 그대로 적용된다 |
 | `tests/test_aimem_lint.py` | S2 | T-005B. R5 에 S4 로 잠시 이관(KISTI 장애) → 2026-11-10 09:15 S2 복구로 환원(태석님 지시) |
 | `tests/test_aimem_monitor*.py` | S2 | 웹 UI 계약 테스트. R5 에 S4 로 잠시 이관 → 2026-11-10 09:15 S2 복구로 환원(태석님 지시) |

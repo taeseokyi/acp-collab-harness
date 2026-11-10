@@ -17,7 +17,8 @@
     python3 tools/fleet_ctl.py run              # running + 주인 없는 미완 그래프를 이어 돌림
     python3 tools/fleet_ctl.py pause
     python3 tools/fleet_ctl.py stop             # 작업자·그래프 즉시 종료
-    python3 tools/fleet_ctl.py round            # ready 에서만. 확정 브리프로 새 관리자 라운드 (클로 경유)
+    python3 tools/fleet_ctl.py round            # ready 에서만. 새 관리자 라운드 (클로 경유). 브리프는 그 라운드만의
+                                                # 확정본이 있으면 그것, 없으면 표준 브리프(할 일 = NEW 요청)
 
 **새 라운드는 사람이 판단해서 누릅니다** (`round`). `run` 은 진행 중이던 라운드만 이어 돌리고
 새 관리자를 띄우지 않습니다. 관리자 투입은 지금처럼 **클로(전달자) 경유**입니다
@@ -45,6 +46,18 @@ MODE_LABEL = {"ready": "준비", "running": "실행", "paused": "일시 중지",
 SPAWN_MODES = ("running",)
 FORCE_ENV = "AIMEM_FLEET_FORCE"   # 스모크 등 사람이 직접 하는 1회 실행용 우회 (기록에 남는다)
 BRIEF_RE = re.compile(r"\Amanager-round(\d+)-(\d{4}-\d{2}-\d{2})\.md\Z")
+#: 표준 브리프 (2026-11-10 태석님 지시 - 라운드 내용은 웹 요청으로 정한다). 그 라운드만의 확정 브리프가 없으면
+#: 이 파일로 다음 번호 라운드를 띄운다. 할 일은 NEW 요청 전부, 상시 루틴은 AIMEM.md `8.0-8`.
+#: `{round}` `{date}` `{rev}` `{workspace}` 를 채워 그 라운드 작업 공간의 `brief.md` 로 굳힌 뒤 그 파일을 보낸다.
+STANDARD_BRIEF = "manager-round-standard.md"
+#: 라운드별 작업 공간 (2026-11-10 태석님 지시 - 결과물이 들어가는 곳). `rounds/R<N>/` - git 에 올라간다.
+#: 띄울 때 만들고 그 라운드의 브리프(`brief.md`)를 넣는다. 보고(`REPORT.md`)와 요청별 결과물은 관리자·작업자가 채운다.
+ROUNDS_DIR = "rounds"
+
+
+def round_workspace(n):
+    """그 라운드 작업 공간의 저장소 상대 경로 (`rounds/R7`)."""
+    return f"{ROUNDS_DIR}/R{int(n)}"
 RELAY_TIMEOUT_SEC = 900
 RELAY_NUDGE_WAIT_SEC = 90
 
@@ -195,10 +208,39 @@ def latest_brief(used=None):
             if best is None or n > best[0]:
                 best = (n, f)
     used = _used_rounds() if used is None else set(used)
+    last_written = best[0] if best else 0
     if best and best[0] in used:
         best = None   # 이미 띄운 라운드의 브리프는 다시 쓰지 않는다
-    return {"round": best[0] if best else None, "file": best[1].name if best else None,
+    if best is None and (d / STANDARD_BRIEF).is_file():
+        # 그 라운드만의 브리프가 없다 -> 표준 브리프로 다음 번호. 번호는 지금까지 쓰인 것(브리프 파일·전달 기록·세션 라벨) 다음.
+        n = max([last_written, *used]) + 1
+        return {"round": n, "file": STANDARD_BRIEF, "standard": True, "workspace": round_workspace(n),
+                "drafts": sorted(drafts), "used_rounds": sorted(used)}
+    return {"round": best[0] if best else None, "file": best[1].name if best else None, "standard": False,
+            "workspace": round_workspace(best[0]) if best else None,
             "drafts": sorted(drafts), "used_rounds": sorted(used)}
+
+
+def _round_brief_path(b, at):
+    """보낼 브리프의 절대 경로. 라운드 작업 공간을 만들고, 브리프를 그 안의 `brief.md` 로 굳힌다.
+
+    표준 브리프는 번호·날짜·REV·작업 공간을 채운다. 그 라운드만의 확정 브리프는 글자 그대로 옮기고
+    작업 공간 안내 한 줄을 덧붙인다. 어느 쪽이든 **보낸 그대로가 작업 공간에 남는다.**
+    """
+    ws = round_workspace(b["round"])
+    text = (fleet.ROOT / ".aimem" / "briefs" / b["file"]).read_text(encoding="utf-8")
+    if b.get("standard"):
+        for k, v in (("{round}", str(b["round"])), ("{date}", at.strftime("%Y-%m-%d %H:%M")),
+                     ("{rev}", str(fleet.read_rev())), ("{workspace}", ws)):
+            text = text.replace(k, v)
+    else:
+        text = text.rstrip("\n") + (f"\n\n## 라운드 작업 공간\n이 라운드의 결과물(보고 `REPORT.md`, 요청별 산출물)은 `{ws}/` 에 둡니다 "
+                                    f"(`8.0-8`).\n")
+    d = fleet.ROOT / ws
+    d.mkdir(parents=True, exist_ok=True)
+    out = d / "brief.md"
+    out.write_text(text, encoding="utf-8")
+    return out
 
 
 def rounds_from_labels(labels):
@@ -210,8 +252,33 @@ def rounds_from_labels(labels):
     return out
 
 
+def _db_rounds():
+    """핸드오프 로그에 관리자로 남은 라운드 번호 (`관리자(R6)`, `Manager (R5)`).
+
+    세션은 끝나면 거두고 전달 기록은 버튼으로 띄운 것만 남으므로, 그 둘만 보면 **이미 돈 라운드의 브리프를
+    다음 라운드로 고릅니다**(2026-11-10 실측: 게이트웨이가 내려가 있을 때 R6 브리프가 다시 뽑혔다). DB 가 정본입니다.
+    """
+    out = set()
+    db = _aimem_dir() / "aimem.db"
+    if not db.is_file():
+        return out
+    try:
+        import sqlite3
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2)
+        try:
+            for (actor,) in con.execute("SELECT DISTINCT actor FROM events WHERE kind='handoff'"):
+                m = re.search(r"(?:관리자|Manager)\s*\(R(\d+)\)", actor or "")
+                if m:
+                    out.add(int(m.group(1)))
+        finally:
+            con.close()
+    except Exception:  # noqa: BLE001 - DB 를 못 읽어도 제어 화면은 떠야 한다
+        pass
+    return out
+
+
 def _relay_rounds():
-    used = set()
+    used = _db_rounds()
     relay = _aimem_dir() / "relay"
     if relay.exists():
         for f in relay.glob("r*.json"):
@@ -244,13 +311,7 @@ def public_state(manager_labels=(), manager_running_now=False):
 
 
 def _used_rounds():
-    used = set()
-    relay = _aimem_dir() / "relay"
-    if relay.exists():
-        for f in relay.glob("r*.json"):
-            m = re.match(r"r(\d+)", f.stem)
-            if m:
-                used.add(int(m.group(1)))
+    used = _relay_rounds()
     # 관리자 세션 라벨에 남은 라운드도 사용된 것으로 본다
     for s in _manager_sessions(cache_ok=True):
         m = re.search(r"\bR(\d+)\b", s.get("label") or "")
@@ -467,18 +528,18 @@ def launch_round(by="사람"):
         return {"ok": False, "error": f"'준비' 상태에서만 새 라운드를 띄웁니다 (지금: {MODE_LABEL.get(mode())}). 먼저 '준비' 를 누르십시오"}
     b = latest_brief()
     if not b["file"]:
-        return {"ok": False, "error": "확정된 다음 라운드 브리프가 없습니다 (manager-round<N>-<날짜>.md). 초안: " + (", ".join(b["drafts"]) or "없음")}
+        return {"ok": False, "error": f"다음 라운드 브리프가 없습니다 (표준 브리프 .aimem/briefs/{STANDARD_BRIEF} 또는 manager-round<N>-<날짜>.md). 초안: " + (", ".join(b["drafts"]) or "없음")}
     _SESS_CACHE["at"] = 0
     if manager_running():
         return {"ok": False, "error": "이미 실행 중인 관리자가 있습니다"}
     n = b["round"]
     at = dt.datetime.now()
     label = f"관리자 R{n} (Opus) {at.strftime('%Y-%m-%d')}"
-    brief = fleet.ROOT / ".aimem" / "briefs" / b["file"]
+    brief = _round_brief_path(b, at)
     relay = _relay_dir()
     msg = relay / f"r{n}-instruction.md"
     msg.write_text(RELAY_TEMPLATE.format(at=at.strftime("%Y-%m-%d %H:%M"), brief=brief, label=label), encoding="utf-8")
-    rec = {"round": n, "label": label, "brief": b["file"], "by": by, "at": _now(), "state": "launching",
+    rec = {"round": n, "label": label, "brief": b["file"], "brief_path": str(brief), "workspace": round_workspace(n), "by": by, "at": _now(), "state": "launching",
            "session_key": f"agent:coding:relay-r{n}-{at.strftime('%H%M%S')}", "nudged": False, "log": []}
     _write_relay(rec)
     set_mode("running", by, f"라운드 R{n} 실행 ({b['file']})")
@@ -486,7 +547,7 @@ def launch_round(by="사람"):
     subprocess.Popen([sys.executable, str(HERE / "fleet_ctl.py"), "_relay", "--round", str(n)],
                      cwd=str(fleet.ROOT), stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                      start_new_session=True)
-    return {"ok": True, "round": n, "label": label, "brief": b["file"], "mode": "running"}
+    return {"ok": True, "round": n, "label": label, "brief": b["file"], "workspace": round_workspace(n), "mode": "running"}
 
 
 def _relay_worker(n):
@@ -522,7 +583,8 @@ def _relay_worker(n):
         time.sleep(10)
     if not spawned():
         nudge = relay / f"r{n}-nudge.md"
-        nudge.write_text(NUDGE_TEMPLATE.format(brief=fleet.ROOT / ".aimem" / "briefs" / rec["brief"], label=rec["label"]),
+        nudge.write_text(NUDGE_TEMPLATE.format(brief=rec.get("brief_path") or fleet.ROOT / ".aimem" / "briefs" / rec["brief"],
+                                               label=rec["label"]),
                          encoding="utf-8")
         rec["nudged"] = True
         note("관리자 세션이 없어 재촉 1회")

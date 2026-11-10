@@ -456,12 +456,14 @@ def _run_state(run_id):
             return "done", -1
     meta = _run_meta(run_id) or {}
     pid = meta.get("pid")
-    if pid:
+    # 깨진 메타(`pid` 가 문자열·bool·음수)는 `os.kill` 에 넣지 않습니다 - 예전엔 `TypeError` 하나로
+    # `fleet_graph progress/status/list` 가 통째로 죽었고, 음수는 프로세스 그룹에 신호를 보내는 뜻입니다.
+    if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
         try:
             import os
             os.kill(pid, 0)
             return "running", None
-        except OSError:
+        except (OSError, OverflowError):
             return "lost", None
     return "unknown", None
 

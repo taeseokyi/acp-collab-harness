@@ -11,6 +11,7 @@
   python3 tools/fleet_graph.py step R-001          # 스케줄러 한 틱: 끝난 것 거두고 검증, 준비된 것 띄움
   python3 tools/fleet_graph.py run R-001 [--timeout 3600] [--concurrency 3]   # 끝날 때까지 틱 반복
   python3 tools/fleet_graph.py status R-001        # 노드별 상태·진행율·ETA (웹 UI 가 읽는 것과 같은 JSON)
+  python3 tools/fleet_graph.py unblock R-001 T1    # 사람이 확인한 blocked/failed 노드를 다시 굴림 (그 뒤 run/step)
 
 노드 형식 (nodes.json 배열):
   {"id":"T1","title":"서버 골격","slot":"S1","write":["tools/aimem_monitor/server.py"],
@@ -203,16 +204,19 @@ def harness_durations():
     """`.aimem/runs` 에서 하네스별 완료 실행 시간(초) 목록."""
     out = {}
     for rid in fleet._list_runs():
-        meta = fleet._run_meta(rid) or {}
-        state, rc = fleet._run_state(rid)
-        rcf = fleet.RUNS / f"{rid}.rc"
-        if state != "done" or not meta.get("started") or not rcf.exists():
+        try:
+            meta = fleet._run_meta(rid) or {}
+            state, rc = fleet._run_state(rid)
+            rcf = fleet.RUNS / f"{rid}.rc"
+            if state != "done" or not meta.get("started") or not rcf.exists():
+                continue
+            started = _parse_started(meta["started"])
+            if started is None:
+                continue
+            ended = dt.datetime.fromtimestamp(rcf.stat().st_mtime)
+            out.setdefault(str(meta.get("harness") or "?"), []).append(max(1.0, (ended - started).total_seconds()))
+        except Exception:  # noqa: BLE001 - 기록 하나가 깨져도 진행율은 나와야 한다 (`_busy_slots` 와 같은 방어)
             continue
-        started = _parse_started(meta["started"])
-        if started is None:
-            continue
-        ended = dt.datetime.fromtimestamp(rcf.stat().st_mtime)
-        out.setdefault(meta.get("harness", "?"), []).append(max(1.0, (ended - started).total_seconds()))
     return out
 
 
@@ -875,6 +879,61 @@ def cmd_run(a):
         return 0 if all(n.get("status") == "done" for n in g["nodes"]) else 1
 
 
+def unblock(g, node_id):
+    """사람이 확인한 뒤 `blocked`/`failed` 노드를 다시 굴립니다. (ok, 메시지)
+
+    - 마지막 시도의 작업자가 **아직 살아 있으면 거절**합니다 - 옆에 두 번째 작업자를 띄우지 않습니다.
+    - 죽이지 못해(`refused`) 막혔던 시도가 그 뒤 스스로 끝났으면 노드를 `running` 으로 돌려
+      다음 틱이 그 결과를 **거두게** 합니다(보고·검증). 새로 띄우지 않습니다.
+    - 그 밖에는 `todo` 로 돌립니다. 시도 한도를 다 썼으면 한 번 더 허용합니다.
+    - 이 노드 때문에 '의존 실패' 로 막힌 뒤쪽 노드(시도 기록 없음)는 `todo` 로 풉니다.
+    """
+    nodes = {n["id"]: n for n in g["nodes"]}
+    n = nodes.get(node_id)
+    if n is None:
+        return False, f"노드가 없습니다: {node_id}"
+    if n.get("status") not in ("blocked", "failed"):
+        return False, f"{node_id} 는 {n.get('status', 'todo')} 입니다 - blocked/failed 만 풉니다"
+    atts = n.get("attempts") or []
+    if not atts:
+        return False, f"{node_id} 는 의존 노드 때문에 막혔습니다 - 막힌 원인 노드를 푸십시오"
+    last = atts[-1]
+    state, _ = fleet._run_state(last["run_id"])
+    if state == "running":
+        return False, f"{node_id} 의 작업자가 아직 살아 있습니다 (run {last['run_id']}) - 끝나거나 사람이 내린 뒤에"
+    if last.get("kill_outcome") == "refused" and "ended" not in last and state == "done":
+        n["status"] = "running"
+        how = f"끝난 실행 {last['run_id']} 을 다음 틱이 거둡니다"
+    else:
+        if len(atts) >= int(n.get("max_attempts", 2)):
+            n["max_attempts"] = len(atts) + 1
+        n["status"] = "todo"
+        how = f"다음 틱에 {len(atts) + 1}번째 시도를 띄웁니다"
+    freed, changed = [], True
+    while changed:
+        changed = False
+        for m in g["nodes"]:
+            if m.get("status") != "blocked" or m.get("attempts"):
+                continue
+            deps = [nodes[d] for d in m.get("deps", []) if d in nodes]
+            if deps and not any(d.get("status") in ("failed", "blocked") for d in deps):
+                m["status"] = "todo"
+                freed.append(m["id"])
+                changed = True
+    _log(g, f"unblock {node_id} - {how}" + (f"; 뒤쪽 {', '.join(freed)} 도 todo" if freed else ""))
+    return True, f"{node_id}: {how}" + (f" / 함께 푼 노드: {', '.join(freed)}" if freed else "")
+
+
+def cmd_unblock(a):
+    with graph_lock(a.id, "unblock"):
+        g = _load(a.id)
+        ok, msg = unblock(g, a.node)
+        if ok:
+            _save(g)
+    print(msg, file=sys.stdout if ok else sys.stderr)
+    return 0 if ok else 2
+
+
 def cmd_status(a):
     g = _load(a.id)
     out = {"id": g["id"], "request": g.get("request"), "created": g.get("created"), "updated": g.get("updated"),
@@ -919,9 +978,12 @@ def main():
     r.add_argument("--poll", type=int, default=10)
     r.add_argument("--concurrency", type=int)
     sub.add_parser("list")
+    u = sub.add_parser("unblock", help="사람이 확인한 blocked/failed 노드를 다시 굴림")
+    u.add_argument("id")
+    u.add_argument("node")
     a = p.parse_args()
     return {"new": cmd_new, "validate": cmd_validate, "step": cmd_step, "run": cmd_run,
-            "status": cmd_status, "list": cmd_list}[a.cmd](a) or 0
+            "status": cmd_status, "list": cmd_list, "unblock": cmd_unblock}[a.cmd](a) or 0
 
 
 if __name__ == "__main__":
