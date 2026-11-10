@@ -1,0 +1,32 @@
+{
+ "id": "20261109-172326-c5c1",
+ "created": "2026-11-09T17:23:26",
+ "requester": "태석 (클로드 코드 전달)",
+ "title": "모니터 UI 스타일을 KISTI Strata 모니터(aida.kisti.re.kr:10430/#monitor)와 비슷하게",
+ "detail": "태석님 지시 2026-11-09 17:25. 참조 토큰 파일 .aimem/briefs/strata-tokens.css (원본 https://aida.kisti.re.kr:10430/web/tokens.css). 적용: 밝은 테마 기본(--st-bg #f9fafb, 카드 #ffffff, 선 #dee5ee, 잉크 #221e1f, 보조 #6f6f6f), 강조 #10b981(틴트 #ecfdf5), 정보 #0f97ff, 경고 #e39b0b, 위험 #e0283f, 반경 8/14/20px, 4pt 간격 스케일, 카드 그림자 --st-sh-card, 글꼴은 Outfit 대신 system-ui 폴백(외부 폰트 로드 금지), 글자 12/13/14/16/18/24px, 통계 숫자 32px, 상태 배지는 pill(9999px)+틴트 배경+텍스트색 조합. 어두운 모드는 data-theme=dark 토글로만. 변수 이름은 --st-* 를 그대로 써서 참조와 1:1 대응되게. 검증: Playwright 스크린샷으로 참조 페이지와 나란히 비교, 대비 4.5:1, 콘솔 오류 0.",
+ "status": "DONE",
+ "subtasks": [
+  {
+   "id": "T-047",
+   "title": "Strata --st-* 토큰 이식 + pill 배지 + 4pt 간격·반경 (외부 폰트 금지)",
+   "slot": "S3",
+   "harness": "opencode",
+   "status": "REVIEW",
+   "run_id": null,
+   "graph_node": "N6"
+  },
+  {
+   "id": "T-048",
+   "title": "교차검수 - 대비비 재측정 + 하드코딩 hex 0 + N3 DOM id 보존",
+   "slot": "S1",
+   "harness": "claude",
+   "status": "DONE",
+   "run_id": null,
+   "graph_node": "N5",
+   "note": "S4 가 T-047 교차검수에서 이미 수행. 결과는 4.5 큐 10·11번"
+  }
+ ],
+ "graph": "R-002",
+ "note": "R5: 남은 것은 대비비 결함 2건(4.5 큐 10번, S3)과 원본 토큰 파일 수정 여부(큐 11번, 관리자).",
+ "updated": "2026-11-09T21:40:00"
+}

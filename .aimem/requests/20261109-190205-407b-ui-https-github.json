@@ -1,0 +1,84 @@
+{
+ "id": "20261109-190205-407b",
+ "created": "2026-11-09T19:02:05",
+ "requester": "태석 (클로드 코드 전달)",
+ "title": "함대 웹 UI 외부 공개: HTTPS(자체 인증서) + 접근 제어(토큰, 선택적 GitHub 로그인)",
+ "detail": "태석님 지시 2026-11-09 19:05. 외부에서 접속하도록 공개하되 자체 인증서를 크롬에 설치해 쓴다. 표준 라이브러리만. (1) HTTPS: ssl.SSLContext(PROTOCOL_TLS_SERVER) 로 ThreadingHTTPServer 를 감싼다. 인증서는 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -days 825 -subj /CN=aimem-fleet -addext subjectAltName=DNS:aimem-fleet,IP:<WSL IP>,IP:<Windows 호스트 IP> 로 .aimem/tls/server.{crt,key} 에 만든다(키 0600, git 제외). 크롬 설치용으로 server.crt 를 Windows 신뢰된 루트 인증기관에 가져오는 절차를 README 에 적는다. --tls 플래그 없으면 지금처럼 http 로컬 전용. (2) 접근 제어 1차 = 토큰: .aimem/tls/access-token(32바이트 hex, 0600) 을 서버가 기동 때 읽고(없으면 생성해 로그에 한 번 출력), /login 페이지에서 토큰을 받아 HttpOnly+Secure+SameSite=Strict 세션 쿠키(서명된 만료 포함, hmac) 발급, 모든 /api/* 와 정적 자원은 쿠키 또는 Authorization: Bearer <토큰> 없으면 401. 실패 5회/분 IP 당 지연. (3) 2차(선택) = GitHub OAuth: GITHUB_CLIENT_ID/SECRET 환경변수가 있으면 /login 에 GitHub 버튼, urllib 로 code→token 교환 후 GET /user 의 login 을 .aimem/tls/allowed-github-logins(한 줄 한 계정) 과 대조해 통과 시 같은 세션 쿠키. 없으면 버튼 숨김. 콜백 URL 은 https://<호스트>:18799/auth/github/callback. (4) 공개 시 주의: POST /api/requests 와 상세 패널(.err 꼬리 포함)은 반드시 인증 뒤에만, KISTI 키·토큰·시크릿이 응답에 나가지 않는지 S4 가 적대적 검수, 디렉터리 탈출 403 유지, HSTS 헤더, 요청 본문 64KB 제한. (5) WSL2 라 Windows 쪽 netsh portproxy(18799)와 방화벽 허용이 필요하다 - 명령을 README 에 적되 실행은 태석님이 한다. 검증: curl -k https://127.0.0.1:18799/api/health 가 401, Bearer 토큰 붙이면 200, 잘못된 토큰 401, 쿠키 로그인 흐름 Playwright 로 확인.",
+ "status": "DONE",
+ "subtasks": [
+  {
+   "id": "T-066",
+   "title": "서버 TLS(ssl.SSLContext) + 토큰/세션쿠키 인증 + 면제경로 + 보안헤더 + CSRF·본문상한",
+   "slot": "관리자",
+   "harness": "claude",
+   "status": "REVIEW",
+   "run_id": null
+  },
+  {
+   "id": "T-062",
+   "title": "로그인 화면 static/login.html (자족, 외부자원 0, 토큰 저장 금지)",
+   "slot": "S3",
+   "harness": "claude",
+   "status": "REVIEW",
+   "run_id": "T-062-S3-a2-192923"
+  },
+  {
+   "id": "T-063",
+   "title": "공개 전 정보유출 적대적 검수 (읽기 전용)",
+   "slot": "S4",
+   "harness": "claude",
+   "status": "DONE",
+   "run_id": "T-063-S4-a1-192303"
+  },
+  {
+   "id": "T-065",
+   "title": "인증·TLS 구현 적대적 검수 (읽기 전용, 자기채점 금지 8.0-1)",
+   "slot": "S4",
+   "harness": "claude",
+   "status": "DONE",
+   "run_id": "T-065-S4-a1-193106"
+  },
+  {
+   "id": "T-067",
+   "title": "인증·TLS 계약 테스트 tests/test_aimem_monitor_auth.py",
+   "slot": "S2",
+   "harness": "claude",
+   "status": "REVIEW",
+   "run_id": "T-067-S2-a1-193531"
+  },
+  {
+   "id": "T-068",
+   "title": "인증서 생성·크롬 설치·netsh portproxy 절차를 README 에",
+   "slot": "관리자",
+   "harness": "claude",
+   "status": "DONE",
+   "run_id": null
+  },
+  {
+   "id": "T-074",
+   "title": "공개면 2차 프런트 - 슬롯 표의 확인토큰 열 제거 + DEMO token 제거",
+   "slot": "S3",
+   "harness": "opencode",
+   "status": "REVIEW",
+   "run_id": "T-074-S3-a1-212016"
+  },
+  {
+   "id": "T-075",
+   "title": "/api/state 에서 root·slots[].token·kisti.url 제거(값까지 가림) + 요청 생성 분당 제한",
+   "slot": "관리자",
+   "harness": "claude",
+   "status": "REVIEW",
+   "run_id": null
+  },
+  {
+   "id": "T-076",
+   "title": "공개면 2차 계약 테스트 (키 부재·값 미유출·429·창 해제)",
+   "slot": "S4",
+   "harness": "claude",
+   "status": "REVIEW",
+   "run_id": "T-076-S4-a1-213229"
+  }
+ ],
+ "updated": "2026-11-09T21:36:30",
+ "note": "R5(2026-11-09 21시): 공개면 2차까지 끝났습니다. 남은 것은 (a) 쿠키 로그인 흐름의 브라우저 육안 확인(이 환경에 브라우저 자동화가 없습니다 - 4.5 큐 2번), (b) requests[].detail 잘라 보내기(4.5 큐 13번), (c) 접근 토큰 파일의 심볼릭 링크 읽기(큐 3번). 실제 외부 공개(netsh portproxy + 방화벽)는 태석님 몫으로 README 에 절차만 있습니다."
+}

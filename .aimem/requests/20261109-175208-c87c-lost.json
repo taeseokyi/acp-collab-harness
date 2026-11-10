@@ -1,0 +1,28 @@
+{
+ "id": "20261109-175208-c87c",
+ "created": "2026-11-09T17:52:08",
+ "requester": "태석 (클로드 코드 전달)",
+ "title": "lost 실행의 경과 시간 고정 및 표시",
+ "detail": "태석님 지적 2026-11-09 17:55: 실행 표의 S3 N3 1차 시도(20261109-172329-S3)가 lost 상태인데 경과가 27분 넘게 계속 늘어난다. 원인: .rc 가 없어 reader 가 끝 시각을 now 로 계산. 수정: (1) reader.py 의 runs 경과는 state==lost 일 때 .aimem/runs/<id>.lost 마커(JSON ended 필드) 또는 기록 파일들의 마지막 mtime 에서 멈춘다. (2) lost 행은 회색 배지 + 툴팁 \"작업자가 보고/종료코드 없이 사라짐\" 으로 표시하고 상세 패널에 .err 꼬리를 보여 준다. (3) fleet.py 에 `reap` 명령이 생겼고 .lost 마커를 쓴다 - 서버는 그 마커를 읽기만 한다. 검증: /api/state 의 runs 에서 해당 id 의 elapsed 가 두 번 호출 사이에 변하지 않아야 한다.",
+ "status": "DONE",
+ "subtasks": [
+  {
+   "id": "T-057",
+   "title": "lost 실행 경과를 .lost 마커 ended / 기록 파일 마지막 mtime 에서 고정",
+   "slot": "S1",
+   "harness": "claude",
+   "status": "DONE",
+   "run_id": "20261109-180013-S1"
+  },
+  {
+   "id": "T-058",
+   "title": "lost 행 회색 배지 + 툴팁 + 상세 패널에 .err 꼬리",
+   "slot": "S3",
+   "harness": "opencode",
+   "status": "REVIEW",
+   "run_id": "20261109-175955-S3"
+  }
+ ],
+ "note": "reader(경과 고정)와 프런트(배지)가 다른 소유라 둘로 쪼갰다. 3항 `fleet.py reap` 은 이미 있다 - 서버는 .lost 마커를 읽기만 한다.",
+ "updated": "2026-11-09T21:36:30"
+}

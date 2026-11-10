@@ -13,3 +13,16 @@ node_modules/
 IDENTITY.md
 SOUL.md
 USER.md
+
+# REV 109: 관리자가 하네스 CLI 로 띄운 작업자의 실행 기록(brief/out/err/rc). 재생성 가능.
+.aimem/runs/
+.aimem/graph/
+
+# 운영 상태 정본(SQLite). git 에는 render 스냅샷(AIMEM-state.md)만 커밋한다 (태석님 결정 2026-11-09 18:25)
+.aimem/aimem.db
+.aimem/aimem.db-wal
+.aimem/aimem.db-shm
+
+# 외부 공개용 TLS 자료와 접근 토큰 (요청 Q-261109-407b, 태석님 19:05).
+# **절대 커밋하지 않습니다** - 개인키(0600)와 접근 토큰이 들어 있습니다.
+.aimem/tls/

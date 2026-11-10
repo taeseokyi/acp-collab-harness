@@ -1,0 +1,10 @@
+{
+ "S1": {
+  "model": "opus",
+  "harness": "claude"
+ },
+ "S4": {
+  "model": "sonnet",
+  "harness": "claude"
+ }
+}

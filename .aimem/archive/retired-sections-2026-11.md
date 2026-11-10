@@ -100,3 +100,235 @@
 | S3 | `71e4db` | claude | 커밋 훅 / 검수 | `agent:coding:dashboard:833d60d2-6433-48ec-bcc8-6946c675ef4c` |
 
 세 대시보드 세션은 2026-11-06 세션 정리 때 삭제됐다(10-02 에 끝난 작업 세션). 토큰은 REV 107 에서 새로 발급.
+
+## [REV 109 / 2026-11-09 내림] 8.0 ACP 일회성 자식(게이트웨이 스폰) (원문)
+
+사유: 태석님 지시(2026-11-09 16시)로 관리자를 Claude ACP 세션(Opus 5.5)으로, 작업자를 하네스 CLI 일회성 프로세스(`fleet.py spawn`)로 바꿨다. 아래 원문의 스폰 호출문·`sessions_list` 서술은 관리자 세션을 여는 경우에만 남는다.
+
+### 8.0 최상위 규칙 - ACP 일회성 자식 (태석님 지시 2026-11-09)
+
+**이 절의 나머지보다 우선합니다.** 어긋나면 이 규칙을 따릅니다.
+(구 `8.0` "네이티브 상주 슬롯" 원문은 `.aimem/archive/retired-sections-2026-11.md`)
+
+**ACP 런타임은 다시 세션을 만듭니다.** 2026-11-06 에 `agents.entries.claude|codex|opencode` 를
+`runtime.type="acp"` 로 등록해 `Unknown agent id` 가 사라졌고(스모크 PONG 3/3), 세 항목의
+`workspace` 가 `/home/tsyi/work/opencode` 라 `cwd` 인자 없이 이 폴더에서 뜹니다
+(`runtime.acp.cwd` 는 스폰에 적용되지 않습니다 - 실측). 업스트림 #138580 은 그대로이고
+이 등록이 우회책입니다.
+
+- **슬롯은 ACP 일회성 자식입니다.** 태스크마다 관리자가 새로 엽니다:
+
+  ```
+  sessions_spawn(runtime: "acp", agentId: "claude" | "codex" | "opencode",
+                 mode: "run", context: "isolated",
+                 label: "S1 린터/보드 CLI", task: "<브리프 전문>")
+  ```
+
+  `agentId` 는 `2절` 명부의 하네스 칸입니다. `cwd` / `thread` / `streamTo` 는 주지 않습니다.
+  세션키는 `agent:<하네스>:acp:<uuid>` 로 나며 **명부에 적지 않습니다**. 턴이 끝나면 세션은
+  `done` 으로 남고 재사용하지 않습니다(11-09 실측). `python3 tools/fleet.py close` 가 남은 것을
+  짚어 주면 `sessions.delete` 로 거둡니다
+- **지시는 스폰의 `task` 한 번, 보고는 자식의 완료 응답 본문입니다.** `sessions_send` 는 쓰지
+  않습니다(일회성 자식은 한 턴으로 끝납니다). 보고는 완료 통보로 올라옵니다. 통보 본문이
+  잘렸으면 거두기 전에 `sessions_history(sessionKey)` 로 읽습니다(11-09 실측: 전문이 남아 있음)
+- **모델:** claude 는 `anthropic/claude-sonnet-5`(항목 고정), codex·opencode 는 `kisti/kistillm`.
+  판단이 갈릴 수 있는 태스크는 claude 슬롯(S1)에, 범위가 좁은 실행은 codex·opencode(S2·S3)에
+  줍니다. 스폰 `model` 인자로 바꿀 수 있습니다
+- **실행 모델의 정본은 하네스 설정입니다** - claude 는 `agents.entries.claude.model`, codex 는
+  `~/.codex/config.toml`, opencode 는 `~/.config/opencode/opencode.jsonc`. **`sessions_list` 의
+  `model` 은 읽지 마십시오** - OpenClaw 기본 모델(`kisti/kistillm`)이 찍히는 표기라 ACP 자식의
+  실행 모델이 아닙니다(11-09 실측: sonnet-5 로 돈 claude 자식도 `kistillm` 으로 표시). CLI
+  `openclaw sessions` 의 `claude-acp` 류는 하네스 이름입니다. 자식 조회는
+  `python3 tools/fleet.py children` 으로 합니다 - 하네스 설정에서 모델을 읽어 같이 보여 줍니다
+- **점검(하이파이브) 브리프의 보고 한 줄 형식:**
+  `하이파이브 S<n> OK | REV <N> | 토큰 <t> | 시각 <KST HH:MM> | cwd <pwd> | 모델 <자기 모델 또는 unknown>`.
+  claude 는 자기 모델을 압니다. codex·opencode 는 모르면 `unknown` 으로 적고, 관리자가
+  `fleet.py children` 출력과 대조합니다. 이 한 줄 **앞뒤에 다른 문장을 붙이지 않습니다**
+- **브리프에 슬롯 ID · 확인토큰 · REV · 쓰기 범위 · 배경 · 요구사항 · 검증 방법을 전부
+  싣습니다.** 자식은 매번 빈 컨텍스트로 시작합니다. 불일치 시 작업자가 멈추고 되묻는 것이
+  **정상 동작**입니다. `python3 tools/fleet.py brief --slot S1 --write <경로>` 가 머리말을 만듭니다
+- **이어하기는 새 스폰입니다.** 직전 결과(산출물 유무, 남은 일)를 브리프에 적어 다시 엽니다.
+  재배정 전에 보드 상태를 `TODO` 로 되돌리고 미커밋을 정리합니다(`8.1`)
+- **위임 파일:** 작업자는 자기 하네스의 사용자 전역 지침 파일에서 위임을 확인합니다(`0절`).
+  `~/.codex/AGENTS.md` 와 `~/.config/opencode/AGENTS.md` 는 2026-11-09 에 만들었습니다.
+  없으면 작업자가 쓰기를 거절하는 것이 맞습니다
+- **상주 세션이 꼭 필요하면**(여러 턴 대화가 필요한 예외) `mode: "session"` + `thread: true`
+  로 `#sss-fleet` 채널 세션에서 열고 `sessions_send` 로 지시합니다. 디스코드 자식 스레드가
+  생깁니다(`session.threadBindings.spawnSessions` 기본 참). **10.3 에서 미실측** - 첫 사용 전
+  프로브 1회를 거칩니다
+
+## [REV 114 / 2026-11-09 내림] 2·3·4.5·6절 운영 상태 표 (원문)
+
+**왜 내렸나.** 운영 상태의 정본이 `.aimem/aimem.db` 로 옮겨졌습니다(태석님 결정 2026-11-09 18:25).
+`tools/fleet.py`(T-070)·`tools/aimem_monitor/reader.py`(T-069)·`tools/aimem_board.py`(T-071)가 모두
+DB 를 읽게 된 뒤에 내렸습니다 - 셋 중 하나라도 표를 읽고 있으면 내리는 순간 작업자를 띄울 수 없게 됩니다
+(`4.5` 큐 1~4번이 그 순서였습니다). 읽기용 스냅샷은 `AIMEM-state.md`(`python3 tools/aimem_db.py render`)이고,
+**아래는 내리기 직전(REV 113)의 마크다운 원문**입니다. DB 가 날아갔을 때의 복원 근거로 남깁니다.
+
+### 2절 세션 명부 (REV 113 시점, AIMEM.md 177~199행)
+
+## 2. 세션 명부
+
+> **전환 중 (REV 113):** 이 절의 운영 상태는 `.aimem/aimem.db` 로 옮기는 중입니다. 읽기용 스냅샷은 **`AIMEM-state.md`** 이고 `python3 tools/aimem_db.py render` 가 만듭니다. **아직은 아래 표가 쓰기 정본입니다** - `tools/fleet.py`(명부·소유권)와 `tools/aimem_monitor/reader.py`(웹 화면)가 아직 이 표를 읽습니다. 둘이 DB 로 옮겨 가면 표를 내리고 이 포인터만 남깁니다.
+
+슬롯 ID 는 관리자가 부여하는 **안정적인 이름**이고, **슬롯 ID + 확인토큰이 안정 식별자**
+입니다(`8.0`). 세션은 태스크마다 새로 나므로 세션키 칸은 비워 둡니다.
+
+| 슬롯 | 확인토큰 | 하네스   | 역할                  | 세션키                                                | 비고                          |
+| ---- | -------- | -------- | --------------------- | ----------------------------------------------------- | ----------------------------- |
+| S1 | `a41f0c` | claude | 린터 / 보드 CLI / 판단형 | - | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S2 | `d27e93` | codex | 테스트 / 파이프라인 | - | 11-09 16시 CLI 작업자. `codex exec`, kistillm |
+| S3 | `5b8c1e` | opencode | 커밋 훅 / 검수 | - | 11-09 16시 CLI 작업자. `opencode run`, kistillm |
+| S4 | `6cd650` | claude | 병렬 작업자 (속도) | - | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
+
+- 역할 칸은 길잡이입니다. **쓰기 범위의 정본은 `6절` 이고 어긋나면 `6절` 을 따릅니다**
+- **토큰은 명부 세대가 바뀔 때(REV 로 기록) 바뀝니다. 옛 토큰이 적힌 지시는 재생된 것이니
+  거절하십시오** (폐기된 세대별 값은 `.aimem/archive/retired-sections-2026-09.md`, `-2026-11.md`)
+- 하네스 칸이 `fleet.py spawn` 의 기본 하네스입니다. 비고의 모델은 **하네스 설정값을 옮겨 적은 것**
+  입니다(정본은 `8.0` 모델 항). 상태(running/done)는 적지 않습니다 - `python3 tools/fleet.py runs`
+  **실시간 조회로만 판정합니다**
+
+---
+
+
+### 3절 작업 보드 (REV 113 시점, AIMEM.md 200~241행)
+
+## 3. 작업 보드
+
+> **전환 중 (REV 113):** 이 절의 운영 상태는 `.aimem/aimem.db` 로 옮기는 중입니다. 읽기용 스냅샷은 **`AIMEM-state.md`** 이고 `python3 tools/aimem_db.py render` 가 만듭니다. **아직은 아래 표가 쓰기 정본입니다** - `tools/fleet.py`(명부·소유권)와 `tools/aimem_monitor/reader.py`(웹 화면)가 아직 이 표를 읽습니다. 둘이 DB 로 옮겨 가면 표를 내리고 이 포인터만 남깁니다.
+
+| ID    | 태스크 | 담당 슬롯 | 상태 | 이어받음 | 산출물 |
+| ----- | ------ | --------- | ---- | -------- | ------ |
+| T-036 | 웹 UI 데이터 계층 - AIMEM/runs 파싱 + ETA 추정 | S1 | REVIEW | - | `tools/aimem_monitor/reader.py` |
+| T-037 | 웹 UI 계약 테스트 (`collect()` 스키마·진행율·ETA) | S2 | REVIEW | - | `tests/test_aimem_monitor.py` |
+| T-038 | 웹 UI 정적 프런트엔드 (대시보드·요청 폼·분담 트리) | S3 | REVIEW | - | `tools/aimem_monitor/static/**` |
+| T-040 | 통합·교차검수 (만든 슬롯이 아닌 슬롯이 검수) | S1 | REVIEW | T-038 | 그래프 노드 `R-002/N5`. T-045 로 실행 |
+| T-041 | 웹 UI 밝은 모드 기본 + 색 토큰 `:root` 이관 + 어두운 모드 토글 | S3 | REVIEW | - | `static/style.css`·`index.html`·`app.js` (`R-002/N3`) |
+| T-042 | 웹 UI 가독성·정렬 (열 정렬·고정폭·말줄임+툴팁·카드 위계) | S3 | REVIEW | - | 요청 `ce9f`. 같은 화면이라 T-041 과 한 노드 |
+| T-043 | ETA 초과 처리 (`_estimate` 가 0 으로 바닥치던 것) | S1 | REVIEW | T-036 | `reader.py` `eta_over` (`R-002/N1`) |
+| T-044 | 린터 보드 담당 `관리자`/`미배정` 허용 | S1 | REVIEW | - | `tools/aimem_lint.py` (`R-002/N2`) |
+| T-045 | 계약 테스트 보강 (ETA 초과 · `kisti`/`graphs` · 보드 슬롯) | S2 | REVIEW | T-043 | `tests/test_aimem_monitor.py`·`test_aimem_lint.py` (`R-002/N4`) |
+| T-047 | 모니터 UI 를 Strata 토큰(`--st-*`)으로 재스킨 | S3 | REVIEW | T-041 | 요청 `c5c1`. 그래프 노드 `R-002/N6` |
+| T-050 | 상세 조회 데이터 계층 (`reader.run_detail()` 16키 계약) | S1 | REVIEW | - | 요청 8d8d. `reader.py`, run `…174829-S1` |
+| T-052 | 상세 조회 계약 테스트 (16키·경로탈출·404/400·결함 회귀) | S2 | REVIEW | T-050 | `tests/test_aimem_monitor_detail.py` |
+| T-055 | ETA 표본 결함 2건 (중복 `eta_over` · 스모크가 중앙값 끌어내림) | S1 | REVIEW | - | `4.5` 큐 4·5번. opencode 중앙값 458→841s |
+| T-058 | lost 실행 경과 고정 (`.lost` 마커 / 마지막 mtime) | S1 | REVIEW | - | 요청 c87c. `reader.py`, run `…180013-S1` |
+| T-053 | 상세 패널 + id 열 + lost 배지 + 요청자 기본값 | S3 | REVIEW | - | 요청 8d8d·cf63·c87c. 1차 유실 후 2차 `…175955-S3` |
+| T-059 | 관리자 수정분 적대적 재검수 (읽기 전용) | S4 | DONE | T-056 | 자기채점 금지 `8.0-1` |
+
+| T-060 | 린터를 2단계(DB 정본)로 - 상태 표 검사 제거 + `STATE_*` 5종 신설 | S1 | REVIEW | - | `tools/aimem_lint.py` 709->454줄. `lint_repo()` 신설 |
+| T-061 | 린터 2단계 테스트 갈아끼우기 (71건 폐기, 새 계약 덮기) | S2 | REVIEW | T-060 | `tests/test_aimem_lint.py` 98->73건. 전체 106건 OK |
+| T-062 | 로그인 화면 (자족 HTML, 외부자원 0, 토큰 저장 금지) | S3 | REVIEW | T-066 | 요청 `407b`. `static/login.html` 138줄, 대비 4.95~16.5:1 |
+| T-063 | 공개 전 정보유출 적대적 검수 (읽기 전용) | S4 | DONE | - | 요청 `407b`. 결함 7건 - 2·5·6번은 관리자가 수정, 나머지 큐 |
+| T-064 | `reader` 슬롯별 모델 + 비밀 가림 + 심볼릭 링크 차단 | S1 | REVIEW | T-063 | 요청 `b125` 완료(S1 opus/S4 sonnet 실측). `reader.py` |
+| T-065 | 인증·TLS 구현 적대적 검수 (읽기 전용) | S4 | DONE | T-066 | 요청 `407b`. 관리자 자기채점 금지 `8.0-1` - 결함 9건(TLS DoS 포함) 재현 - 관리자가 7건 수정 |
+| T-066 | **서버 TLS + 접근 제어** (ssl / 토큰 / 세션쿠키 / 면제경로 / 보안헤더 / CSRF) | 관리자 | REVIEW | - | 요청 `407b`. `server.py` +400줄. curl 검증 전항 통과 |
+| T-067 | 인증·TLS 계약 테스트 (`test_aimem_monitor_auth.py`) | S2 | REVIEW | T-066 | 요청 `407b`. 18개 항목 브리프 - 55+3건. **관리자 CSRF 들여쓰기 결함을 테스트가 잡았다** |
+| T-068 | 인증서 생성·크롬 설치·`netsh portproxy` 절차 | 관리자 | DONE | T-066 | 요청 `407b`. `README.md` + `.gitignore` `.aimem/tls/` |
+
+상태 값: `TODO` / `ASSIGNED` / `IN-PROGRESS` / `REVIEW` / `DONE` / `BLOCKED`
+
+**완료분은 `.aimem/archive/board-2026-09.md`**(T-002A~T-035, **37건**, REV 104 에서 내림)**와
+`.aimem/archive/board-2026-11.md`**(T-039, REV 111 에서 내림) **에 있습니다.** `4절` 로그와 그
+아카이브가 `T-0xx` 로 인용하므로 참조가 끊기지 않게 원문 그대로 옮겼습니다. 이 표에는
+**진행 중인 것만** 둡니다 - 끝난 행은 바로 아카이브로 내립니다.
+
+---
+
+
+### 4.5 대기 큐 (REV 113 시점, AIMEM.md 262~303행)
+
+## 4.5 대기 큐
+
+> **전환 중 (REV 113):** 이 절의 운영 상태는 `.aimem/aimem.db` 로 옮기는 중입니다. 읽기용 스냅샷은 **`AIMEM-state.md`** 이고 `python3 tools/aimem_db.py render` 가 만듭니다. **아직은 아래 표가 쓰기 정본입니다** - `tools/fleet.py`(명부·소유권)와 `tools/aimem_monitor/reader.py`(웹 화면)가 아직 이 표를 읽습니다. 둘이 DB 로 옮겨 가면 표를 내리고 이 포인터만 남깁니다.
+
+관리자가 다음에 배정할 태스크를 위에서부터 꺼내 씁니다(`8.0-4-2`). 비어 있으면
+관리자는 요약 보고 후 멈춥니다 - 스스로 항목을 추가하지 않습니다.
+
+| 순서 | 태스크 | 후보 슬롯 | 이어받음 | 비고 |
+| ---- | ------ | --------- | -------- | ---- |
+| 1 | `reader.py` 가 운영 상태를 **DB 에서** 읽게 (`AIMEM.md` 파싱 폐기) | S1 | T-060 | **2단계의 길목.** 지금 `collect()` 가 2·3·4·4.5·6절 표를 파싱한다. DB(`aimem_db.state_dict()`)로 돌려야 표를 내릴 수 있다. 키 이름은 그대로 두어 프런트가 안 깨지게 |
+| 2 | `fleet.py` 가 명부·소유권·REV 를 **DB 에서** 읽게 | 관리자 | T-060 | **같은 길목.** `roster()`/`owned_paths()`/`read_rev()` 가 `AIMEM.md` 를 읽어서, 표를 내리면 **작업자를 띄울 수 없게 된다.** 마크다운 폴백을 남겨 두 정본이 어긋나도 멈추지 않게 |
+| 3 | `aimem_board.py` 를 `aimem_db.py task set` 으로 위임하거나 폐기 | S1 | T-060 | `board-set` 이 3절 표를 쓴다. 표가 사라지면 죽는다. 린터 헬퍼(`SEP_RE`/`VALID_STATUSES`/`_col_index`)를 board 가 잡고 있는 것도 이때 끊는다 |
+| 4 | `AIMEM.md` 2·3·4·4.5·6절 본문 제거 -> 포인터만 | 관리자 | 위 3건 | **위 3건이 끝난 뒤에만.** 원문은 `.aimem/archive/retired-sections-2026-11.md` 로. 지금 린터가 이미 `STATE_TABLE_IN_AIMEM` 4건으로 이 일을 가리키고 있다 |
+| 5 | 공개면에서 `root`·`paths`·`slots[].token`·`kisti.url` 빼기 | S1 | T-063 | **S4 유출 검수 5·6번.** 프런트는 셋 다 안 쓴다(`app.js` 는 `s.token` 만). 테스트(`SLOT_KEYS`)·프런트와 **같이** 움직여야 해서 REV 113 에서 미뤘다 |
+| 6 | 요청 생성 속도 제한 + `/api/state` 의 `detail` 잘라 보내기 | 관리자 | T-063 | **S4 유출 검수 3번.** 개수 상한 500 은 걸었지만 분당 횟수 제한이 없다. 요청 1건 최대 60KB 가 폴링마다 전부 실린다 |
+| 7 | `.aimem/runs/<id>.json`·`.rc` 에도 심볼릭 링크 검사 | S1 | T-064 | T-064 가 `brief`/`out`/`err` 만 막았다. 메타 파일이 링크면 `slot`/`label`/`model` 문자열이 응답에 실린다 (S1 보고 ④) |
+| 8 | 쿠키 로그인 흐름 브라우저 확인 (Playwright) | 미배정 | T-066 | **태석님 검증 항목 중 유일하게 못 돌린 것.** 이 환경에 브라우저 자동화가 없어 curl 로 대신했다(쿠키 발급·재사용·변조 401 까지 실측) - 육안 확인은 태석님 몫 |
+| 9 | 접근 토큰 파일이 **심볼릭 링크면 읽기 경로는 따라간다** | 관리자 | T-067 | S2 보고. `O_NOFOLLOW` 는 새로 만들 때만 걸리고 `load_access_token` 은 링크를 따라 읽는다. `.aimem/tls` 가 0700 이라 당장 위험은 낮지만 읽기도 `O_NOFOLLOW` 로 여는 편이 맞다 |
+| 10 | 요청 -> 서브태스크 분담을 관리자 CLI 로 (`fleet.py request` 또는 `fleet_graph` 와 요청 파일 연결) | 관리자 | T-039 | 지금은 요청 파일을 손으로 고쳐야 분담이 보인다. REV 111 에서 `graph`/`graph_node` 필드를 손으로 넣었다 |
+| 11 | 그래프 노드 <-> 요청 서브태스크 자동 동기화 | 관리자 | T-046 | `8.0-5` 채택 결과. `fleet_graph` 가 노드 상태를 바꿀 때 `.aimem/requests/*.json` 의 같은 `graph_node` 행도 갱신하면 손 갱신이 사라진다 |
+| 12 | 밝은 모드 스크린샷 검증 (Playwright) | 미배정 | T-041 | 요청 `ce9f` 가 요구했으나 이 환경에 브라우저 자동화가 없다. 대비비는 계산으로 대신했다 - 육안 확인은 태석님 몫으로 남았다 |
+| 13 | `fleet_graph` 단일 실행자 잠금 (`O_EXCL` + pid, 죽은 pid 회수) | 관리자 | T-057 | **S4 재현.** 잠금이 없어 `run` 과 `step` 이 같은 노드를 두 번 띄운다(`[('A','S1','fake-1'), …('A','S1','fake-3')]`). 같은 수정이 **`run` 중 수동 편집 덮어쓰기**(`step` 진입 시 디스크 재읽기·병합)도 막는다. 약 20줄 |
+| 14 | `fleet_graph` 모양 검증 재사용 + 노드별 타임아웃 | 관리자 | T-057 | **S4 재현.** `step`/`progress` 가 `validate_graph` 를 다시 돌리지 않아 순환 의존은 `RecursionError`, `nodes` 가 dict 면 `TypeError` 로 죽는다. 멈춘 자식은 `rc` 가 없어 **영원히 `running`** 으로 보인다(전체 `--timeout` 까지). 약 20줄 |
+| 15 | 작업자가 `rc=0` 으로 끝나면 보고가 `BLOCKED` 여도 `done` 이 된다 | 관리자 | T-057 | **S4 재현.** 브리프는 첫 줄 상태 규약을 요구하는데 도구는 그것을 파싱하지 않는다. `verify` 없는 노드는 완료로 위장될 수 있다. **R3 에서 실제로 닿았다** - S3 1차(`…175553-S3`)가 파일을 하나도 못 고치고 rc=0 으로 끝났다 |
+| 16 | 라이트 모드 `--st-accent-ink`(#fff) on `--st-accent` = **2.54:1** | S3 | T-047 | **S4 교차검수 실측.** 지금은 어디서도 쓰이지 않는 잠복 결함이라 **채운 accent 버튼을 만드는 순간 터진다.** 같은 보고의 진행 막대 `.bar-fill` on `.bar` 라이트 **2.37:1**(비텍스트 3:1 미만)도 함께. `ink-muted` on `info-tint` 는 4.5021 로 **여유가 0.002** 다 |
+| 17 | 참조 토큰 원본 `.aimem/briefs/strata-tokens.css` 의 `--st-accent-text` 가 틀렸다 | 관리자 | T-047 | **S4 실측.** 원본 `#0c8a60` 은 틴트 `#ecfdf5` 위에서 **4.136:1** 로 4.5 미만이다. S3 가 `#0b8058`(4.699:1)로 고쳐 쓴 것이 옳다. 원본을 고칠지, 편차로 남길지 정할 것 - 지금은 "토큰 1:1 대응" 요건과 어긋난 상태다 |
+| 18 | 작업자 허용목록 - 브리프가 `PYTHONPATH=... python3` 로 시작하면 아직 막힌다 | 관리자 | - | 16:51 수정은 `Bash(python3:*)` 접두사 매칭이라 **명령 첫 낱말이 `python3` 여야** 한다. 11-09 17:33 제3 세션 브리프가 그걸 몰라 작업자가 검증을 한 줄도 못 돌렸다. `fleet.py spawn` 이 브리프의 검증 명령을 점검해 경고하거나, 허용목록에 `Bash(PYTHONPATH=*)` 를 더할 것 |
+
+**REV 113 에서 내린 항목:** `aimem_lint` 보드 슬롯 관련 잔여 없음 / **틀린 계약 단언**(구 9번, `test_collect_graphs_bad_attempts` - T-052 2차에서 완화) / **`harness_model` 하드코딩**(구 10번 - T-064 가 `tools/fleet_slots.json` 을 정본으로 삼아 해소. S1 opus / S4 sonnet 실측).
+
+**REV 111 에서 내린 항목:** ETA 초과 처리(T-043) / T-040 교차검수(T-045) / `aimem_lint` 보드 슬롯(T-044) /
+**`eta_over` 중복**(T-055 - `run_id` 로 제거) / **스모크가 중앙값을 끌어내리던 것**(T-055 - 라벨 `스모크`
+제외. opencode 중앙값 458 -> **841s** 로 실작업 850~983s 와 맞아졌고, codex 68 -> 983s. **모든 중앙값이
+올라갔으므로 ETA 가 더 낙관적이 된 하네스는 없다**). 쓰기 경로 유무로 거르는 안(b)은 **버렸다** -
+S4 의 적대적 검수(189·224초, 읽기 전용)가 표본에서 빠져 claude 중앙값이 43s 로 더 떨어졌다.
+
+`fleet.py` 허용목록 결함은 **16:51 에 이미 고쳐져 있었다** - `Bash(python3:*)` 콜론 문법
+(클로드 코드, run `20261109-165102-S1` 로 검증). opencode 보고 본문 유실은
+`fleet.py run_report()` 가 stderr 꼬리를 대신 보여 주는 것으로 완화됐다.
+
+---
+
+
+### 6절 파일 소유권 (REV 113 시점, AIMEM.md 330~377행)
+
+## 6. 파일 소유권
+
+> **전환 중 (REV 113):** 이 절의 운영 상태는 `.aimem/aimem.db` 로 옮기는 중입니다. 읽기용 스냅샷은 **`AIMEM-state.md`** 이고 `python3 tools/aimem_db.py render` 가 만듭니다. **아직은 아래 표가 쓰기 정본입니다** - `tools/fleet.py`(명부·소유권)와 `tools/aimem_monitor/reader.py`(웹 화면)가 아직 이 표를 읽습니다. 둘이 DB 로 옮겨 가면 표를 내리고 이 포인터만 남깁니다.
+
+**동일 폴더 공동 작업의 충돌 방지 장치입니다.** 쓰기는 소유 슬롯만 합니다. 읽기는 전원 자유입니다.
+
+| 경로 패턴                     | 쓰기 소유    | 비고                                      |
+| ----------------------------- | ------------ | ----------------------------------------- |
+| `AIMEM.md`                    | 관리자(클로) | 작업자 쓰기 금지                          |
+| `.gitignore`                  | 관리자       |                                           |
+| `.aimem/outbox/README.md`     | 관리자       | 아웃박스 사용법                           |
+| `CLAUDE.md`                   | 관리자       | 부트스트랩. 자동 주입되는 유일한 파일     |
+| `AGENTS.md`                   | 관리자       | `CLAUDE.md` 심볼릭 링크 (타 하네스용)     |
+| `tools/fleet.py`              | 관리자       | 슬롯 시작/종료 도우미                     |
+| `.aimem/archive/**`           | 관리자       | 아카이브는 관리자만 씁니다                |
+| `tools/aimem_lint.py`         | S1           | T-005A                                    |
+| `tools/aimem_board.py`        | S1           | T-006 / T-009                             |
+| `tests/test_aimem_lint.py`    | S4           | T-005B. **R5 에 S2 -> S4** (KISTI 서버 장애로 S2 제외, 태석님 지시 2026-11-09 20:55). S2 복구 시 되돌립니다 |
+| `.githooks/**`                | S3           | T-008                                     |
+| `tools/envcheck/sessions.py`  | S1           | 라운드 2. 세션·에이전트 계층 검사         |
+| `tools/envcheck/runtime.py`   | S2           | 라운드 2. 실행 환경 계층 검사             |
+| `tools/envcheck/terminal.py`  | S3           | 라운드 2. 터미널 규약 계층 검사           |
+| `tools/envcheck/__main__.py`  | 관리자       | 통합 러너. **합류점을 하나로 두는 장치**  |
+| `tools/envcheck/__init__.py`  | 관리자       | 공통 계약(`check()` / `Result`) 정의      |
+| `.aimem/envcheck-state.json`  | 관리자       | 러너의 누적 판정 상태. **러너만 씁니다. `.gitignore` 대상 - 이력 자산이 아니라 상태 파일(REV 106)** |
+| `tools/aimem_monitor/reader.py` | S1         | 라운드 3 웹 UI. 파일 -> 딕셔너리 (파싱·ETA) |
+| `tools/aimem_monitor/static/**` | S3         | 라운드 3 웹 UI. 정적 프런트엔드 (HTML/JS/CSS) |
+| `tools/aimem_monitor/server.py` | 관리자     | 라운드 3 웹 UI. HTTP 라우팅 + 요청 파일 쓰기. **합류점을 하나로 두는 장치** |
+| `tools/aimem_monitor/__init__.py` | 관리자   | 라운드 3 웹 UI. 공통 계약(`collect()` 스키마·가중치) |
+| `tools/aimem_monitor/__main__.py` | 관리자   | 라운드 3 웹 UI. `python3 -m aimem_monitor` 진입점 |
+| `tests/test_aimem_monitor*.py`  | S4         | 라운드 3 웹 UI. 계약 테스트. **R5 에 S2 -> S4** (KISTI 서버 장애로 S2 제외, 태석님 지시 2026-11-09 20:55). S2 복구 시 되돌립니다 |
+| `.aimem/requests/**`            | 관리자     | 웹에서 들어온 작업 요청. 생성은 **서버만** 하고, 분담(`status`/`subtasks`/`graph`)은 관리자가 채웁니다 |
+| `tools/fleet_graph.py`          | 관리자     | 태스크 DAG 실행기. `8.0-5` (REV 111 채택). 출처는 클로드 코드 |
+| `.aimem/graph/**`               | 관리자     | 그래프 파일·로그·노드 브리프. `fleet_graph` 와 관리자만 씁니다. **`.gitignore` 대상**입니다(`.aimem/runs/` 와 같은 성격 - 실행 기록). 노드 입력은 `inputs/` 아래 |
+| `.aimem/briefs/**`              | 관리자     | 관리자 세션 브리프와 참조 자료(예: `strata-tokens.css`). 작업자는 읽기만 |
+| `.aimem.lock`                 | 미배정       | flock 대상. 내용을 쓰지 않고 unlink 금지  |
+| (그 외 모든 경로)             | 미배정       | 배정 전 쓰기 금지. 아래 절차로 요청       |
+| README.md | 관리자 | 저장소 소개 |
+| `tools/aimem_db.py` | 관리자 | 운영 상태 SQLite (REV 112~). `migrate`/`render`/`check`/`event`. 출처는 클로드 코드 |
+| `.aimem/aimem.db` | 관리자 | **운영 상태의 정본(전환 중)**. `.gitignore` 대상 - 커밋되는 것은 `AIMEM-state.md` 스냅샷 |
+| `AIMEM-state.md` | 관리자 | `aimem_db.py render` **산출물**. 손으로 고치지 않는다 (린터가 바이트 대조) |
+| `.aimem/tls/**` | 관리자 | 외부 공개용 자체 인증서·개인키(0600)·접근 토큰. **`.gitignore` 대상, 절대 커밋 금지** (REV 113) |
+| `tools/fleet_slots.json` | 관리자 | 슬롯별 하네스·모델 정본. `fleet.py slot` 이 쓰고 `reader` 가 읽는다 (`8.0` 모델 항) |
+| skills/** | 관리자 | **현재 비어 있음** (REV 101 에서 `acp-slot-lifecycle` 제거). 되살아나면 이 행이 그대로 적용된다 |
+
+새 경로가 필요하면 보고에 `NEEDS-LOCK` 으로 요청하십시오(`0.2`/`0.3`).
+관리자가 이 표에 등록한 뒤에 작업을 시작합니다.
+
+

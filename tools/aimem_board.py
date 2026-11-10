@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""AIMEM.md 표 갱신 CLI. 표준 라이브러리만 사용.
+"""2단계(REV 114~): 보드의 정본은 `.aimem/aimem.db` 다. 이 파일은 `AIMEM.md` 를 더 이상 쓰지 않는다.
+
+T-071 (G-003). 대상 선택 규칙:
+
+- `--file` 을 생략했거나 그 파일 이름이 `AIMEM.md`(또는 실제 저장소 `AIMEM.md` 로 풀리는 경로)면
+  **DB 모드**다. `board-set` / `board-add` 는 `aimem_db.cmd_task` 를 import 해 불러
+  `tasks` upsert + `events` 기록을 하고, `board-list` 는 DB 를 읽는다. 나머지 하위명령
+  (`rev-bump` / `handoff-add` / `archive-rollover` / `queue-*` / `roster-set` / `owner-add`)은
+  폐기 안내를 찍고 rc 2 로 끝난다. **이 모드는 어떤 마크다운도 쓰지 않는다.**
+- `--file` 이 `AIMEM.md` 가 아닌 **사본**(테스트 픽스처, 아카이브 편집 등)이면 아래의 옛
+  마크다운 편집 경로가 그대로 돈다. `tests/test_aimem_lint.py` 의 board 스모크·행위 테스트가
+  이 경로를 덮는다. 린터가 빌려 주는 헬퍼(`find_section`/`find_queue_section`/`ENTRY_RE` 등)도
+  이 경로를 위해 남긴다.
+
+--- 이하 1단계(마크다운 편집) 설명 ---
 
 인라인 문자열 치환 대신, 표 구조를 파싱해 셀 단위로 고친다. 쓰기 전에
 aimem_lint.lint_text() (순수 함수) 로 검증하고, 위반이 있으면 아무것도 쓰지 않고
@@ -19,7 +33,9 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
+import aimem_db
 import aimem_lint as lint
 
 NEXT_HEADING_RE = re.compile(r"^##(?!#)\s")
@@ -529,9 +545,132 @@ def finalize(path: Path, original_text: str, lines, dry_run: bool, success_msg: 
     return 0
 
 
+# ---- 2단계: DB 모드 (정본 .aimem/aimem.db) ----
+#
+# 위임 방식은 subprocess 가 아니라 **import** 다. aimem_db.cmd_task 는 argparse Namespace 만
+# 받는 순수한 함수라 SimpleNamespace 로 그대로 부를 수 있고, 인자 따옴표·rc 해석·PYTHONPATH
+# 를 신경 쓸 필요가 없다. aimem_db.py 는 관리자 소유라 고치지 않고 부르기만 한다.
+
+DEPRECATED = {
+    "rev-bump": "python3 tools/aimem_db.py event --kind note --body '...' --bump",
+    "handoff-add": "python3 tools/aimem_db.py event --kind handoff --body '...'",
+    "archive-rollover": "(필요 없음 - 로그는 DB events 테이블에 쌓이고 render 가 최신 50건만 보인다)",
+    "queue-pop": "(aimem_db.py 에 큐 명령이 아직 없음 - 관리자에게 요청)",
+    "queue-add": "(aimem_db.py 에 큐 명령이 아직 없음 - 관리자에게 요청)",
+    "roster-set": "(aimem_db.py 에 명부 명령이 아직 없음 - 관리자에게 요청)",
+    "owner-add": "python3 tools/aimem_db.py ownership set --path ... --owner ... --note ...",
+}
+
+
+def _is_canonical_target(file_arg) -> bool:
+    """마크다운으로 쓰면 안 되는 대상인가. 생략, 이름이 AIMEM.md, 또는 저장소 AIMEM.md 로 풀리는 경로."""
+    if file_arg is None:
+        return True
+    p = Path(file_arg)
+    if p.name == "AIMEM.md":
+        return True
+    try:
+        return p.resolve() == aimem_db.AIMEM.resolve()
+    except OSError:
+        return False
+
+
+def _db_task_row(task_id):
+    with aimem_db.connect() as con:
+        return con.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+
+
+def _db_check_status(status):
+    if status not in lint.VALID_STATUSES:
+        die(f"허용되지 않는 상태값: {status} (허용: {', '.join(sorted(lint.VALID_STATUSES))})")
+
+
+def _db_board_set(args):
+    _db_check_status(args.status)
+    row = _db_task_row(args.task_id)
+    if row is None:
+        die(f"'{args.task_id}' 에 해당하는 태스크가 DB 에 없음 (새 행은 board-add)")
+    if args.dry_run:
+        print(f"[dry-run] board-set {args.task_id}: {row['status']} -> {args.status} (DB 미기록)")
+        return 0
+    aimem_db.cmd_task(SimpleNamespace(
+        action="set", id=args.task_id, request=None, title=None, slot=None,
+        status=args.status, artifacts=None, actor=args.actor))
+    print(f"board-set {args.task_id} -> {args.status}")
+    return 0
+
+
+def _db_board_add(args):
+    _db_check_status(args.status)
+    if _db_task_row(args.task_id) is not None:
+        die(f"이미 존재하는 태스크 ID: {args.task_id}")
+    title, slot, handoff, artifact = (sanitize(v) for v in (args.name, args.slot, args.handoff, args.artifact))
+    if args.dry_run:
+        print(f"[dry-run] board-add {args.task_id} ({slot}, {args.status}) {title} (DB 미기록)")
+        return 0
+    aimem_db.cmd_task(SimpleNamespace(
+        action="set", id=args.task_id, request=None, title=title, slot=slot,
+        status=args.status, artifacts=artifact, actor=args.actor))
+    # cmd_task 는 inherited(이어받음) 칸을 받지 않는다. 옛 board-add 의 다섯째 인자를 잃지 않도록 따로 채운다.
+    if handoff not in ("", "-"):
+        with aimem_db.connect() as con:
+            con.execute("UPDATE tasks SET inherited=? WHERE id=?", (handoff, args.task_id))
+            con.commit()
+    print(f"board-add {args.task_id} ({slot}, {args.status})")
+    return 0
+
+
+def _db_board_list(args):
+    with aimem_db.connect() as con:
+        q = "SELECT id,request_id,slot,status,title FROM tasks"
+        cond, params = [], []
+        if args.slot:
+            cond.append("slot=?"); params.append(args.slot)
+        if args.status:
+            cond.append("status=?"); params.append(args.status)
+        if cond:
+            q += " WHERE " + " AND ".join(cond)
+        for r in con.execute(q + " ORDER BY id", params):
+            print(f"  {r['id']:<7} {r['status']:<11} {r['slot'] or '-':<4} {r['request_id'] or '-':<22} {r['title'] or ''}")
+    return 0
+
+
+def run_db(args) -> int:
+    """DB 모드 진입점. 마크다운은 읽지도 쓰지도 않는다."""
+    if args.command == "board-list":
+        return _db_board_list(args)
+    if args.command in DEPRECATED:
+        print(
+            f"이 명령은 폐기됐습니다(2단계, REV 114~). 운영 상태의 정본은 .aimem/aimem.db 입니다.\n"
+            f"  board 상태는: python3 tools/aimem_db.py task set --id T-xxx --status ...\n"
+            f"  '{args.command}' 대신: {DEPRECATED[args.command]}",
+            file=sys.stderr,
+        )
+        return 2
+    if args.expect_rev is not None:
+        with aimem_db.connect() as con:
+            cur_rev = aimem_db.rev(con)
+        if cur_rev != args.expect_rev:
+            print(f"오류: REV 불일치 - 예상 {args.expect_rev}, DB {cur_rev} (다시 읽고 재시도할 것)", file=sys.stderr)
+            return 1
+    try:
+        if args.command == "board-set":
+            return _db_board_set(args)
+        if args.command == "board-add":
+            return _db_board_add(args)
+    except SystemExit as e:
+        return int(e.code) if e.code is not None else 1
+    die(f"알 수 없는 명령: {args.command}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--file", default="AIMEM.md", help="대상 AIMEM.md 경로 (기본: AIMEM.md)")
+    common.add_argument(
+        "--file",
+        default=None,
+        help="생략(또는 AIMEM.md)이면 DB 모드(.aimem/aimem.db). AIMEM.md 가 아닌 사본 경로를 주면 그 마크다운을 옛 방식으로 편집",
+    )
+    common.add_argument("--actor", default="관리자", help="DB 모드에서 events 에 남길 행위자 (기본: 관리자)")
     common.add_argument("--dry-run", action="store_true", help="diff만 출력하고 저장하지 않음")
     common.add_argument(
         "--expect-rev",
@@ -540,8 +679,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="락 안에서 읽은 현재 REV 가 이 값이 아니면 거부 (낙관적 동시성 - sed 우회 경로 안전망)",
     )
 
-    parser = argparse.ArgumentParser(prog="aimem_board.py", description="AIMEM.md 표 갱신 CLI (표준 라이브러리만)")
+    parser = argparse.ArgumentParser(
+        prog="aimem_board.py",
+        description="2단계(REV 114~): 보드 정본은 .aimem/aimem.db. board-set/board-add/board-list 는 DB 로 위임하고 "
+        "나머지는 폐기(rc 2). --file 로 AIMEM.md 가 아닌 사본을 주면 그 마크다운을 옛 방식으로 편집",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    sp = sub.add_parser("board-list", parents=[common], help="DB 의 작업 보드 출력 (읽기 전용)")
+    sp.add_argument("--slot", default=None, help="이 슬롯 담당만")
+    sp.add_argument("--status", default=None, help="이 상태만")
 
     sp = sub.add_parser("rev-bump", parents=[common], help="REV 증가 및 최종 갱신 시각 갱신")
     sp.add_argument("--to", type=int, default=None, help="증가(+1) 대신 이 값으로 설정")
@@ -599,6 +746,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # 2단계: AIMEM.md 를 겨누면(기본값 포함) 마크다운 경로로 들어가지 않는다.
+    if args.command == "board-list" or _is_canonical_target(args.file):
+        return run_db(args)
 
     path = Path(args.file)
 

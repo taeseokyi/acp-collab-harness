@@ -1,0 +1,63 @@
+import json, os, subprocess, sys, threading, time, queue
+env = dict(os.environ)
+for line in open('/home/tsyi/.openclaw/.env'):
+    line=line.strip()
+    if line.startswith('KISTI_API_KEY='): env['KISTI_API_KEY']=line.split('=',1)[1].strip().strip('"')
+env['CODEX_PATH'] = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] else env.get('CODEX_PATH','')
+if not env['CODEX_PATH']: env.pop('CODEX_PATH')
+cwd='/home/tsyi/work/opencode'
+p = subprocess.Popen(['/usr/bin/node','/home/tsyi/.openclaw/acpx/claude-agent-acp-wrapper.mjs'], cwd=cwd, env=env,
+                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+q=queue.Queue()
+def rd():
+    for l in p.stdout: q.put(l)
+    q.put(None)
+threading.Thread(target=rd,daemon=True).start()
+nid=0
+def send(method, params=None, _id=True):
+    global nid
+    msg={'jsonrpc':'2.0','method':method,'params':params or {}}
+    if _id: nid+=1; msg['id']=nid
+    p.stdin.write(json.dumps(msg)+'\n'); p.stdin.flush(); return nid if _id else None
+def wait(rid, timeout=300):
+    t0=time.time()
+    while time.time()-t0<timeout:
+        try: l=q.get(timeout=1)
+        except queue.Empty: continue
+        if l is None: raise SystemExit('agent exited: '+p.stderr.read()[-2000:])
+        m=json.loads(l)
+        if m.get('id')==rid and ('result' in m or 'error' in m): return m
+        handle(m)
+    raise SystemExit('timeout waiting %s'%rid)
+chunks=[]
+def handle(m):
+    meth=m.get('method')
+    if meth=='session/update':
+        u=m['params']['update']; k=u.get('sessionUpdate')
+        if k=='agent_message_chunk': chunks.append(('text',u['content'].get('text','')))
+        elif k=='agent_thought_chunk': chunks.append(('thought',u['content'].get('text','')[:80]))
+        elif k=='tool_call': chunks.append(('tool',u.get('title','')))
+        else: chunks.append((k, json.dumps(u,ensure_ascii=False)[:120]))
+    elif meth=='session/request_permission':
+        opts=m['params'].get('options',[])
+        allow=next((o for o in opts if o.get('kind','').startswith('allow')), opts[0] if opts else None)
+        resp={'jsonrpc':'2.0','id':m['id'],'result':{'outcome':{'outcome':'selected','optionId':allow['optionId']}}}
+        p.stdin.write(json.dumps(resp)+'\n'); p.stdin.flush()
+    elif 'id' in m and 'method' in m:
+        p.stdin.write(json.dumps({'jsonrpc':'2.0','id':m['id'],'result':{}})+'\n'); p.stdin.flush()
+r=wait(send('initialize',{'protocolVersion':1,'clientCapabilities':{'fs':{'readTextFile':False,'writeTextFile':False},'terminal':False}}))
+r=wait(send('session/new',{'cwd':cwd,'mcpServers':[]}))
+print('session/new ->', json.dumps(r,ensure_ascii=False)[:1500]); sys.stdout.flush()
+if 'result' not in r:
+    time.sleep(1); p.kill(); print('ADAPTER STDERR:', p.stderr.read()[-3000:]); raise SystemExit(1)
+sid=r['result']['sessionId']
+r2=wait(send('session/set_config_option',{'sessionId':sid,'configId':'model','value':sys.argv[3] if len(sys.argv)>3 else 'opus[1m]'}))
+print('set_model ->', json.dumps(r2,ensure_ascii=False)[:300])
+task=open(sys.argv[2]).read() if len(sys.argv)>2 else 'Reply with exactly PONG'
+r=wait(send('session/prompt',{'sessionId':sid,'prompt':[{'type':'text','text':task}]}), timeout=420)
+print('stopReason:', r.get('result',{}).get('stopReason'), r.get('error'))
+texts=[c for c in chunks if c[0]=='text']
+print('FIRST agent text block:', repr(texts[0][1][:200]) if texts else None)
+print('ALL agent text:', repr(''.join(t for _,t in texts)[:600]))
+print('event kinds in order:', [c[0] for c in chunks][:12])
+p.stdin.close(); time.sleep(1); p.kill()

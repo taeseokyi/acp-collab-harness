@@ -1,0 +1,18 @@
+{
+ "id": "20261109-180055-b125",
+ "created": "2026-11-09T18:00:55",
+ "requester": "태석 (클로드 코드 전달)",
+ "title": "함대 현황의 슬롯 모델을 슬롯별로 표시 (S1 opus / S4 sonnet)",
+ "detail": "태석님 지적 2026-11-09 18:08: 함대 현황에 S1·S4 가 모두 sonnet 5.5 로 보인다. 실측: 실제 배정은 맞다 - run 메타와 claude -p 의 modelUsage 가 S1=claude-opus-5-5, S4=claude-sonnet-5-5 다. 표시만 틀리다. 원인: reader.py harness_model(\"claude\") 가 하네스 단위로 sonnet 한 값을 돌려준다. 수정(S1 소유 reader.py): 슬롯별 모델은 tools/fleet_slots.json 을 정본으로 읽어 slots[].model 을 채운다 - 매핑 opus→anthropic/claude-opus-5-5, sonnet→anthropic/claude-sonnet-5-5, haiku→anthropic/claude-haiku-5-5. 파일에 없는 claude 슬롯은 sonnet(fleet.py 기본), codex/opencode 는 기존 하네스 설정값. 덤으로 slots[].model_source 필드를 추가해 출처(fleet_slots.json / 하네스 설정)를 UI 툴팁에 보이게. 서버 재시작 후 /api/state 의 slots 에서 S1 이 opus, S4 가 sonnet 으로 나와야 DONE. 계약 테스트에 슬롯별 모델 케이스 1건 추가(S2).",
+ "status": "DONE",
+ "subtasks": [
+  {
+   "id": "T-064",
+   "title": "reader 가 tools/fleet_slots.json 을 읽어 슬롯별 모델 (+비밀 가림·심링크 차단)",
+   "slot": "S1",
+   "harness": "claude",
+   "status": "REVIEW",
+   "run_id": "T-064-S1-a1-193105"
+  }
+ ]
+}

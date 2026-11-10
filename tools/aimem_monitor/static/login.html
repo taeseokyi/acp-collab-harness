@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>로그인 - AIMEM 함대 모니터</title>
+<style>
+/* 자족 파일: 인증 전에는 이 경로만 열려 있으므로 외부 CSS/JS/폰트를 부르지 않는다. */
+:root {
+  --st-font: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
+  --st-bg: #f9fafb;
+  --st-surface: #ffffff;
+  --st-line: #dee5ee;
+  --st-ink: #221e1f;
+  --st-ink-muted: #6f6f6f;
+  --st-accent-text: #0b8058;
+  --st-accent-ink: #ffffff;
+  --st-focus: #405de6;
+  --st-danger-text: #b01a2e;
+  --st-danger-tint: #fdecee;
+  --st-sh-card: 0 18px 7px rgba(0,0,0,.01), 0 10px 6px rgba(0,0,0,.02), 0 4px 4px rgba(0,0,0,.03), 0 1px 2px rgba(0,0,0,.04);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; background: var(--st-bg); color: var(--st-ink);
+  font-family: var(--st-font); font-size: 16px; line-height: 1.55;
+}
+.card {
+  width: 100%; max-width: 380px; padding: 32px 24px;
+  background: var(--st-surface); border: 1px solid var(--st-line);
+  border-radius: 20px; box-shadow: var(--st-sh-card);
+}
+h1 { margin: 0 0 4px; font-size: 24px; line-height: 1.1; font-weight: 700; }
+.sub { margin: 0 0 24px; font-size: 14px; color: var(--st-ink-muted); }
+label { display: block; margin-bottom: 8px; font-size: 14px; font-weight: 500; }
+input[type="password"] {
+  width: 100%; padding: 12px; margin-bottom: 16px;
+  font: 14px ui-monospace, "SF Mono", Consolas, "Liberation Mono", monospace;
+  color: var(--st-ink); background: var(--st-surface);
+  border: 1px solid #6f6f6f; border-radius: 8px;
+}
+button, .btn {
+  display: block; width: 100%; padding: 12px; text-align: center; text-decoration: none;
+  font: 500 16px var(--st-font); border-radius: 8px; cursor: pointer;
+}
+button {
+  color: var(--st-accent-ink); background: var(--st-accent-text); border: 1px solid var(--st-accent-text);
+}
+button:disabled { opacity: .7; cursor: progress; }
+.btn {
+  margin-top: 12px; color: var(--st-ink); background: var(--st-surface); border: 1px solid #6f6f6f;
+}
+:focus-visible { outline: 3px solid var(--st-focus); outline-offset: 2px; }
+#err {
+  margin: 0 0 16px; padding: 8px 12px; border-radius: 8px;
+  color: var(--st-danger-text); background: var(--st-danger-tint); font-size: 14px;
+}
+#err:empty { display: none; }
+#status { margin: 12px 0 0; min-height: 1.55em; font-size: 14px; color: var(--st-ink-muted); text-align: center; }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1>AIMEM 함대 모니터</h1>
+  <p class="sub">접근 토큰을 입력하십시오</p>
+  <form id="form" novalidate>
+    <label for="token">접근 토큰</label>
+    <input type="password" id="token" name="token" autocomplete="off" spellcheck="false" autofocus>
+    <p id="err" role="alert"></p>
+    <button type="submit" id="submit">로그인</button>
+  </form>
+  <a class="btn" id="github" href="/auth/github/start">GitHub 로 로그인</a>
+  <div id="status" aria-live="polite"></div>
+</main>
+<script>
+(function () {
+  'use strict';
+  var form = document.getElementById('form');
+  var input = document.getElementById('token');
+  var btn = document.getElementById('submit');
+  var err = document.getElementById('err');
+  var status = document.getElementById('status');
+  var busy = false;
+
+  // GitHub 로그인이 꺼져 있으면 버튼을 DOM 에서 제거한다 (숨김이 아님).
+  // 조회에 실패해도 존재하지 않는 경로로 보내지 않도록 우선 제거했다가, 켜져 있을 때만 쓴다.
+  var gh = document.getElementById('github');
+  var ghParent = gh.parentNode, ghNext = gh.nextSibling;
+  ghParent.removeChild(gh);
+  fetch('/api/authinfo', { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+    .then(function (r) { return r.json(); })
+    .then(function (info) {
+      if (info && info.authenticated) { location.replace('/'); return; }
+      if (info && info.github_enabled === true) { ghParent.insertBefore(gh, ghNext); }
+    })
+    .catch(function () { /* 토큰 로그인만 제공 */ });
+
+  function setErr(msg) { err.textContent = msg || ''; }
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (busy) { return; }
+    var token = input.value.trim();
+    setErr('');
+    if (!token) { setErr('토큰을 입력하십시오'); input.focus(); return; }
+    busy = true;
+    btn.disabled = true;
+    status.textContent = '확인 중...';
+    fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ token: token })
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (data) { return { ok: r.ok, status: r.status, data: data }; });
+    }).then(function (res) {
+      if (res.ok && res.data && res.data.ok) {
+        status.textContent = '로그인했습니다';
+        input.value = '';
+        location.replace(res.data.redirect || '/');
+        return;
+      }
+      setErr((res.data && res.data.error) || ('로그인에 실패했습니다 (HTTP ' + res.status + ')'));
+      status.textContent = '';
+      busy = false; btn.disabled = false; input.focus(); input.select();
+    }).catch(function () {
+      setErr('서버에 연결하지 못했습니다');
+      status.textContent = '';
+      busy = false; btn.disabled = false;
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,71 @@
+{
+ "id": "20261109-170155-582a",
+ "created": "2026-11-09T17:01:55",
+ "requester": "태석",
+ "title": "AIMEM 함대 모니터링 웹 UI",
+ "detail": "태석님 주문 2026-11-09. 모니터링(REV·명부·보드·큐·로그·runs·하네스별 모델) + 작업 요청 + 분담 가시화 + 진행율/ETA. 표준 라이브러리만, 포트 18799.",
+ "status": "DONE",
+ "subtasks": [
+  {
+   "id": "T-036",
+   "title": "데이터 계층 - AIMEM/runs 파싱 + ETA 추정",
+   "slot": "S1",
+   "harness": "claude",
+   "status": "REVIEW",
+   "run_id": "20261109-164847-S1"
+  },
+  {
+   "id": "T-037",
+   "title": "계약 테스트",
+   "slot": "S2",
+   "harness": "codex",
+   "status": "REVIEW",
+   "run_id": "20261109-164849-S2"
+  },
+  {
+   "id": "T-038",
+   "title": "정적 프런트엔드",
+   "slot": "S3",
+   "harness": "opencode",
+   "status": "REVIEW",
+   "run_id": "20261109-164850-S3"
+  },
+  {
+   "id": "T-039",
+   "title": "서버 - HTTP 라우팅 + 요청 파일 쓰기",
+   "slot": "관리자",
+   "harness": "claude",
+   "status": "DONE",
+   "run_id": null
+  },
+  {
+   "id": "T-040",
+   "title": "통합·교차검수",
+   "slot": "S1",
+   "harness": "claude",
+   "status": "REVIEW",
+   "run_id": null,
+   "graph_node": "N5"
+  },
+  {
+   "id": "T-043",
+   "title": "ETA 초과 처리 (중앙값 초과를 0 으로 바닥치던 결함)",
+   "slot": "S1",
+   "harness": "claude",
+   "status": "REVIEW",
+   "run_id": "20261109-172329-S1",
+   "graph_node": "N1"
+  },
+  {
+   "id": "T-046",
+   "title": "KISTI LLM 서버 상태 + 그래프 요약을 /api/state 에",
+   "slot": "관리자",
+   "harness": "claude",
+   "status": "DONE",
+   "run_id": null,
+   "graph_node": null
+  }
+ ],
+ "graph": "R-002",
+ "updated": "2026-11-09T21:36:30"
+}
