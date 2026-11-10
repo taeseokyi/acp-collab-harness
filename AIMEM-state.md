@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T21:47:54 / REV 146
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T21:53:22 / REV 147
 
 ## 2. 세션 명부
 
@@ -18,6 +18,7 @@
 
 ## 4. 이벤트 로그 (최신 50)
 
+- `2026-11-10 21:53` 클로드 코드 [handoff] REV 147: **REV 147. `monitorctl.sh restart` 가 내리기만 하고 올리지 못하던 것.** 원인: 출력을 `| head -1` 처럼 중간에 닫히는 파이프로 받으면 stop 의 다음 줄을 찍다 SIGPIPE 로 스크립트가 죽어 start 까지 가지 못했다. `trap '' PIPE` + 출력 함수 `say`(실패 무시)로 출력이 끊겨도 동작은 끝까지 한다. 내리는 순간의 `tr: 읽기 오류` 소음도 버림. `restart | head -1` 3회 연속 재기동 확인. 준비 점검의 '2건 미통과' 는 15:37(REV 123
 - `2026-11-10 21:47` 클로드 코드 [handoff] REV 146: **REV 146. 웹에서 프로젝트 결과물을 보고, 요청 수정 화면에서 프로젝트를 바꾼다.** (1) `GET /api/projects/<이름>/files` · `/file?path=` - `projects/<이름>/` 의 파일 목록(최대 500, README·PROGRESS 먼저, 숨김·링크·의존성 폴더 제외)과 본문(텍스트만, 200KB 까지, 상세 응답과 같은 가림). 경로는 폴더 안 상대 경로만 - 절대 경로·`..`·숨김 조각·심볼릭 링크 거절. (2) 함대 탭 프로젝트 카드에 '결과물 보기' → 상세 패널에서 목록, 행을
 - `2026-11-10 21:40` 클로드 코드 [handoff] REV 145: **REV 145. 프로젝트 구조 종합 검토 - 라운드 흐름 결함 5건과 화면 가독성 정비.** (1) 웹 요청 폼은 파일만 만들고 `request list` 는 DB 만 읽어 표준 브리프 라운드의 관리자가 NEW 를 못 봤다 → `aimem_db.load_request_files` 를 `request list/set`·`task set` 앞에서 부른다. (2) `request set --project` 추가(파일 없으면 만든다). (3) 관리자가 안 뜬 라운드는 `round.json` 에 `state: failed` → 프로젝트 
 - `2026-11-10 21:02` Claude Code [handoff] REV 144: **REV 144. 작업자 실행 상태에 프로젝트 구분.** 태석님 지시. 식별자는 그대로 두고, 작업자를 띄울 때 실행 기록(`.aimem/runs/<id>.json`)에 `project`·`round` 를 따로 적는다 - 프로젝트는 그래프 노드의 `"project"` 또는 태스크→요청(`task set --request`)에서, 라운드는 가장 최근에 띄운 라운드(`fleet.current_round()`). 그래프 파일에도 `round`. 웹 '작업자 실행 상태' 표에 **프로젝트 칸**(`이름 · R<n>`, 없으면 '함대'),
@@ -67,7 +68,6 @@
 - `2026-11-10 14:20` Claude Code (Taeseok's instruction) [handoff] REV 118: **REV 118. Detail views reachable from all three monitor tabs.** Places that had no detail: idle slot rows, board rows without a run (Manager's own work), the queue, graph nodes (tasks), request subtasks without a run, past Manager sessions, and **the handoff log was not on screen at all** (the "log
 - `2026-11-10 13:50` Claude Code (Taeseok's instruction) [handoff] REV 117: **REV 117. Five monitor design-vs-function checks + shared CA and Windows proxy.** (1) For closed requests (DONE/REJECTED) the request status decides progress and ETA (`reader._estimate`, front end shows "closed") - 10 DONE requests had shown 0~90% progress and remaining ETA. The `REVIEW` closing ru
 - `2026-11-10 11:40` Claude Code (Taeseok's instruction, fleet stopped) [handoff] REV 116: **REV 116. Direct monitor UI work + clearing handled items.** (1) UI: numbered titles → bullets, type scale 15/14/13/12, width 1680 + fixed request sidebar, underline tabs with counts, Manager session line (`/api/state.managers`, 30-second background cache), per-slot "now", 20 runs + more + report b
-- `2026-11-10 10:40` Manager (R6) [handoff] REV 115: **REV 115. Four slots back + `fleet_graph` cut down three times + tab UI.** (1) **S2 (codex, kistillm) returned.** KISTI recovered in the morning (smoke 28 s), test-path ownership reverted S4→**S2**, and `tests/test_fleet*.py` was **registered** as S2-owned (Taeseok approved in the R6 brief → `Secti
 
 ## 4.5 대기 큐
 

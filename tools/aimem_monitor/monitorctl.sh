@@ -10,6 +10,10 @@
 # 비밀값은 셸이 아니라 파일에서 읽습니다 - .aimem/tls/monitor.env (0600), KISTI 키는 ~/.openclaw/.env 도.
 # pid 는 .aimem/monitor.pid, 로그는 .aimem/monitor.log. 끌 때는 **pid 로만** 죽입니다 (pkill -f 금지, AIMEM 8.0-5).
 set -euo pipefail
+# 출력이 `| head -1` 같은 파이프로 가다가 닫혀도 **동작은 끝까지** 합니다 (REV 147). 예전엔 stop 의 첫 줄 뒤에
+# 파이프가 닫히면 SIGPIPE 로 스크립트가 죽어 restart 가 내리기만 하고 올리지 못했습니다.
+trap '' PIPE
+say() { echo "$@" 2>/dev/null || true; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PIDF="$ROOT/.aimem/monitor.pid"
 LOG="$ROOT/.aimem/monitor.log"
@@ -18,7 +22,8 @@ PORT="${AIMEM_MONITOR_PORT:-18799}"
 
 is_ours() {   # pid 가 살아 있고 정말 aimem_monitor 인가
   local pid="$1"
-  [[ -n "$pid" && -r "/proc/$pid/cmdline" ]] && tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q -- "-m aimem_monitor"
+  # 검사와 읽기 사이에 프로세스가 사라질 수 있다 - 그때의 `tr: 읽기 오류` 는 소음이라 버린다
+  [[ -n "$pid" && -r "/proc/$pid/cmdline" ]] && { tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q -- "-m aimem_monitor"; } 2>/dev/null
 }
 
 cur_pid() { [[ -f "$PIDF" ]] && cat "$PIDF" || true; }
@@ -26,9 +31,9 @@ cur_pid() { [[ -f "$PIDF" ]] && cat "$PIDF" || true; }
 do_status() {
   local pid; pid="$(cur_pid)"
   if is_ours "$pid"; then
-    echo "실행 중 pid $pid ($(cat "$MODEF" 2>/dev/null || echo '?'))  $(tr '\0' ' ' < /proc/$pid/cmdline)"
+    say "실행 중 pid $pid ($(cat "$MODEF" 2>/dev/null || echo '?'))  $(tr '\0' ' ' < /proc/$pid/cmdline)"
   else
-    echo "꺼져 있음"; return 1
+    say "꺼져 있음"; return 1
   fi
 }
 
@@ -38,16 +43,16 @@ do_stop() {
     kill "$pid"
     for _ in $(seq 1 30); do is_ours "$pid" || break; sleep 0.2; done
     is_ours "$pid" && kill -9 "$pid" || true
-    echo "내렸습니다 (pid $pid)"
+    say "내렸습니다 (pid $pid)"
   else
-    echo "pid 파일의 프로세스가 없습니다"
+    say "pid 파일의 프로세스가 없습니다"
   fi
   rm -f "$PIDF"
 }
 
 do_start() {
   local mode="${1:-https}" args
-  if is_ours "$(cur_pid)"; then echo "이미 실행 중입니다 - restart 를 쓰십시오"; do_status; return 1; fi
+  if is_ours "$(cur_pid)"; then say "이미 실행 중입니다 - restart 를 쓰십시오"; do_status; return 1; fi
   case "$mode" in
     https) args=(--tls --host 0.0.0.0 --port "$PORT") ;;
     local) args=(--host 127.0.0.1 --port "$PORT") ;;
@@ -60,10 +65,10 @@ do_start() {
   sleep 1.5
   if is_ours "$(cur_pid)"; then
     local scheme=http; [[ "$mode" == https ]] && scheme=https
-    echo "띄웠습니다: $scheme://127.0.0.1:$PORT/  (pid $(cur_pid), 로그 $LOG)"
-    [[ "$mode" == https ]] && echo "  로그인 토큰: PYTHONPATH=tools python3 -m aimem_monitor admin token show"
+    say "띄웠습니다: $scheme://127.0.0.1:$PORT/  (pid $(cur_pid), 로그 $LOG)"
+    [[ "$mode" == https ]] && say "  로그인 토큰: PYTHONPATH=tools python3 -m aimem_monitor admin token show"
   else
-    echo "시작 실패 - 로그 끝:" >&2; tail -20 "$LOG" >&2; return 1
+    say "시작 실패 - 로그 끝:" >&2; tail -20 "$LOG" >&2; return 1
   fi
 }
 
