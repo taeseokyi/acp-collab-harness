@@ -47,6 +47,11 @@
           <div class="tablewrap" id="slots-table-wrap"></div>
         </section>
 
+        <section class="card" id="projects-section">
+          <h2>프로젝트 <span class="hint">여러 라운드에 걸친 진행 상황 · 결과물 projects/&lt;이름&gt;/</span></h2>
+          <div id="projects-list"></div>
+        </section>
+
         <section class="card" id="kisti-section">
           <h2>KISTI LLM 서버 <span class="hint">S2·S3 작업자</span></h2>
           <div id="kisti-card"></div>
@@ -91,10 +96,13 @@
     <aside class="side">
       <section class="card" id="request-form-section">
         <h2>작업 요청 <span class="hint">다음 라운드가 할 일</span></h2>
-        <p class="form-help">여기 적어 보낸 요청이 <b>NEW</b> 로 쌓이고, 함대 탭의 <b>라운드 실행</b>을 누르면 관리자가 전부 읽어 나눠 처리합니다. 결과물은 <code>rounds/R&lt;번호&gt;/</code> 에 남습니다.</p>
+        <p class="form-help">여기 적어 보낸 요청이 <b>NEW</b> 로 쌓이고, 함대 탭의 <b>라운드 실행</b>을 누르면 관리자가 전부 읽어 나눠 처리합니다. 결과물은 라운드가 아니라 <b>프로젝트 폴더</b> <code>projects/&lt;프로젝트&gt;/</code> 한 곳에 여러 라운드에 걸쳐 쌓입니다.</p>
         <form id="request-form" autocomplete="off">
           <label for="req-title">제목 <span class="required">*</span></label>
           <input id="req-title" name="title" type="text" required placeholder="한 줄 제목">
+          <label for="req-project">프로젝트 <span class="hint">결과물이 쌓일 곳 · 비우면 함대 자체의 일</span></label>
+          <input id="req-project" name="project" type="text" list="project-list" maxlength="40" placeholder="고르거나 새 이름을 적으십시오 (예: reefwiz-앱)">
+          <datalist id="project-list"></datalist>
           <label for="req-detail">본문 <span class="hint">줄바꿈은 그대로 보존됩니다</span></label>
           <textarea id="req-detail" name="detail" rows="8" placeholder="요청 내용"></textarea>
           <label for="req-requester">요청자 <span class="required">*</span></label>

@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T20:01:26 / REV 141
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T21:02:32 / REV 144
 
 ## 2. 세션 명부
 
@@ -18,6 +18,11 @@
 
 ## 4. 이벤트 로그 (최신 50)
 
+- `2026-11-10 21:02` Claude Code [handoff] REV 144: **REV 144. 작업자 실행 상태에 프로젝트 구분.** 태석님 지시. 식별자는 그대로 두고, 작업자를 띄울 때 실행 기록(`.aimem/runs/<id>.json`)에 `project`·`round` 를 따로 적는다 - 프로젝트는 그래프 노드의 `"project"` 또는 태스크→요청(`task set --request`)에서, 라운드는 가장 최근에 띄운 라운드(`fleet.current_round()`). 그래프 파일에도 `round`. 웹 '작업자 실행 상태' 표에 **프로젝트 칸**(`이름 · R<n>`, 없으면 '함대'),
+- `2026-11-10 21:00` Claude Code [handoff] REV 143: **REV 143. 프로젝트별 진행 상황을 함대 화면에.** 태석님 지시(식별자에는 붙이지 않는다 - 알아볼 수만 있으면 된다 / 대신 각 프로젝트가 얼마나 진행됐는지, 몇 라운드를 거쳤는지). 식별자 체계(`8.0-3-1`)는 그대로. (1) 함대 탭 '프로젝트' 카드: 프로젝트마다 진행률 막대(그 프로젝트 요청들의 평균 - 완료 100, 진행 중은 요청 진행율, 거절 제외, 아카이브된 완료 포함), 요청 완료/진행/대기 건수, 거친 라운드 수와 목록, 마지막 라운드 시각, `PROGRESS.md` 최근 항목(펼침). `/api/
+- `2026-11-10 20:10` Claude Code [handoff] REV 142: **REV 142. 프로젝트 - 여러 라운드를 묶는 단위, 결과물은 프로젝트 폴더 한 곳에.** 태석님 정정(라운드는 과정이라 라운드별 결과물 폴더는 맞지 않다 / 요청마다 프로젝트 선택 / 저장소 안). (1) 요청에 `project` 필드: 웹 작업 요청 폼의 '프로젝트' 칸(목록에서 고르거나 새 이름, 한글·영문·숫자·`-`·`_` 40자, 빈 값 = 함대 자체의 일). `aimem_db.py request list` 가 `[이름]` 으로 보인다. (2) 결과물은 `projects/<프로젝트>/` 에 여러 라운드에 걸쳐 쌓인다
+- `2026-11-10T20:08:35` Claude Code [ownership] REV 141: rounds/** -> 관리자
+- `2026-11-10T20:08:35` Claude Code [ownership] REV 141: projects/** -> 관리자
 - `2026-11-10 20:01` Claude Code [handoff] REV 141: **REV 141. 준비 점검 펼침이 새로고침에 닫히던 것.** 태석님 지시. 함대 탭 '준비 점검' 목록은 5초마다 다시 그려지며 펼친 상태를 잃었다 - 펼침을 `state.expanded` 에 기억하고, '준비' 를 방금 눌렀을 때만 한 번 자동으로 펼친다(그 뒤 사람이 접으면 접힌 채). 서비스 워커 캐시 v3. 바뀐 파일: `tools/aimem_monitor/static/{app.js,sw.js}`. 브라우저로 자동 새로고침 두 번 넘게 열려 있음을 확인.
 - `2026-11-10 19:49` Claude Code [handoff] REV 140: **REV 140. 웹에서 라운드 할 일을 넣는 길이 보이게.** 태석님 지시(작업 요청 폼이 안 보인다). 함대 탭 '라운드 실행' 아래에 지금 쌓인 NEW 요청 건수와 **'할 일 쓰기'** 버튼(작업 요청 폼으로 이동·제목 칸 포커스), 요청 0건으로 라운드를 누르면 확인 창이 '점검만 하고 끝난다' 고 알림, 폼 제목에 '다음 라운드가 할 일' 설명. 앞선 안내 문구의 '요청 탭' 은 틀린 말이었다(요청 트리 탭엔 입력 칸이 없다). 서비스 워커 캐시 v2. 바뀐 파일: `tools/aimem_monitor/static/{a
 - `2026-11-10 18:51` Claude Code [handoff] REV 139: **REV 139. 라운드 내용은 웹 요청으로, 결과물은 라운드 작업 공간으로.** 태석님 지시. (1) 표준 브리프 `.aimem/briefs/manager-round-standard.md`: 그 라운드만의 확정 브리프가 없으면 '라운드 실행' 이 이 파일로 다음 번호 라운드를 띄운다 - 할 일은 NEW 요청 전부, 요청도 큐도 비었으면 보고만 하고 끝. 브리프를 매번 쓰지 않는다. (2) 라운드 작업 공간 `rounds/R<N>/`(git 포함): 띄울 때 만들고 보낸 브리프를 `brief.md` 로 남긴다. 종료 보고는 `RE
@@ -63,11 +68,6 @@
 - `2026-11-10 10:40` Manager (R6) [handoff] REV 115: **REV 115. Four slots back + `fleet_graph` cut down three times + tab UI.** (1) **S2 (codex, kistillm) returned.** KISTI recovered in the morning (smoke 28 s), test-path ownership reverted S4→**S2**, and `tests/test_fleet*.py` was **registered** as S2-owned (Taeseok approved in the R6 brief → `Secti
 - `2026-11-09 21:50` Manager (R5) [handoff] REV 114: **REV 114. DB phase 2 complete + second public-surface pass.** (1) **Four operating-state tables removed** (Sections 2, 3, 4.5, 6; 772→705 lines). Order respected - removed **after** `reader` (T-069, S1), `fleet.py` (T-070, Manager) and `aimem_board` (T-071, S1) read the DB, with the originals moved
 - `2026-11-09 19:45` Manager (R4) [handoff] REV 113: **REV 113. External exposure (HTTPS + access control) + linter phase 2.** (1) **Request `407b` (exposure):** the Manager added TLS (`--tls`, self-signed cert in `.aimem/tls/`) and access control (32-byte token → hmac-signed session cookie `HttpOnly;Secure;SameSite=Strict`, Bearer alongside, 7 exempt
-- `2026-11-09 19:01` Manager: Claude Code (approved by Taeseok 2026-11-09 18:20, applied while Manager and workers were stopped) [handoff] REV 112: **REV 112. Unified identifier scheme (`8.0-5` created).** Request `Q-<YYMMDD>-<4 chars>` / task `T-0xx` / graph `G-00x` / run `<T>-<S#>-a<n>-<HHMMSS>` / round `R<n>` (record only). `fleet.py spawn --task-id/--attempt` builds run id and label, `fleet_graph.py` passes node id (= task id) and attempt n
-- `2026-11-09 18:05` Manager (R3) [handoff] REV 111: **REV 111 (2/2). Took over the round R2 cut short by ending its turn, and split web request `8d8d`.** **Why it broke:** R2 set up a background watcher and ended its turn saying "I will continue when notified" - **a one-shot ACP session never wakes again.** Rule pinned in `8.0-6`. (1) **S4's adversar
-- `2026-11-09 17:35` Manager (R2) [handoff] REV 111: **REV 111 (1/2). First round run as a task DAG + two web requests split.** Graph `R-002`, 6 nodes (N1 ETA overrun / N2 linter board slots / N3 light mode + readability / N4 test reinforcement / N5 cross-review / N6 Strata reskin). **When a dependency clears, the next node starts without a Manager tu
-- `2026-11-09 17:10` Manager [handoff] REV 110: **REV 110. Fleet monitoring web UI, first pass (Taeseok's order 2026-11-09).** First live round under the Claude ACP Manager regime. 7 rows registered in `Section 6` (`tools/aimem_monitor/**`, `tests/test_aimem_monitor*.py`, `.aimem/requests/**`; approved by Taeseok, `6.1`). **The Manager pinned the
-- `2026-11-09 16:40` Manager: Claude Code (Taeseok's instruction 2026-11-09, not a Manager session) [handoff] REV 109: **REV 109. Manager becomes an Opus 5.5 Claude ACP session; workers become one-shot harness CLI processes.** (1) Header, `0.5`, `Section 2`, `Section 5`, `Section 7`, `8.0` revised - the Manager is identified by session-key prefix `agent:claude:acp:` (linter pin replaced; `tools/aimem_lint.py` and te
 
 ## 4.5 대기 큐
 
@@ -96,7 +96,8 @@
 | `AIMEM.md` | 관리자(클로) | 작업자 쓰기 금지 |
 | `CLAUDE.md` | 관리자 | 부트스트랩. 자동 주입되는 유일한 파일 |
 | `README.md` | 관리자 | 저장소 소개 |
-| `rounds/**` | 관리자 | 라운드별 작업 공간 rounds/R<N>/ (REV 139). 관리자가 요청별 하위 폴더를 슬롯에 배정 |
+| `projects/**` | 관리자 | 프로젝트 결과물 projects/<이름>/ - 여러 라운드에 걸쳐 쌓임 (REV 142). 관리자가 하위 경로를 슬롯에 배정 |
+| `rounds/**` | 관리자 | 라운드 기록 폴더 rounds/R<N>/ - brief.md·REPORT.md 만 (결과물은 projects/) |
 | `skills/**` | 관리자 | **현재 비어 있음** (REV 101 에서 `acp-slot-lifecycle` 제거). 되살아나면 이 행이 그대로 적용된다 |
 | `tests/test_aimem_lint.py` | S2 | T-005B. R5 에 S4 로 잠시 이관(KISTI 장애) → 2026-11-10 09:15 S2 복구로 환원(태석님 지시) |
 | `tests/test_aimem_monitor*.py` | S2 | 웹 UI 계약 테스트. R5 에 S4 로 잠시 이관 → 2026-11-10 09:15 S2 복구로 환원(태석님 지시) |

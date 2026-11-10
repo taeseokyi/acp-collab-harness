@@ -1293,3 +1293,13 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .form-help { margin: 0 0 var(--st-s-3); font-size: 13px; line-height: 1.5; color: var(--st-ink-muted); }
 #request-form-section { scroll-margin-top: calc(var(--topbar-h) + var(--st-s-3)); }
 #request-form-section.flash { outline: 3px solid var(--st-focus); outline-offset: 2px; transition: outline-color .3s; }
+
+/* 프로젝트 진행 상황 (2026-11-10) */
+.proj-item { padding: var(--st-s-3) 0; border-top: 1px solid var(--st-line); }
+.proj-item:first-child { border-top: 0; padding-top: 0; }
+.proj-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--st-s-2) var(--st-s-3); }
+.proj-head h3 { margin: 0; font-size: var(--st-fs-md); }
+.proj-meta { font-size: 13px; color: var(--st-ink-muted); }
+.proj-summary { margin-top: var(--st-s-2); white-space: pre-wrap; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.proj-tag { font-size: 13px; font-weight: 500; }
+.proj-tag.none { color: var(--st-ink-muted); font-weight: 400; }

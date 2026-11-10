@@ -76,7 +76,8 @@ from . import (AUTH_EXEMPT_PATHS, AUTH_UNAUTH_REDIRECT_PATHS, CERT_FILE,
                REQUEST_RATE_MAX, REQUEST_RATE_WINDOW_SEC,
                REQUEST_STATES, RUN_DETAIL_KEYS, RUN_ID_RE, SECURITY_HEADERS,
                SESSION_COOKIE, SESSION_SUBJECT_GITHUB_PREFIX, SESSION_SUBJECT_TOKEN,
-               SESSION_TTL_SEC, SESSION_VERSION, TLS_DIR, TOKEN_FILE, REQUEST_ROW_KEYS)
+               SESSION_TTL_SEC, SESSION_VERSION, TLS_DIR, TOKEN_FILE, REQUEST_ROW_KEYS,
+               PROJECTS_DIR, PROJECT_NAME_RE)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 STATIC = pathlib.Path(__file__).resolve().parent / "static"
@@ -603,7 +604,7 @@ def _empty_state(root, errors):
     """
     state = _blank_keys(root)
     state.update({"kisti": kisti_status(), "graphs": collect_graphs(root, errors),
-                  "managers": manager_status(root), "errors": errors})
+                  "managers": manager_status(root), "errors": errors, "projects": list_projects(root)})
     state["fleet"] = fleet_state(root, state["managers"])
     return scrub_public(state, root)
 
@@ -763,6 +764,7 @@ def collect_state(root=ROOT):
         state.setdefault(k, v)
     state["kisti"] = kisti_status()
     state["graphs"] = collect_graphs(root, state["errors"])
+    state["projects"] = list_projects(root, state.get("requests") if isinstance(state.get("requests"), list) else None)
     state["managers"] = manager_status(root)
     state["fleet"] = fleet_state(root, state["managers"])
     return scrub_public(state, root)
@@ -1594,6 +1596,150 @@ def _slug(title):
     return s[:24]
 
 
+_PROJECT_RE = re.compile(PROJECT_NAME_RE)
+
+
+def _project_of(payload):
+    """(이름, 오류). 빈 값·없음은 `""`(함대 자체의 일). 이름은 폴더 하나의 이름이어야 합니다."""
+    raw = payload.get("project")
+    if raw is None:
+        return "", None
+    if not isinstance(raw, str):
+        return None, "프로젝트(project)는 문자열이어야 합니다"
+    name = raw.strip()
+    if name and not _PROJECT_RE.match(name):
+        return None, "프로젝트 이름은 한글·영문·숫자·`-`·`_` 만, 40자 이하입니다 (공백·점·`/` 불가)"
+    return name, None
+
+
+_PROGRESS_ROUND = re.compile(r"^##\s*R(\d+)\b(.*)$", re.MULTILINE)
+PROJECT_SUMMARY_MAX = 600
+
+
+def _archived_request_projects(root):
+    """아카이브로 내려간 요청의 (프로젝트, 상태) - 끝난 요청이 14일 뒤 화면에서 사라져도 프로젝트 진행률에는 남게."""
+    out = []
+    try:
+        dirs = sorted((pathlib.Path(root) / ".aimem" / "archive").glob("requests-*"))
+    except OSError:
+        return out
+    for d in dirs:
+        try:
+            files = list(d.glob("*.json"))[:2000]
+        except OSError:
+            continue
+        for f in files:
+            try:
+                rec = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(rec, dict) and isinstance(rec.get("project"), str) and _PROJECT_RE.match(rec["project"]):
+                out.append((rec["project"], str(rec.get("status") or "").upper()))
+    return out
+
+
+def _project_progress_file(root, name):
+    """`projects/<이름>/PROGRESS.md` 에서 거친 라운드와 가장 최근 항목(= 남은 일이 적힌 곳)을 읽습니다."""
+    f = pathlib.Path(root) / PROJECTS_DIR / name / "PROGRESS.md"
+    try:
+        if f.is_symlink() or not f.is_file():
+            return [], "", None
+        text = f.read_text(encoding="utf-8", errors="replace")[:200_000]
+        updated = datetime.datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")
+    except OSError:
+        return [], "", None
+    marks = list(_PROGRESS_ROUND.finditer(text))
+    rounds = sorted({int(m.group(1)) for m in marks})
+    summary = ""
+    if marks:
+        top = max(marks, key=lambda m: int(m.group(1)))      # 가장 높은 라운드의 항목
+        nxt = [m.start() for m in marks if m.start() > top.start()]
+        summary = text[top.start():(min(nxt) if nxt else len(text))].strip()
+    else:
+        summary = text.strip()
+    return rounds, summary[:PROJECT_SUMMARY_MAX], updated
+
+
+def _round_records(root):
+    """`rounds/R<N>/round.json` 들 -> {프로젝트: {라운드: 띄운 시각}}. `fleet_ctl` 이 라운드를 띄울 때 씁니다."""
+    out = {}
+    try:
+        files = sorted((pathlib.Path(root) / "rounds").glob("R*/round.json"))[:1000]
+    except OSError:
+        return out
+    for f in files:
+        try:
+            rec = json.loads(f.read_text(encoding="utf-8"))
+            n = int(rec["round"])
+            projs = rec.get("projects") or []
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        for pr in projs if isinstance(projs, list) else []:
+            if isinstance(pr, str) and _PROJECT_RE.match(pr):
+                out.setdefault(pr, {})[n] = rec.get("at") if isinstance(rec.get("at"), str) else None
+    return out
+
+
+def list_projects(root=ROOT, requests=None):
+    """프로젝트별 진행 상황 (2026-11-10 태석님: "각 프로젝트가 얼마나 진행되고 있나").
+
+    프로젝트 = `projects/` 아래 폴더 + 요청이 가리키는 이름. 진행률은 그 프로젝트 **요청들의 평균**입니다 -
+    끝난 요청 100, 진행 중인 요청은 그 요청의 진행율(`progress_pct`), 거절된 요청은 셈에서 뺍니다.
+    거친 라운드와 '남은 일' 은 관리자가 쓰는 `PROGRESS.md` 에서 읽습니다.
+    """
+    root = pathlib.Path(root)
+    names = set()
+    try:
+        for d in (root / PROJECTS_DIR).iterdir():
+            if d.is_dir() and not d.is_symlink() and _PROJECT_RE.match(d.name):
+                names.add(d.name)
+    except OSError:
+        pass
+    have = set(names)
+    if requests is None:                       # 상태를 안 받았으면 요청 파일에서 직접 (진행율 없이 상태만)
+        requests = []
+        try:
+            for f in (root / ".aimem" / "requests").glob("*.json"):
+                try:
+                    rec = json.loads(f.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if isinstance(rec, dict):
+                    requests.append(rec)
+        except OSError:
+            pass
+    per = {}
+    for q in requests:
+        pr = q.get("project") if isinstance(q, dict) else None
+        if not (isinstance(pr, str) and _PROJECT_RE.match(pr)):
+            continue
+        st = str(q.get("status") or "").upper()
+        pct = q.get("progress_pct")
+        pct = float(pct) if isinstance(pct, (int, float)) and not isinstance(pct, bool) else 0.0
+        per.setdefault(pr, []).append((st, 100.0 if st == "DONE" else max(0.0, min(100.0, pct))))
+    for pr, st in _archived_request_projects(root):
+        per.setdefault(pr, []).append((st, 100.0 if st == "DONE" else 0.0))
+    launched = _round_records(root)
+    names |= set(per) | set(launched)
+    out = []
+    for n in sorted(names):
+        rows = [r for r in per.get(n, []) if r[0] != "REJECTED"]
+        counts = {"total": len(rows), "done": sum(1 for s, _ in rows if s == "DONE"),
+                  "new": sum(1 for s, _ in rows if s == "NEW"),
+                  "active": sum(1 for s, _ in rows if s not in ("DONE", "NEW"))}
+        noted, summary, updated = _project_progress_file(root, n)
+        mine = launched.get(n, {})
+        rounds = sorted(set(noted) | set(mine))          # 띄운 기록(round.json) + 관리자가 적은 기록(PROGRESS.md)
+        last = rounds[-1] if rounds else None
+        out.append({"name": n, "path": f"{PROJECTS_DIR}/{n}/", "exists": n in have,
+                    "percent": round(sum(p for _, p in rows) / len(rows), 1) if rows else None,
+                    "requests": counts, "rounds": rounds, "round_count": len(rounds),
+                    "first_round": rounds[0] if rounds else None, "last_round": last,
+                    "last_round_at": mine.get(last) if last is not None else None,
+                    "updated": updated, "summary": summary})
+    return out
+
+
 def create_request(payload, root=ROOT):
     """요청 파일을 하나 만듭니다. (성공 여부, 결과 딕셔너리) 를 돌려줍니다.
 
@@ -1620,6 +1766,9 @@ def create_request(payload, root=ROOT):
     requester = _meaningful(raw_requester)[:60]
     if not requester:
         return False, {"ok": False, "error": "요청자(requester)는 비워 둘 수 없습니다"}
+    project, perr = _project_of(payload)
+    if perr:
+        return False, {"ok": False, "error": perr}
 
     reqs_dir = root / ".aimem" / "requests"
     # 개수 상한 (S4 검수 3번). 공개되면 요청 POST 가 디스크를 채우는 가장 싼 길이고,
@@ -1643,6 +1792,7 @@ def create_request(payload, root=ROOT):
             "id": rid,
             "created": now.isoformat(timespec="seconds"),
             "requester": requester,
+            "project": project,            # 결과물이 쌓일 곳 `projects/<이름>/`. 빈 값 = 함대 자체의 일
             "title": title,
             "detail": detail,
             "status": REQUEST_STATES[0],   # NEW. 분담은 관리자가 한다
@@ -1690,7 +1840,7 @@ def request_detail(req_id, root=ROOT):
     if f is None:
         return 404, {"ok": False, "error": f"그런 요청이 없습니다: {req_id}"}
     mask = _detail_masker(root)
-    out = {k: rec.get(k) for k in ("id", "created", "edited", "requester", "title", "detail", "status")}
+    out = {k: rec.get(k) for k in ("id", "created", "edited", "requester", "project", "title", "detail", "status")}
     out["subtasks"] = len(rec.get("subtasks") or [])
     out["editable"] = rec.get("status") == REQUEST_STATES[0] and not rec.get("subtasks")
     out["ok"] = True
@@ -1728,6 +1878,11 @@ def update_request(req_id, payload, root=ROOT):
     if record.get("status") != REQUEST_STATES[0] or record.get("subtasks"):
         return 409, {"ok": False, "error": "관리자가 이미 분담을 시작한 요청은 웹에서 고칠 수 없습니다 "
                                            f"(상태 {record.get('status')})"}
+    if "project" in payload:            # 주면 바꾸고, 안 주면 그대로 (옛 화면은 이 키를 보내지 않는다)
+        project, perr = _project_of(payload)
+        if perr:
+            return 400, {"ok": False, "error": perr}
+        record["project"] = project
     record["title"] = title
     record["detail"] = detail
     record["edited"] = datetime.datetime.now().isoformat(timespec="seconds")

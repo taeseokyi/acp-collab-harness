@@ -50,8 +50,9 @@ BRIEF_RE = re.compile(r"\Amanager-round(\d+)-(\d{4}-\d{2}-\d{2})\.md\Z")
 #: 이 파일로 다음 번호 라운드를 띄운다. 할 일은 NEW 요청 전부, 상시 루틴은 AIMEM.md `8.0-8`.
 #: `{round}` `{date}` `{rev}` `{workspace}` 를 채워 그 라운드 작업 공간의 `brief.md` 로 굳힌 뒤 그 파일을 보낸다.
 STANDARD_BRIEF = "manager-round-standard.md"
-#: 라운드별 작업 공간 (2026-11-10 태석님 지시 - 결과물이 들어가는 곳). `rounds/R<N>/` - git 에 올라간다.
-#: 띄울 때 만들고 그 라운드의 브리프(`brief.md`)를 넣는다. 보고(`REPORT.md`)와 요청별 결과물은 관리자·작업자가 채운다.
+#: 라운드 기록 폴더 `rounds/R<N>/` - git 에 올라간다. 띄울 때 만들고 그 라운드의 브리프(`brief.md`)를 넣고,
+#: 관리자가 종료 보고(`REPORT.md`)를 쓴다. **결과물은 여기 두지 않는다** - 라운드는 과정이고 결과물은 여러
+#: 라운드에 걸쳐 만들어지므로 프로젝트 폴더 `projects/<이름>/` 한 곳에 쌓인다 (2026-11-10 태석님 정정).
 ROUNDS_DIR = "rounds"
 
 
@@ -221,6 +222,40 @@ def latest_brief(used=None):
             "drafts": sorted(drafts), "used_rounds": sorted(used)}
 
 
+def _open_requests():
+    """아직 안 끝난 요청의 (id, 프로젝트). 라운드를 띄울 때 '이 라운드가 다룰 것' 으로 적어 둔다."""
+    out = []
+    d = fleet.ROOT / ".aimem" / "requests"
+    try:
+        files = sorted(d.glob("*.json"))
+    except OSError:
+        return out
+    for f in files:
+        try:
+            rec = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(rec, dict) and str(rec.get("status") or "").upper() not in ("DONE", "REJECTED"):
+            pr = rec.get("project")
+            out.append((str(rec.get("id") or f.stem), pr if isinstance(pr, str) else ""))
+    return out
+
+
+def _write_round_record(n, at, brief_name):
+    """`rounds/R<N>/round.json` - 이 라운드가 언제 떴고 어떤 요청·프로젝트를 다루는지 (git 에 남는 기록).
+
+    모니터의 프로젝트 카드가 "이 프로젝트는 몇 라운드를 거쳤나" 를 여기서 셉니다 - 관리자가 `PROGRESS.md` 를
+    빠뜨려도 라운드 수는 맞게.
+    """
+    reqs = _open_requests()
+    rec = {"round": int(n), "at": at.isoformat(timespec="seconds"), "brief": brief_name,
+           "requests": [i for i, _ in reqs], "projects": sorted({p for _, p in reqs if p})}
+    d = fleet.ROOT / round_workspace(n)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "round.json").write_text(json.dumps(rec, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    return rec
+
+
 def _round_brief_path(b, at):
     """보낼 브리프의 절대 경로. 라운드 작업 공간을 만들고, 브리프를 그 안의 `brief.md` 로 굳힌다.
 
@@ -234,8 +269,8 @@ def _round_brief_path(b, at):
                      ("{rev}", str(fleet.read_rev())), ("{workspace}", ws)):
             text = text.replace(k, v)
     else:
-        text = text.rstrip("\n") + (f"\n\n## 라운드 작업 공간\n이 라운드의 결과물(보고 `REPORT.md`, 요청별 산출물)은 `{ws}/` 에 둡니다 "
-                                    f"(`8.0-8`).\n")
+        text = text.rstrip("\n") + (f"\n\n## 라운드 기록과 결과물\n종료 보고는 `{ws}/REPORT.md` 에도 씁니다. 결과물은 라운드 폴더가 아니라 "
+                                    f"요청의 프로젝트 폴더 `projects/<프로젝트>/` 에 쌓습니다 (`8.0-8`).\n")
     d = fleet.ROOT / ws
     d.mkdir(parents=True, exist_ok=True)
     out = d / "brief.md"
@@ -536,6 +571,7 @@ def launch_round(by="사람"):
     at = dt.datetime.now()
     label = f"관리자 R{n} (Opus) {at.strftime('%Y-%m-%d')}"
     brief = _round_brief_path(b, at)
+    _write_round_record(n, at, b["file"])
     relay = _relay_dir()
     msg = relay / f"r{n}-instruction.md"
     msg.write_text(RELAY_TEMPLATE.format(at=at.strftime("%Y-%m-%d %H:%M"), brief=brief, label=label), encoding="utf-8")

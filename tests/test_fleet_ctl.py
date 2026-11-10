@@ -210,6 +210,20 @@ class FleetCtlTest(unittest.TestCase):
             self.assertEqual((b["round"], b["standard"]), (7, True))
             self.assertEqual(fleet_ctl.public_state()["brief"]["round"], 7)
 
+    def test_round_record_lists_open_requests_and_their_projects(self):
+        repo = self.tmp / "repo"
+        reqs = repo / ".aimem" / "requests"
+        reqs.mkdir(parents=True)
+        for rid, proj, status in (("Q-1", "알파", "NEW"), ("Q-2", "", "PLANNED"), ("Q-3", "베타", "DONE"), ("Q-4", "알파", "IN-PROGRESS")):
+            (reqs / f"{rid}.json").write_text(json.dumps({"id": rid, "project": proj, "status": status}), encoding="utf-8")
+        (reqs / "broken.json").write_text("{", encoding="utf-8")
+        with mock.patch.object(fleet, "ROOT", repo):
+            rec = fleet_ctl._write_round_record(7, dt.datetime(2026, 11, 10, 20, 0), "manager-round-standard.md")
+        saved = json.loads((repo / "rounds" / "R7" / "round.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved, rec)
+        self.assertEqual((saved["round"], saved["at"], saved["projects"], saved["requests"]),
+                         (7, "2026-11-10T20:00:00", ["알파"], ["Q-1", "Q-2", "Q-4"]))
+
     def test_launch_round_requires_ready(self):
         fleet_ctl.set_mode("stopped", "test")
         out = fleet_ctl.launch_round("test")

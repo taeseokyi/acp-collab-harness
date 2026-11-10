@@ -664,8 +664,19 @@ def cmd_request(a):
             synced = _sync_request_file(a.id, a.status, a.title, a.detail)
             print(f"request {a.id} {what}" + (" (요청 파일도 맞춤)" if synced else ""))
         elif a.action == "list":
+            # 프로젝트는 요청 파일(.aimem/requests/*.json)의 `project` - 결과물이 쌓일 `projects/<이름>/` (빈 값 = 함대 자체)
+            proj = {}
+            rdir = ROOT / ".aimem" / "requests"
+            for f in (sorted(rdir.glob("*.json")) if rdir.exists() else []):
+                try:
+                    d = json.loads(f.read_text(encoding="utf-8"))
+                    proj[d.get("id")] = d.get("project") or ""
+                except (OSError, ValueError, AttributeError):
+                    continue
             for r in con.execute("SELECT id,status,requester,title FROM requests ORDER BY created"):
-                print(f"  {r['id']:<26} {r['status']:<12} {r['requester'] or '':<16} {r['title'] or ''}")
+                pr = proj.get(r["id"]) or ""
+                print(f"  {r['id']:<26} {r['status']:<12} {r['requester'] or '':<16} "
+                      f"{('[' + pr + '] ') if pr else ''}{r['title'] or ''}")
     return 0
 
 

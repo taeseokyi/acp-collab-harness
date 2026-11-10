@@ -279,6 +279,10 @@ def _collect_runs(root: pathlib.Path, now: datetime, errors: list) -> list[dict]
             "rev": meta.get("rev"), "write": meta.get("write") or [],
             "started": started, "state": state, "rc": rc,
             "elapsed_sec": elapsed, "report_head": head,
+            # 식별자에 붙이지 않고 따로 싣는다 (2026-11-10) - 화면이 실행을 프로젝트·라운드로 구분해 보인다
+            "task": meta.get("task") if isinstance(meta.get("task"), str) else None,
+            "project": meta.get("project") if isinstance(meta.get("project"), str) else None,
+            "round": meta.get("round") if isinstance(meta.get("round"), int) and not isinstance(meta.get("round"), bool) else None,
         })
     runs.sort(key=lambda r: str(r["id"]))
     return runs
@@ -552,6 +556,13 @@ def collect(root: pathlib.Path | None = None) -> dict:
     runs = _collect_runs(root, now, errors)
     eta = median_durations(runs)
     requests = _collect_requests(root, runs, slots, eta, now, errors)
+    # 기록에 프로젝트가 없는 실행(옛 기록·손으로 띄운 것)은 태스크 -> 요청 -> 프로젝트로 메운다
+    if db is not None:
+        proj_of_req = {q.get("id"): q.get("project") for q in requests if isinstance(q.get("project"), str)}
+        req_of_task = {_s(t.get("id")): t.get("request_id") for t in db.get("tasks") or []}
+        for r in runs:
+            if r["project"] is None and r["task"]:
+                r["project"] = proj_of_req.get(req_of_task.get(r["task"])) or None
 
     return {
         "generated": now.isoformat(timespec="seconds"),

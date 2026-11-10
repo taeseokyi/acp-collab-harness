@@ -14,7 +14,7 @@
   python3 tools/fleet_graph.py unblock R-001 T1    # 사람이 확인한 blocked/failed 노드를 다시 굴림 (그 뒤 run/step)
 
 노드 형식 (nodes.json 배열):
-  {"id":"T1","title":"서버 골격","slot":"S1","write":["tools/aimem_monitor/server.py"],
+  {"id":"T1","title":"서버 골격","slot":"S1","project":"<프로젝트 이름, 함대 자체 일이면 생략>","write":["tools/aimem_monitor/server.py"],
    "task":"...지시 본문...","deps":[],"verify":"python3 -m py_compile tools/aimem_monitor/server.py",
    "max_attempts":2,"harness":null,"model":null}
 
@@ -329,7 +329,8 @@ def _spawn_node(g, n, attempt_no):
     ns = argparse.Namespace(slot=n["slot"], harness=n.get("harness"), model=n.get("model"),
                             task_id=tid, attempt=attempt_no,
                             label=f"{n.get('title','')} ({g['id']})".strip(),
-                            write=list(n.get("write", [])), task=None, task_file=str(task_file))
+                            write=list(n.get("write", [])), task=None, task_file=str(task_file),
+                            project=n.get("project") or g.get("project") or None, round=g.get("round"))
     import io, contextlib
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -797,6 +798,7 @@ def cmd_new(a):
     if bad_ids:
         print(f"경고: 노드 id 는 보드 태스크 id(T-0xx) 를 그대로 쓰십시오: {bad_ids}", file=sys.stderr)
     g = {"id": a.id, "request": a.request, "created": _now(), "rev": fleet.read_rev(),
+         "round": fleet.current_round(),      # 식별자에 붙이지 않고 따로 적는다 (화면 구분용)
          "concurrency": a.concurrency, "nodes": nodes}
     probs = validate_graph(g)
     if probs:

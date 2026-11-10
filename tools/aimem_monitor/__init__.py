@@ -44,10 +44,11 @@ STATE_KEYS = {
     "board": "[{id, task, slot, status, handoff, artifact}]  - 작업 보드",
     "queue": "[{order, task, slots, handoff, note}]  - 대기 큐",
     "log": "[{when, text}]  - 핸드오프 로그, 최신 먼저",
-    "runs": "[{id, slot, harness, model, label, rev, write, started, state, rc, elapsed_sec, report_head}]",
+    "runs": "[{id, slot, harness, model, label, rev, write, started, state, rc, elapsed_sec, report_head, "
+            "task, project, round}]  - project/round 는 식별자에 붙이지 않고 따로 (없으면 null)",
     "eta": "{by_harness:{<h>:{median_sec, samples, source}}, overall:{median_sec, samples}}",
     "requests": "[{" + ", ".join(REQUEST_ROW_KEYS := (
-                    "id", "created", "updated", "requester", "title", "detail", "detail_truncated", "detail_len",
+                    "id", "created", "updated", "requester", "project", "title", "detail", "detail_truncated", "detail_len",
                     "status", "subtasks", "graph", "progress_pct", "eta_sec", "eta_at", "eta_basis", "eta_over")) + "}]"
                 "  - 행 키는 REQUEST_ROW_KEYS 가 정본, scrub_public 이 그 밖의 키를 떼어냅니다",
     "errors": "[문자열]  - 파싱 중 삼킨 문제. 비어 있어야 정상",
@@ -66,6 +67,11 @@ SERVER_KEYS = {
     # 함대 제어 상태 (`tools/fleet_ctl.public_state`, 2026-11-10). can = 지금 누를 수 있는 동작
     "fleet": "{mode, label, at, by, note, default, running_runs, graphs, brief, prepare, relay, "
              "can:{prepare, run, pause, stop, round}}",
+    # 프로젝트 목록 (2026-11-10) - `projects/` 아래 폴더 + 요청이 가리키는 이름. exists = 폴더가 이미 있나
+    # percent = 그 프로젝트 요청들의 평균 진행율. rounds = `rounds/R<N>/round.json`(띄운 기록) + `PROGRESS.md` 의 `## R<N>`.
+    # summary = `projects/<이름>/PROGRESS.md` 의 가장 최근 라운드 항목
+    "projects": "[{name, path, exists, percent, requests:{total, done, new, active}, rounds, round_count, first_round, "
+                "last_round, last_round_at, updated, summary}]",
 }
 
 #: 공개면에서 **절대 나가면 안 되는** 것 (REV 114, S4 유출 검수 5번).
@@ -177,6 +183,10 @@ CA_FILE = ".aimem/tls/ca.crt"
 #: `admin cert renew` 가 마지막 발급 조건(CA 디렉터리·추가 SAN)을 적어 두는 곳. 다음 `renew` 는
 #: 인자가 없어도 이것을 그대로 다시 쓴다 - 갱신 때 SAN 하나를 빠뜨려 브라우저 경고가 돌아오지 않게.
 CERT_PROFILE_FILE = ".aimem/tls/cert-profile.json"
+#: 프로젝트 (2026-11-10 태석님 지시) - 여러 라운드를 묶는 단위. 결과물은 `projects/<이름>/` 한 곳에 쌓인다.
+#: 요청마다 프로젝트를 고른다(빈 값 = 함대 자체의 일). 이름은 한 폴더 이름이라 구분자·점·공백을 받지 않는다.
+PROJECTS_DIR = "projects"
+PROJECT_NAME_RE = r"\A[0-9A-Za-z가-힣][0-9A-Za-z가-힣_-]{0,39}\Z"
 GITHUB_ALLOW_FILE = ".aimem/tls/allowed-github-logins"   # 한 줄 한 계정, `#` 주석 허용
 
 #: 세션 쿠키. `Secure` 는 TLS 일 때만 붙습니다(http 로컬 검증에서 쿠키가 죽지 않도록).

@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/o
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 141** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-10 20:01 KST
+- **REV: 144** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-10 21:02 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **a Claude ACP session** (harness claude, model Opus 5.5 = `opus[1m]`),
@@ -414,13 +414,20 @@ starts blank every round and uses this file plus the handoff log as memory; it m
 
 The standing routine every round brief points to; briefs list only the round's tasks.
 
-**Round content and workspace.** A round is launched from the web (`라운드 실행`). Without a round-specific brief
-(`.aimem/briefs/manager-round<N>-<date>.md`) the standard brief `.aimem/briefs/manager-round-standard.md` is used
-and **the round's tasks are the `NEW` requests**; with nothing to do the Manager reports and ends. Each round owns
-a workspace `rounds/R<N>/` (in git): `brief.md` (the brief as sent), `REPORT.md` (the close report, also in the
-response body), `<request id>/` for deliverables - assign it to a slot with `aimem_db.py ownership set` before a
-worker writes. Changes to the fleet's own code (`tools/`, `tests/`, this file) stay in place and are listed in
-`REPORT.md`. Other rounds' folders are not touched.
+**Round content, projects, records.** A round is launched from the web (`라운드 실행`). Without a round-specific
+brief (`.aimem/briefs/manager-round<N>-<date>.md`) the standard brief `.aimem/briefs/manager-round-standard.md` is
+used and **the round's tasks are the `NEW` requests**; with nothing to do the Manager reports and ends.
+- **A project spans rounds.** Each request names a project (`project` in the request file; empty = the fleet's own
+  code, changed in place). Deliverables accumulate in **`projects/<project>/`** across rounds - one place, edited
+  in place, no per-round copies. `projects/<project>/PROGRESS.md` is the project's memory: the Manager reads it at
+  round start and prepends `## R<N>` (done, changed files, verification, **what remains**) at round close. A new
+  project gets a `README.md`. Assign paths to a slot with `aimem_db.py ownership set` before a worker writes
+- **A round folder holds records only:** `rounds/R<N>/brief.md` (the brief as sent), `round.json` (launch time,
+  open requests and their projects - written by the launcher) and `REPORT.md` (the close report, also in the
+  response body). No deliverables there; other rounds' folders are not touched
+- **Identifiers stay as they are** (`8.0-3-1`); project and round are not prefixed to them. The web Fleet tab
+  shows per-project progress: request counts and average progress, rounds worked (`round.json` + `PROGRESS.md`),
+  and the latest `PROGRESS.md` entry
 
 **Start** (a new session is blank)
 1. `fleet_ctl.py status` · `fleet.py status` · `aimem_db.py queue list` · `request list` · `slot list` ·

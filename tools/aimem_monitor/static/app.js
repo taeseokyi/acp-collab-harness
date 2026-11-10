@@ -1244,14 +1244,22 @@ function renderFleetControl(data) {
     go.title = "'작업 요청' 폼으로 갑니다. 제목과 본문을 적고 '요청 보내기' 를 누른 뒤 라운드를 실행하십시오";
     go.addEventListener('click', focusRequestForm);
     hint.appendChild(go);
-    if (brief.workspace) {
-      const ws = document.createElement('span');
-      ws.textContent = ` · 결과물 ${brief.workspace}/`;
-      hint.appendChild(ws);
+    const tail = document.createElement('span');
+    const projs = Array.from(new Set(fresh.map((q) => q.project).filter(Boolean)));
+    tail.textContent = (projs.length ? ` · 결과물 ${projs.map((n) => `projects/${n}/`).join(', ')}` : '')
+      + (brief.workspace ? ` · 라운드 보고 ${brief.workspace}/` : '');
+    hint.appendChild(tail);
+    const dl = document.getElementById('project-list');
+    if (dl) {
+      const names = (Array.isArray(data.projects) ? data.projects : []).map((x) => x && x.name).filter(Boolean);
+      if (dl.dataset.names !== names.join('|')) {     // 바뀔 때만 다시 채운다 (입력 중 목록이 깜박이지 않게)
+        dl.dataset.names = names.join('|');
+        dl.replaceChildren(...names.map((n) => { const o = document.createElement('option'); o.value = n; return o; }));
+      }
     }
   } else {
     hint.textContent = brief.file
-      ? `다음 라운드 브리프: ${brief.file}` + (brief.workspace ? ` · 결과물 ${brief.workspace}/` : '')
+      ? `다음 라운드 브리프: ${brief.file}` + (brief.workspace ? ` · 라운드 보고 ${brief.workspace}/` : '')
       : '다음 라운드 브리프: 확정본 없음' + (brief.drafts && brief.drafts.length ? ` (초안 ${brief.drafts.join(', ')})` : '');
   }
   box.appendChild(hint);
@@ -1750,8 +1758,15 @@ function renderRuns(data) {
     head.className = 'report-head';
     head.textContent = plainText(r.report_head) || '-';
     head.title = show(r.report_head, '');
+    const proj = document.createElement('span');
+    proj.className = r.project ? 'proj-tag' : 'proj-tag none';
+    proj.textContent = (r.project || '함대') + (r.round ? ` · R${r.round}` : '');
+    proj.title = r.project
+      ? `프로젝트 ${r.project} (projects/${r.project}/)` + (r.round ? ` · 라운드 R${r.round}` : '')
+      : '프로젝트 없음 - 함대 자체의 일이거나 옛 기록' + (r.round ? ` · 라운드 R${r.round}` : '');
     return [
       mono(r.slot),
+      proj,
       mono(r.id),
       show(r.label),
       statusBadge(r.state),
@@ -1761,11 +1776,11 @@ function renderRuns(data) {
       head,
     ];
   });
-  wrap.appendChild(newTable(['슬롯', 'run id', '라벨', '상태', '보고', 'rc', '경과', '보고 머리말'], rows, rowClasses, {
-    widths: ['52px', '196px', '230px', '80px', '108px', '40px', '92px', null],
-    num: [5, 6],
-    center: [3, 4],
-    ellipsis: [2, 7],
+  wrap.appendChild(newTable(['슬롯', '프로젝트', 'run id', '라벨', '상태', '보고', 'rc', '경과', '보고 머리말'], rows, rowClasses, {
+    widths: ['52px', '140px', '196px', '210px', '80px', '108px', '40px', '92px', null],
+    num: [6, 7],
+    center: [4, 5],
+    ellipsis: [1, 3, 8],
     rowRunIds: runs.map((r) => r.id),
   }));
   if (more && all.length > RUNS_PAGE) {
@@ -2304,7 +2319,8 @@ function renderRequests(data) {
     titleWrap.appendChild(h3);
     const metaLine = document.createElement('div');
     metaLine.className = 'req-meta';
-    metaLine.textContent = `요청 ${fmtDateTime(req.created)} · 요청자 ${show(req.requester)}`;
+    metaLine.textContent = `요청 ${fmtDateTime(req.created)} · 요청자 ${show(req.requester)}`
+      + (req.project ? ` · 프로젝트 ${req.project} (projects/${req.project}/)` : '');
     titleWrap.appendChild(metaLine);
     if (state.editing === key) {
       titleWrap.appendChild(requestEditForm(req));
@@ -2539,11 +2555,92 @@ function renderTabCounts(data) {
   if (q) q.title = '끝나지 않은 요청';
 }
 
+function renderProjects(data) {
+  const box = document.getElementById('projects-list');
+  if (!box) return;
+  const list = Array.isArray(data.projects) ? data.projects : [];
+  box.replaceChildren();
+  if (!list.length) {
+    const p = document.createElement('p');
+    p.className = 'empty';
+    p.textContent = "아직 프로젝트가 없습니다. '작업 요청' 의 프로젝트 칸에 이름을 적어 보내면 생깁니다.";
+    box.appendChild(p);
+    return;
+  }
+  for (const pr of list) {
+    const key = 'project:' + show(pr.name, '');
+    const item = document.createElement('article');
+    item.className = 'proj-item';
+
+    const head = document.createElement('div');
+    head.className = 'proj-head';
+    const name = document.createElement('h3');
+    name.textContent = show(pr.name);
+    head.appendChild(name);
+    const rq = pr.requests || {};
+    const meta = document.createElement('span');
+    meta.className = 'proj-meta';
+    const bits = [];
+    bits.push(rq.total ? `요청 ${rq.done || 0}/${rq.total} 완료` : '요청 없음');
+    if (rq.active) bits.push(`진행 중 ${rq.active}`);
+    if (rq.new) bits.push(`대기 ${rq.new}`);
+    const rounds = Array.isArray(pr.rounds) ? pr.rounds : [];
+    bits.push(rounds.length
+      ? `라운드 ${rounds.length}회 (${rounds.length > 6 ? 'R' + rounds[0] + ' … R' + rounds[rounds.length - 1] : rounds.map((n) => 'R' + n).join(' · ')})`
+      : '아직 라운드 없음');
+    if (pr.last_round_at) bits.push(`마지막 R${pr.last_round} ${fmtDateTime(pr.last_round_at)}`);
+    if (pr.updated) bits.push(`기록 갱신 ${fmtDateTime(pr.updated)}`);
+    meta.textContent = bits.join(' · ');
+    head.appendChild(meta);
+    item.appendChild(head);
+
+    const prog = document.createElement('div');
+    prog.className = 'req-progress';
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    const fill = document.createElement('div');
+    fill.className = 'bar-fill';
+    const pct = typeof pr.percent === 'number' ? Math.max(0, Math.min(100, pr.percent)) : 0;
+    fill.style.width = pct + '%';
+    bar.appendChild(fill);
+    prog.appendChild(bar);
+    const label = document.createElement('span');
+    label.className = 'pct';
+    label.textContent = typeof pr.percent === 'number' ? `${Math.round(pct)}%` : '-';
+    prog.appendChild(label);
+    item.appendChild(prog);
+
+    if (pr.summary) {
+      const det = document.createElement('details');
+      det.className = 'fold-group';
+      det.open = state.expanded.has(key);
+      det.addEventListener('toggle', () => {
+        if (det.open) state.expanded.add(key); else state.expanded.delete(key);
+      });
+      const sum = document.createElement('summary');
+      sum.textContent = `최근 기록 (${show(pr.path)}PROGRESS.md)`;
+      det.appendChild(sum);
+      const body = document.createElement('div');
+      body.className = 'proj-summary';
+      body.textContent = pr.summary;
+      det.appendChild(body);
+      item.appendChild(det);
+    } else {
+      const none = document.createElement('div');
+      none.className = 'proj-meta';
+      none.textContent = pr.exists ? '진행 기록(PROGRESS.md)이 아직 없습니다' : '폴더가 아직 없습니다 - 첫 라운드에서 만들어집니다';
+      item.appendChild(none);
+    }
+    box.appendChild(item);
+  }
+}
+
 function renderAll(data) {
   renderErrors(data);
   renderTabCounts(data);
   renderFleetControl(data);
   renderManager(data);
+  renderProjects(data);
   renderMeta(data);
   renderSlots(data);
   renderKisti(data);
@@ -2648,10 +2745,13 @@ async function onSubmit(event) {
     titleEl.focus();
     return;
   }
+  const projectEl = $('req-project');
+  const project = projectEl ? projectEl.value.trim() : '';
   const payload = {
     title,
     detail: detailEl.value,
     requester: requesterEl.value.trim(),
+    project,
   };
   button.disabled = true;
   msg.className = 'form-msg';
@@ -2681,9 +2781,10 @@ async function onSubmit(event) {
       result = body;
     }
     $('request-form').reset();
+    if (projectEl) projectEl.value = project;   // 같은 프로젝트에 이어서 넣기 쉽게 남겨 둔다
     msg.className = 'form-msg success';
     msg.textContent = '요청 생성됨: ' + show(result.id, '-') +
-      (result.path ? ' · ' + result.path : '');
+      (project ? ` · 프로젝트 ${project}` : ' · 함대 자체');
     await refresh();
   } catch (err) {
     msg.className = 'form-msg error';

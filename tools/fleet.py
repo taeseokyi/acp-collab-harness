@@ -498,6 +498,49 @@ def run_report(run_id):
     return "(최종 보고문 없음 - 작업자가 보고 전에 끝남. stderr 꼬리:)\n" + tail if tail else ""
 
 
+def current_round():
+    """지금 도는(가장 최근에 띄운) 라운드 번호. 모르면 None.
+
+    `fleet_ctl` 이 라운드를 띄울 때 `.aimem/relay/r<N>.json` 을 남깁니다. 식별자에는 라운드를 붙이지 않고
+    (2026-11-10 태석님), 실행 기록·그래프에 **따로** 적어 화면이 구분해 보이게 합니다.
+    """
+    best = None
+    try:
+        files = list((pathlib.Path(RUNS).parent / "relay").glob("r*.json"))
+    except OSError:
+        return None
+    for f in files:
+        m = re.fullmatch(r"r(\d+)", f.stem)
+        if not m:
+            continue
+        try:
+            if json.loads(f.read_text(encoding="utf-8")).get("state") == "failed":
+                continue
+        except (OSError, ValueError, AttributeError):
+            continue
+        best = max(best or 0, int(m.group(1)))
+    return best
+
+
+def task_project(task_id):
+    """태스크 -> 그 요청의 프로젝트 이름. 없거나 모르면 `""`(함대 자체의 일)."""
+    if not task_id or task_id == "ADHOC":
+        return ""
+    s = db_state() or {}
+    rid = next((t.get("request_id") for t in s.get("tasks") or [] if t.get("id") == task_id), None)
+    if not rid or not re.fullmatch(r"[A-Za-z0-9-]{1,40}", str(rid)):
+        return ""
+    try:
+        for f in (ROOT / ".aimem" / "requests").glob(f"{rid}*.json"):
+            rec = json.loads(f.read_text(encoding="utf-8"))
+            if isinstance(rec, dict) and rec.get("id") == rid:
+                pr = rec.get("project")
+                return pr if isinstance(pr, str) else ""
+    except (OSError, ValueError):
+        pass
+    return ""
+
+
 def cmd_spawn(args):
     """작업자 1명을 백그라운드로 띄웁니다. 즉시 돌아오고 run id 를 찍습니다."""
     import datetime, shlex, subprocess as sp
@@ -567,6 +610,13 @@ def cmd_spawn(args):
             "task": task_id, "attempt": attempt, "date": datetime.date.today().isoformat(),
             "label": label, "rev": rev, "write": args.write, "pid": proc.pid,
             "started": datetime.datetime.now().isoformat(timespec="seconds"), "brief": str(brief_path)}
+    # 프로젝트·라운드는 식별자에 붙이지 않고 기록에 따로 적는다 - 화면이 실행을 프로젝트별로 구분해 보인다.
+    try:
+        meta["project"] = getattr(args, "project", None) or task_project(task_id)
+        meta["round"] = getattr(args, "round", None) or current_round()
+    except Exception:  # noqa: BLE001 - 표시용 정보 때문에 스폰이 죽으면 안 된다
+        meta.setdefault("project", "")
+        meta.setdefault("round", None)
     (RUNS / f"{run_id}.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
     print(run_id)
     _db_sync()
@@ -718,6 +768,7 @@ def main():
     sp_.add_argument("--write", nargs="*", default=[], help="이 태스크에서 쓸 경로 (6절 대조)")
     sp_.add_argument("--task", help="지시 본문")
     sp_.add_argument("--task-file", help="지시 본문 파일")
+    sp_.add_argument("--project", help="결과물이 쌓이는 프로젝트 이름 (생략하면 태스크의 요청에서 찾는다)")
     rn = sub.add_parser("runs", help="띄운 작업자 상태 표")
     rn.add_argument("--last", type=int, help="최근 N 건만")
     w = sub.add_parser("wait", help="작업자 완료를 기다려 보고 본문 출력")
