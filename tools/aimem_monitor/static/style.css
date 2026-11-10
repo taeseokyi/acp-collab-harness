@@ -1129,9 +1129,16 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
   background: var(--st-surface); border: 1px solid var(--st-line-soft); border-radius: var(--st-r-sm);
 }
 .req-detail.is-clamped {
-  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+  /* -webkit-line-clamp 은 블록 자식(표·목록)이 있으면 접히지 않는다(2026-11-10 실측) - 높이로 접고 아래를 흐린다 */
+  display: block; max-height: 7.8em; overflow: hidden; position: relative;
   cursor: pointer;
 }
+.req-detail.is-clamped::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2.2em;
+  background: linear-gradient(to bottom, transparent, var(--st-surface-2));
+}
+.req-detail .md { white-space: normal; font-size: inherit; }
+.req-detail .md > :last-child { margin-bottom: 0; }
 .req-detail.is-clamped:hover { border-color: var(--st-line); }
 .detail-body .req-detail { font-size: 15px; color: var(--st-ink); background: var(--st-surface-2); }
 .req-full { font-size: var(--st-fs-sm); padding: 4px 12px; margin-top: var(--st-s-2); }

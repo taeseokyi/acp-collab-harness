@@ -2062,9 +2062,9 @@ function renderRequests(data) {
       titleWrap.appendChild(requestEditForm(req));
     } else if (req.detail && open) {
       const detail = document.createElement('div');
-      detail.className = 'req-detail';
-      detail.textContent = show(req.detail);   // 입력한 줄바꿈 그대로 (pre-wrap), 마크업 해석 없음
-      // 항상 4줄로 접어 두고, 실제로 잘렸는지(높이)나 서버가 잘랐는지(detail_truncated)로 '전체 보기' 를 켠다
+      detail.className = 'req-detail req-preview';
+      detail.appendChild(renderMarkdown(show(req.detail, '')));   // 카드에서도 마크다운으로 (HTML 비해석, 줄바꿈 보존)
+      // 높이로 접어 두고(약 5줄), 실제로 잘렸는지(scrollHeight)나 서버가 잘랐는지(detail_truncated)로 '전체 보기' 를 켠다
       detail.classList.add('is-clamped');
       detail.addEventListener('click', () => openRequestDetail(req));
       detail.addEventListener('keydown', (e) => {
@@ -2077,7 +2077,12 @@ function renderRequests(data) {
         full.type = 'button';
         full.className = 'req-full';
         const markLong = () => {
-          const long = req.detail_truncated === true || detail.scrollHeight > detail.clientHeight + 2;
+          // 요청 트리 탭이 숨겨져 있으면(다른 탭에서 렌더) 높이가 0 으로 재어져 접기가 풀렸다(2026-11-10 실측).
+          // 그때는 본문 길이로 판단하고, 보이는 상태에서만 실제 높이로 판단한다.
+          const hidden = detail.clientHeight === 0;
+          const text = show(req.detail, '');
+          const long = req.detail_truncated === true
+            || (hidden ? (text.split('\n').length > 5 || text.length > 280) : detail.scrollHeight > detail.clientHeight + 2);
           full.classList.toggle('is-on', long);
           if (long) {
             detail.title = '클릭하면 전체 내용을 봅니다';
