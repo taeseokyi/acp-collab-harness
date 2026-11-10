@@ -162,6 +162,49 @@ class HstsTest(unittest.TestCase):
         self.assertFalse(self.want("aimem.example.org", tls=False))
 
 
+class ManagerDetailTest(unittest.TestCase):
+    """관리자 상세: 단계는 말·명령만(출력 X), id 검증, 경로 가림, 끝난 세션 이벤트 범위."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.acpx = pathlib.Path(self.tmp.name) / "acpx"
+        self.acpx.mkdir()
+        p = mock.patch.object(server, "ACPX_SESSIONS", self.acpx)
+        p.start()
+        self.addCleanup(p.stop)
+        rec = {"agent_started_at": "2026-11-10T00:00:00Z", "title": "관리자 R9", "closed": True, "messages": [
+            {"User": {"content": [{"Text": "브리프"}]}},
+            {"Agent": {"content": [
+                {"Text": "먼저 상태를 읽겠습니다."},
+                {"ToolUse": {"name": "x", "input": {"command": f"cat {server.ROOT}/AIMEM.md", "description": "읽기"}}},
+                {"ToolResult": {"content": "SECRET-OUTPUT-SHOULD-NOT-APPEAR"}},
+                {"Text": "상태: DONE"}]}}]}
+        (self.acpx / "agent%3Aclaude%3Aacp%3Aabcdef12-0000%3Aoneshot%3Ax.json").write_text(
+            json.dumps(rec, ensure_ascii=False), encoding="utf-8")
+
+    def test_steps_exclude_tool_output_and_mask_paths(self):
+        code, body = server.manager_detail("abcdef12")
+        self.assertEqual(code, 200)
+        self.assertEqual(body["steps_total"], 3)
+        self.assertEqual([s["kind"] for s in body["steps"]], ["text", "tool", "text"])
+        dumped = json.dumps(body, ensure_ascii=False)
+        self.assertNotIn("SECRET-OUTPUT-SHOULD-NOT-APPEAR", dumped)
+        self.assertNotIn(str(server.ROOT), dumped)                    # 저장소 절대경로 가림
+        self.assertEqual(body["session"]["label"], "관리자 R9")
+
+    def test_bad_and_missing_ids(self):
+        self.assertEqual(server.manager_detail("../etc/pa")[0], 400)
+        self.assertEqual(server.manager_detail("ABCDEF12")[0], 400)
+        self.assertEqual(server.manager_detail("00000000")[0], 404)
+        self.assertIsNone(server._REQ_MGR_RE.match("/api/managers/abcdef12/x"))
+        self.assertTrue(server._REQ_MGR_RE.match("/api/managers/abcdef12"))
+
+    def test_step_line_prefers_description(self):
+        self.assertEqual(server._step_line({"kind": "tool", "text": "ls -la", "desc": "목록"}), "▸ 목록")
+        self.assertEqual(server._step_line({"kind": "text", "text": "a\n  b"}), "a b")
+
+
 @unittest.skipUnless(shutil.which("openssl"), "openssl 없음")
 class PlainHttpOnTlsPortTest(unittest.TestCase):
     """실제 TLS 서버: 평문 HTTP 는 https 로 301, TLS 는 그대로 동작."""

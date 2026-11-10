@@ -16,6 +16,7 @@
     GET  /api/runs/<id>    -> reader.run_detail(). 상세 패널용 (브리프·보고·rc·경과)
     POST /api/requests     -> .aimem/requests/<id>.json 생성
     GET  /api/requests/<id> -> 요청 하나의 전문 (목록은 600자로 잘림)
+    GET  /api/managers/<id8> -> 관리자 세션 상세 (최근 단계·라운드 전달·이벤트·그래프, 도구 출력 제외)
     POST /api/requests/<id>/edit -> NEW·미분담 요청의 제목·본문 수정 (Q-261110-549a)
     POST /api/fleet/<동작> -> 함대 제어 prepare|run|pause|stop|round (tools/fleet_ctl.py)
     GET  /login            -> static/login.html (인증 면제)
@@ -919,23 +920,149 @@ def _fetch_managers():
         if not isinstance(s, dict) or ":acp:" not in str(s.get("key", "")):
             continue
         sid = str(s.get("key", "")).rsplit(":", 1)[-1]
-        record_kb = None
-        try:
-            hits = [f for f in ACPX_SESSIONS.glob(f"*{sid}*") if f.is_file()]
-            if hits:
-                record_kb = max(f.stat().st_size for f in hits) // 1024
-        except OSError:
-            pass
+        status = str(s.get("status") or "unknown")[:20]
+        rec = _manager_record(sid[:8])
+        info = {"record_kb": None, "last_activity": None, "steps": None, "last_step": None}
+        if rec is not None:
+            try:
+                st = rec.stat()
+                info["record_kb"] = st.st_size // 1024
+                info["last_activity"] = datetime.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")
+            except OSError:
+                pass
+            if status == "running":            # 끝난 세션의 1MB 기록을 30초마다 다시 읽지 않는다
+                steps = _manager_steps(rec)
+                if steps is not None:
+                    info["steps"] = len(steps)
+                    info["last_step"] = _step_line(steps[-1]) if steps else None
         out.append({
             "label": str(s.get("label") or "(라벨 없음)")[:80],
-            "status": str(s.get("status") or "unknown")[:20],
+            "status": status,
             "started": _ms_iso(s.get("sessionStartedAt")),
             "updated": _ms_iso(s.get("updatedAt")),
             "id": sid[:8],
-            "record_kb": record_kb,
+            **info,
         })
     out.sort(key=lambda m: m.get("started") or "", reverse=True)
     return out[:MANAGER_MAX]
+
+
+_MGR_ID_RE = re.compile(r"\A[0-9a-f]{8}\Z")
+_REQ_MGR_RE = re.compile(r"\A/api/managers/([0-9a-f]{8})\Z")
+MANAGER_STEPS_MAX = 40
+
+
+def _manager_record(id8):
+    """관리자 세션 기록 파일(`~/.openclaw/acpx/sessions/*<uuid>*.json`). id8 은 uuid 앞 8자(16진)."""
+    if not _MGR_ID_RE.match(id8 or ""):
+        return None
+    try:
+        hits = [f for f in ACPX_SESSIONS.glob(f"*%3A{id8}*.json") if f.is_file() and not f.is_symlink()]
+    except OSError:
+        return None
+    return max(hits, key=lambda f: f.stat().st_mtime) if hits else None
+
+
+def _manager_steps(path):
+    """기록의 마지막 에이전트 턴에서 단계 목록 [{kind, text}] - **도구 결과(출력)는 싣지 않습니다.**"""
+    try:
+        if path.stat().st_size > 64 * 1024 * 1024:
+            return None
+        d = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return None
+    steps = []
+    for m in (d.get("messages") or []):
+        agent = m.get("Agent") if isinstance(m, dict) else None
+        if not isinstance(agent, dict):
+            continue
+        for item in agent.get("content") or []:
+            if not isinstance(item, dict):
+                continue
+            if "Text" in item and isinstance(item["Text"], str) and item["Text"].strip():
+                steps.append({"kind": "text", "text": item["Text"].strip()})
+            elif isinstance(item.get("ToolUse"), dict):
+                tu = item["ToolUse"]
+                inp = tu.get("input") if isinstance(tu.get("input"), dict) else {}
+                cmd = inp.get("command") or inp.get("file_path") or inp.get("path") or tu.get("name") or ""
+                steps.append({"kind": "tool", "text": str(cmd), "desc": str(inp.get("description") or "")})
+    return steps
+
+
+def _step_line(step):
+    s = step.get("desc") or step.get("text") or ""
+    s = " ".join(str(s).split())
+    return ("▸ " if step.get("kind") == "tool" else "") + s[:160]
+
+
+def manager_detail(id8, root=ROOT):
+    """관리자 세션 하나의 상세: 요약 + 최근 단계 + 라운드 전달 기록 + 라운드 중 이벤트·그래프. (코드, 본문)"""
+    if not _MGR_ID_RE.match(id8 or ""):
+        return 400, {"ok": False, "error": "잘못된 관리자 id 입니다"}
+    with _mgr_lock:
+        cached = dict(_mgr_cache["value"] or {})
+    sess = next((s for s in cached.get("sessions") or [] if s.get("id") == id8), None)
+    rec = _manager_record(id8)
+    if sess is None and rec is None:
+        return 404, {"ok": False, "error": f"그런 관리자 세션이 없습니다: {id8}"}
+    out = {"ok": True, "id": id8, "session": sess, "steps": [], "steps_total": 0, "relay": None,
+           "events": [], "graphs": []}
+    if rec is not None:
+        steps = _manager_steps(rec) or []
+        out["steps_total"] = len(steps)
+        out["steps"] = [{"kind": s["kind"], "text": s["text"][:1200 if s["kind"] == "text" else 300],
+                         "desc": s.get("desc", "")[:120]} for s in steps[-MANAGER_STEPS_MAX:]]
+        try:
+            st = rec.stat()
+            out["record_kb"] = st.st_size // 1024
+            out["last_activity"] = datetime.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")
+        except OSError:
+            pass
+        if sess is None:
+            # 세션 목록 캐시에 없으면(서버 막 시작·지운 세션) 기록 파일의 시작 시각으로 대신합니다
+            try:
+                d = json.loads(rec.read_text(encoding="utf-8", errors="replace"))
+                raw = str(d.get("agent_started_at") or d.get("created_at") or "")
+                started_utc = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                sess = {"label": d.get("title") or d.get("name"), "status": "closed" if d.get("closed") else "?",
+                        "started": started_utc.astimezone().replace(tzinfo=None).isoformat(timespec="seconds"),
+                        "id": id8}
+                out["session"] = sess
+            except (OSError, ValueError, TypeError):
+                pass
+    label = (sess or {}).get("label") or ""
+    m = re.search(r"\bR(\d+)\b", label)
+    relay_f = pathlib.Path(root) / ".aimem" / "relay" / f"r{m.group(1)}.json" if m else None
+    if relay_f is not None and relay_f.is_file():
+        try:
+            out["relay"] = json.loads(relay_f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+    started = (sess or {}).get("started")
+    if started:
+        try:
+            tools_dir = str(pathlib.Path(root) / "tools")
+            if tools_dir not in sys.path:
+                sys.path.insert(0, tools_dir)
+            import aimem_db  # noqa: PLC0415
+            until = "9999"
+            if (sess or {}).get("status") != "running" and out.get("last_activity"):
+                until = out["last_activity"]          # 끝난 세션은 그 세션이 끝난 시각까지만
+            with aimem_db.connect() as con:
+                rows = con.execute("SELECT at, actor, rev, kind, body FROM events WHERE at >= ? AND at <= ? "
+                                   "ORDER BY seq DESC LIMIT 30", (started, until)).fetchall()
+            out["events"] = [{"at": r["at"], "actor": r["actor"], "rev": r["rev"], "kind": r["kind"],
+                              "body": (r["body"] or "")[:400]} for r in rows]
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            for g in collect_graphs(root, []):
+                if started[:19] <= str(g.get("created") or "") <= (out.get("last_activity") if (sess or {}).get("status") != "running" and out.get("last_activity") else "9999"):
+                    out["graphs"].append({"id": g.get("id"), "request": g.get("request"), "percent": g.get("percent"),
+                                          "counts": g.get("counts")})
+        except Exception:  # noqa: BLE001
+            pass
+    return 200, mask_deep(out, _detail_masker(root))
 
 
 def _refresh_managers():
@@ -1533,6 +1660,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json(404, {"ok": False, "error": f"그런 실행 기록이 없습니다: {rid}",
                                         "detail": d})
             return self._json(200, d)
+        mm = _REQ_MGR_RE.match(path)
+        if mm:
+            code, body = manager_detail(mm.group(1), self.root)
+            return self._json(code, body)
         m = _REQ_GET_RE.match(path)
         if m:
             code, body = request_detail(m.group(1), self.root)

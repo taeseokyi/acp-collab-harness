@@ -51,7 +51,8 @@ SERVER_KEYS = {
     "graphs": "[{id, request, created, updated, percent, eta_seconds, eta_at, counts, nodes:[...], source}]",
     # 관리자 ACP 세션 (요청 Q-261110-549a, 2026-11-10). `openclaw sessions` 배경 갱신 30초 캐시.
     # 세션 키 원문은 싣지 않고 uuid 앞 8자(id)만 싣습니다.
-    "managers": "{ok, pending, age_sec, error, sessions:[{label, status, started, updated, id, record_kb}]}",
+    "managers": "{ok, pending, age_sec, error, sessions:[{label, status, started, updated, id, record_kb, "
+                "last_activity, steps, last_step}]}",
     # 함대 제어 상태 (`tools/fleet_ctl.public_state`, 2026-11-10). can = 지금 누를 수 있는 동작
     "fleet": "{mode, label, at, by, note, default, running_runs, graphs, brief, prepare, relay, "
              "can:{prepare, run, pause, stop, round}}",

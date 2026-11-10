@@ -837,6 +837,101 @@ function managerActivity(data) {
   return '직접 작업 중 (계획·검증·보고 작성) - 이 동안 작업자는 0개입니다';
 }
 
+const MANAGER_IDLE_WARN_SEC = 600;
+
+function detailRows(parent, title, rows) {
+  const sec = document.createElement('section');
+  sec.className = 'detail-section';
+  const h = document.createElement('h3');
+  h.textContent = title;
+  sec.appendChild(h);
+  if (!rows.length) {
+    sec.appendChild(emptyP('없음'));
+  } else {
+    const ol = document.createElement('ol');
+    ol.className = 'mgr-list';
+    for (const r of rows) {
+      const li = document.createElement('li');
+      if (r.cls) li.className = r.cls;
+      if (r.head) {
+        const b = document.createElement('span');
+        b.className = 'mgr-head';
+        b.textContent = r.head;
+        li.appendChild(b);
+      }
+      const s = document.createElement('span');
+      s.className = 'mgr-body';
+      s.textContent = r.body;
+      li.appendChild(s);
+      ol.appendChild(li);
+    }
+    sec.appendChild(ol);
+  }
+  parent.appendChild(sec);
+}
+
+async function openManagerDetail(cur) {
+  if (!cur || !cur.id) return;
+  state.detailReturnFocus = document.activeElement;
+  const overlay = bindDetailControls();
+  state.detailOpen = true;
+  state.detailSeq += 1;
+  const seq = state.detailSeq;
+  $('detail-label').textContent = '관리자 - ' + show(cur.label);
+  const body = $('detail-body');
+  body.textContent = '';
+  body.appendChild(emptyP('불러오는 중…'));
+  overlay.hidden = false;
+  const close = $('detail-close');
+  if (close) close.focus();
+  let d;
+  try {
+    if (DEMO) throw new Error('데모 모드에는 관리자 기록이 없습니다');
+    const res = await fetch('/api/managers/' + encodeURIComponent(cur.id), { headers: { Accept: 'application/json' } });
+    d = await res.json().catch(() => ({}));
+    if (!res.ok || !d.ok) throw new Error(d.error || ('HTTP ' + res.status));
+  } catch (err) {
+    if (seq !== state.detailSeq) return;
+    body.textContent = '';
+    body.appendChild(emptyP('관리자 상세를 읽지 못했습니다: ' + (err && err.message ? err.message : err)));
+    return;
+  }
+  if (seq !== state.detailSeq || !state.detailOpen) return;
+  body.textContent = '';
+  const s = d.session || {};
+  const meta = document.createElement('div');
+  meta.className = 'detail-meta';
+  const st = Date.parse(String(s.started || ''));
+  const la = Date.parse(String(d.last_activity || ''));
+  const isRun = s.status === 'running';
+  meta.appendChild(detailMetaItem('상태', isRun ? '실행 중' : show(s.status)));
+  meta.appendChild(detailMetaItem('시작', fmtDateTime(s.started)));
+  meta.appendChild(detailMetaItem(isRun ? '경과' : '소요', Number.isFinite(st) ? fmtElapsed(((isRun ? Date.now() : (Number.isFinite(la) ? la : Date.now())) - st) / 1000) : '-'));
+  meta.appendChild(detailMetaItem('마지막 활동', Number.isFinite(la) ? fmtDateTime(d.last_activity) + ` (${fmtElapsed((Date.now() - la) / 1000)} 전)` : '-'));
+  meta.appendChild(detailMetaItem('단계', show(d.steps_total)));
+  meta.appendChild(detailMetaItem('대화 기록', d.record_kb != null ? (d.record_kb >= 1024 ? (d.record_kb / 1024).toFixed(1) + 'MB' : d.record_kb + 'KB') : '-'));
+  body.appendChild(meta);
+
+  if (d.relay) {
+    const r = d.relay;
+    detailRows(body, `라운드 R${r.round} 전달 (${show(r.state)}${r.nudged ? ', 재촉 1회' : ''})`,
+      [{ head: '브리프', body: show(r.brief) }].concat((r.log || []).map((l) => ({ body: l }))));
+  }
+  const steps = (d.steps || []).slice().reverse();
+  detailRows(body, `최근 단계 ${steps.length}개 (최신이 위, 전체 ${show(d.steps_total)}) - 명령 출력은 싣지 않습니다`,
+    steps.map((x) => (x.kind === 'tool'
+      ? { cls: 'is-tool', head: x.desc || '명령', body: x.text }
+      : { cls: 'is-text', head: '관리자', body: x.text })));
+  detailRows(body, '이 라운드의 그래프', (d.graphs || []).map((g) => ({
+    head: show(g.id) + ' · ' + fmtGraphPct(g.percent),
+    body: plainText(g.request) + ' - ' + Object.entries(g.counts || {}).map(([k, v]) => `${k} ${v}`).join(', '),
+  })));
+  detailRows(body, '이 라운드의 기록 (aimem.db events, 최신이 위)', (d.events || []).map((e) => ({
+    head: `${fmtDateTime(e.at)} · ${show(e.kind)} · REV ${show(e.rev)}`,
+    body: show(e.actor) + ': ' + show(e.body),
+  })));
+}
+
 function renderManager(data) {
   const box = $('manager-card');
   if (!box) return;
@@ -873,10 +968,39 @@ function renderManager(data) {
   head.appendChild(label);
   box.appendChild(head);
 
+  const detailBtn = document.createElement('button');
+  detailBtn.type = 'button';
+  detailBtn.className = 'manager-detail-btn';
+  detailBtn.textContent = '상세 보기';
+  detailBtn.addEventListener('click', () => openManagerDetail(cur));
+  head.appendChild(detailBtn);
+
   const what = document.createElement('div');
   what.className = 'manager-what';
-  what.textContent = isRun ? managerActivity(data) : '실행 중인 관리자 없음 - 함대는 다음 라운드 대기(정지) 상태입니다';
+  const relay = (data.fleet || {}).relay;
+  if (!isRun && relay && ['launching', 'relaying'].includes(relay.state)) {
+    what.textContent = `라운드 R${relay.round} 전달 중 - 클로가 관리자를 띄우는 중입니다` + (relay.nudged ? ' (재촉 1회)' : '');
+  } else {
+    what.textContent = isRun ? managerActivity(data) : '실행 중인 관리자 없음 - 함대는 다음 라운드 대기(정지) 상태입니다';
+  }
   box.appendChild(what);
+
+  if (isRun) {
+    const act = document.createElement('div');
+    act.className = 'manager-step';
+    const la = Date.parse(String(cur.last_activity || ''));
+    const idle = Number.isFinite(la) ? (Date.now() - la) / 1000 : null;
+    const parts = [];
+    if (idle !== null) parts.push('마지막 활동 ' + fmtElapsed(idle) + ' 전');
+    if (cur.steps) parts.push(`${cur.steps}단계`);
+    if (cur.last_step) parts.push('최근: ' + cur.last_step);
+    act.textContent = parts.join(' · ');
+    if (idle !== null && idle > MANAGER_IDLE_WARN_SEC) {
+      act.classList.add('is-warn');
+      act.title = '관리자 기록이 오래 바뀌지 않았습니다. 긴 작업자 대기(fleet_graph run)일 수도, 멈춘 것일 수도 있습니다 - 상세 보기로 확인';
+    }
+    box.appendChild(act);
+  }
 
   const meta = document.createElement('div');
   meta.className = 'manager-meta';

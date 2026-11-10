@@ -1195,6 +1195,14 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .manager-what { font-size: 14px; color: var(--st-ink); }
 .manager-meta { font-size: var(--st-fs-sm); color: var(--st-ink-muted); }
 .run-line { display: inline-flex; gap: 4px; align-items: center; }
+.manager-detail-btn { margin-left: auto; font-size: var(--st-fs-sm); padding: 3px 12px; }
+.manager-step { font-size: var(--st-fs-sm); color: var(--st-ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.manager-step.is-warn { color: var(--st-warn-text); font-weight: var(--st-fw-medium); }
+.mgr-list { margin: 0; padding-left: var(--st-s-5); display: grid; gap: 6px; font-size: var(--st-fs-sm); }
+.mgr-list li { overflow-wrap: anywhere; }
+.mgr-head { display: inline-block; margin-right: 6px; color: var(--st-ink-muted); font-weight: var(--st-fw-medium); }
+.mgr-list .is-tool .mgr-body { font-family: var(--st-font-mono); font-size: 12.5px; white-space: pre-wrap; }
+.mgr-list .is-text .mgr-body { white-space: pre-wrap; color: var(--st-ink); }
 
 /* 넓은 화면이 아니면 사이드바를 아래로 */
 @media (max-width: 1180px) {
