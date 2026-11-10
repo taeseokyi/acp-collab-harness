@@ -1232,3 +1232,6 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
   .graph-block, .req-block { padding: var(--st-s-3); }
   .req-top { flex-wrap: wrap; }
 }
+
+/* 상세 패널 안의 동작 줄 (태스크 → 요청, 큐 → 태스크) - 2026-11-10 */
+.detail-actions { margin: 8px 0 4px; }

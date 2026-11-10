@@ -153,6 +153,7 @@ const state = {
   detailSeq: 0,
   detailReturnFocus: null,
   runsShowAll: false,
+  logShowAll: false,
   boardFilter: 'open',
   graphOpen: new Set(),
   graphKnown: new Set(),
@@ -276,21 +277,24 @@ function newTable(headers, rows, rowClasses, opts = {}) {
     });
     tbody.appendChild(trb);
     const runId = opts.rowRunIds && opts.rowRunIds[rowIndex];
-    if (runId) makeRowOpenable(trb, runId);
+    const opener = opts.rowOpen && opts.rowOpen[rowIndex];   // {fn, title} - 실행 상세가 아닌 다른 상세
+    if (opener) makeRowOpenable(trb, null, opener);
+    else if (runId) makeRowOpenable(trb, runId);
   });
   table.appendChild(tbody);
   return table;
 }
 
-function makeRowOpenable(tr, runId) {
+function makeRowOpenable(tr, runId, opener) {
+  const open = opener ? opener.fn : () => openDetail(runId);
   tr.classList.add('clickable-row');
   tr.tabIndex = 0;
-  tr.title = '실행 상세 보기: ' + runId;
-  tr.addEventListener('click', () => openDetail(runId));
+  tr.title = opener ? (opener.title || '상세 보기') : '실행 상세 보기: ' + runId;
+  tr.addEventListener('click', open);
   tr.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      openDetail(runId);
+      open();
     }
   });
 }
@@ -370,6 +374,203 @@ async function fetchRequestFull(req) {
   const body = await res.json().catch(() => ({}));
   if (!res.ok || !body.ok) throw new Error(body.error || ('HTTP ' + res.status));
   return Object.assign({}, req, { title: body.title, detail: body.detail, detail_truncated: false });
+}
+
+// ---- 상세 패널 공통 (2026-11-10: 탭마다 상세보기가 빠진 곳을 메움)
+// 하나의 오버레이(`detail-overlay`)를 모든 상세가 같이 쓴다 - 포커스 저장·가둠·Esc 는 bindDetailControls 가 맡는다.
+function openPanel(title, build) {
+  state.detailReturnFocus = document.activeElement;
+  const overlay = bindDetailControls();
+  state.detailOpen = true;
+  state.detailSeq += 1;   // 늦게 오는 /api/runs 응답이 이 내용을 덮지 못하게
+  const label = $('detail-label');
+  if (label) label.textContent = title;
+  const body = $('detail-body');
+  body.textContent = '';
+  build(body);
+  overlay.hidden = false;
+  const close = $('detail-close');
+  if (close) close.focus();
+}
+
+function addTextSection(parent, title, text) {
+  const section = document.createElement('section');
+  section.className = 'detail-section';
+  const h3 = document.createElement('h3');
+  h3.textContent = title;
+  section.appendChild(h3);
+  const div = document.createElement('div');
+  div.className = 'req-detail';            // 입력한 줄바꿈 그대로(pre-wrap), 마크업 해석 없음
+  div.textContent = show(text, '없음');
+  section.appendChild(div);
+  parent.appendChild(section);
+}
+
+function linkButton(text, onClick) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn-link';
+  btn.textContent = text;
+  btn.addEventListener('click', onClick);
+  return btn;
+}
+
+function runsForTask(taskId, data) {
+  const prefix = String(taskId) + '-';
+  const out = (Array.isArray(data.runs) ? data.runs : [])
+    .filter((r) => r && String(r.id || '').indexOf(prefix) === 0);
+  out.sort((a, b) => String(b.started || '').localeCompare(String(a.started || '')));
+  return out;
+}
+
+function findSubtask(taskId, data) {
+  for (const req of (Array.isArray(data.requests) ? data.requests : [])) {
+    for (const st of (req && Array.isArray(req.subtasks) ? req.subtasks : [])) {
+      if (st && st.id === taskId) return { req, st };
+    }
+  }
+  return null;
+}
+
+function findGraphNode(taskId, data) {
+  for (const g of (Array.isArray(data.graphs) ? data.graphs : [])) {
+    for (const n of (g && Array.isArray(g.nodes) ? g.nodes : [])) {
+      if (n && n.id === taskId) return { g, n };
+    }
+  }
+  return null;
+}
+
+function taskKnown(taskId, data) {
+  if (!taskId || !data) return false;
+  if ((Array.isArray(data.board) ? data.board : []).some((b) => b && b.id === taskId)) return true;
+  if (findSubtask(taskId, data)) return true;
+  return runsForTask(taskId, data).length > 0;
+}
+
+function runsTable(runs) {
+  const rows = runs.map((r) => {
+    const rc = document.createElement('span');
+    rc.textContent = (r.rc === null || r.rc === undefined) ? '-' : String(r.rc);
+    if (r.rc !== null && r.rc !== undefined && Number(r.rc) !== 0) rc.className = 'warn-text';
+    return [mono(r.id), show(r.slot), statusBadge(r.state), reportBadge(r.report_head), rc,
+      fmtElapsed(r.elapsed_sec), fmtDateTime(r.started)];
+  });
+  return newTable(['run id', '슬롯', '상태', '보고', 'rc', '경과', '시작'], rows, null, {
+    widths: ['196px', '52px', '80px', '108px', '40px', '80px', null],
+    num: [4, 5], center: [2, 3],
+    rowRunIds: runs.map((r) => r.id),
+  });
+}
+
+// 태스크 상세: 보드 행 + 요청 안의 서브태스크 + 그래프 노드 + 이 태스크로 뜬 **모든** 실행(재시도 포함).
+// 실행이 없는 태스크(관리자 직접분·미착수)도 열린다 - 전에는 그런 행이 아무 반응도 없었다.
+function openTaskDetail(taskId, data) {
+  data = data || state.data;
+  if (!taskId || !data) return;
+  const b = (Array.isArray(data.board) ? data.board : []).find((x) => x && x.id === taskId) || null;
+  const sub = findSubtask(taskId, data);
+  const gn = findGraphNode(taskId, data);
+  const runs = runsForTask(taskId, data);
+  if (sub && sub.st.run_id && !runs.some((r) => r.id === sub.st.run_id)) {
+    const r = (Array.isArray(data.runs) ? data.runs : []).find((x) => x && x.id === sub.st.run_id);
+    if (r) runs.push(r);
+  }
+  const title = b ? b.task : (sub ? sub.st.title : (gn ? gn.n.title : ''));
+  openPanel('태스크 ' + show(taskId, ''), (body) => {
+    const meta = document.createElement('div');
+    meta.className = 'detail-meta';
+    meta.appendChild(detailMetaItem('id', mono(taskId)));
+    meta.appendChild(detailMetaItem('작업', plainText(title) || '-'));
+    meta.appendChild(detailMetaItem('슬롯', show(b ? b.slot : (sub ? sub.st.slot : (gn ? gn.n.slot : null)))));
+    if (b) {
+      meta.appendChild(detailMetaItem('보드 상태', statusBadge(b.status)));
+      meta.appendChild(detailMetaItem('핸드오프', show(b.handoff)));
+      meta.appendChild(detailMetaItem('산출물', plainText(b.artifact) || '-'));
+    } else {
+      meta.appendChild(detailMetaItem('보드 상태', '보드에 없음'));
+    }
+    if (sub) {
+      meta.appendChild(detailMetaItem('요청', show(sub.req.title)));
+      meta.appendChild(detailMetaItem('요청 내 상태', statusBadge(sub.st.status)));
+      if (sub.st.harness) meta.appendChild(detailMetaItem('하네스', show(sub.st.harness)));
+    }
+    if (gn) {
+      meta.appendChild(detailMetaItem('그래프', show(gn.g.id) + ' · ' + show(gn.n.status)
+        + ' · 시도 ' + show(gn.n.attempts) + '/' + show(gn.n.max_attempts)));
+      if (Array.isArray(gn.n.deps) && gn.n.deps.length) meta.appendChild(detailMetaItem('의존', gn.n.deps.join(', ')));
+    }
+    body.appendChild(meta);
+    if (sub) {
+      const row = document.createElement('div');
+      row.className = 'detail-actions';
+      row.appendChild(linkButton('요청 상세 보기 → ' + show(sub.req.id, ''), () => openRequestDetail(sub.req)));
+      body.appendChild(row);
+    }
+    const section = document.createElement('section');
+    section.className = 'detail-section';
+    const h3 = document.createElement('h3');
+    h3.textContent = '실행 기록 ' + runs.length + '건' + (runs.length ? ' · 행을 누르면 실행 상세' : '');
+    section.appendChild(h3);
+    if (!runs.length) {
+      section.appendChild(emptyP('이 태스크로 뜬 작업자 실행이 없습니다 - 관리자 직접분이거나 아직 미착수'));
+    } else {
+      const tw = document.createElement('div');
+      tw.className = 'tablewrap';
+      tw.appendChild(runsTable(runs));
+      section.appendChild(tw);
+    }
+    body.appendChild(section);
+  });
+}
+
+function openQueueDetail(q, data) {
+  data = data || state.data;
+  openPanel('대기 큐 ' + show(q.order, ''), (body) => {
+    const meta = document.createElement('div');
+    meta.className = 'detail-meta';
+    meta.appendChild(detailMetaItem('순서', show(q.order)));
+    meta.appendChild(detailMetaItem('슬롯', show(q.slots)));
+    meta.appendChild(detailMetaItem('핸드오프', show(q.handoff)));
+    body.appendChild(meta);
+    const ho = String(q.handoff || '').trim();
+    if (ho && data && taskKnown(ho, data)) {
+      const row = document.createElement('div');
+      row.className = 'detail-actions';
+      row.appendChild(linkButton('태스크 상세 보기 → ' + ho, () => openTaskDetail(ho, data)));
+      body.appendChild(row);
+    }
+    addTextSection(body, '작업', q.task);
+    addTextSection(body, '비고', q.note);
+  });
+}
+
+function openLogDetail(entry) {
+  openPanel('핸드오프 로그 ' + show(entry.when, ''), (body) => {
+    addTextSection(body, '내용', entry.text);
+  });
+}
+
+function openManagerList(sessions) {
+  openPanel('관리자 세션 ' + sessions.length + '개', (body) => {
+    const rows = sessions.map((s) => [
+      show(s.label),
+      s.status === 'running' ? badge('실행 중', 'running')
+        : badge(s.status === 'done' ? '끝남' : show(s.status), s.status === 'failed' ? 'blocked' : 'neutral'),
+      fmtDateTime(s.started),
+      fmtDateTime(s.updated),
+      (s.record_kb === null || s.record_kb === undefined) ? '-'
+        : (s.record_kb >= 1024 ? (s.record_kb / 1024).toFixed(1) + 'MB' : s.record_kb + 'KB'),
+    ]);
+    const tw = document.createElement('div');
+    tw.className = 'tablewrap';
+    tw.appendChild(newTable(['라벨', '상태', '시작', '갱신', '기록'], rows, null, {
+      widths: [null, '80px', '150px', '150px', '70px'],
+      center: [1], ellipsis: [0],
+      rowOpen: sessions.map((s) => ({ fn: () => openManagerDetail(s), title: '관리자 세션 상세: ' + show(s.label, '') })),
+    }));
+    body.appendChild(tw);
+  });
 }
 
 function openRequestDetail(req) {
@@ -538,6 +739,8 @@ async function openDetail(runId) {
   overlay.hidden = false;
   const close = $('detail-close');
   if (close) close.focus();
+  const titleEl = $('detail-label');
+  if (titleEl) titleEl.textContent = '실행 상세 ' + show(runId, '');   // 다른 상세(태스크·큐)에서 넘어와도 제목이 바뀐다
   body.textContent = '가져오는 중... (' + runId + ')';
 
   let res;
@@ -1019,7 +1222,22 @@ function renderManager(data) {
   if (m.error) parts.push('갱신 실패(지난 값)');
   meta.textContent = parts.join(' · ');
   meta.title = sessions.map((s) => `${s.label} - ${s.status} - ${fmtDateTime(s.started)}`).join('\n');
+  if (sessions.length > 1) {
+    meta.appendChild(document.createTextNode(' · '));
+    meta.appendChild(linkButton('세션 목록', () => openManagerList(sessions)));
+  }
   box.appendChild(meta);
+}
+
+function latestBySlot(data) {
+  const map = new Map();
+  for (const r of (Array.isArray(data.runs) ? data.runs : [])) {
+    if (r && r.slot) {
+      const prev = map.get(r.slot);
+      if (!prev || String(r.started || '') > String(prev.started || '')) map.set(r.slot, r);
+    }
+  }
+  return map;
 }
 
 function runningBySlot(data) {
@@ -1042,6 +1260,7 @@ function renderSlots(data) {
     return;
   }
   const running = runningBySlot(data);
+  const latest = latestBySlot(data);
   const runIds = [];
   const rows = slots.map((s) => {
     const modelCell = document.createElement('div');
@@ -1058,7 +1277,8 @@ function renderSlots(data) {
       modelCell.appendChild(source);
     }
     const r = running.get(s.slot);
-    runIds.push(r ? r.id : null);
+    const last = latest.get(s.slot);
+    runIds.push(r ? r.id : (last ? last.id : null));   // 대기 중이면 마지막 실행 상세로
     const now = document.createElement('div');
     now.className = 'slot-state';
     now.appendChild(r ? badge('실행 중', 'running') : badge('대기', 'idle'));
@@ -1227,9 +1447,8 @@ function renderBoard(data) {
     widths: ['76px', '380px', '76px', '100px', '170px', null],
     center: [3],
     ellipsis: [1, 5],
-    rowRunIds,
+    rowOpen: board.map((b) => ({ fn: () => openTaskDetail(b.id, state.data), title: '태스크 상세 보기: ' + show(b.id, '') })),
   });
-  markUnopenableRows(table, rowRunIds);
   wrap.appendChild(table);
 }
 
@@ -1252,6 +1471,7 @@ function renderQueue(data) {
     widths: ['56px', '420px', '96px', '96px', null],
     num: [0],
     ellipsis: [1, 4],
+    rowOpen: queue.map((q) => ({ fn: () => openQueueDetail(q, state.data), title: '큐 항목 전문 보기' })),
   }));
 }
 
@@ -1425,6 +1645,8 @@ function graphBlock(g) {
         mono(n.last_run),
       ]);
       const runIds = nodes.map((n) => n.last_run || null);
+      const openers = nodes.map((n) => (taskKnown(n.id, state.data)
+        ? { fn: () => openTaskDetail(n.id, state.data), title: '태스크 상세 보기: ' + show(n.id, '') } : null));
       const tw = document.createElement('div');
       tw.className = 'tablewrap';
       const table = newTable(['노드', '제목', '슬롯', '상태', '의존', '시도', '마지막 실행'], rows, null, {
@@ -1433,8 +1655,9 @@ function graphBlock(g) {
         center: [3],
         ellipsis: [1, 4, 6],
         rowRunIds: runIds,
+        rowOpen: openers,
       });
-      markUnopenableRows(table, runIds);
+      markUnopenableRows(table, runIds.map((id, i) => id || (openers[i] ? 'task' : null)));
       tw.appendChild(table);
       block.appendChild(tw);
     }
@@ -1750,10 +1973,9 @@ function renderRequests(data) {
           num: [5],
           center: [4],
           ellipsis: [1, 6],
-          rowRunIds: subRunIds,
+          rowOpen: subtasks.map((st) => ({ fn: () => openTaskDetail(st.id, state.data), title: '태스크 상세 보기: ' + show(st.id, '') })),
         },
       );
-      markUnopenableRows(subTable, subRunIds);
       const tw = document.createElement('div');
       tw.className = 'tablewrap';
       tw.appendChild(subTable);
@@ -1762,6 +1984,32 @@ function renderRequests(data) {
     article.appendChild(body);
     list.appendChild(article);
   });
+}
+
+const LOG_PAGE = 10;
+
+function renderLog(data) {
+  const wrap = $('log-table-wrap');
+  const more = $('log-more');
+  if (!wrap) return;
+  wrap.textContent = '';
+  if (more) more.textContent = '';
+  const all = Array.isArray(data.log) ? data.log : [];   // reader 가 최신 먼저로 준다
+  if (!all.length) {
+    wrap.appendChild(emptyP('핸드오프 로그 없음'));
+    return;
+  }
+  const log = state.logShowAll ? all : all.slice(0, LOG_PAGE);
+  const rows = log.map((e) => [show(e.when), plainText(e.text) || '-']);
+  wrap.appendChild(newTable(['시각', '내용'], rows, null, {
+    widths: ['130px', null],
+    ellipsis: [1],
+    rowOpen: log.map((e) => ({ fn: () => openLogDetail(e), title: '로그 전문 보기' })),
+  }));
+  if (more && all.length > LOG_PAGE) {
+    more.appendChild(linkButton(state.logShowAll ? `최근 ${LOG_PAGE}건만 보기` : `이전 ${all.length - LOG_PAGE}건 더 보기 (전체 ${all.length}건)`,
+      () => { state.logShowAll = !state.logShowAll; if (state.data) renderLog(state.data); }));
+  }
 }
 
 function renderErrors(data) {
@@ -1821,6 +2069,7 @@ function renderAll(data) {
   renderRuns(data);
   renderBoard(data);
   renderQueue(data);
+  renderLog(data);
   renderGraphs(data);
   renderRequests(data);
 }
