@@ -1,0 +1,6 @@
+G-003: 60.2%  남은 ETA 244s  상태 {'done': 2, 'failed': 2, 'blocked': 1}
+  T-069  done     S1  시도 2  run T-069-S1-a2-212247  rc 0/0  reader.collect() 를 DB 정본으로
+  T-074  done     S3  시도 1  run T-074-S3-a1-212016  rc 0/0  공개면 2차 프런트 (토큰 열 제거)
+  T-073  failed   S4  시도 2  run T-073-S4-a2-212535  rc 0/1  2단계 계약 테스트 (reader <- DB)
+  T-071  failed   S1  시도 2  run T-071-S1-a2-212719  rc 0/1  aimem_board.py 를 aimem_db 위임으로
+  T-076  blocked  S4  시도 0  run -  rc -/-  공개면 2차 계약 테스트

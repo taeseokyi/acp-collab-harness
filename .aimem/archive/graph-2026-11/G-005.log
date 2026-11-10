@@ -1,0 +1,12 @@
+2026-11-10T09:57:53 created 5 nodes, request='R6 2파: fleet_graph 검수 결함 수정+테스트 · Q-549a 탭 UI · 요청 본문 줄바꿈/전체보기'
+2026-11-10T09:57:56 spawn T-087 attempt 1 -> T-087-S1-a1-095756 (S1)
+2026-11-10T09:57:56 spawn T-089 attempt 1 -> T-089-S3-a1-095756 (S3)
+2026-11-10T10:01:29 done T-087 (T-087-S1-a1-095756)
+2026-11-10T10:01:29 spawn T-088 attempt 1 -> T-088-S2-a1-100129 (S2)
+2026-11-10T10:01:29 spawn T-090 attempt 1 -> T-090-S4-a1-100129 (S4)
+2026-11-10T10:04:01 retry-queued T-089 rc=0 verify_rc=1
+2026-11-10T10:04:02 spawn T-089 attempt 2 -> T-089-S3-a2-100401 (S3)
+2026-11-10T10:05:02 done T-090 (T-090-S4-a1-100129)
+2026-11-10T10:11:32 FAILED T-089 after 2 attempts
+2026-11-10T10:11:32 blocked T-091 (의존 실패)
+2026-11-10T10:11:47 BLOCKED T-088 - 상태: BLOCKED

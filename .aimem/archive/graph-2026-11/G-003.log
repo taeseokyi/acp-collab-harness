@@ -1,0 +1,16 @@
+2026-11-09T21:20:10 created 5 nodes, request='DB 2단계 마무리 + 공개면 2차 (R5)'
+2026-11-09T21:20:16 spawn T-069 attempt 1 -> T-069-S1-a1-212016 (S1)
+2026-11-09T21:20:16 spawn T-074 attempt 1 -> T-074-S3-a1-212016 (S3)
+2026-11-09T21:22:46 retry-queued T-069 rc=0 verify_rc=1
+2026-11-09T21:22:49 spawn T-069 attempt 2 -> T-069-S1-a2-212247 (S1)
+2026-11-09T21:23:02 done T-074 (T-074-S3-a1-212016)
+2026-11-09T21:24:02 done T-069 (T-069-S1-a2-212247)
+2026-11-09T21:24:02 spawn T-073 attempt 1 -> T-073-S4-a1-212402 (S4)
+2026-11-09T21:24:02 spawn T-071 attempt 1 -> T-071-S1-a1-212402 (S1)
+2026-11-09T21:25:35 retry-queued T-073 rc=0 verify_rc=1
+2026-11-09T21:25:35 spawn T-073 attempt 2 -> T-073-S4-a2-212535 (S4)
+2026-11-09T21:26:29 FAILED T-073 after 2 attempts
+2026-11-09T21:26:29 blocked T-076 (의존 실패)
+2026-11-09T21:27:19 retry-queued T-071 rc=0 verify_rc=1
+2026-11-09T21:27:19 spawn T-071 attempt 2 -> T-071-S1-a2-212719 (S1)
+2026-11-09T21:29:12 FAILED T-071 after 2 attempts
