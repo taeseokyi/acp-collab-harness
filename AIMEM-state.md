@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T19:49:17 / REV 140
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T20:01:26 / REV 141
 
 ## 2. 세션 명부
 
@@ -18,6 +18,7 @@
 
 ## 4. 이벤트 로그 (최신 50)
 
+- `2026-11-10 20:01` Claude Code [handoff] REV 141: **REV 141. 준비 점검 펼침이 새로고침에 닫히던 것.** 태석님 지시. 함대 탭 '준비 점검' 목록은 5초마다 다시 그려지며 펼친 상태를 잃었다 - 펼침을 `state.expanded` 에 기억하고, '준비' 를 방금 눌렀을 때만 한 번 자동으로 펼친다(그 뒤 사람이 접으면 접힌 채). 서비스 워커 캐시 v3. 바뀐 파일: `tools/aimem_monitor/static/{app.js,sw.js}`. 브라우저로 자동 새로고침 두 번 넘게 열려 있음을 확인.
 - `2026-11-10 19:49` Claude Code [handoff] REV 140: **REV 140. 웹에서 라운드 할 일을 넣는 길이 보이게.** 태석님 지시(작업 요청 폼이 안 보인다). 함대 탭 '라운드 실행' 아래에 지금 쌓인 NEW 요청 건수와 **'할 일 쓰기'** 버튼(작업 요청 폼으로 이동·제목 칸 포커스), 요청 0건으로 라운드를 누르면 확인 창이 '점검만 하고 끝난다' 고 알림, 폼 제목에 '다음 라운드가 할 일' 설명. 앞선 안내 문구의 '요청 탭' 은 틀린 말이었다(요청 트리 탭엔 입력 칸이 없다). 서비스 워커 캐시 v2. 바뀐 파일: `tools/aimem_monitor/static/{a
 - `2026-11-10 18:51` Claude Code [handoff] REV 139: **REV 139. 라운드 내용은 웹 요청으로, 결과물은 라운드 작업 공간으로.** 태석님 지시. (1) 표준 브리프 `.aimem/briefs/manager-round-standard.md`: 그 라운드만의 확정 브리프가 없으면 '라운드 실행' 이 이 파일로 다음 번호 라운드를 띄운다 - 할 일은 NEW 요청 전부, 요청도 큐도 비었으면 보고만 하고 끝. 브리프를 매번 쓰지 않는다. (2) 라운드 작업 공간 `rounds/R<N>/`(git 포함): 띄울 때 만들고 보낸 브리프를 `brief.md` 로 남긴다. 종료 보고는 `RE
 - `2026-11-10T18:50:59` Claude Code [ownership] REV 138: rounds/** -> 관리자
@@ -67,7 +68,6 @@
 - `2026-11-09 17:35` Manager (R2) [handoff] REV 111: **REV 111 (1/2). First round run as a task DAG + two web requests split.** Graph `R-002`, 6 nodes (N1 ETA overrun / N2 linter board slots / N3 light mode + readability / N4 test reinforcement / N5 cross-review / N6 Strata reskin). **When a dependency clears, the next node starts without a Manager tu
 - `2026-11-09 17:10` Manager [handoff] REV 110: **REV 110. Fleet monitoring web UI, first pass (Taeseok's order 2026-11-09).** First live round under the Claude ACP Manager regime. 7 rows registered in `Section 6` (`tools/aimem_monitor/**`, `tests/test_aimem_monitor*.py`, `.aimem/requests/**`; approved by Taeseok, `6.1`). **The Manager pinned the
 - `2026-11-09 16:40` Manager: Claude Code (Taeseok's instruction 2026-11-09, not a Manager session) [handoff] REV 109: **REV 109. Manager becomes an Opus 5.5 Claude ACP session; workers become one-shot harness CLI processes.** (1) Header, `0.5`, `Section 2`, `Section 5`, `Section 7`, `8.0` revised - the Manager is identified by session-key prefix `agent:claude:acp:` (linter pin replaced; `tools/aimem_lint.py` and te
-- `2026-11-09 15:00` Manager: Claude Code (Taeseok's instruction 2026-11-09, not a Manager session) [handoff] REV 108: **REV 108. Cleared up the ACP child model-label confusion.** In the high-five check `sessions_list.model` showed `kistillm` for all three (S1 actually ran on sonnet-5), so Clo and Gureum asked back. (1) New `8.0` item: "the source of truth for the running model is the harness configuration; `session
 
 ## 4.5 대기 큐
 

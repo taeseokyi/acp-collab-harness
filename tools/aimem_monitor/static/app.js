@@ -1276,7 +1276,17 @@ function renderFleetControl(data) {
   if (prep && Array.isArray(prep.checks)) {
     const det = document.createElement('details');
     det.className = 'fold-group';
-    if (state.fleetMsg && state.fleetMsg.act === 'prepare') det.open = true;
+    // 5초마다 다시 그리므로 펼친 상태를 기억한다 (2026-11-10 태석님: 펼치면 새로고침에 닫혀 볼 수가 없다).
+    // '준비' 를 방금 눌렀으면 결과를 보이려고 한 번 펼친다 - 그 뒤 사람이 접으면 접힌 채 둔다.
+    if (state.fleetMsg && state.fleetMsg.act === 'prepare' && state.prepShownFor !== state.fleetMsg) {
+      state.prepShownFor = state.fleetMsg;
+      state.expanded.add('fleet-prepare');
+    }
+    det.open = state.expanded.has('fleet-prepare');
+    det.addEventListener('toggle', () => {
+      if (det.open) state.expanded.add('fleet-prepare');
+      else state.expanded.delete('fleet-prepare');
+    });
     const sum = document.createElement('summary');
     const failed = prep.checks.filter((c) => !c.ok);
     sum.textContent = `준비 점검 ${fmtDateTime(prep.at)} - ${prep.ok ? '통과' : '막힘'}` + (failed.length ? ` (${failed.length}건 미통과)` : '');
