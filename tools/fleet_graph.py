@@ -178,6 +178,9 @@ def validate_graph(g, spawnable_only=False):
                     problems.append(f"{n['id']}: {w} 는 {n['slot']} 소유가 아님 (6절)")
         if not (n.get("task") or "").strip():
             problems.append(f"{n['id']}: task 본문이 비어 있음")
+        pr = n.get("project")
+        if pr not in (None, "") and not (isinstance(pr, str) and re.match(fleet.PROJECT_NAME_RE, pr)):
+            problems.append(f"{n['id']}: project {pr!r} 는 프로젝트 이름이 아님 (`projects/` 아래 폴더 이름 하나 - 한글·영문·숫자·`-`·`_`, 40자 이하)")
     # 사이클 검사 (Kahn)
     indeg = {k: 0 for k in nodes}
     for n in g["nodes"]:

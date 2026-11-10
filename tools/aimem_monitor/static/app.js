@@ -1227,6 +1227,17 @@ function renderFleetControl(data) {
 
   const hint = document.createElement('div');
   hint.className = 'fc-hint';
+  {
+    // 작업 요청 폼의 프로젝트 자동완성 - 브리프 종류와 상관없이 채운다
+    const dl = document.getElementById('project-list');
+    if (dl) {
+      const names = (data && Array.isArray(data.projects) ? data.projects : []).map((x) => x && x.name).filter(Boolean);
+      if (dl.dataset.names !== names.join('|')) {     // 바뀔 때만 다시 채운다 (입력 중 목록이 깜박이지 않게)
+        dl.dataset.names = names.join('|');
+        dl.replaceChildren(...names.map((n) => { const o = document.createElement('option'); o.value = n; return o; }));
+      }
+    }
+  }
   if (brief.file && brief.standard) {
     // 라운드가 할 일 = '작업 요청' 폼으로 넣은 NEW 요청. 폼은 넓은 화면에선 오른쪽, 좁은 화면에선 맨 아래라
     // 잘 안 보인다(2026-11-10 태석님) - 여기서 바로 가는 버튼과 지금 쌓인 건수를 보인다.
@@ -1244,18 +1255,16 @@ function renderFleetControl(data) {
     go.title = "'작업 요청' 폼으로 갑니다. 제목과 본문을 적고 '요청 보내기' 를 누른 뒤 라운드를 실행하십시오";
     go.addEventListener('click', focusRequestForm);
     hint.appendChild(go);
-    const tail = document.createElement('span');
+    // 경로는 둘째 줄로 (REV 145) - 한 문장에 건수·버튼·경로가 섞여 읽기 어려웠다
     const projs = Array.from(new Set(fresh.map((q) => q.project).filter(Boolean)));
-    tail.textContent = (projs.length ? ` · 결과물 ${projs.map((n) => `projects/${n}/`).join(', ')}` : '')
-      + (brief.workspace ? ` · 라운드 보고 ${brief.workspace}/` : '');
-    hint.appendChild(tail);
-    const dl = document.getElementById('project-list');
-    if (dl) {
-      const names = (Array.isArray(data.projects) ? data.projects : []).map((x) => x && x.name).filter(Boolean);
-      if (dl.dataset.names !== names.join('|')) {     // 바뀔 때만 다시 채운다 (입력 중 목록이 깜박이지 않게)
-        dl.dataset.names = names.join('|');
-        dl.replaceChildren(...names.map((n) => { const o = document.createElement('option'); o.value = n; return o; }));
-      }
+    const where = [];
+    if (projs.length) where.push(`결과물 ${projs.map((n) => `projects/${n}/`).join(', ')}`);
+    if (brief.workspace) where.push(`라운드 보고 ${brief.workspace}/`);
+    if (where.length) {
+      const tail = document.createElement('div');
+      tail.className = 'fc-hint-where';
+      tail.textContent = where.join(' · ');
+      hint.appendChild(tail);
     }
   } else {
     hint.textContent = brief.file
@@ -1297,7 +1306,14 @@ function renderFleetControl(data) {
     });
     const sum = document.createElement('summary');
     const failed = prep.checks.filter((c) => !c.ok);
-    sum.textContent = `준비 점검 ${fmtDateTime(prep.at)} - ${prep.ok ? '통과' : '막힘'}` + (failed.length ? ` (${failed.length}건 미통과)` : '');
+    // 준비 점검은 누른 순간의 결과다. 오래된 결과가 '막힘' 으로 계속 떠 있으면 지금 상태로 읽힌다 (REV 145)
+    const ageMin = (Date.now() - Date.parse(prep.at)) / 60000;
+    const old = Number.isFinite(ageMin) && ageMin > 30;
+    const ageText = !old ? '' : (ageMin < 90 ? `${Math.round(ageMin)}분 전` : (ageMin < 48 * 60 ? `${Math.round(ageMin / 60)}시간 전` : `${Math.round(ageMin / 1440)}일 전`));
+    sum.textContent = (old ? '지난 준비 점검 ' : '준비 점검 ') + `${fmtDateTime(prep.at)} - ${prep.ok ? '통과' : '막힘'}`
+      + (failed.length ? ` (${failed.length}건 미통과)` : '')
+      + (old ? ` · ${ageText} 결과라 지금 상태가 아닙니다 - '준비' 를 누르면 다시 점검합니다` : '');
+    if (old) det.classList.add('fc-prep-old');
     det.appendChild(sum);
     const ul = document.createElement('ul');
     ul.className = 'fc-checks';
@@ -1711,7 +1727,8 @@ function renderSlots(data) {
   });
   const rowClasses = runIds.map((id) => (id ? 'row-running' : ''));
   wrap.appendChild(newTable(['슬롯', '지금', '하네스', '모델', '역할', '비고', '관리'], rows, rowClasses, {
-    widths: ['64px', '230px', '100px', '250px', '180px', null, '64px'],
+    className: 'slots-table',
+    widths: ['52px', '160px', '92px', '230px', '170px', null, '80px'],
     ellipsis: [3, 4, 5],
     rowRunIds: runIds,
   }));
@@ -1764,23 +1781,35 @@ function renderRuns(data) {
     proj.title = r.project
       ? `프로젝트 ${r.project} (projects/${r.project}/)` + (r.round ? ` · 라운드 R${r.round}` : '')
       : '프로젝트 없음 - 함대 자체의 일이거나 옛 기록' + (r.round ? ` · 라운드 R${r.round}` : '');
+    // 라벨 아래에 run id 를 작게 (REV 145) - run id 칸이 196px 를 차지해 '보고 머리말' 이 두 글자로 줄었다.
+    // 상태·보고를 앞에 둔다: 좁은 화면에서 가로로 밀지 않아도 보이게.
+    const what = document.createElement('div');
+    what.className = 'run-what';
+    const lab = document.createElement('span');
+    lab.className = 'run-label';
+    lab.textContent = show(r.label);
+    const rid = document.createElement('span');
+    rid.className = 'sub mono';
+    rid.textContent = show(r.id);
+    what.append(lab, rid);
+    what.title = `${show(r.label, '')}\n${show(r.id, '')}`;
     return [
       mono(r.slot),
-      proj,
-      mono(r.id),
-      show(r.label),
       statusBadge(r.state),
       reportBadge(r.report_head),
-      rc,
+      proj,
+      what,
       fmtElapsed(r.elapsed_sec),
+      rc,
       head,
     ];
   });
-  wrap.appendChild(newTable(['슬롯', '프로젝트', 'run id', '라벨', '상태', '보고', 'rc', '경과', '보고 머리말'], rows, rowClasses, {
-    widths: ['52px', '140px', '196px', '210px', '80px', '108px', '40px', '92px', null],
-    num: [6, 7],
-    center: [4, 5],
-    ellipsis: [1, 3, 8],
+  wrap.appendChild(newTable(['슬롯', '상태', '보고', '프로젝트', '작업 · run id', '경과', 'rc', '보고 머리말'], rows, rowClasses, {
+    className: 'runs-table',
+    widths: ['52px', '80px', '100px', '130px', '250px', '104px', '40px', null],
+    num: [5, 6],
+    center: [1, 2],
+    ellipsis: [3, 7],
     rowRunIds: runs.map((r) => r.id),
   }));
   if (more && all.length > RUNS_PAGE) {
@@ -2588,11 +2617,18 @@ function renderProjects(data) {
     bits.push(rounds.length
       ? `라운드 ${rounds.length}회 (${rounds.length > 6 ? 'R' + rounds[0] + ' … R' + rounds[rounds.length - 1] : rounds.map((n) => 'R' + n).join(' · ')})`
       : '아직 라운드 없음');
-    if (pr.last_round_at) bits.push(`마지막 R${pr.last_round} ${fmtDateTime(pr.last_round_at)}`);
-    if (pr.updated) bits.push(`기록 갱신 ${fmtDateTime(pr.updated)}`);
     meta.textContent = bits.join(' · ');
     head.appendChild(meta);
     item.appendChild(head);
+    const when = [];
+    if (pr.last_round_at) when.push(`마지막 라운드 R${pr.last_round} ${fmtDateTime(pr.last_round_at)}`);
+    if (pr.updated) when.push(`기록 갱신 ${fmtDateTime(pr.updated)}`);
+    if (when.length) {
+      const w = document.createElement('div');
+      w.className = 'proj-meta proj-when';
+      w.textContent = when.join(' · ');
+      item.appendChild(w);
+    }
 
     const prog = document.createElement('div');
     prog.className = 'req-progress';
@@ -2622,7 +2658,7 @@ function renderProjects(data) {
       det.appendChild(sum);
       const body = document.createElement('div');
       body.className = 'proj-summary';
-      body.textContent = pr.summary;
+      body.appendChild(renderMarkdown(pr.summary));   // 관리자가 쓰는 PROGRESS.md 는 마크다운 (HTML 비해석)
       det.appendChild(body);
       item.appendChild(det);
     } else {

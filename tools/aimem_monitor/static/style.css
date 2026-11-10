@@ -1300,6 +1300,18 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .proj-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--st-s-2) var(--st-s-3); }
 .proj-head h3 { margin: 0; font-size: var(--st-fs-md); }
 .proj-meta { font-size: 13px; color: var(--st-ink-muted); }
-.proj-summary { margin-top: var(--st-s-2); white-space: pre-wrap; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.proj-summary { margin-top: var(--st-s-2); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.proj-summary .md h1, .proj-summary .md h2, .proj-summary .md h3 { font-size: 14px; margin: 0 0 var(--st-s-1); }
+.proj-summary .md > :last-child { margin-bottom: 0; }
+.proj-when { margin-top: 2px; }
 .proj-tag { font-size: 13px; font-weight: 500; }
 .proj-tag.none { color: var(--st-ink-muted); font-weight: 400; }
+
+/* REV 145 가독성: 실행 표는 라벨 아래 run id, 표에 최소 폭(유동 칸이 0 으로 줄지 않게), 안내문 둘째 줄 */
+.run-what { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.run-what > span { overflow: hidden; text-overflow: ellipsis; }
+.run-what .sub { color: var(--st-ink-muted); font-size: var(--st-fs-xs); }
+.runs-table { min-width: 900px; }
+.slots-table { min-width: 900px; }
+.fc-hint-where { margin-top: 2px; overflow-wrap: anywhere; }
+.fc-prep-old > summary { color: var(--st-ink-muted); }

@@ -224,6 +224,20 @@ class FleetCtlTest(unittest.TestCase):
         self.assertEqual((saved["round"], saved["at"], saved["projects"], saved["requests"]),
                          (7, "2026-11-10T20:00:00", ["알파"], ["Q-1", "Q-2", "Q-4"]))
 
+    def test_failed_launch_is_marked_in_round_record(self):
+        repo = self.tmp / "repo2"
+        (repo / ".aimem" / "requests").mkdir(parents=True)
+        (repo / ".aimem" / "requests" / "Q-1.json").write_text(json.dumps({"id": "Q-1", "project": "알파", "status": "NEW"}), encoding="utf-8")
+        with mock.patch.object(fleet, "ROOT", repo):
+            fleet_ctl._write_round_record(7, dt.datetime(2026, 11, 10, 20, 0), "manager-round-standard.md")
+            fleet_ctl._mark_round_record_failed(7)
+            fleet_ctl._mark_round_record_failed(8)      # 기록이 없어도 조용히
+        saved = json.loads((repo / "rounds" / "R7" / "round.json").read_text(encoding="utf-8"))
+        self.assertEqual((saved["state"], saved["projects"]), ("failed", ["알파"]))
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
+        from aimem_monitor import server
+        self.assertEqual(server._round_records(repo), {})          # 프로젝트 카드는 이 라운드를 세지 않는다
+
     def test_launch_round_requires_ready(self):
         fleet_ctl.set_mode("stopped", "test")
         out = fleet_ctl.launch_round("test")

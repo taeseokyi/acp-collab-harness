@@ -256,6 +256,19 @@ def _write_round_record(n, at, brief_name):
     return rec
 
 
+def _mark_round_record_failed(n):
+    """관리자가 뜨지 않은 라운드는 `round.json` 에 `state: failed` 를 적는다 - 프로젝트 카드가 '거친 라운드' 로 세지 않게."""
+    f = fleet.ROOT / round_workspace(n) / "round.json"
+    try:
+        rec = json.loads(f.read_text(encoding="utf-8"))
+        if not isinstance(rec, dict):
+            return
+        rec["state"] = "failed"
+        f.write_text(json.dumps(rec, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    except (OSError, ValueError):
+        pass
+
+
 def _round_brief_path(b, at):
     """보낼 브리프의 절대 경로. 라운드 작업 공간을 만들고, 브리프를 그 안의 `brief.md` 로 굳힌다.
 
@@ -629,6 +642,8 @@ def _relay_worker(n):
         while time.time() < deadline and not spawned():
             time.sleep(10)
     rec["state"] = "spawned" if spawned() else "failed"
+    if rec["state"] == "failed":
+        _mark_round_record_failed(n)
     note("관리자 세션 확인" if rec["state"] == "spawned" else "관리자 세션이 생기지 않았습니다 - 사람이 확인해야 합니다")
     return 0 if rec["state"] == "spawned" else 1
 

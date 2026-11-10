@@ -274,6 +274,34 @@ def _strip_code(s):
     return s.strip().strip("`").strip()
 
 
+def load_request_files(con, now=None):
+    """`.aimem/requests/*.json` 을 requests 표에 적재합니다(멱등 upsert). 적재한 건수.
+
+    웹 요청 폼은 **파일만** 만듭니다. `request list` 는 DB 를 읽으므로, 읽기 전에 이것을 부르지 않으면
+    방금 넣은 `NEW` 요청이 관리자에게 보이지 않습니다 (REV 145 - 표준 브리프의 할 일이 `request list` 다).
+    """
+    now = now or _now()
+    d0 = ROOT / ".aimem" / "requests"
+    n_req = 0
+    for f in sorted(d0.glob("*.json")) if d0.exists() else []:
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(d, dict):
+            continue
+        con.execute("""INSERT INTO requests(id,title,detail,requester,status,created,updated,raw) VALUES(?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET title=excluded.title,detail=excluded.detail,requester=excluded.requester,
+            status=excluded.status,updated=excluded.updated,raw=excluded.raw""",
+                    (d.get("id") or f.stem, d.get("title"), d.get("detail"), d.get("requester"), d.get("status") or "NEW",
+                     d.get("created"), d.get("updated") or now, json.dumps(d, ensure_ascii=False)))
+        for st in d.get("subtasks") or []:
+            if isinstance(st, dict) and st.get("id"):
+                con.execute("UPDATE tasks SET request_id=? WHERE id=? AND request_id IS NULL", (d.get("id") or f.stem, st["id"]))
+        n_req += 1
+    return n_req
+
+
 def migrate(verbose=True):
     cmd_init()
     text = AIMEM.read_text(encoding="utf-8") if AIMEM.exists() else ""
@@ -357,21 +385,7 @@ def migrate(verbose=True):
             entries += parse_handoff_entries(body[:nxt.start()] if nxt else body)
         n_ev = _import_handoff_entries(con, entries)
         # 요청 JSON
-        n_req = 0
-        for f in sorted((ROOT / ".aimem" / "requests").glob("*.json")) if (ROOT / ".aimem" / "requests").exists() else []:
-            try:
-                d = json.loads(f.read_text(encoding="utf-8"))
-            except ValueError:
-                continue
-            con.execute("""INSERT INTO requests(id,title,detail,requester,status,created,updated,raw) VALUES(?,?,?,?,?,?,?,?)
-                ON CONFLICT(id) DO UPDATE SET title=excluded.title,detail=excluded.detail,requester=excluded.requester,
-                status=excluded.status,updated=excluded.updated,raw=excluded.raw""",
-                        (d.get("id") or f.stem, d.get("title"), d.get("detail"), d.get("requester"), d.get("status") or "NEW",
-                         d.get("created"), d.get("updated") or now, json.dumps(d, ensure_ascii=False)))
-            for st in d.get("subtasks") or []:
-                if st.get("id"):
-                    con.execute("UPDATE tasks SET request_id=? WHERE id=? AND request_id IS NULL", (d.get("id") or f.stem, st["id"]))
-            n_req += 1
+        n_req = load_request_files(con, now)
         # 그래프 JSON
         n_g = 0
         for f in sorted((ROOT / ".aimem" / "graph").glob("*.json")) if (ROOT / ".aimem" / "graph").exists() else []:
@@ -610,6 +624,7 @@ def _upsert(con, table, key_col, key, fields, defaults):
 def cmd_task(a):
     with connect() as con:
         now = _now()
+        load_request_files(con, now)     # 웹에서 방금 넣은 요청에도 `--request` 로 이을 수 있게
         if a.action == "set":
             if not a.id:
                 sys.exit("task set 에는 --id 가 필요합니다")
@@ -626,7 +641,7 @@ def cmd_task(a):
     return 0
 
 
-def _sync_request_file(req_id, status=None, title=None, detail=None):
+def _sync_request_file(req_id, status=None, title=None, detail=None, project=None):
     """`migrate` 는 `.aimem/requests/*.json` 을 다시 적재합니다 - DB 만 고치면 다음 migrate 가
     옛 값으로 되돌립니다. 그래서 요청 파일도 같은 값으로 맞춥니다 (있을 때만)."""
     d = ROOT / ".aimem" / "requests"
@@ -639,7 +654,7 @@ def _sync_request_file(req_id, status=None, title=None, detail=None):
             continue
         if not isinstance(obj, dict) or obj.get("id") != req_id:
             continue
-        for k, v in (("status", status), ("title", title), ("detail", detail)):
+        for k, v in (("status", status), ("title", title), ("detail", detail), ("project", project)):
             if v is not None:
                 obj[k] = v
         tmp = f.with_suffix(".json.tmp")
@@ -649,9 +664,20 @@ def _sync_request_file(req_id, status=None, title=None, detail=None):
     return False
 
 
+#: 프로젝트 이름 = `projects/` 아래 폴더 하나의 이름. `aimem_monitor.PROJECT_NAME_RE` 와 같은 식 (테스트가 대조한다)
+PROJECT_NAME_RE = r"\A[0-9A-Za-z가-힣][0-9A-Za-z가-힣_-]{0,39}\Z"
+
+
 def cmd_request(a):
+    project = getattr(a, "project", None)
+    if project is not None:
+        project = project.strip()
+        if project and not re.match(PROJECT_NAME_RE, project):
+            sys.exit("프로젝트 이름은 한글·영문·숫자·`-`·`_` 만, 40자 이하입니다 (공백·점·`/` 불가). 빈 문자열 = 함대 자체의 일")
     with connect() as con:
         now = _now()
+        load_request_files(con, now)     # 웹 요청 폼은 파일만 만든다 - 읽기·쓰기 전에 DB 에 싣는다
+        con.commit()
         if a.action == "set":
             if not a.id:
                 sys.exit("request set 에는 --id 가 필요합니다")
@@ -661,8 +687,19 @@ def cmd_request(a):
                            {"status": "NEW", "created": now})
             con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)", (now, a.actor, rev(con), "request", f"{a.id} {a.status or ''} {a.title or ''}".strip()))
             con.commit()
-            synced = _sync_request_file(a.id, a.status, a.title, a.detail)
-            print(f"request {a.id} {what}" + (" (요청 파일도 맞춤)" if synced else ""))
+            synced = _sync_request_file(a.id, a.status, a.title, a.detail, project)
+            if not synced and project:
+                # 프로젝트는 요청 파일에 산다. 관리자가 CLI 로 만든 요청은 파일이 없으니 만들어 준다 (웹에도 보인다)
+                row = con.execute("SELECT * FROM requests WHERE id=?", (a.id,)).fetchone()
+                if not re.fullmatch(r"[A-Za-z0-9-]{1,40}", a.id):
+                    sys.exit("--project 를 붙이려면 요청 id 가 영문·숫자·`-` 40자 이하여야 합니다 (파일 이름이 됩니다)")
+                rdir = ROOT / ".aimem" / "requests"
+                rdir.mkdir(parents=True, exist_ok=True)
+                rec = {"id": a.id, "created": row["created"], "requester": row["requester"] or a.actor, "project": project,
+                       "title": row["title"] or "", "detail": row["detail"] or "", "status": row["status"], "subtasks": []}
+                (rdir / f"{a.id}.json").write_text(json.dumps(rec, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+                synced = True
+            print(f"request {a.id} {what}" + (" (요청 파일도 맞춤)" if synced else "") + (f" [프로젝트 {project}]" if project else ""))
         elif a.action == "list":
             # 프로젝트는 요청 파일(.aimem/requests/*.json)의 `project` - 결과물이 쌓일 `projects/<이름>/` (빈 값 = 함대 자체)
             proj = {}
@@ -1038,6 +1075,7 @@ def main():
     t.add_argument("--artifacts"); t.add_argument("--actor", default="관리자")
     q = sub.add_parser("request"); q.add_argument("action", choices=["set", "list"]); q.add_argument("--id"); q.add_argument("--title")
     q.add_argument("--detail"); q.add_argument("--requester"); q.add_argument("--status", choices=["NEW","PLANNED","IN-PROGRESS","DONE","REJECTED"]); q.add_argument("--actor", default="관리자")
+    q.add_argument("--project", help="결과물이 쌓일 프로젝트 `projects/<이름>/` (빈 문자열 = 함대 자체의 일). 요청 파일에 적힌다")
     o = sub.add_parser("ownership"); o.add_argument("action", choices=["set", "list"]); o.add_argument("--path"); o.add_argument("--owner"); o.add_argument("--note"); o.add_argument("--actor", default="관리자")
     sl = sub.add_parser("slot", help="슬롯 추가/변경/삭제/목록 - DB 정본 + tools/fleet_slots.json 거울 (웹 함대 현황에서도 됨)")
     sl.add_argument("action", choices=["add", "set", "remove", "list"]); sl.add_argument("--slot"); sl.add_argument("--harness", choices=HARNESSES)

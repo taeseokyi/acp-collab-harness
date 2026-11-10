@@ -23,7 +23,7 @@ import aimem_db  # noqa: E402
 
 def ns(**kw):
     base = {"actor": "test", "id": None, "request": None, "title": None, "slot": None, "status": None,
-            "artifacts": None, "detail": None, "requester": None, "days": 14, "dry_run": False}
+            "artifacts": None, "detail": None, "requester": None, "days": 14, "dry_run": False, "project": None}
     base.update(kw)
     return argparse.Namespace(**base)
 
@@ -69,6 +69,34 @@ class AimemDbCliTest(unittest.TestCase):
                      encoding="utf-8")
         self.run_cmd(aimem_db.cmd_request, action="set", id="Q-3", status="DONE")
         self.assertEqual(json.loads(f.read_text(encoding="utf-8"))["status"], "DONE")
+
+    def test_request_list_sees_web_request_files(self):
+        """REV 145: 웹 폼은 파일만 만든다 - `request list` 가 DB 에 싣지 않으면 관리자에게 NEW 가 안 보였다."""
+        f = self.root / ".aimem" / "requests" / "Q-261110-ab12-x.json"
+        f.write_text(json.dumps({"id": "Q-261110-ab12", "title": "웹에서 넣음", "detail": "d", "requester": "태석",
+                                 "project": "데모", "status": "NEW", "subtasks": []}), encoding="utf-8")
+        out = self.run_cmd(aimem_db.cmd_request, action="list")
+        self.assertIn("Q-261110-ab12", out)
+        self.assertIn("NEW", out)
+        self.assertIn("[데모] 웹에서 넣음", out)
+        # 그 요청에 태스크를 바로 이을 수 있다 (외래 키)
+        self.run_cmd(aimem_db.cmd_task, action="set", id="T-900", request="Q-261110-ab12", title="t")
+        self.assertEqual(self.row("SELECT request_id FROM tasks WHERE id=?", "T-900")["request_id"], "Q-261110-ab12")
+
+    def test_request_set_project_writes_file_and_validates(self):
+        self.run_cmd(aimem_db.cmd_request, action="set", id="Q-9", title="관리자가 만든 요청", project="알파")
+        rec = json.loads((self.root / ".aimem" / "requests" / "Q-9.json").read_text(encoding="utf-8"))
+        self.assertEqual((rec["project"], rec["status"], rec["title"]), ("알파", "NEW", "관리자가 만든 요청"))
+        self.run_cmd(aimem_db.cmd_request, action="set", id="Q-9", project="베타")      # 있는 파일은 고친다
+        self.assertEqual(json.loads((self.root / ".aimem" / "requests" / "Q-9.json").read_text(encoding="utf-8"))["project"], "베타")
+        with self.assertRaises(SystemExit):
+            self.run_cmd(aimem_db.cmd_request, action="set", id="Q-9", project="../x")
+
+    def test_project_name_rule_is_one_rule(self):
+        import fleet
+        import aimem_monitor
+        self.assertEqual(aimem_db.PROJECT_NAME_RE, aimem_monitor.PROJECT_NAME_RE)
+        self.assertEqual(fleet.PROJECT_NAME_RE, aimem_monitor.PROJECT_NAME_RE)
 
     def test_task_set_without_status_keeps_status(self):
         self.run_cmd(aimem_db.cmd_task, action="set", id="T-1", title="a", status="REVIEW")

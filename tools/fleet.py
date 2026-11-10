@@ -498,6 +498,10 @@ def run_report(run_id):
     return "(최종 보고문 없음 - 작업자가 보고 전에 끝남. stderr 꼬리:)\n" + tail if tail else ""
 
 
+#: 프로젝트 이름 = `projects/` 아래 폴더 하나의 이름. `aimem_monitor.PROJECT_NAME_RE` 와 같은 식 (테스트가 대조한다)
+PROJECT_NAME_RE = r"\A[0-9A-Za-z가-힣][0-9A-Za-z가-힣_-]{0,39}\Z"
+
+
 def current_round():
     """지금 도는(가장 최근에 띄운) 라운드 번호. 모르면 None.
 
@@ -505,6 +509,13 @@ def current_round():
     (2026-11-10 태석님), 실행 기록·그래프에 **따로** 적어 화면이 구분해 보이게 합니다.
     """
     best = None
+    try:
+        # 라운드는 함대가 '실행' 일 때만 돈다. 끝난 뒤(준비·중지) 손으로 띄운 실행에 지난 라운드 번호를 붙이지 않는다 (REV 145)
+        import fleet_ctl  # noqa: PLC0415 - 순환 import 를 피해 호출 시점에
+        if fleet_ctl.mode() != "running":
+            return None
+    except Exception:  # noqa: BLE001 - 모드를 못 읽으면 예전처럼 전달 기록만 본다
+        pass
     try:
         files = list((pathlib.Path(RUNS).parent / "relay").glob("r*.json"))
     except OSError:

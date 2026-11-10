@@ -33,6 +33,9 @@ class CurrentRoundAndProject(unittest.TestCase):
             (relay / name).write_text(json.dumps(body) if body is not None else "x", encoding="utf-8")
         (relay / "r10.json").write_text("{깨진", encoding="utf-8")
         self.assertEqual(fleet.current_round(), 8)
+        # 함대가 '실행' 이 아니면 도는 라운드가 없다 - 끝난 뒤 손으로 띄운 실행에 지난 번호를 붙이지 않는다
+        (self.root / ".aimem" / "fleet-mode.json").write_text(json.dumps({"mode": "ready"}), encoding="utf-8")
+        self.assertIsNone(fleet.current_round())
 
     def test_task_project_follows_task_to_request(self):
         reqs = self.root / ".aimem" / "requests"

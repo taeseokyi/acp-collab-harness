@@ -1674,6 +1674,8 @@ def _round_records(root):
             projs = rec.get("projects") or []
         except (OSError, ValueError, KeyError, TypeError):
             continue
+        if rec.get("state") == "failed":      # 관리자가 뜨지 않은 라운드 (`fleet_ctl._mark_round_record_failed`)
+            continue
         for pr in projs if isinstance(projs, list) else []:
             if isinstance(pr, str) and _PROJECT_RE.match(pr):
                 out.setdefault(pr, {})[n] = rec.get("at") if isinstance(rec.get("at"), str) else None

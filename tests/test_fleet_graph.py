@@ -384,6 +384,14 @@ class FleetGraphContractTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         spawn_mock.assert_not_called()
 
+    def test_validate_graph_rejects_bad_project_name(self):
+        good, bad = self._node("T-1"), self._node("T-2")
+        good["project"] = "reefwiz-앱"
+        bad["project"] = "../../etc"
+        problems = fleet_graph.validate_graph(self._graph([good, bad]))
+        self.assertTrue(any(p.startswith("T-2:") and "project" in p for p in problems))
+        self.assertFalse(any(p.startswith("T-1:") and "project" in p for p in problems))
+
     def test_validate_graph_default_still_checks_done_node_slot(self):
         node = self._node("T-1", status="done")
         node["slot"] = "S9"
