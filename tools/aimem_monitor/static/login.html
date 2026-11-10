@@ -59,6 +59,11 @@ button:disabled { opacity: .7; cursor: progress; }
   color: var(--st-danger-text); background: var(--st-danger-tint); font-size: 14px;
 }
 #err:empty { display: none; }
+#device { margin-top: 16px; text-align: center; }
+#device[hidden] { display: none; }
+.dv-step { margin: 0 0 8px; font-size: 14px; color: var(--st-ink-muted); }
+#dv-code { margin: 0 0 4px; font: 700 28px ui-monospace, "SF Mono", Consolas, monospace; letter-spacing: .12em; user-select: all; }
+#dv-note { margin-top: 12px; }
 #status { margin: 12px 0 0; min-height: 1.55em; font-size: 14px; color: var(--st-ink-muted); text-align: center; }
 </style>
 </head>
@@ -73,6 +78,12 @@ button:disabled { opacity: .7; cursor: progress; }
     <button type="submit" id="submit">로그인</button>
   </form>
   <a class="btn" id="github" href="/auth/github/start">GitHub 로 로그인</a>
+  <div id="device" hidden>
+    <p class="dv-step">아래 코드를 GitHub 에 넣고 승인하십시오</p>
+    <p id="dv-code" aria-live="polite"></p>
+    <a class="btn" id="dv-link" href="https://github.com/login/device" target="_blank" rel="noopener noreferrer">GitHub 열기</a>
+    <p class="dv-step" id="dv-note">이 화면에서 직접 시작한 로그인만 승인하십시오. 승인하면 이 화면이 자동으로 넘어갑니다.</p>
+  </div>
   <div id="status" aria-live="polite"></div>
 </main>
 <script>
@@ -95,10 +106,59 @@ button:disabled { opacity: .7; cursor: progress; }
     .then(function (info) {
       if (info && info.authenticated) { location.replace('/'); return; }
       if (info && info.github_enabled === true) { ghParent.insertBefore(gh, ghNext); }
+      else if (info && info.github_device === true) {
+        ghParent.insertBefore(gh, ghNext);
+        gh.setAttribute('href', '#');
+        gh.setAttribute('role', 'button');
+        gh.addEventListener('click', function (e) { e.preventDefault(); deviceStart(); });
+      }
     })
     .catch(function () { /* 토큰 로그인만 제공 */ });
 
   function setErr(msg) { err.textContent = msg || ''; }
+
+  // GitHub 기기 흐름: 서버가 확인 코드를 받아 오고, 사람이 github.com/login/device 에서 승인하면 poll 이 세션을 준다.
+  var dvBox = document.getElementById('device');
+  var dvCode = document.getElementById('dv-code');
+  var dvLink = document.getElementById('dv-link');
+  var dvTimer = null, dvBusy = false;
+  function post(path) {
+    return fetch(path, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: '{}'
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (d) { return { status: r.status, data: d }; });
+    });
+  }
+  function deviceStop(msg) {
+    if (dvTimer) { clearTimeout(dvTimer); dvTimer = null; }
+    dvBusy = false; dvBox.hidden = true; dvCode.textContent = '';
+    status.textContent = '';
+    setErr(msg || '');
+  }
+  function devicePoll(waitMs) {
+    dvTimer = setTimeout(function () {
+      post('/api/github/device/poll').then(function (res) {
+        var d = res.data || {};
+        if (d.state === 'ok') { status.textContent = '로그인했습니다'; location.replace(d.redirect || '/'); return; }
+        if (d.state === 'pending') { devicePoll(waitMs); return; }
+        deviceStop(d.error || ('GitHub 로그인에 실패했습니다 (HTTP ' + res.status + ')'));
+      }).catch(function () { devicePoll(waitMs); });
+    }, waitMs);
+  }
+  function deviceStart() {
+    if (dvBusy) { return; }
+    dvBusy = true; setErr(''); status.textContent = 'GitHub 에 확인 코드를 요청하는 중...';
+    post('/api/github/device/start').then(function (res) {
+      var d = res.data || {};
+      if (!d.ok || !d.user_code) { deviceStop(d.error || ('GitHub 로그인을 시작하지 못했습니다 (HTTP ' + res.status + ')')); return; }
+      dvCode.textContent = d.user_code;
+      dvLink.href = d.verification_uri || 'https://github.com/login/device';
+      dvBox.hidden = false;
+      status.textContent = '승인을 기다리는 중...';
+      devicePoll(Math.max(2, (d.interval || 5)) * 1000 + 500);
+    }).catch(function () { deviceStop('서버에 연결하지 못했습니다'); });
+  }
 
   form.addEventListener('submit', function (e) {
     e.preventDefault();

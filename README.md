@@ -68,7 +68,7 @@ pid 는 `.aimem/monitor.pid`, 로그는 `.aimem/monitor.log`. 내릴 때는 pid 
 ### 접근 제어
 
 - `/login` 에서 **접근 토큰**을 넣으면 `HttpOnly; Secure; SameSite=Strict` 세션 쿠키(12시간). 도구는
-  `Authorization: Bearer <토큰>`. `/login`·`/api/login`·`/api/logout`·`/api/authinfo`·`/auth/github/*`·
+  `Authorization: Bearer <토큰>`. `/login`·`/api/login`·`/api/logout`·`/api/authinfo`·`/auth/github/*`·`/api/github/device/*`·
   `/favicon.ico` 를 뺀 **모든 경로**가 401 입니다. 화면 오른쪽 위에 로그인한 주체와 **로그아웃**이 있습니다
 - 관리 명령 (`PYTHONPATH=tools python3 -m aimem_monitor admin ...`):
 
@@ -84,7 +84,7 @@ pid 는 `.aimem/monitor.pid`, 로그는 `.aimem/monitor.log`. 내릴 때는 pid 
 슬롯(작업자 하네스·모델)은 웹 **함대 현황**의 '변경'·'+ 슬롯 추가' 로, 또는 `python3 tools/aimem_db.py slot add|set|remove|list` 로 다룹니다. 모델 선택지는 OpenClaw 가 설정한 모델(`openclaw models list` + `~/.openclaw/openclaw.json` providers)입니다.
 
 - **비밀은 셸이 아니라 파일에서 읽습니다** - `.aimem/tls/monitor.env`(0600; `KISTI_API_KEY`,
-  `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`). KISTI 키가 없으면 `~/.openclaw/.env` 에서 읽습니다.
+  `GITHUB_CLIENT_ID`, 선택으로 `GITHUB_CLIENT_SECRET`). KISTI 키가 없으면 `~/.openclaw/.env` 에서 읽습니다.
   그룹·기타가 읽을 수 있는 파일은 읽지 않습니다. **`.aimem/tls/` 는 git 제외**입니다
 - HSTS 는 **도메인 이름으로 들어온 요청에만** 보냅니다. `localhost`·IP 로 들어오면 보내지 않습니다 -
   HSTS 는 포트가 아니라 호스트 전체에 걸려, 같은 PC 의 다른 `http://localhost:*` 서비스를 깨뜨릴 수 있습니다
@@ -142,9 +142,15 @@ New-NetFirewallRule -DisplayName "AIMEM fleet proxy" -Direction Inbound -LocalPo
 
 ### GitHub 로그인 (선택)
 
-GitHub > Settings > Developer settings > OAuth Apps > New OAuth App - 콜백 URL
-`https://<외부 주소>:18799/auth/github/callback`. 받은 두 값을 `.aimem/tls/monitor.env` 에 적고
-`admin github allow <내 계정>` → `restart`. 로그인 화면에 **GitHub 로 로그인** 버튼이 생깁니다.
+**기기 흐름(기본).** `.aimem/tls/monitor.env` 에 `GITHUB_CLIENT_ID` **만** 적고(기기 흐름이 켜진 OAuth App 의
+Client ID - 공개 정보, reefwiz-esp32 와 같은 앱을 씁니다) `admin github allow <내 계정>` → `restart`.
+로그인 화면의 **GitHub 로 로그인** 을 누르면 확인 코드가 뜨고, `github.com/login/device` 에 그 코드를 넣어
+승인하면 화면이 넘어갑니다. 콜백 주소가 없어 **어느 주소·포트로 접속하든 같습니다**(내부 IP, 프록시 18800, 외부 주소).
+시크릿도 없습니다. 코드는 15분, 한 번 승인은 한 번의 로그인, 열린 코드는 IP 당 하나·전체 8개.
+**자기가 방금 띄운 코드만 승인하십시오** - 남이 보낸 코드를 승인하면 그 사람이 들어옵니다(기기 흐름의 성질).
+
+**웹 흐름.** `GITHUB_CLIENT_SECRET` 도 적으면 리다이렉트 방식으로 바뀝니다. 그때는 OAuth App 의 콜백 URL 이
+`https://<접속 주소>/auth/github/callback` 과 같아야 합니다(앱 하나에 주소 하나).
 
 ## 알려진 한계
 

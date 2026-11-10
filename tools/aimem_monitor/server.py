@@ -64,7 +64,10 @@ import urllib.request
 
 from . import (AUTH_EXEMPT_PATHS, AUTH_UNAUTH_REDIRECT_PATHS, CERT_FILE,
                GITHUB_ALLOW_FILE, GITHUB_AUTHORIZE_URL, GITHUB_CALLBACK_PATH,
-               GITHUB_CLIENT_ID_ENV, GITHUB_CLIENT_SECRET_ENV, GITHUB_STATE_COOKIE,
+               GITHUB_CLIENT_ID_ENV, GITHUB_CLIENT_SECRET_ENV, GITHUB_DEVICE_CODE_URL,
+               GITHUB_DEVICE_COOKIE, GITHUB_DEVICE_GRANT, GITHUB_DEVICE_MAX_PENDING,
+               GITHUB_DEVICE_POLL_PATH, GITHUB_DEVICE_START_PATH, GITHUB_DEVICE_VERIFY_URL,
+               GITHUB_STATE_COOKIE,
                GITHUB_TOKEN_URL, GITHUB_USER_URL, GRAPH_DIR, HOST, HSTS_HEADER,
                KEY_FILE, KISTI_API_KEY_ENV, KISTI_CACHE_SEC, KISTI_FIELDS,
                KISTI_FIELD_TYPES, KISTI_STATUS_URL, KISTI_TIMEOUT_SEC,
@@ -306,6 +309,83 @@ def github_enabled():
     return bool(os.environ.get(GITHUB_CLIENT_ID_ENV) and os.environ.get(GITHUB_CLIENT_SECRET_ENV))
 
 
+def github_device_enabled():
+    """기기 흐름: client id 만 있고 시크릿이 없을 때. (둘 다 있으면 웹 흐름 `github_enabled()`.)"""
+    return bool(os.environ.get(GITHUB_CLIENT_ID_ENV)) and not os.environ.get(GITHUB_CLIENT_SECRET_ENV)
+
+
+class DevicePending:
+    """열려 있는 확인 코드. `aid`(쿠키로만 오가는 난수) -> device_code. 메모리에만 있고 서버가 내려가면 사라진다.
+
+    로그인 전 누구나 부를 수 있는 길이라 크기를 묶는다: IP 하나에 하나(새로 시작하면 앞의 것은 버림), 전체 상한.
+    """
+
+    def __init__(self, limit=GITHUB_DEVICE_MAX_PENDING):
+        self.limit = limit
+        self._items = {}
+        self._lock = threading.Lock()
+
+    def add(self, ip, device_code, interval, expires_in, now=None):
+        """aid 를 돌려준다. 자리가 없으면 None."""
+        now = time.time() if now is None else now
+        with self._lock:
+            for k in [k for k, v in self._items.items() if v["exp"] <= now or v["ip"] == ip]:
+                del self._items[k]
+            if len(self._items) >= self.limit:
+                return None
+            aid = secrets.token_urlsafe(24)
+            self._items[aid] = {"ip": ip, "device_code": device_code, "interval": max(1, int(interval)),
+                                "next": now + max(1, int(interval)), "exp": now + int(expires_in)}
+            return aid
+
+    def due(self, aid, now=None):
+        """(항목 사본 | None, 지금 GitHub 에 물어도 되나). 물어도 되면 다음 시각을 미룬다."""
+        now = time.time() if now is None else now
+        with self._lock:
+            it = self._items.get(aid or "")
+            if it is None:
+                return None, False
+            if it["exp"] <= now:
+                del self._items[aid]
+                return None, False
+            if now < it["next"]:
+                return dict(it), False
+            it["next"] = now + it["interval"]
+            return dict(it), True
+
+    def slow_down(self, aid, now=None):
+        now = time.time() if now is None else now
+        with self._lock:
+            it = self._items.get(aid)
+            if it:
+                it["interval"] += 5
+                it["next"] = now + it["interval"]
+
+    def drop(self, aid):
+        with self._lock:
+            self._items.pop(aid, None)
+
+
+def github_post_form(url, fields):
+    """GitHub 에 폼을 보내고 JSON 을 받는다. 리다이렉트는 따르지 않는다. (시험에서 갈아 끼우는 자리)"""
+    req = urllib.request.Request(url, data=urllib.parse.urlencode(fields).encode("ascii"),
+                                 headers={"Accept": "application/json", "User-Agent": "aimem-monitor"})
+    with _no_redirect_opener().open(req, timeout=8.0) as r:
+        out = json.loads(r.read(64 * 1024).decode("utf-8"))
+    if not isinstance(out, dict):
+        raise ValueError("GitHub 응답이 객체가 아님")
+    return out
+
+
+def github_user_login(access_token):
+    """access token -> `GET /user` 의 login. 토큰은 여기서만 쓰고 어디에도 적지 않는다."""
+    req = urllib.request.Request(GITHUB_USER_URL, headers={
+        "Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github+json",
+        "User-Agent": "aimem-monitor"})
+    with _no_redirect_opener().open(req, timeout=8.0) as r:
+        return json.loads(r.read(64 * 1024).decode("utf-8")).get("login")
+
+
 def github_allowed_logins(root=ROOT):
     """허용 GitHub 로그인 집합(소문자). 파일이 없으면 **빈 집합** - 아무도 못 들어옵니다."""
     out = set()
@@ -360,7 +440,7 @@ class LoginGuard:
 
 # -- 설정 파일 / 감사 로그 (접근 제어 보강, 2026-11-10) -------------------------
 
-MONITOR_ENV_FILE = ".aimem/tls/monitor.env"      # 0600. KISTI_API_KEY / GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET
+MONITOR_ENV_FILE = ".aimem/tls/monitor.env"      # 0600. KISTI_API_KEY / GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET(없으면 기기 흐름)
 OPENCLAW_ENV_FILE = pathlib.Path.home() / ".openclaw" / ".env"
 AUDIT_LOG = ".aimem/access.log"                   # git 제외. 로그인·쓰기 동작만 (폴링은 적지 않음)
 _ENV_KEYS = (KISTI_API_KEY_ENV, GITHUB_CLIENT_ID_ENV, GITHUB_CLIENT_SECRET_ENV)
@@ -1675,6 +1755,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     tls = False
     access_token = None
     guard = None
+    device = None      # DevicePending - GitHub 기기 흐름의 열린 확인 코드 (serve() 가 채운다)
     #: 요청 생성 속도 제한. **클래스 속성 기본값으로 둡니다** - `--tls`/`--auth` 없이
     #: 로컬로 띄워도 걸립니다. 공개 여부와 무관하게 디스크·화면을 지키는 선이고,
     #: 사람이 폼으로 분당 5건을 넘길 일은 없습니다.
@@ -1908,6 +1989,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/authinfo":
             subj = self._subject()
             return self._json(200, {"ok": True, "github_enabled": github_enabled(),
+                                    "github_device": github_device_enabled(),
                                     "tls": bool(self.tls), "auth_required": bool(self.require_auth),
                                     "authenticated": bool(subj), "who": subject_label(subj)})
         if path == "/auth/github/start":
@@ -1988,6 +2070,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return None
         if path == "/api/login":
             return self._login()
+        if path == GITHUB_DEVICE_START_PATH:
+            return self._github_device_start()
+        if path == GITHUB_DEVICE_POLL_PATH:
+            return self._github_device_poll()
         if path == "/api/logout":
             self._audit("logout")
             return self._send(200, json.dumps({"ok": True}, ensure_ascii=False),
@@ -2131,6 +2217,98 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self._redirect(f"{GITHUB_AUTHORIZE_URL}?{q}",
                               extra=[self._cookie_header(GITHUB_STATE_COOKIE, state, 600, samesite="Lax")])
 
+    # -- GitHub 기기 흐름 (client id 만 있을 때. 콜백 주소·시크릿 없음) ---------------
+    def _device_body(self):
+        """로그인 전 POST 두 개의 공통 문턱: JSON Content-Type, Origin==Host, 본문 소진. 보냈으면 True."""
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        origin = self.headers.get("Origin")
+        bad_origin = bool(origin) and urllib.parse.urlparse(origin).netloc.lower() != (self.headers.get("Host") or "").lower()
+        if ctype != "application/json" or bad_origin:
+            self.close_connection = True
+            self._send(403 if bad_origin else 415, json.dumps({"ok": False, "error": "요청 형식이 맞지 않습니다"}, ensure_ascii=False),
+                       extra=[("Connection", "close")])
+            return True
+        return self._read_json_body()[1]
+
+    def _github_device_start(self):
+        if self._device_body():
+            return None
+        if not github_device_enabled() or not self.access_token or self.device is None:
+            return self._json(404, {"ok": False, "error": "GitHub 기기 로그인이 꺼져 있습니다"})
+        ip = self._client_ip()
+        delay = self.guard.check(ip) if self.guard else 0.0
+        if delay:
+            time.sleep(min(delay, 10.0))
+        try:
+            r = github_post_form(GITHUB_DEVICE_CODE_URL, {"client_id": os.environ[GITHUB_CLIENT_ID_ENV], "scope": ""})
+            device_code, user_code = r["device_code"], r["user_code"]
+            interval, expires_in = int(r.get("interval", 5)), int(r.get("expires_in", 900))
+        except (urllib.error.URLError, ValueError, KeyError, TypeError, OSError) as e:
+            return self._json(502, {"ok": False, "error": f"GitHub 이 확인 코드를 주지 않았습니다: {type(e).__name__}"})
+        aid = self.device.add(ip, device_code, interval, expires_in)
+        if aid is None:
+            return self._json(429, {"ok": False, "error": "열려 있는 GitHub 확인이 너무 많습니다. 잠시 뒤 다시 하십시오"})
+        audit(self.root, "github-device-start", ip, None, "")
+        body = {"ok": True, "user_code": str(user_code)[:16], "verification_uri": GITHUB_DEVICE_VERIFY_URL,
+                "interval": interval, "expires_in": expires_in}
+        return self._send(200, json.dumps(body, ensure_ascii=False),
+                          extra=[self._cookie_header(GITHUB_DEVICE_COOKIE, aid, expires_in)])
+
+    def _github_device_poll(self):
+        if self._device_body():
+            return None
+        if not github_device_enabled() or not self.access_token or self.device is None:
+            return self._json(404, {"ok": False, "error": "GitHub 기기 로그인이 꺼져 있습니다"})
+        aid = self._cookie(GITHUB_DEVICE_COOKIE) or ""
+        clear = self._cookie_header(GITHUB_DEVICE_COOKIE, "", 0)
+        ip = self._client_ip()
+
+        def done(code, state, error=None, extra=()):
+            body = {"ok": state == "ok", "state": state}
+            if error:
+                body["error"] = error
+            if state == "ok":
+                body["redirect"] = "/"
+            return self._send(code, json.dumps(body, ensure_ascii=False), extra=[clear, *extra])
+
+        item, ask = self.device.due(aid)
+        if item is None:
+            return done(410, "expired", "확인 코드가 만료됐습니다. 다시 시작하십시오")
+        if not ask:
+            return self._json(200, {"ok": False, "state": "pending"})
+        try:
+            r = github_post_form(GITHUB_TOKEN_URL, {"client_id": os.environ[GITHUB_CLIENT_ID_ENV],
+                                                    "device_code": item["device_code"], "grant_type": GITHUB_DEVICE_GRANT})
+        except (urllib.error.URLError, ValueError, OSError):
+            return self._json(200, {"ok": False, "state": "pending"})   # 일시 오류 - 다음 물음에 다시
+        tok, err = r.get("access_token"), r.get("error")
+        if not tok:
+            if err == "authorization_pending":
+                return self._json(200, {"ok": False, "state": "pending"})
+            if err == "slow_down":
+                self.device.slow_down(aid)
+                return self._json(200, {"ok": False, "state": "pending"})
+            self.device.drop(aid)
+            if err == "access_denied":
+                audit(self.root, "github-denied", ip, None, "승인 거절")
+                return done(403, "denied", "GitHub 에서 승인을 거절했습니다")
+            return done(410, "expired", "확인 코드가 만료됐습니다. 다시 시작하십시오")
+        self.device.drop(aid)        # 한 번 승인은 한 번의 로그인에만
+        try:
+            login = github_user_login(tok)
+        except (urllib.error.URLError, ValueError, OSError) as e:
+            return done(502, "error", f"GitHub 계정 확인 실패: {type(e).__name__}")
+        if not isinstance(login, str) or login.lower() not in github_allowed_logins(self.root):
+            if self.guard:
+                self.guard.fail(ip)
+            self.log_message("GitHub 로그인 거절 %s (%s)", login or "?", ip)
+            audit(self.root, "github-denied", ip, None, str(login or "?")[:60])
+            return done(403, "denied", "허용 목록에 없는 계정입니다")
+        subject = SESSION_SUBJECT_GITHUB_PREFIX + re.sub(r"[^A-Za-z0-9_-]", "", login)[:60]
+        self.log_message("GitHub 로그인 성공 %s", subject)
+        audit(self.root, "login-ok", ip, subject, "GitHub 기기 흐름")
+        return done(200, "ok", extra=[self._issue_session(subject)])
+
     def _self_url(self, path):
         host = self.headers.get("Host") or f"127.0.0.1:{PORT}"
         return f"{'https' if self.tls else 'http'}://{host}{path}"
@@ -2208,6 +2386,7 @@ def serve(host=HOST, port=PORT, root=ROOT, once=False, tls=False, auth=None):
     handler = type("BoundHandler", (Handler,), {
         "root": root, "require_auth": require_auth, "tls": bool(tls),
         "access_token": token, "guard": LoginGuard(), "rate": RequestRateLimiter(),
+        "device": DevicePending(),
         "fail_rate": RequestRateLimiter(limit=REQUEST_FAIL_MAX),
     })
     if tls:

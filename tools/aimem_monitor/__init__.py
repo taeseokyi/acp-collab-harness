@@ -195,6 +195,7 @@ SESSION_SUBJECT_GITHUB_PREFIX = "gh:"
 #: 부르지 않습니다(부르면 그 경로도 면제 목록에 들어가야 하므로).
 AUTH_EXEMPT_PATHS = ("/login", "/api/login", "/api/logout", "/api/authinfo",
                      "/auth/github/start", "/auth/github/callback", "/favicon.ico",
+                     "/api/github/device/start", "/api/github/device/poll",
                      # 폰 설치(PWA, 2026-11-10) - 매니페스트·아이콘·서비스 워커는 데이터가 없는 껍데기라 공개해도 되고,
                      # 공개해야 로그인 화면에서도 '앱 설치' 가 뜬다. `app.js`·`/api/*` 는 그대로 인증 뒤다.
                      "/manifest.webmanifest", "/sw.js", "/icon-192.png", "/icon-512.png",
@@ -224,6 +225,16 @@ GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
 GITHUB_USER_URL = "https://api.github.com/user"
 GITHUB_STATE_COOKIE = "aimem_oauth_state"
 GITHUB_CALLBACK_PATH = "/auth/github/callback"
+#: 기기 흐름(RFC 8628, 2026-11-10 태석님 지시 - reefwiz-esp32 가 쓰는 OAuth App 을 같이 쓴다).
+#: `GITHUB_CLIENT_ID` 만 있고 시크릿이 없으면 이 흐름이다. 콜백 주소가 없어 접속 주소(내부 IP·외부 주소·포트)에
+#: 묶이지 않고, 시크릿도 없다. 화면에 뜬 코드를 github.com/login/device 에 넣어 승인한다.
+GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code"
+GITHUB_DEVICE_VERIFY_URL = "https://github.com/login/device"
+GITHUB_DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
+GITHUB_DEVICE_COOKIE = "aimem_gh_device"
+GITHUB_DEVICE_START_PATH = "/api/github/device/start"
+GITHUB_DEVICE_POLL_PATH = "/api/github/device/poll"
+GITHUB_DEVICE_MAX_PENDING = 8          # 동시에 열려 있는 확인 코드 수(전체). IP 하나에는 하나
 
 #: `server.py` 가 제공하는 인증 함수 이름 - **테스트와 구현이 보는 유일한 목록**입니다.
 AUTH_API = {

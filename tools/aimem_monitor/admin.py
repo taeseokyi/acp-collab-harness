@@ -72,8 +72,10 @@ def _read_allow(root):
 
 def github_list(root):
     allowed = sorted(server.github_allowed_logins(root))
-    print("GitHub 로그인: " + ("켜짐" if server.github_enabled() else
-                              "꺼짐 (GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET 을 .aimem/tls/monitor.env 에)"))
+    server.load_monitor_env(root)
+    print("GitHub 로그인: " + ("켜짐 (웹 흐름)" if server.github_enabled() else
+                              "켜짐 (기기 흐름 - 화면의 코드를 github.com/login/device 에)" if server.github_device_enabled() else
+                              "꺼짐 (GITHUB_CLIENT_ID 를 .aimem/tls/monitor.env 에. 시크릿까지 넣으면 웹 흐름)"))
     print("허용 계정: " + (", ".join(allowed) if allowed else "(없음 - 아무도 GitHub 로 들어올 수 없음)"))
     return 0
 
@@ -270,8 +272,9 @@ def status(root):
     server.load_monitor_env(root)
     rows.append(("KISTI_API_KEY", bool(os.environ.get(server.KISTI_API_KEY_ENV)), "있음" if os.environ.get(server.KISTI_API_KEY_ENV) else "없음"))
     allowed = server.github_allowed_logins(root)
-    rows.append(("GitHub 로그인", server.github_enabled(),
-                 f"허용 {len(allowed)}명" if server.github_enabled() else "꺼짐 (선택)"))
+    gh_on = server.github_enabled() or server.github_device_enabled()
+    rows.append(("GitHub 로그인", gh_on,
+                 f"{'웹' if server.github_enabled() else '기기'} 흐름, 허용 {len(allowed)}명" if gh_on else "꺼짐 (선택)"))
     crt = _p(root, CERT_FILE)
     if crt.exists():
         r = subprocess.run([_openssl(), "x509", "-in", str(crt), "-noout", "-enddate"], capture_output=True, text=True)
