@@ -89,6 +89,28 @@ class ProjectTests(unittest.TestCase):
         b = got["베타"]
         self.assertEqual((b["exists"], b["rounds"], b["percent"], b["summary"]), (False, [8], None, ""))
 
+    def test_progress_is_against_goals_when_the_manager_wrote_them(self):
+        """REV 148: 요청을 다 끝내도 프로젝트가 덜 됐으면 100% 가 아니어야 한다 - `## 목표` 체크리스트 기준."""
+        d = self.root / "projects" / "알파"
+        d.mkdir(parents=True)
+        reqs = [{"id": "a", "project": "알파", "status": "DONE"}]
+        a = server.list_projects(self.root, reqs)[0]
+        self.assertEqual((a["percent"], a["basis"], a["goals"], a["request_percent"]), (100.0, "requests", None, 100.0))
+        (d / "PROGRESS.md").write_text(
+            "# 알파\n\n## 목표\n- [x] 골격\n- [X] 로그인 화면\n  - [ ] 하위 항목도 센다\n* [ ] 배포\n- 체크 없는 줄\n-[ ] 띄어쓰기 없음\n- [ ]\n"
+            "\n## R8 (2026-11-11)\n- 한 일: 화면\n- [x] 여기 체크는 목표가 아니다\n- 남은 일: 배포\n", encoding="utf-8")
+        a = server.list_projects(self.root, reqs)[0]
+        self.assertEqual((a["goals"], a["percent"], a["basis"], a["request_percent"]),
+                         ({"total": 4, "done": 2}, 50.0, "goals", 100.0))
+        self.assertEqual(a["rounds"], [8])
+        self.assertTrue(a["summary"].startswith("## R8"))                 # 최근 기록은 여전히 라운드 항목
+        (d / "PROGRESS.md").write_text("# 알파\n\n## Goals (예측)\n- [x] a\n- [x] b\n", encoding="utf-8")
+        self.assertEqual(server.list_projects(self.root, [])[0]["percent"], 100.0)
+        for empty in ("# 알파\n\n## 목표\n아직 못 정함\n\n## R8\n- [x] x\n", "# 알파\n\n## 목표치 아님\n- [x] x\n"):
+            (d / "PROGRESS.md").write_text(empty, encoding="utf-8")       # 항목이 없으면 요청 기준으로 돌아간다
+            a = server.list_projects(self.root, reqs)[0]
+            self.assertEqual((a["goals"], a["basis"], a["percent"]), (None, "requests", 100.0), empty)
+
     def test_edit_keeps_project_unless_given(self):
         ok, res = self.create(project="알파")
         rid = res["id"]

@@ -2729,7 +2729,16 @@ function renderProjects(data) {
     prog.appendChild(bar);
     const label = document.createElement('span');
     label.className = 'pct';
-    label.textContent = typeof pr.percent === 'number' ? `${Math.round(pct)}%` : '-';
+    const goals = pr.goals && pr.goals.total ? pr.goals : null;
+    if (goals) {
+      // 목표 대비 (관리자가 PROGRESS.md 의 '## 목표' 에 적은 체크리스트, REV 148)
+      label.textContent = `목표 ${goals.done || 0}/${goals.total} · ${Math.round(pct)}%`;
+      label.title = '관리자가 PROGRESS.md 의 "## 목표" 에 적은 목표 중 끝난 것'
+        + (typeof pr.request_percent === 'number' ? ` (요청 기준 ${Math.round(pr.request_percent)}%)` : '');
+    } else {
+      label.textContent = typeof pr.percent === 'number' ? `요청 기준 ${Math.round(pct)}%` : '-';
+      label.title = '목표가 아직 안 적혀 넣은 요청 중 끝난 비율로 셉니다 - 관리자가 PROGRESS.md 에 "## 목표" 를 쓰면 목표 대비로 바뀝니다';
+    }
     prog.appendChild(label);
     item.appendChild(prog);
 

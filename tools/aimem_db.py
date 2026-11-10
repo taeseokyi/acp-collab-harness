@@ -635,6 +635,8 @@ def cmd_task(a):
             con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
                         (now, a.actor, rev(con), "task", f"{a.id} {a.status or ''} {a.slot or ''} {a.title or ''}".strip()))
             con.commit(); print(f"task {a.id} {what}")
+            if a.request:
+                note_round_request(a.request)     # 라운드 도중 들어온 요청도 그 라운드 기록에 (REV 148)
         elif a.action == "list":
             for r in con.execute("SELECT id,request_id,slot,status,title FROM tasks ORDER BY id"):
                 print(f"  {r['id']:<7} {r['status']:<11} {r['slot'] or '-':<4} {r['request_id'] or '-':<22} {r['title'] or ''}")
@@ -668,6 +670,55 @@ def _sync_request_file(req_id, status=None, title=None, detail=None, project=Non
 PROJECT_NAME_RE = r"\A[0-9A-Za-z가-힣][0-9A-Za-z가-힣_-]{0,39}\Z"
 
 
+def note_round_request(req_id, n=None):
+    """라운드 **도중에** 다루게 된 요청을 그 라운드의 `rounds/R<N>/round.json` 에 덧붙입니다 (REV 148).
+
+    `round.json` 은 라운드를 띄우는 순간의 열린 요청만 담습니다(`fleet_ctl._write_round_record`). 그 뒤에 들어온
+    요청을 관리자가 태스크에 잇거나(`task set --request`) 직접 만들면(`request set`) 그 프로젝트가 '거친 라운드' 에서
+    빠졌습니다. 도는 라운드가 없거나 기록 파일이 없으면 아무것도 하지 않습니다. 실패해도 부른 명령은 막지 않습니다.
+    """
+    try:
+        if not req_id:
+            return False
+        if n is None:
+            import fleet  # noqa: PLC0415 - fleet 이 이 모듈을 지연 import 한다
+            if pathlib.Path(fleet.ROOT) != pathlib.Path(ROOT):   # 다른 저장소(테스트의 임시 폴더)의 라운드를 건드리지 않는다
+                return False
+            n = fleet.current_round()
+        if n is None:
+            return False
+        f = ROOT / "rounds" / f"R{int(n)}" / "round.json"
+        rec = json.loads(f.read_text(encoding="utf-8"))
+        if not isinstance(rec, dict) or rec.get("state") == "failed":
+            return False
+        project = ""
+        rdir = ROOT / ".aimem" / "requests"
+        for q in (sorted(rdir.glob("*.json")) if rdir.exists() else []):
+            try:
+                obj = json.loads(q.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(obj, dict) and obj.get("id") == req_id:
+                project = obj.get("project") if isinstance(obj.get("project"), str) else ""
+                break
+        reqs = rec.get("requests") if isinstance(rec.get("requests"), list) else []
+        projs = rec.get("projects") if isinstance(rec.get("projects"), list) else []
+        changed = False
+        if req_id not in reqs:
+            reqs.append(req_id); changed = True
+        if project and re.match(PROJECT_NAME_RE, project) and project not in projs:
+            projs = sorted(set(projs) | {project}); changed = True
+        if not changed:
+            return False
+        rec["requests"], rec["projects"] = reqs, projs
+        tmp = f.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(rec, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        os.replace(tmp, f)
+        return True
+    except Exception:  # noqa: BLE001 - 기록 보강은 덤이다. 태스크·요청 쓰기를 막지 않는다
+        return False
+
+
 def cmd_request(a):
     project = getattr(a, "project", None)
     if project is not None:
@@ -699,6 +750,7 @@ def cmd_request(a):
                        "title": row["title"] or "", "detail": row["detail"] or "", "status": row["status"], "subtasks": []}
                 (rdir / f"{a.id}.json").write_text(json.dumps(rec, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
                 synced = True
+            note_round_request(a.id)              # 관리자가 라운드 도중 만든 요청도 그 라운드 기록에 (REV 148)
             print(f"request {a.id} {what}" + (" (요청 파일도 맞춤)" if synced else "") + (f" [프로젝트 {project}]" if project else ""))
         elif a.action == "list":
             # 프로젝트는 요청 파일(.aimem/requests/*.json)의 `project` - 결과물이 쌓일 `projects/<이름>/` (빈 값 = 함대 자체)

@@ -1614,6 +1614,28 @@ def _project_of(payload):
 
 
 _PROGRESS_ROUND = re.compile(r"^##\s*R(\d+)\b(.*)$", re.MULTILINE)
+# 목표 절 (REV 148): `## 목표`(또는 `## Goals`) 아래의 체크리스트. 관리자가 프로젝트 첫 라운드에 예측해 적고 라운드마다 고칩니다
+_PROGRESS_GOALS = re.compile(r"^##[ \t]*(?:목표|goals)\b[^\n]*$", re.MULTILINE | re.IGNORECASE)
+_PROGRESS_HEADING = re.compile(r"^##?[ \t]+\S", re.MULTILINE)
+_PROGRESS_GOAL_ITEM = re.compile(r"^[ \t]{0,8}[-*][ \t]+\[([ xX])\][ \t]+\S")
+PROJECT_GOALS_MAX = 200
+
+
+def _progress_goals(text):
+    """`PROGRESS.md` 의 `## 목표` 절 -> {"total", "done"}. 절이 없거나 항목이 없으면 None (그때는 요청 기준 진행률)."""
+    m = _PROGRESS_GOALS.search(text)
+    if not m:
+        return None
+    nxt = _PROGRESS_HEADING.search(text, m.end())
+    total = done = 0
+    for line in text[m.end():(nxt.start() if nxt else len(text))].splitlines()[:2000]:
+        g = _PROGRESS_GOAL_ITEM.match(line)
+        if g:
+            total += 1
+            done += g.group(1) != " "
+            if total >= PROJECT_GOALS_MAX:
+                break
+    return {"total": total, "done": done} if total else None
 PROJECT_SUMMARY_MAX = 600
 
 
@@ -1640,15 +1662,15 @@ def _archived_request_projects(root):
 
 
 def _project_progress_file(root, name):
-    """`projects/<이름>/PROGRESS.md` 에서 거친 라운드와 가장 최근 항목(= 남은 일이 적힌 곳)을 읽습니다."""
+    """`projects/<이름>/PROGRESS.md` 에서 거친 라운드, 가장 최근 항목(= 남은 일이 적힌 곳), 목표 달성 수를 읽습니다."""
     f = pathlib.Path(root) / PROJECTS_DIR / name / "PROGRESS.md"
     try:
         if f.is_symlink() or not f.is_file():
-            return [], "", None
+            return [], "", None, None
         text = f.read_text(encoding="utf-8", errors="replace")[:200_000]
         updated = datetime.datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")
     except OSError:
-        return [], "", None
+        return [], "", None, None
     marks = list(_PROGRESS_ROUND.finditer(text))
     rounds = sorted({int(m.group(1)) for m in marks})
     summary = ""
@@ -1658,7 +1680,7 @@ def _project_progress_file(root, name):
         summary = text[top.start():(min(nxt) if nxt else len(text))].strip()
     else:
         summary = text.strip()
-    return rounds, summary[:PROJECT_SUMMARY_MAX], updated
+    return rounds, summary[:PROJECT_SUMMARY_MAX], updated, _progress_goals(text)
 
 
 def _round_records(root):
@@ -1686,8 +1708,10 @@ def _round_records(root):
 def list_projects(root=ROOT, requests=None):
     """프로젝트별 진행 상황 (2026-11-10 태석님: "각 프로젝트가 얼마나 진행되고 있나").
 
-    프로젝트 = `projects/` 아래 폴더 + 요청이 가리키는 이름. 진행률은 그 프로젝트 **요청들의 평균**입니다 -
-    끝난 요청 100, 진행 중인 요청은 그 요청의 진행율(`progress_pct`), 거절된 요청은 셈에서 뺍니다.
+    프로젝트 = `projects/` 아래 폴더 + 요청이 가리키는 이름. 진행률(`percent`)은 **목표 대비**입니다 - 관리자가
+    `PROGRESS.md` 의 `## 목표` 체크리스트에 적은 것 중 끝난 비율(`basis: "goals"`, REV 148). 목표가 아직 안 적힌
+    프로젝트는 예전처럼 그 프로젝트 **요청들의 평균**(`basis: "requests"`)입니다 - 끝난 요청 100, 진행 중인 요청은
+    그 요청의 진행율(`progress_pct`), 거절된 요청은 셈에서 뺍니다. 요청 평균은 `request_percent` 로 늘 따로 싣습니다.
     거친 라운드와 '남은 일' 은 관리자가 쓰는 `PROGRESS.md` 에서 읽습니다.
     """
     root = pathlib.Path(root)
@@ -1730,12 +1754,14 @@ def list_projects(root=ROOT, requests=None):
         counts = {"total": len(rows), "done": sum(1 for s, _ in rows if s == "DONE"),
                   "new": sum(1 for s, _ in rows if s == "NEW"),
                   "active": sum(1 for s, _ in rows if s not in ("DONE", "NEW"))}
-        noted, summary, updated = _project_progress_file(root, n)
+        noted, summary, updated, goals = _project_progress_file(root, n)
+        req_pct = round(sum(p for _, p in rows) / len(rows), 1) if rows else None
         mine = launched.get(n, {})
         rounds = sorted(set(noted) | set(mine))          # 띄운 기록(round.json) + 관리자가 적은 기록(PROGRESS.md)
         last = rounds[-1] if rounds else None
         out.append({"name": n, "path": f"{PROJECTS_DIR}/{n}/", "exists": n in have,
-                    "percent": round(sum(p for _, p in rows) / len(rows), 1) if rows else None,
+                    "percent": round(100.0 * goals["done"] / goals["total"], 1) if goals else req_pct,
+                    "basis": "goals" if goals else "requests", "goals": goals, "request_percent": req_pct,
                     "requests": counts, "rounds": rounds, "round_count": len(rounds),
                     "first_round": rounds[0] if rounds else None, "last_round": last,
                     "last_round_at": mine.get(last) if last is not None else None,

@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T21:53:22 / REV 147
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T22:08:58 / REV 148
 
 ## 2. 세션 명부
 
@@ -18,6 +18,7 @@
 
 ## 4. 이벤트 로그 (최신 50)
 
+- `2026-11-10 22:08` 클로드 코드 [handoff] REV 148: **REV 148. 프로젝트 진행률을 목표 대비로, 라운드 도중 요청도 라운드 기록에.** (1) 관리자가 `projects/<이름>/PROGRESS.md` 맨 위 `## 목표` 체크리스트에 프로젝트를 끝내는 데 필요한 목표를 예측해 적고 라운드마다 체크를 맞춘다(표준 브리프 1-1, 8.0-8). 웹 프로젝트 카드의 진행률은 그 목록의 끝난 수/전체(`basis: goals`, '목표 2/5 · 40%'), 목표가 없으면 예전처럼 요청 평균('요청 기준 N%', `request_percent` 는 늘 실음). (2) `task s
 - `2026-11-10 21:53` 클로드 코드 [handoff] REV 147: **REV 147. `monitorctl.sh restart` 가 내리기만 하고 올리지 못하던 것.** 원인: 출력을 `| head -1` 처럼 중간에 닫히는 파이프로 받으면 stop 의 다음 줄을 찍다 SIGPIPE 로 스크립트가 죽어 start 까지 가지 못했다. `trap '' PIPE` + 출력 함수 `say`(실패 무시)로 출력이 끊겨도 동작은 끝까지 한다. 내리는 순간의 `tr: 읽기 오류` 소음도 버림. `restart | head -1` 3회 연속 재기동 확인. 준비 점검의 '2건 미통과' 는 15:37(REV 123
 - `2026-11-10 21:47` 클로드 코드 [handoff] REV 146: **REV 146. 웹에서 프로젝트 결과물을 보고, 요청 수정 화면에서 프로젝트를 바꾼다.** (1) `GET /api/projects/<이름>/files` · `/file?path=` - `projects/<이름>/` 의 파일 목록(최대 500, README·PROGRESS 먼저, 숨김·링크·의존성 폴더 제외)과 본문(텍스트만, 200KB 까지, 상세 응답과 같은 가림). 경로는 폴더 안 상대 경로만 - 절대 경로·`..`·숨김 조각·심볼릭 링크 거절. (2) 함대 탭 프로젝트 카드에 '결과물 보기' → 상세 패널에서 목록, 행을
 - `2026-11-10 21:40` 클로드 코드 [handoff] REV 145: **REV 145. 프로젝트 구조 종합 검토 - 라운드 흐름 결함 5건과 화면 가독성 정비.** (1) 웹 요청 폼은 파일만 만들고 `request list` 는 DB 만 읽어 표준 브리프 라운드의 관리자가 NEW 를 못 봤다 → `aimem_db.load_request_files` 를 `request list/set`·`task set` 앞에서 부른다. (2) `request set --project` 추가(파일 없으면 만든다). (3) 관리자가 안 뜬 라운드는 `round.json` 에 `state: failed` → 프로젝트 
@@ -67,7 +68,6 @@
 - `2026-11-10 14:30` Claude Code (Taeseok: "remove all finished work") [handoff] REV 119: **REV 119. First clean-up of board, queue and request tree.** (1) All 31 lingering REVIEW tasks belonged to DONE requests or finished graphs (G-004~007 100%; G-003 and G-005 resolved in later rounds), so they were closed as DONE, and all 59 DONE rows were moved with `archive --days 0` to `.aimem/arc
 - `2026-11-10 14:20` Claude Code (Taeseok's instruction) [handoff] REV 118: **REV 118. Detail views reachable from all three monitor tabs.** Places that had no detail: idle slot rows, board rows without a run (Manager's own work), the queue, graph nodes (tasks), request subtasks without a run, past Manager sessions, and **the handoff log was not on screen at all** (the "log
 - `2026-11-10 13:50` Claude Code (Taeseok's instruction) [handoff] REV 117: **REV 117. Five monitor design-vs-function checks + shared CA and Windows proxy.** (1) For closed requests (DONE/REJECTED) the request status decides progress and ETA (`reader._estimate`, front end shows "closed") - 10 DONE requests had shown 0~90% progress and remaining ETA. The `REVIEW` closing ru
-- `2026-11-10 11:40` Claude Code (Taeseok's instruction, fleet stopped) [handoff] REV 116: **REV 116. Direct monitor UI work + clearing handled items.** (1) UI: numbered titles → bullets, type scale 15/14/13/12, width 1680 + fixed request sidebar, underline tabs with counts, Manager session line (`/api/state.managers`, 30-second background cache), per-slot "now", 20 runs + more + report b
 
 ## 4.5 대기 큐
 

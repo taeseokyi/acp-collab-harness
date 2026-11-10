@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/o
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 147** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-10 21:53 KST
+- **REV: 148** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-10 22:08 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **a Claude ACP session** (harness claude, model Opus 5.5 = `opus[1m]`),
@@ -420,13 +420,17 @@ used and **the round's tasks are the `NEW` requests**; with nothing to do the Ma
 - **A project spans rounds.** Each request names a project (`project` in the request file; empty = the fleet's own
   code, changed in place). Deliverables accumulate in **`projects/<project>/`** across rounds - one place, edited
   in place, no per-round copies. `projects/<project>/PROGRESS.md` is the project's memory: the Manager reads it at
-  round start and prepends `## R<N>` (done, changed files, verification, **what remains**) at round close. A new
+  round start and prepends `## R<N>` (done, changed files, verification, **what remains**) at round close. Its
+  top section `## 목표` is the project's goal checklist (`- [ ]` / `- [x]`): the Manager predicts the goals needed
+  to finish the project on its first round and keeps the checks true every round - the web progress is
+  done/total of that list (request average until the list exists). A new
   project gets a `README.md`. Assign paths to a slot with `aimem_db.py ownership set` before a worker writes
 - **A round folder holds records only:** `rounds/R<N>/brief.md` (the brief as sent), `round.json` (launch time,
-  open requests and their projects - written by the launcher) and `REPORT.md` (the close report, also in the
+  open requests and their projects - written by the launcher; `task set --request` / `request set` during the
+  round add theirs) and `REPORT.md` (the close report, also in the
   response body). No deliverables there; other rounds' folders are not touched
 - **Identifiers stay as they are** (`8.0-3-1`); project and round are not prefixed to them. The web Fleet tab
-  shows per-project progress: request counts and average progress, rounds worked (`round.json` + `PROGRESS.md`),
+  shows per-project progress: goals done/total (or request average), request counts, rounds worked (`round.json` + `PROGRESS.md`),
   and the latest `PROGRESS.md` entry
 
 **Start** (a new session is blank)

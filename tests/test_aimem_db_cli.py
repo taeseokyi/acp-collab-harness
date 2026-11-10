@@ -92,6 +92,38 @@ class AimemDbCliTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.run_cmd(aimem_db.cmd_request, action="set", id="Q-9", project="../x")
 
+    def test_requests_taken_up_mid_round_join_the_round_record(self):
+        """REV 148: `round.json` 은 띄울 때의 열린 요청만 담았다 - 도중에 들어온 요청의 프로젝트가 라운드에서 빠졌다."""
+        import fleet
+        rd = self.root / "rounds" / "R7"
+        rd.mkdir(parents=True)
+        rj = rd / "round.json"
+        rj.write_text(json.dumps({"round": 7, "at": "2026-11-10T22:00:00", "requests": ["Q-a"], "projects": ["알파"]}),
+                      encoding="utf-8")
+        (self.root / ".aimem" / "requests" / "Q-b.json").write_text(json.dumps(
+            {"id": "Q-b", "title": "도중에 넣음", "detail": "", "project": "베타", "status": "NEW", "subtasks": []}), encoding="utf-8")
+        read = lambda: json.loads(rj.read_text(encoding="utf-8"))  # noqa: E731
+        # 다른 저장소(이 임시 폴더)의 라운드는 건드리지 않는다 - fleet.ROOT 가 다르면 아무것도 안 한다
+        self.run_cmd(aimem_db.cmd_task, action="set", id="T-1", request="Q-b", title="x")
+        self.assertEqual(read()["projects"], ["알파"])
+        with mock.patch.object(fleet, "ROOT", self.root):
+            with mock.patch.object(fleet, "current_round", return_value=None):      # 도는 라운드가 없으면 그대로
+                self.run_cmd(aimem_db.cmd_task, action="set", id="T-1", request="Q-b")
+                self.assertEqual(read()["requests"], ["Q-a"])
+            with mock.patch.object(fleet, "current_round", return_value=7):
+                self.run_cmd(aimem_db.cmd_task, action="set", id="T-1", request="Q-b")
+                self.assertEqual((read()["requests"], read()["projects"]), (["Q-a", "Q-b"], ["베타", "알파"]))
+                self.run_cmd(aimem_db.cmd_task, action="set", id="T-1", status="DONE")   # 요청을 안 주면 손대지 않는다
+                self.run_cmd(aimem_db.cmd_request, action="set", id="Q-c", title="관리자가 만든 후속", project="감마")
+                self.assertEqual((read()["requests"], read()["projects"]), (["Q-a", "Q-b", "Q-c"], ["감마", "베타", "알파"]))
+                self.assertEqual(read()["at"], "2026-11-10T22:00:00")
+                rec = read(); rec["state"] = "failed"; rj.write_text(json.dumps(rec), encoding="utf-8")
+                self.run_cmd(aimem_db.cmd_request, action="set", id="Q-d", title="x", project="델타")   # 실패한 라운드는 그대로
+                self.assertNotIn("델타", read()["projects"])
+            with mock.patch.object(fleet, "current_round", return_value=9):          # 기록 파일이 없는 라운드 - 만들지 않는다
+                self.run_cmd(aimem_db.cmd_request, action="set", id="Q-e", title="x", project="엡실론")
+                self.assertFalse((self.root / "rounds" / "R9").exists())
+
     def test_project_name_rule_is_one_rule(self):
         import fleet
         import aimem_monitor

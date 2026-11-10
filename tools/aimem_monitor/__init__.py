@@ -68,9 +68,10 @@ SERVER_KEYS = {
     "fleet": "{mode, label, at, by, note, default, running_runs, graphs, brief, prepare, relay, "
              "can:{prepare, run, pause, stop, round}}",
     # 프로젝트 목록 (2026-11-10) - `projects/` 아래 폴더 + 요청이 가리키는 이름. exists = 폴더가 이미 있나
-    # percent = 그 프로젝트 요청들의 평균 진행율. rounds = `rounds/R<N>/round.json`(띄운 기록) + `PROGRESS.md` 의 `## R<N>`.
+    # percent = 목표 대비(`PROGRESS.md` 의 `## 목표` 체크리스트, basis "goals") - 목표가 없으면 요청들의 평균(basis "requests").
+    # goals = {total, done} 또는 null. request_percent = 요청 평균(늘 실음). rounds = `rounds/R<N>/round.json`(띄운 기록) + `PROGRESS.md` 의 `## R<N>`.
     # summary = `projects/<이름>/PROGRESS.md` 의 가장 최근 라운드 항목
-    "projects": "[{name, path, exists, percent, requests:{total, done, new, active}, rounds, round_count, first_round, "
+    "projects": "[{name, path, exists, percent, basis, goals:{total, done}, request_percent, requests:{total, done, new, active}, rounds, round_count, first_round, "
                 "last_round, last_round_at, updated, summary}]",
 }
 
