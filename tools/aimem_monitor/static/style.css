@@ -929,7 +929,6 @@ form label {
   line-height: var(--st-lh-body);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 45vh;
   overflow-y: auto;
 }
 
@@ -1200,6 +1199,7 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .manager-step.is-warn { color: var(--st-warn-text); font-weight: var(--st-fw-medium); }
 .mgr-list { margin: 0; padding-left: var(--st-s-5); display: grid; gap: 6px; font-size: var(--st-fs-sm); }
 .mgr-list li { overflow-wrap: anywhere; }
+.mgr-list .mgr-body { white-space: pre-wrap; }   /* 관리자 단계 본문(표·목록)의 줄바꿈 보존 (2026-11-10) */
 .mgr-head { display: inline-block; margin-right: 6px; color: var(--st-ink-muted); font-weight: var(--st-fw-medium); }
 .mgr-list .is-tool .mgr-body { font-family: var(--st-font-mono); font-size: 12.5px; white-space: pre-wrap; }
 .mgr-list .is-text .mgr-body { white-space: pre-wrap; color: var(--st-ink); }

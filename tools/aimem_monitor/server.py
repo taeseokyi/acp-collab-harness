@@ -1002,7 +1002,7 @@ def _step_line(step):
     return ("▸ " if step.get("kind") == "tool" else "") + s[:160]
 
 
-def manager_detail(id8, root=ROOT):
+def manager_detail(id8, root=ROOT, all_steps=False):
     """관리자 세션 하나의 상세: 요약 + 최근 단계 + 라운드 전달 기록 + 라운드 중 이벤트·그래프. (코드, 본문)"""
     if not _MGR_ID_RE.match(id8 or ""):
         return 400, {"ok": False, "error": "잘못된 관리자 id 입니다"}
@@ -1017,8 +1017,9 @@ def manager_detail(id8, root=ROOT):
     if rec is not None:
         steps = _manager_steps(rec) or []
         out["steps_total"] = len(steps)
-        out["steps"] = [{"kind": s["kind"], "text": s["text"][:1200 if s["kind"] == "text" else 300],
-                         "desc": s.get("desc", "")[:120]} for s in steps[-MANAGER_STEPS_MAX:]]
+        # 단계 본문은 자르지 않는다(상세는 전문, 2026-11-10). 기본은 최근 MANAGER_STEPS_MAX 개, `?all=1` 이면 전부.
+        shown = steps if all_steps else steps[-MANAGER_STEPS_MAX:]
+        out["steps"] = [{"kind": s["kind"], "text": s["text"], "desc": s.get("desc", "")} for s in shown]
         try:
             st = rec.stat()
             out["record_kb"] = st.st_size // 1024
@@ -1057,9 +1058,9 @@ def manager_detail(id8, root=ROOT):
                 until = out["last_activity"]          # 끝난 세션은 그 세션이 끝난 시각까지만
             with aimem_db.connect() as con:
                 rows = con.execute("SELECT at, actor, rev, kind, body FROM events WHERE at >= ? AND at <= ? "
-                                   "ORDER BY seq DESC LIMIT 30", (started, until)).fetchall()
+                                   "ORDER BY seq DESC" + ("" if all_steps else " LIMIT 30"), (started, until)).fetchall()
             out["events"] = [{"at": r["at"], "actor": r["actor"], "rev": r["rev"], "kind": r["kind"],
-                              "body": (r["body"] or "")[:400]} for r in rows]
+                              "body": r["body"] or ""} for r in rows]
         except Exception:  # noqa: BLE001
             pass
         try:
@@ -1672,7 +1673,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(200, d)
         mm = _REQ_MGR_RE.match(path)
         if mm:
-            code, body = manager_detail(mm.group(1), self.root)
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            code, body = manager_detail(mm.group(1), self.root, all_steps=(q.get("all") or [""])[0] == "1")
             return self._json(code, body)
         m = _REQ_GET_RE.match(path)
         if m:

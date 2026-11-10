@@ -194,6 +194,21 @@ class ManagerDetailTest(unittest.TestCase):
         self.assertNotIn(str(server.ROOT), dumped)                    # 저장소 절대경로 가림
         self.assertEqual(body["session"]["label"], "관리자 R9")
 
+    def test_steps_are_not_truncated_and_all_returns_everything(self):
+        rec = json.loads(next(self.acpx.glob("*.json")).read_text(encoding="utf-8"))
+        long = "표 " * 1500   # 3000자 - 예전 상한 1200 을 넘긴다
+        rec["messages"][1]["Agent"]["content"].append({"Text": long})
+        for i in range(60):   # MANAGER_STEPS_MAX(40) 을 넘긴다
+            rec["messages"][1]["Agent"]["content"].append({"Text": f"단계 {i}"})
+        next(self.acpx.glob("*.json")).write_text(json.dumps(rec, ensure_ascii=False), encoding="utf-8")
+        code, body = server.manager_detail("abcdef12")
+        self.assertEqual(code, 200)
+        self.assertEqual(body["steps_total"], 64)
+        self.assertEqual(len(body["steps"]), server.MANAGER_STEPS_MAX)
+        code, body = server.manager_detail("abcdef12", all_steps=True)
+        self.assertEqual(len(body["steps"]), 64)
+        self.assertIn(long.strip(), [s["text"] for s in body["steps"]])   # 본문이 잘리지 않는다
+
     def test_bad_and_missing_ids(self):
         self.assertEqual(server.manager_detail("../etc/pa")[0], 400)
         self.assertEqual(server.manager_detail("ABCDEF12")[0], 400)

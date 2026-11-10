@@ -308,7 +308,7 @@ def state_dict():
             # 밀려나, 웹 화면의 `4절` 로그가 2건으로 줄었다(REV 114 실측). 12 는
             # `5절` 의 "`4절` 로그 항목 수 12건" 상한과 같은 수다.
             "events": rows("""
-                SELECT seq,at,actor,rev,kind,substr(body,1,400) AS body FROM events
+                SELECT seq,at,actor,rev,kind,body FROM events
                  WHERE seq IN (SELECT seq FROM events ORDER BY seq DESC LIMIT 50)
                     OR seq IN (SELECT seq FROM events WHERE kind='handoff' ORDER BY seq DESC LIMIT 12)
                  ORDER BY seq DESC"""),

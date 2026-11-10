@@ -313,7 +313,7 @@ class TestStateContract(unittest.TestCase):
         self.assertEqual(entry["handoff"], "T-036")
         self.assertEqual(entry["note"], "라운드 4")
 
-    def test_log_is_newest_first_and_truncates(self):
+    def test_log_is_newest_first_and_untruncated(self):
         long_text = "가" * 1200
         fixture = AIMEM_FIXTURE.replace(
             "## 4.5 대기 큐",
@@ -332,8 +332,9 @@ class TestStateContract(unittest.TestCase):
         self.assertIn("그 앞 항목", log[1]["text"])
         self.assertEqual(log[2]["when"], "2026-11-09 14:00")
         self.assertNotIn("2026-11-09", log[0]["text"])
-        self.assertTrue(log[2]["text"].endswith("..."))
-        self.assertEqual(len(log[2]["text"]), 403)
+        # 2026-11-10: 자르지 않는다 - 상세보기가 전문을 보여야 한다 (목록 말줄임은 CSS 몫)
+        self.assertFalse(log[2]["text"].endswith("..."))
+        self.assertEqual(log[2]["text"], "관리자: " + long_text)
 
     def test_runs_states_and_order(self):
         runs = self.collect()["runs"]

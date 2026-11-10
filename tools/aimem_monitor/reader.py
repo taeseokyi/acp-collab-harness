@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from . import PROGRESS_WEIGHTS, REQUEST_CLOSED_STATES
 from . import RUN_ID_RE as _RUN_ID_PATTERN
 
-LOG_MAX = 400
+LOG_MAX = 400   # (더는 자르는 데 쓰지 않는다 - 하위 호환용 상수)
 REPORT_HEAD = 200
 _OPENCODE_PROGRESS = re.compile(r"^\s*>\s*\w+\s*·")
 
@@ -120,10 +120,7 @@ def _parse_log(lines: list[str]) -> list[dict]:
             cur["text"] += " " + ln.strip()
         else:
             cur = None
-    for e in entries:
-        if len(e["text"]) > LOG_MAX:
-            e["text"] = e["text"][:LOG_MAX] + "..."
-    return entries
+    return entries   # 자르지 않는다 - 목록은 CSS 가 말줄임하고 상세는 전문을 보인다 (2026-11-10)
 
 
 # --------------------------------------------------------------- 하네스 모델
@@ -417,7 +414,7 @@ def _collect_requests(root, runs, slots, eta, now, errors) -> list[dict]:
 # --------------------------------------------------------------- 운영 상태 DB (T-069)
 
 _DB_LOG_HEAD = re.compile(r"^-\s*`([^`]+)`\s*")
-_DB_BODY_CAP = 400  # aimem_db.state_dict() 가 events.body 를 substr(body,1,400) 으로 자른다
+# (2026-11-10) aimem_db.state_dict() 가 events.body 를 더는 자르지 않는다 - 로그 상세가 전문을 보여야 해서
 
 
 def _s(v) -> str:
@@ -466,7 +463,6 @@ def _db_log(events: list) -> list[dict]:
         if not isinstance(ev, dict) or ev.get("kind") != "handoff":
             continue
         body = _s(ev.get("body"))
-        capped = len(body) >= _DB_BODY_CAP
         m = _DB_LOG_HEAD.match(body)
         if m:  # 마크다운 원문 `- \`<시각>\` 관리자(R4): ...`
             when, text = m.group(1), body[m.end():]
@@ -475,10 +471,6 @@ def _db_log(events: list) -> list[dict]:
             actor = _s(ev.get("actor"))
             text = f"{actor}: {body}" if actor else body
         text = " ".join(text.split())
-        if len(text) > LOG_MAX:
-            text = text[:LOG_MAX] + "..."
-        elif capped:
-            text += "..."
         out.append({"when": when, "text": text})
     return out
 
@@ -567,7 +559,7 @@ def collect(root: pathlib.Path | None = None) -> dict:
 # 가져다 컴파일만 한다. `re.ASCII` 는 전각 숫자 등 유니코드 `[0-9]` 외 문자를 막기 위한 것이고,
 # 아래에서 `fullmatch` 로 거르므로 끝의 `\n` 도 통과하지 못한다.
 RUN_ID_RE = re.compile(_RUN_ID_PATTERN, re.ASCII)
-STDERR_TAIL = 2000
+STDERR_TAIL = 2000   # (더는 자르는 데 쓰지 않는다 - 하위 호환용 상수)
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 DETAIL_KEYS = ("id", "found", "slot", "harness", "model", "label", "status", "rc", "elapsed_s",
                "started", "ended", "brief", "report", "stderr_tail", "paths", "errors")
@@ -724,4 +716,4 @@ def _fill_detail(d: dict, run_id: str, root) -> None:
     if d["paths"]["err"] and _safe_run_file(files["err"], rdir, errors):
         err = _read(files["err"], errors)
         # 자르기 전에 가린다 - 잘린 경계에 걸친 비밀이 짧은 조각으로 남아 패턴을 피하지 않게
-        d["stderr_tail"] = _redact(_ANSI.sub("", err).strip())[-STDERR_TAIL:]
+        d["stderr_tail"] = _redact(_ANSI.sub("", err).strip())   # 키 이름은 계약대로 두되 전문 (2026-11-10, 상세는 잘리지 않는다)

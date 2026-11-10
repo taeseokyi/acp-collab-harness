@@ -1071,9 +1071,10 @@ function detailRows(parent, title, rows) {
     sec.appendChild(ol);
   }
   parent.appendChild(sec);
+  return sec;
 }
 
-async function openManagerDetail(cur) {
+async function openManagerDetail(cur, all = false) {
   if (!cur || !cur.id) return;
   state.detailReturnFocus = document.activeElement;
   const overlay = bindDetailControls();
@@ -1090,7 +1091,7 @@ async function openManagerDetail(cur) {
   let d;
   try {
     if (DEMO) throw new Error('데모 모드에는 관리자 기록이 없습니다');
-    const res = await fetch('/api/managers/' + encodeURIComponent(cur.id), { headers: { Accept: 'application/json' } });
+    const res = await fetch('/api/managers/' + encodeURIComponent(cur.id) + (all ? '?all=1' : ''), { headers: { Accept: 'application/json' } });
     d = await res.json().catch(() => ({}));
     if (!res.ok || !d.ok) throw new Error(d.error || ('HTTP ' + res.status));
   } catch (err) {
@@ -1121,15 +1122,18 @@ async function openManagerDetail(cur) {
       [{ head: '브리프', body: show(r.brief) }].concat((r.log || []).map((l) => ({ body: l }))));
   }
   const steps = (d.steps || []).slice().reverse();
-  detailRows(body, `최근 단계 ${steps.length}개 (최신이 위, 전체 ${show(d.steps_total)}) - 명령 출력은 싣지 않습니다`,
+  const stepSec = detailRows(body, (all ? `전체 단계 ${steps.length}개` : `최근 단계 ${steps.length}개`) + ` (최신이 위, 전체 ${show(d.steps_total)}) - 명령 출력은 싣지 않습니다`,
     steps.map((x) => (x.kind === 'tool'
       ? { cls: 'is-tool', head: x.desc || '명령', body: x.text }
       : { cls: 'is-text', head: '관리자', body: x.text })));
+  if (!all && Number(d.steps_total) > steps.length) {
+    stepSec.appendChild(linkButton(`전체 ${show(d.steps_total)}단계·기록 전부 보기`, () => openManagerDetail(cur, true)));
+  }
   detailRows(body, '이 라운드의 그래프', (d.graphs || []).map((g) => ({
     head: show(g.id) + ' · ' + fmtGraphPct(g.percent),
     body: plainText(g.request) + ' - ' + Object.entries(g.counts || {}).map(([k, v]) => `${k} ${v}`).join(', '),
   })));
-  detailRows(body, '이 라운드의 기록 (aimem.db events, 최신이 위)', (d.events || []).map((e) => ({
+  detailRows(body, all ? '이 라운드의 기록 전부 (aimem.db events, 최신이 위)' : '이 라운드의 기록 (aimem.db events, 최신이 위, 최근 30건)', (d.events || []).map((e) => ({
     head: `${fmtDateTime(e.at)} · ${show(e.kind)} · REV ${show(e.rev)}`,
     body: show(e.actor) + ': ' + show(e.body),
   })));
