@@ -78,7 +78,7 @@ pid 는 `.aimem/monitor.pid`, 로그는 `.aimem/monitor.log`. 내릴 때는 pid 
 | `token show` | 로그인할 토큰 보기 |
 | `token rotate` | 새 토큰. **발급된 세션이 전부 무효**(쿠키 서명 키가 토큰) - 기기 분실 시. 뒤에 `restart` |
 | `github list` / `allow <계정>` / `deny <계정>` | GitHub 로그인 허용 목록 (`.aimem/tls/allowed-github-logins`, 없으면 전원 거부) |
-| `cert info` / `cert renew [--ip 공인IP] [--dns 도메인]` | 자체 인증서 보기·재발급 (EC P-256, 825일, 옛 것은 `.bak`) |
+| `cert info` / `cert renew [--ca-dir DIR] [--ip IP] [--dns 이름] [--self-signed]` | 서버 인증서 보기·재발급 (EC P-256, 825일, 옛 것은 `.bak`). `--ca-dir` 의 `ca.crt`·`ca.key` 로 서명하고 그 조건을 `.aimem/tls/cert-profile.json` 에 기억해 다음부터는 인자 없이 `cert renew` 만 치면 됨(SAN 누적). `--self-signed` 는 예전 방식 |
 | `audit [-n 30]` | 감사 로그 `.aimem/access.log` - 로그인 성공·실패, 로그아웃, 요청 생성·수정, 함대 제어, 토큰 교체 |
 
 - **비밀은 셸이 아니라 파일에서 읽습니다** - `.aimem/tls/monitor.env`(0600; `KISTI_API_KEY`,
@@ -87,28 +87,44 @@ pid 는 `.aimem/monitor.pid`, 로그는 `.aimem/monitor.log`. 내릴 때는 pid 
 - HSTS 는 **도메인 이름으로 들어온 요청에만** 보냅니다. `localhost`·IP 로 들어오면 보내지 않습니다 -
   HSTS 는 포트가 아니라 호스트 전체에 걸려, 같은 PC 의 다른 `http://localhost:*` 서비스를 깨뜨릴 수 있습니다
 
-### 인증서 신뢰 (윈도우 크롬, 한 번)
+### 인증서 - PC 의 다른 서비스와 같은 사설 CA 를 씁니다 (2026-11-10)
 
-1. 외부 주소로도 들어올 거라면 먼저 그 주소를 넣어 다시 만듭니다: `admin cert renew --ip <공인 IP>` 또는 `--dns <도메인>`
-   (WSL IP 는 재부팅마다 바뀔 수 있습니다 - 바뀌면 `cert renew` 후 `restart`)
-2. `\\wsl$\<배포판>\home\<사용자>\work\opencode\.aimem\tls\server.crt` 를 윈도우로 복사 → 더블클릭 →
-   **인증서 설치** → **로컬 컴퓨터** → **신뢰할 수 있는 루트 인증 기관**
-3. 크롬을 완전히 닫았다 다시 엽니다. 설치 전에는 `NET::ERR_CERT_AUTHORITY_INVALID` 경고가 뜹니다(진행은 가능)
+서버 인증서는 태석님 PC 의 사설 CA(`C:\Temp\carefor-app\server\certs\ca.{crt,key}`, carefor-app·
+Signposts_of_Faith 와 공용)로 서명합니다. 그 CA 가 윈도우 신뢰 루트에 **이미 들어 있으므로 브라우저에
+따로 설치할 것이 없습니다.** CA 공개 인증서 사본은 `.aimem/tls/ca.crt`(검증용 `curl --cacert`), CA 개인키는
+저장소 밖에 그대로 둡니다.
 
-### 외부에서 들어오게 하기 (WSL2 + 공유기, 태석님이 직접)
-
-**관리자 권한 PowerShell**:
-
-```powershell
-netsh interface portproxy add v4tov4 listenport=18799 listenaddress=0.0.0.0 `
-    connectport=18799 connectaddress=<WSL IP>
-New-NetFirewallRule -DisplayName "AIMEM fleet monitor" -Direction Inbound `
-    -LocalPort 18799 -Protocol TCP -Action Allow
+```bash
+# 처음 한 번 (이후엔 `cert renew` 만 - 조건은 .aimem/tls/cert-profile.json 에 기억됨)
+PYTHONPATH=tools python3 -m aimem_monitor admin cert renew \
+    --ca-dir /mnt/c/Temp/carefor-app/server/certs --dns DESKTOP-4QI608A --ip 192.168.0.5 --ip 192.168.200.102
+tools/aimem_monitor/monitorctl.sh restart
+curl -s --cacert .aimem/tls/ca.crt https://192.168.0.5:18800/api/health   # 401 이면 체인·주소 모두 정상
 ```
 
-그 뒤 공유기에서 외부 포트 → 윈도우 PC 18799 로 포워딩합니다. 되돌리기:
-`netsh interface portproxy delete v4tov4 listenport=18799 listenaddress=0.0.0.0`.
-**저장소 밖(호스트·공유기 설정)이라 작업자도 관리자도 실행하지 않습니다.**
+새 주소(공인 IP·도메인)로도 들어올 거면 `--ip`/`--dns` 를 더해 `renew` 후 `restart`. WSL IP 는
+자동으로 들어가지만 아래 프록시 경로에서는 필요 없습니다. CA 없이 쓰려면 `--self-signed` - 그때는
+`server.crt` 를 윈도우 **신뢰할 수 있는 루트 인증 기관**에 설치해야 경고가 사라집니다.
+
+### 외부에서 들어오게 하기 - 윈도우 쪽 TCP 프록시 (WSL2, 2026-11-10)
+
+`netsh portproxy` 는 WSL IP 를 직접 적어야 해서 재부팅마다 끊겼습니다(Windows 10 이라 `networkingMode=mirrored`
+도 못 씁니다). 대신 **윈도우에서 도는 작은 통과 프록시**가 `0.0.0.0:18800` 을 듣고 **`127.0.0.1:18799`** 로
+넘깁니다 - 윈도우의 localhost 는 WSL2 가 알아서 WSL 서버로 이어 주므로 WSL IP 가 바뀌어도 아무것도 고칠 게
+없습니다. TLS 는 건드리지 않고 바이트만 통과시킵니다(인증서·인증은 WSL 서버 몫).
+
+- 스크립트·로그: `C:\Temp\aimem-proxy\aimem_proxy.py`, `aimem_proxy.log` (표준 라이브러리만, 윈도우 Python 3.13)
+- 작업 스케줄러 `\tsyi\AIMEM fleet proxy`: 로그온 시 `pythonw.exe` 로 시작, 시간제한 없음, 실패 시 1분 간격 재시작.
+  등록 XML 은 `C:\Temp\aimem-proxy\task.xml` (`schtasks /create /tn "\tsyi\AIMEM fleet proxy" /xml ... /f`)
+- 접속 주소: **`https://192.168.0.5:18800/`** (PC IP + 프록시 포트). 공유기는 외부 포트 → `192.168.0.5:18800`
+- 다른 기기에서 들어오려면 방화벽 1줄 (관리자 PowerShell, 태석님이 직접):
+
+```powershell
+New-NetFirewallRule -DisplayName "AIMEM fleet proxy" -Direction Inbound -LocalPort 18800 -Protocol TCP -Action Allow
+```
+
+**저장소 밖(호스트·공유기 설정)이라 작업자도 관리자도 실행하지 않습니다.** 옛 `portproxy` 규칙은 없습니다
+(2026-11-10 확인) - 있었다면 `netsh interface portproxy delete v4tov4 listenport=18799 listenaddress=0.0.0.0`.
 
 ### GitHub 로그인 (선택)
 

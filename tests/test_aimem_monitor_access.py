@@ -17,6 +17,7 @@ import shutil
 import socket
 import ssl
 import sys
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -263,3 +264,51 @@ class PlainHttpOnTlsPortTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CertRenewWithCATests(unittest.TestCase):
+    """`admin cert renew --ca-dir` - 사설 CA 서명 + 발급 조건 기억 (2026-11-10, 공유 CA 전환)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self._tmp.name)
+        self.ca = self.root / "ca"
+        self.ca.mkdir()
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                        "-nodes", "-keyout", str(self.ca / "ca.key"), "-out", str(self.ca / "ca.crt"), "-days", "2",
+                        "-subj", "/CN=test CA", "-addext", "basicConstraints=critical,CA:TRUE"],
+                       check=True, capture_output=True)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _x509(self, *args):
+        return subprocess.run(["openssl", "x509", "-in", str(self.root / admin.CERT_FILE), "-noout", *args],
+                              capture_output=True, text=True, check=True).stdout
+
+    def test_ca_signed_and_profile_remembered(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            admin.cert_renew(self.root, extra_ips=["192.0.2.7"], extra_dns=["pc-name"], days=2, ca_dir=self.ca)
+        self.assertIn("CN=test CA", self._x509("-issuer"))
+        san = self._x509("-ext", "subjectAltName")
+        self.assertIn("192.0.2.7", san)
+        self.assertIn("pc-name", san)
+        self.assertTrue((self.root / admin.CA_FILE).exists(), "CA 공개 인증서 사본")
+        self.assertFalse(list((self.root / ".aimem/tls").glob("*.tmp")), "임시 CSR/ext 가 남으면 안 된다")
+        # CA 개인키는 복사하지 않는다
+        self.assertFalse((self.root / ".aimem/tls/ca.key").exists())
+        # 서버가 그대로 올릴 수 있어야 한다
+        server.build_ssl_context(self.root)
+        # 두 번째 renew 는 인자 없이도 같은 CA·같은 SAN 을 다시 쓴다
+        with contextlib.redirect_stdout(io.StringIO()):
+            admin.cert_renew(self.root, days=2)
+        self.assertIn("CN=test CA", self._x509("-issuer"))
+        self.assertIn("192.0.2.7", self._x509("-ext", "subjectAltName"))
+        # --self-signed 는 CA 를 무시한다
+        with contextlib.redirect_stdout(io.StringIO()):
+            admin.cert_renew(self.root, days=2, self_signed=True)
+        self.assertIn("CN=aimem-fleet", self._x509("-issuer"))
+
+    def test_missing_ca_files_is_an_error(self):
+        with self.assertRaises(SystemExit):
+            admin.cert_renew(self.root, days=2, ca_dir=self.root / "nowhere")

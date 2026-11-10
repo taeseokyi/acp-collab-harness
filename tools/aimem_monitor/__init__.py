@@ -158,6 +158,13 @@ TLS_DIR = ".aimem/tls"
 CERT_FILE = ".aimem/tls/server.crt"
 KEY_FILE = ".aimem/tls/server.key"
 TOKEN_FILE = ".aimem/tls/access-token"               # 32바이트 hex(64자), 0600
+#: 서버 인증서를 서명한 사설 CA 의 공개 인증서 사본 (2026-11-10, 태석님 지시 - carefor-app·
+#: Signposts_of_Faith 와 **같은 CA** 를 쓴다. 윈도우 신뢰 루트에 그 CA 가 이미 있어 서비스마다
+#: 인증서를 설치할 필요가 없다). 자체 서명일 때는 없을 수 있다. CA **개인키**는 저장소 밖에 산다.
+CA_FILE = ".aimem/tls/ca.crt"
+#: `admin cert renew` 가 마지막 발급 조건(CA 디렉터리·추가 SAN)을 적어 두는 곳. 다음 `renew` 는
+#: 인자가 없어도 이것을 그대로 다시 쓴다 - 갱신 때 SAN 하나를 빠뜨려 브라우저 경고가 돌아오지 않게.
+CERT_PROFILE_FILE = ".aimem/tls/cert-profile.json"
 GITHUB_ALLOW_FILE = ".aimem/tls/allowed-github-logins"   # 한 줄 한 계정, `#` 주석 허용
 
 #: 세션 쿠키. `Secure` 는 TLS 일 때만 붙습니다(http 로컬 검증에서 쿠키가 죽지 않도록).

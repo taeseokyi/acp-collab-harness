@@ -15,6 +15,7 @@
 import argparse
 import datetime
 import ipaddress
+import json
 import os
 import pathlib
 import re
@@ -23,7 +24,7 @@ import shutil
 import subprocess
 import sys
 
-from . import CERT_FILE, GITHUB_ALLOW_FILE, KEY_FILE, TOKEN_FILE
+from . import CA_FILE, CERT_FILE, CERT_PROFILE_FILE, GITHUB_ALLOW_FILE, KEY_FILE, TOKEN_FILE
 from . import server
 
 _LOGIN_RE = re.compile(r"\A[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\Z")   # GitHub 로그인 꼴
@@ -119,9 +120,13 @@ def cert_info(root):
     if not crt.exists():
         print("인증서 없음 - `admin cert renew` 로 만드십시오")
         return 1
-    out = subprocess.run([_openssl(), "x509", "-in", str(crt), "-noout", "-subject", "-enddate", "-fingerprint",
-                          "-sha256", "-ext", "subjectAltName"], capture_output=True, text=True)
+    out = subprocess.run([_openssl(), "x509", "-in", str(crt), "-noout", "-subject", "-issuer", "-enddate",
+                          "-fingerprint", "-sha256", "-ext", "subjectAltName"], capture_output=True, text=True)
     print(out.stdout.strip() or out.stderr.strip())
+    prof = _load_profile(root)
+    if prof:
+        print(f"발급 조건({CERT_PROFILE_FILE}): CA 디렉터리 {prof.get('ca_dir') or '없음(자체 서명)'} / "
+              f"추가 DNS {prof.get('dns') or []} / 추가 IP {prof.get('ips') or []}")
     return 0 if out.returncode == 0 else 1
 
 
@@ -140,21 +145,61 @@ def _default_sans():
     return dns, ips
 
 
-def cert_renew(root, extra_ips=(), extra_dns=(), days=825):
-    """자체 서명 인증서를 새로 만듭니다 (EC P-256). 옛 것은 `.bak` 으로 남깁니다.
+def _load_profile(root):
+    f = _p(root, CERT_PROFILE_FILE)
+    if not f.exists():
+        return {}
+    try:
+        d = json.loads(f.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
 
-    외부 주소(공유기 공인 IP·도메인)로 접속하려면 `--ip`/`--dns` 로 그 주소를 넣어야
-    브라우저가 이름 불일치 경고를 내지 않습니다(자체 서명 경고는 인증서를 신뢰 저장소에
-    설치하기 전까지 남습니다). 825일은 브라우저가 받아 주는 최대 유효기간입니다.
+
+def _save_profile(root, ca_dir, dns, ips):
+    f = _p(root, CERT_PROFILE_FILE)
+    f.write_text(json.dumps({"ca_dir": str(ca_dir) if ca_dir else None, "dns": sorted(dns), "ips": sorted(ips),
+                             "saved": datetime.datetime.now().isoformat(timespec="seconds")},
+                            ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+
+def cert_renew(root, extra_ips=(), extra_dns=(), days=825, ca_dir=None, self_signed=False):
+    """서버 인증서를 새로 만듭니다 (EC P-256). 옛 것은 `.bak` 으로 남깁니다.
+
+    두 가지 길:
+      - **CA 서명** (`--ca-dir <ca.crt·ca.key 가 있는 디렉터리>`): 그 사설 CA 로 서명합니다. 태석님 PC 의
+        다른 서비스(carefor-app·Signposts_of_Faith)와 같은 CA 를 쓰면 윈도우 신뢰 루트에 이미 있는
+        CA 하나로 전부 통하므로 **브라우저에 아무것도 설치하지 않아도** 됩니다. CA 공개 인증서는
+        `CA_FILE` 로 복사해 두고(검증용), CA 개인키는 읽기만 하고 복사하지 않습니다.
+      - **자체 서명** (`--self-signed`, 또는 CA 를 한 번도 지정한 적이 없을 때): 예전 방식. 브라우저에
+        `server.crt` 를 신뢰 루트로 설치해야 경고가 사라집니다.
+
+    마지막 발급 조건은 `CERT_PROFILE_FILE` 에 적고, 다음 `renew` 는 인자 없이 쳐도 그것을 다시 씁니다
+    (추가 SAN 은 **누적**됩니다 - 빼려면 파일을 고치십시오). 외부 주소(공유기 공인 IP·도메인)로
+    접속하려면 `--ip`/`--dns` 로 그 주소를 넣어야 이름 불일치 경고가 나지 않습니다.
+    825일은 브라우저가 받아 주는 최대 유효기간입니다.
     """
     for ip in extra_ips:
         ipaddress.ip_address(ip)   # 꼴 검사 - 틀리면 ValueError
     for d in extra_dns:
         if not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", d):
             raise SystemExit(f"DNS 이름 꼴이 아닙니다: {d!r}")
+    prof = _load_profile(root)
+    saved_dns, saved_ips = set(prof.get("dns") or []), set(prof.get("ips") or [])
+    if self_signed:
+        ca_dir = None
+    elif ca_dir is None and prof.get("ca_dir"):
+        ca_dir = prof["ca_dir"]
+    ca_crt = ca_key = None
+    if ca_dir:
+        ca_dir = pathlib.Path(ca_dir).expanduser()
+        ca_crt, ca_key = ca_dir / "ca.crt", ca_dir / "ca.key"
+        for f in (ca_crt, ca_key):
+            if not f.is_file():
+                raise SystemExit(f"CA 파일이 없습니다: {f} (--ca-dir 에는 ca.crt 와 ca.key 가 있어야 합니다)")
     dns, ips = _default_sans()
-    dns |= set(extra_dns)
-    ips |= set(extra_ips)
+    dns |= saved_dns | set(extra_dns)
+    ips |= saved_ips | set(extra_ips)
     san = ",".join([f"DNS:{d}" for d in sorted(dns)] + [f"IP:{i}" for i in sorted(ips)])
     crt, key = _p(root, CERT_FILE), _p(root, KEY_FILE)
     crt.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -163,19 +208,51 @@ def cert_renew(root, extra_ips=(), extra_dns=(), days=825):
         if f.exists():
             f.replace(f.with_name(f"{f.name}.{stamp}.bak"))
     tmpkey = key.with_name(key.name + ".new")
-    r = subprocess.run([_openssl(), "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
-                        "-nodes", "-keyout", str(tmpkey), "-out", str(crt), "-days", str(int(days)),
-                        "-subj", "/CN=aimem-fleet", "-addext", f"subjectAltName={san}",
-                        "-addext", "extendedKeyUsage=serverAuth"], capture_output=True, text=True)
-    if r.returncode != 0:
-        raise SystemExit("openssl 실패: " + r.stderr.strip()[-300:])
+    if ca_dir:
+        _issue_with_ca(crt, tmpkey, san, days, ca_crt, ca_key)
+        shutil.copyfile(ca_crt, _p(root, CA_FILE))
+        os.chmod(_p(root, CA_FILE), 0o644)
+        how = f"CA 서명 ({ca_dir})"
+        tail = "브라우저에 이 CA 가 이미 신뢰돼 있으면 더 설치할 것이 없습니다."
+    else:
+        r = subprocess.run([_openssl(), "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                            "-nodes", "-keyout", str(tmpkey), "-out", str(crt), "-days", str(int(days)),
+                            "-subj", "/CN=aimem-fleet", "-addext", f"subjectAltName={san}",
+                            "-addext", "extendedKeyUsage=serverAuth"], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SystemExit("openssl 실패: " + r.stderr.strip()[-300:])
+        how = "자체 서명"
+        tail = "브라우저(Windows)에 이 인증서를 '신뢰할 수 있는 루트 인증 기관' 으로 설치하면 경고가 사라집니다."
     os.chmod(tmpkey, 0o600)
     os.replace(tmpkey, key)
     os.chmod(crt, 0o644)
-    server.audit(root, "cert-renew", "cli", None, san)
-    print(f"새 인증서: {crt}\n  SAN: {san}\n  {days}일. 서버를 다시 띄우고, 브라우저(Windows)에 이 인증서를 "
-          f"'신뢰할 수 있는 루트 인증 기관' 으로 설치하면 경고가 사라집니다.")
+    _save_profile(root, ca_dir, saved_dns | set(extra_dns), saved_ips | set(extra_ips))
+    server.audit(root, "cert-renew", "cli", None, f"{how} {san}")
+    print(f"새 인증서: {crt}  [{how}]\n  SAN: {san}\n  {days}일. 서버를 다시 띄우십시오(`monitorctl.sh restart`). {tail}")
     return 0
+
+
+def _issue_with_ca(crt, key, san, days, ca_crt, ca_key):
+    """키 생성 -> CSR -> CA 서명. 임시 파일은 인증서 디렉터리 안에 두고 끝나면 지웁니다."""
+    o = _openssl()
+    csr, ext = crt.with_name("server.csr.tmp"), crt.with_name("server.ext.tmp")
+    try:
+        for cmd in ([o, "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", str(key)],
+                    [o, "req", "-new", "-key", str(key), "-subj", "/CN=aimem-fleet", "-out", str(csr)]):
+            r = subprocess.run(cmd, capture_output=True, text=True)
+            if r.returncode != 0:
+                raise SystemExit("openssl 실패: " + r.stderr.strip()[-300:])
+        ext.write_text("basicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\n"
+                       f"extendedKeyUsage=serverAuth\nsubjectAltName={san}\n", encoding="utf-8")
+        r = subprocess.run([o, "x509", "-req", "-in", str(csr), "-CA", str(ca_crt), "-CAkey", str(ca_key),
+                            "-CAcreateserial", "-CAserial", str(crt.with_name("ca.srl")), "-days", str(int(days)),
+                            "-sha256", "-extfile", str(ext), "-out", str(crt)], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SystemExit("openssl(CA 서명) 실패: " + r.stderr.strip()[-300:])
+    finally:
+        for f in (csr, ext):
+            if f.exists():
+                f.unlink()
 
 
 # ---------------------------------------------------------------- status / audit
@@ -240,6 +317,8 @@ def main(argv, root):
     c.add_argument("--ip", action="append", default=[])
     c.add_argument("--dns", action="append", default=[])
     c.add_argument("--days", type=int, default=825)
+    c.add_argument("--ca-dir", help="ca.crt·ca.key 가 있는 사설 CA 디렉터리 (한 번 주면 다음부터 기억)")
+    c.add_argument("--self-signed", action="store_true", help="CA 를 쓰지 않고 자체 서명으로")
     a_ = sub.add_parser("audit")
     a_.add_argument("-n", type=int, default=30)
     a = p.parse_args(argv)
@@ -254,7 +333,7 @@ def main(argv, root):
             p.error("계정 이름이 필요합니다")
         return github_allow(root, a.login) if a.action == "allow" else github_deny(root, a.login)
     if a.cmd == "cert":
-        return cert_info(root) if a.action == "info" else cert_renew(root, a.ip, a.dns, a.days)
+        return cert_info(root) if a.action == "info" else cert_renew(root, a.ip, a.dns, a.days, a.ca_dir, a.self_signed)
     if a.cmd == "audit":
         return audit_tail(root, a.n)
     return 2
