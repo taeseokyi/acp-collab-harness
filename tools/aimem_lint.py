@@ -277,7 +277,7 @@ def _note_weight(lines: List[str], fenced: List[bool], notes: List[str]) -> None
 
 def _check_handoff_entries(lines: List[str], fenced: List[bool], violations: List[Violation]) -> None:
     """REV 129: 4절은 관리 방법만 적는다. 로그 항목(`- \`YYYY-MM-DD\``)이 남아 있으면 문서가 다시 무거워지는 길이다 -
-    항목은 `.aimem/handoff.md` (`aimem_db.py handoff add`) 에 쌓이고 오래된 것은 `handoff rollover` 가 아카이브로 보낸다."""
+    항목의 정본은 DB events 다(`aimem_db.py handoff add`). `.aimem/handoff.md` 는 최신 12건 생성물이고 밀려난 항목은 자동으로 아카이브에 내보낸다."""
     for s, e in _section_spans(lines, fenced, 4):
         hits = [i for i in range(s, e) if not fenced[i] and HANDOFF_ENTRY_RE.match(lines[i])]
         if hits:

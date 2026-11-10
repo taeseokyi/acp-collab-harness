@@ -533,8 +533,15 @@ def collect(root: pathlib.Path | None = None) -> dict:
                   "handoff": _s(r.get("inherited")), "note": _s(r.get("note"))} for r in db.get("queue") or []]
         # 계약은 `when` 기준 최신 먼저다. events.seq 는 삽입 순서라 migrate/과거 시각 event 로 어긋난다 (T-077).
         # 정렬 키에서만 ISO 의 'T' 를 공백으로 (0x54 > 0x20 이라 같은 날 ISO 가 늘 위로 감). 안정 정렬 -> 동시각은 seq 순 유지.
-        log = sorted(_db_log(db.get("events") or []),
-                     key=lambda e: e["when"].replace("T", " "), reverse=True)
+        # REV 132~: handoff.md 와 같은 순서 - **REV 가 먼저**, 같은 REV(또는 REV 없음) 안에서는 `when`. 옛 항목의 시각은 손으로
+        # 적은 값이라 실제 순서와 어긋난 것이 있다(REV 126 이 131 보다 늦은 시각). REV 가 없는 이벤트끼리는 예전처럼 `when` 순이다.
+        def _rev_of(ev):
+            try:
+                return int(ev.get("rev"))
+            except (TypeError, ValueError, AttributeError):
+                return -1
+        pairs = [(_rev_of(ev), e) for ev in (db.get("events") or []) for e in _db_log([ev])]
+        log = [e for _, e in sorted(pairs, key=lambda p: (p[0], p[1]["when"].replace("T", " ")), reverse=True)]
     else:
         board = [{"id": c[0], "task": c[1], "slot": c[2], "status": c[3], "handoff": c[4], "artifact": c[5]}
                  for c in _table_rows(_section(lines, r"3\."), 6, errors, "3절 작업 보드")]

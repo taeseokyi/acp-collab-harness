@@ -13,7 +13,7 @@
 ## 해결 구조
 
 - **`AIMEM.md`** - 규약 한 벌(영어, REV 128~). 운영 상태(명부·보드·큐·소유권)는 `.aimem/aimem.db` 가 정본이고
-  `AIMEM-state.md` 가 읽기용 스냅샷, 핸드오프 로그는 `.aimem/handoff.md`(`aimem_db.py handoff`)입니다. 쓰기는 관리자만
+  `AIMEM-state.md` 가 읽기용 스냅샷, 핸드오프 로그도 DB 가 정본이고 `.aimem/handoff.md` 는 최신 12건 생성물입니다(`aimem_db.py handoff add|list`). 쓰기는 관리자만
 - **파일 소유권 표** - 경로 패턴마다 쓰기 소유 슬롯을 하나로 못박습니다.
   동시 쓰기 충돌을 구조적으로 없앱니다
 - **REV + 확인토큰** - 작업자는 착수 전에 지시의 REV·토큰을 `AIMEM.md` 실측으로
