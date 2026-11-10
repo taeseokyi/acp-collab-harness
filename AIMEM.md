@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/o
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` is the DB's read-only snapshot and `.aimem/handoff.md` is the handoff log.
 
-- **REV: 130** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-10 17:08 KST
+- **REV: 131** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-10 17:48 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **a Claude ACP session** (harness claude, model Opus 5.5 = `opus[1m]`),
@@ -179,6 +179,11 @@ python3 tools/aimem_db.py handoff rollover [--keep 4] [--dry-run]    # `archive`
   says **what changed**; history goes to the relevant section or the archive
 - Above 12 entries, `add` and `archive` roll the older ones over to `.aimem/archive/handoff-YYYY-MM.md`, keeping the
   newest 4 - archive first, verify, then remove. Nothing is deleted
+- **Concurrent writers are serialized.** `add`, `rollover` and `archive` hold one file lock (`.aimem/handoff.lock`)
+  for the whole read-modify-write, the REV is raised inside a DB write transaction, and the file is replaced
+  atomically - no lost entry, no duplicate REV, no double rollover. `add --expect-rev N` refuses to write when
+  another session raised the REV meanwhile. Hand edits bypass the lock; the linter then reports
+  `HANDOFF_DB_MISMATCH` (entry in the file without its `events` row)
 - Wherever this file says "record it in `Section 4`", it means `handoff add`. Entries written into this file are a
   linter violation (`HANDOFF_IN_AIMEM`)
 

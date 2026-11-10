@@ -301,3 +301,79 @@ class HandoffLogTest(AimemDbCliTest):
         self.assertNotIn("2000-01-01", text)
         self.assertRegex(text, r"- Last updated: \d{4}-\d{2}-\d{2} \d{2}:\d{2} KST")
         self.assertIsNone(aimem_db.sync_rev_in_aimem())   # 이미 맞으면 손대지 않는다
+
+
+class HandoffConcurrencyTest(AimemDbCliTest):
+    """REV 131: 동시에 쓰는 handoff add 가 항목을 잃지 않고, REV 가 겹치지 않고, 롤오버가 두 번 일어나지 않는다."""
+
+    def test_parallel_adds_lose_nothing_and_revs_are_unique(self):
+        import threading
+        n, results, errors = 10, [], []
+        start = threading.Barrier(n)
+
+        def work(i):
+            try:
+                start.wait()
+                results.append(aimem_db.handoff_add(f"parallel {i}", actor="t", bump=True, when=f"2026-11-10 10:{i:02d}")[0])
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+
+        ts = [threading.Thread(target=work, args=(i,)) for i in range(n)]
+        [t.start() for t in ts]; [t.join() for t in ts]
+        self.assertEqual(errors, [])
+        self.assertEqual(sorted(results), list(range(1, n + 1)))          # REV 가 하나도 겹치지 않는다
+        text = aimem_db.HANDOFF.read_text(encoding="utf-8")
+        self.assertEqual(sum(text.count(f"parallel {i}\n") for i in range(n)), n)   # 파일에 전부 있다
+        with aimem_db.connect() as con:
+            self.assertEqual(con.execute("SELECT count(*) FROM events WHERE kind='handoff'").fetchone()[0], n)
+        self.assertEqual(list(aimem_db.HANDOFF.parent.glob("handoff.md.*.tmp")), [])   # 임시 파일이 남지 않는다
+
+    def test_parallel_adds_roll_over_exactly_once_each(self):
+        import threading
+        n = 20
+        start = threading.Barrier(n)
+
+        def work(i):
+            start.wait()
+            aimem_db.handoff_add(f"roll {i:02d}", actor="t", when=f"2026-11-{i + 1:02d} 10:00")
+
+        ts = [threading.Thread(target=work, args=(i,)) for i in range(n)]
+        [t.start() for t in ts]; [t.join() for t in ts]
+        live = aimem_db.HANDOFF.read_text(encoding="utf-8")
+        arch = (self.root / ".aimem" / "archive" / "handoff-2026-11.md").read_text(encoding="utf-8")
+        for i in range(n):   # 항목마다 정확히 한 곳에, 한 번만
+            self.assertEqual(live.count(f"roll {i:02d}\n") + arch.count(f"roll {i:02d}\n"), 1, i)
+        self.assertLessEqual(len(aimem_db.handoff_entries()), aimem_db.HANDOFF_MAX)
+
+    def test_expect_rev_refuses_stale_writer(self):
+        aimem_db.handoff_add("first", actor="a", bump=True, when="2026-11-10 10:00")      # REV 0 → 1
+        with self.assertRaises(ValueError) as cm:
+            aimem_db.handoff_add("stale", actor="b", bump=True, expect_rev=0, when="2026-11-10 10:01")
+        self.assertIn("REV 불일치", str(cm.exception))
+        self.assertNotIn("stale", aimem_db.HANDOFF.read_text(encoding="utf-8"))            # 아무것도 쓰지 않았다
+        with aimem_db.connect() as con:
+            self.assertEqual(con.execute("SELECT count(*) FROM events WHERE kind='handoff'").fetchone()[0], 1)
+            self.assertEqual(aimem_db.rev(con), 1)
+        self.assertEqual(aimem_db.handoff_add("fresh", actor="b", bump=True, expect_rev=1, when="2026-11-10 10:02")[0], 2)
+
+    def test_lock_times_out_with_clear_error_when_held(self):
+        import fcntl as _f, os as _os
+        aimem_db.HANDOFF.parent.mkdir(parents=True, exist_ok=True)
+        fd = _os.open(aimem_db.HANDOFF.parent / "handoff.lock", _os.O_CREAT | _os.O_RDWR)
+        _f.flock(fd, _f.LOCK_EX)
+        try:
+            with mock.patch.object(aimem_db, "HANDOFF_LOCK_TIMEOUT", 0.2):
+                with self.assertRaises(RuntimeError):
+                    aimem_db.handoff_add("blocked", actor="t")
+        finally:
+            _os.close(fd)
+        self.assertFalse(aimem_db.HANDOFF.exists())
+
+    def test_rollover_apply_is_idempotent(self):
+        entries = [f"- `2026-11-{i:02d} 10:00` t: e{i}" for i in range(13, 0, -1)]
+        aimem_db._write_handoff(entries)
+        plan = aimem_db.handoff_rollover_plan()
+        self.assertEqual(aimem_db.handoff_rollover_apply(plan, "t"), 9)
+        self.assertEqual(aimem_db.handoff_rollover_apply(plan, "t"), 0)      # 같은 계획을 다시 적용해도 중복 없음
+        arch = (self.root / ".aimem" / "archive" / "handoff-2026-11.md").read_text(encoding="utf-8")
+        self.assertEqual(arch.count("t: e1\n"), 1)

@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T17:08:05 / REV 130
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T17:48:00 / REV 131
 
 ## 2. 세션 명부
 
@@ -18,6 +18,7 @@
 
 ## 4. 이벤트 로그 (최신 50)
 
+- `2026-11-10 17:48` Claude Code [handoff] REV 131: **REV 131. Concurrent handoff writes are blocked at the source.** `handoff add`, `rollover` and `archive` now hold one file lock (`.aimem/handoff.lock`, flock, 30 s timeout, re-entrant per thread) for the whole read-modify-write; the REV is read and raised inside `BEGIN IMMEDIATE`; `handoff.md` is w
 - `2026-11-10 17:08` Claude Code [handoff] REV 130: **REV 130. AIMEM.md compressed to rules and pointers (765→475 lines); five tool/doc mismatches fixed.** (1) Compression: Section 0 to 60 lines, hard limits stated once in `0.2`, histories replaced by archive pointers, dated provenance dropped from headings, 8.0 84→41 lines; full REV 129 text kept at
 - `2026-11-10T16:47:15` Claude Code [archive] REV 129: 핸드오프 로그 9건 → .aimem/archive/handoff-<YYYY-MM>.md (최신 4건 유지)
 - `2026-11-10 16:47` Claude Code [handoff] REV 129: - `2026-11-10 16:47` Claude Code: **REV 129. Handoff log moved out of AIMEM.md (Taeseok: "manage the handoff log differently, keep the document light").** Entries now live in `.aimem/handoff.md`; Section 4 states only the method. New `aimem_db.py handoff add|list|rollover`: `add` prepends to the fil
@@ -67,7 +68,6 @@
 - `2026-11-10T14:25:09` 클로드 코드 [rev] REV 119: REV 119: 보드·큐·요청 트리 1차 정리 - DONE 59건 아카이브, 요청 10건·그래프 6개 아카이브, 큐 2건 내림
 - `2026-11-10T14:25:09` 클로드 코드(태석 지시 2026-11-10 정리) [archive] REV 118: DONE 0일 경과 5건 -> board-*.md: T-085, T-087, T-088, T-092, T-093
 - `2026-11-10T14:24:21` 클로드 코드(태석 지시 2026-11-10 정리) [queue] REV 118: queue -4 작업자 허용목록 - 브리프가 `PYTHONPATH=... python3` 로 시작하면 아직 막힌다
-- `2026-11-10T14:24:20` 클로드 코드(태석 지시 2026-11-10 정리) [queue] REV 118: queue -8 `fleet_graph.step()` - `running` 인데 `attempts` 가 빈 노드에서 `IndexError`
 
 ## 4.5 대기 큐
 

@@ -39,3 +39,7 @@ USER.md
 .aimem/monitor.mode
 .aimem/monitor.log
 .aimem/access.log
+
+# 핸드오프 쓰기 잠금 파일 (REV 131) - 내용 없는 flock 대상
+.aimem/handoff.lock
+.aimem/handoff.md.*.tmp
