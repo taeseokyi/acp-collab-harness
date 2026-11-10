@@ -3,7 +3,7 @@
 이 폴더(`/home/tsyi/work/opencode`)에서 일하는 **모든 AI 세션의 단일 진실 소스**입니다.
 관리자와 작업자가 여기서 만나고, 여기서만 조율합니다.
 
-- **REV: 124** (개정 번호. 지시 메시지의 REV 와 다르면 작업을 멈추고 되묻습니다 - `0.1` 참조)
+- **REV: 125** (개정 번호. 지시 메시지의 REV 와 다르면 작업을 멈추고 되묻습니다 - `0.1` 참조)
 - 최종 갱신: 2026-11-10 11:40 KST
 - **약칭 `sss` = sub-session slots** (태석님 명명 2026-09-28). 슬롯은 2026-11-09 16시부터
   **하네스 CLI 일회성 작업자**(claude / codex / opencode CLI)이고 관리자가 `tools/fleet.py spawn`
@@ -227,6 +227,7 @@ python3 tools/aimem_db.py task set --id T-069 --slot S1 --status DONE  # 관리�
 시간 역순(최신 위)으로 관리자가 추가합니다. **REV 를 올릴 때는 `event --bump` 와 이 절을
 같이 씁니다** - DB 가 REV 의 정본이고 `render` 가 서문 6행을 거기에 맞춥니다.
 
+- `2026-11-10 17:40` 클로드 코드(태석님 "폰으로도 모니터링, 크롬 앱 설치"): **REV 125. PWA 설치형.** `static/manifest.webmanifest`(standalone, 아이콘 192/512/maskable) + `sw.js`(앱 껍데기만 stale-while-revalidate, **`/api/*`·로그인은 캐시 금지**) + 머리 태그(theme-color·apple-touch-icon). 매니페스트·아이콘·`sw.js` 는 인증 면제(데이터 없는 껍데기, 로그인 화면에서도 설치가 뜨게) - `app.js`·API 는 그대로 401. 반응형은 이미 있었다(720/1180px). README 에 Android/iPhone 설치 절차(사설 CA 설치 → 로그인 → 앱 설치). 실측: Pixel 5 에뮬레이션에서 SW 등록·가로 넘침 없음, 무인증 매니페스트 200 / app.js 401. 테스트 317→319.
 - `2026-11-10 17:10` 클로드 코드(태석님 "역할·비고는 관리자 의도대로" / "내가 추가한 걸 관리자가 몰라선 안 된다" / "슬롯 관리 책임은 관리자"): **REV 124. 슬롯 통제권 정리.** (1) 웹은 **하네스·모델만** 바꾼다 - 역할·비고를 보내면 400, 웹 추가 슬롯은 역할 `(미배정 - 관리자가 다음 라운드에 정함)` 표식. (2) 웹 슬롯 추가·변경·삭제마다 서버가 **NEW 요청(요청자 `슬롯 관리(웹)`)을 자동 생성** - 관리자가 분담하는 경로로 통지, 요청 본문에 관리자 할 일을 적음. 준비 점검표에 '슬롯 역할 미배정' 항목. (3) R7 브리프 (0) '라운드 시작 때 slot list·events(kind=slot) 확인, 미배정 역할 지정' + `8.0` 에 책임 소재(엔진은 태석님, 운영은 관리자). 실측: 웹 역할 변경 → 400, 웹 추가 → 미배정 표식 + 통지 요청 생성, 관리자 CLI `slot set --role` 로 채움. 테스트 317.
 - `2026-11-10 16:40` 클로드 코드(태석님 "아카이브는 어떻게 되나" → 1+2 진행 지시): **REV 123. 아카이브를 도구 하나·실행 지점 둘로.** (1) `aimem_db.py archive` 를 `archive_plan/apply` 로 나누고 **요청 파일·그래프(부속 파일·inputs 포함)까지** 내린다 - 오늘 손으로 한 절차를 코드로. NEW 요청·running 노드가 있는 그래프·기준일 안 지난 것은 남긴다. (2) 실행 지점: 관리자 R7 브리프 체크포인트 (e) '라운드 끝에 archive 한 번' + 웹 보드·큐 탭 **'끝난 것 정리…'**(`POST /api/archive` {days, dry_run}: 미리보기 → 확인 → 실행, 감사 로그). 실측: 시험 요청·그래프를 심어 dry-run(계획만, 파일 그대로) → 실행(요청 1·그래프 1·파일 4 이동) → 화면 패널에서 '옮길 것 0건' 미리보기. 테스트 304→317. `8.0` 보관·폐기 항 갱신.
 - `2026-11-10 16:10` 클로드 코드(태석님 지시 "슬롯 하네스 추가·삭제, 모델 지정 - openclaw 설정 모델"): **REV 122. 슬롯 관리를 웹·CLI 로.** (1) `aimem_db.py slot add|set|remove|list` 신설 - DB `slots` 정본, `fleet_slots.json` 거울 동기화, `events` 기록, 미완 태스크 가드(`--force`), 소유권 행 동반 삭제. `fleet.py slot` 은 여기에 위임(2절 표를 고치던 옛 코드는 REV 114 이후 깨져 있었다 - 표가 없어 `max()` 가 터짐). (2) 모니터 `GET /api/models`(OpenClaw 설정 모델 - `models list` 가 인증 없는 EXAONE 을 빼고 보여 줘 `openclaw.json` providers 와 합집합), `POST /api/slots`·`/api/slots/<S>/set|remove`(인증·CSRF·감사 로그, 도는 작업자 있으면 409). 모델은 하네스별로 거른다(claude=Anthropic, codex/opencode=그 밖). (3) 화면: 함대 현황 '관리' 열(변경)·'+ 슬롯 추가' → 패널 폼(하네스/모델 선택/역할/비고/삭제). (4) `fleet.normalize_model` - openclaw 키를 하네스 꼴로(codex 는 `-m`+`-c model_provider=`), `spawn` 기본 모델은 하네스 불문 슬롯 모델. reader 는 DB `slots.model` 을 먼저 본다. 실측: API 로 S5 추가(opencode·EXAONE)→변경(codex·kistillm, spawn argv `-m kistillm -c model_provider=kisti`)→삭제, 웹 폼으로 추가·삭제, 콘솔 오류 0. 테스트 289→304. `8.0` 모델·슬롯 문단 갱신.

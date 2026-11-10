@@ -194,7 +194,11 @@ SESSION_SUBJECT_GITHUB_PREFIX = "gh:"
 #: 로그인 화면은 자족적이어야 합니다 - `login.html` 하나로 끝나고 외부 자원을
 #: 부르지 않습니다(부르면 그 경로도 면제 목록에 들어가야 하므로).
 AUTH_EXEMPT_PATHS = ("/login", "/api/login", "/api/logout", "/api/authinfo",
-                     "/auth/github/start", "/auth/github/callback", "/favicon.ico")
+                     "/auth/github/start", "/auth/github/callback", "/favicon.ico",
+                     # 폰 설치(PWA, 2026-11-10) - 매니페스트·아이콘·서비스 워커는 데이터가 없는 껍데기라 공개해도 되고,
+                     # 공개해야 로그인 화면에서도 '앱 설치' 가 뜬다. `app.js`·`/api/*` 는 그대로 인증 뒤다.
+                     "/manifest.webmanifest", "/sw.js", "/icon-192.png", "/icon-512.png",
+                     "/icon-maskable-512.png", "/apple-touch-icon.png")
 
 #: 로그인 실패 제한 - IP 당 1분에 5회를 넘으면 지연으로 갚게 합니다.
 LOGIN_FAIL_WINDOW_SEC = 60

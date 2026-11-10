@@ -327,3 +327,51 @@ class CertRenewWithCATests(unittest.TestCase):
     def test_missing_ca_files_is_an_error(self):
         with self.assertRaises(SystemExit):
             admin.cert_renew(self.root, days=2, ca_dir=self.root / "nowhere")
+
+
+class PwaAssetsTest(unittest.TestCase):
+    """폰 설치(PWA, 2026-11-10): 매니페스트·아이콘·서비스 워커는 인증 없이, app.js·API 는 여전히 인증 뒤."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.root = pathlib.Path(cls._tmp.name)
+        with contextlib.redirect_stdout(io.StringIO()):
+            admin.cert_renew(cls.root, days=2)
+        handler = type("H", (server.Handler,), {"root": cls.root, "require_auth": True, "tls": True,
+                                                 "access_token": "c" * 64, "guard": server.LoginGuard(),
+                                                 "timeout": 5, "log_message": lambda *a, **k: None})
+        cls.httpd = server.TLSThreadingHTTPServer(("127.0.0.1", 0), handler)
+        cls.httpd.ssl_context = server.build_ssl_context(cls.root)
+        cls.httpd.daemon_threads = True
+        cls.port = cls.httpd.server_address[1]
+        cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown(); cls.httpd.server_close(); cls._tmp.cleanup()
+
+    def get(self, path):
+        import http.client, ssl
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+        c = http.client.HTTPSConnection("127.0.0.1", self.port, context=ctx, timeout=5)
+        c.request("GET", path); r = c.getresponse(); body = r.read(); c.close()
+        return r.status, r.getheader("Content-Type") or "", body
+
+    def test_install_assets_are_public_and_typed(self):
+        st, ct, body = self.get("/manifest.webmanifest")
+        self.assertEqual(st, 200); self.assertIn("manifest+json", ct)
+        m = json.loads(body)
+        self.assertEqual((m["display"], m["start_url"], m["scope"]), ("standalone", "/", "/"))
+        self.assertTrue(any(i["sizes"] == "512x512" for i in m["icons"]))
+        st, ct, body = self.get("/sw.js")
+        self.assertEqual(st, 200); self.assertIn("javascript", ct)
+        self.assertNotIn("caches.put(req", body.decode().split("startsWith('/api/')")[0])   # API 경로는 캐시 분기 전에 빠진다
+        st, ct, body = self.get("/icon-192.png")
+        self.assertEqual((st, ct), (200, "image/png")); self.assertTrue(body.startswith(b"\x89PNG"))
+
+    def test_app_and_api_still_require_auth(self):
+        self.assertEqual(self.get("/app.js")[0], 401)
+        self.assertEqual(self.get("/api/state")[0], 401)
+        self.assertEqual(self.get("/style.css")[0], 401)

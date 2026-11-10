@@ -2774,3 +2774,8 @@ initTabs();
 
 // 테스트(Playwright)에서 렌더러만 부를 수 있게 - 상태·데이터는 노출하지 않는다
 window.__aimemMd = { renderMarkdown };
+
+// 폰 설치(PWA): 서비스 워커는 앱 껍데기만 캐시한다(API 금지 - sw.js 참조). 등록 실패는 조용히 넘긴다.
+if ('serviceWorker' in navigator && !DEMO && location.protocol === 'https:') {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => null); });
+}

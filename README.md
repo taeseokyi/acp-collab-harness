@@ -128,6 +128,18 @@ New-NetFirewallRule -DisplayName "AIMEM fleet proxy" -Direction Inbound -LocalPo
 **저장소 밖(호스트·공유기 설정)이라 작업자도 관리자도 실행하지 않습니다.** 옛 `portproxy` 규칙은 없습니다
 (2026-11-10 확인) - 있었다면 `netsh interface portproxy delete v4tov4 listenport=18799 listenaddress=0.0.0.0`.
 
+### 폰에 앱으로 설치 (PWA, 2026-11-10)
+
+모니터는 설치형 웹앱입니다(`/manifest.webmanifest` + `/sw.js`, 아이콘 `static/icon-*.png`). 서비스 워커는 **앱 껍데기만**
+캐시하고 `/api/*`·로그인은 절대 캐시하지 않습니다 - 폰에 함대 데이터가 남지 않습니다. 주소는 외부에서 쓰는 그 주소
+(`https://<공인 주소>:18800/`)이고, 사설 CA 를 폰에 넣어야 '설치' 가 뜹니다(경고 상태에서는 크롬이 설치를 막습니다).
+
+- **Android 크롬:** ① `.aimem/tls/ca.crt`(= `C:\Temp\carefor-app\server\certs\ca.crt`)를 폰으로 보내 열기 → 설정 › 보안 › 기타 보안 설정 ›
+  **CA 인증서 설치** ② 크롬으로 주소 열어 접근 토큰으로 로그인 ③ 크롬 메뉴(⋮) › **앱 설치** (또는 "홈 화면에 추가")
+- **iPhone 사파리:** ① `ca.crt` 를 열어 프로파일 설치 → 설정 › 일반 › 정보 › **인증서 신뢰 설정** 에서 켬 ② 사파리로 주소 열어 로그인
+  ③ 공유 › **홈 화면에 추가**
+- 세션 쿠키는 12시간이라 하루에 한 번 토큰을 다시 넣습니다. 토큰은 `admin token show`. 앱 아이콘이 낡은 화면을 보이면 당겨서 새로고침.
+
 ### GitHub 로그인 (선택)
 
 GitHub > Settings > Developer settings > OAuth Apps > New OAuth App - 콜백 URL
