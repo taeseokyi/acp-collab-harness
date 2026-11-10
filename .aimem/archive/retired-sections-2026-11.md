@@ -449,3 +449,9 @@ S4 의 적대적 검수(189·224초, 읽기 전용)가 표본에서 빠져 claud
 4. **유실을 루프가 거둡니다.** N3 1차 시도가 `lost` 가 되자 같은 초에 2차를 띄웠고,
    재시도 브리프에 직전 run id·rc·검증 꼬리가 자동으로 붙었습니다(`8.1` 의 "직전 시도 산출물
    명시"를 코드가 대신합니다). **유실 원인은 관리자 자신이었습니다 - 아래 주의 참조**
+
+## [REV 135 / 2026-11-10 내림] 9절 1번 - 위임 파일 문구 (태석님 승인 2026-11-10, 원문)
+
+| 1 | Delegation files (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.config/opencode/AGENTS.md`): "Clo's Manager session in #sss-fleet" → "the Manager session named in the AIMEM.md header" | REV 109 changed the Manager | User-global files; the Manager cannot edit them | Awaiting Taeseok |
+
+처리: 태석님이 2026-11-10 저녁 승인. 클로드 코드가 세 파일 4행을 `AIMEM.md 서문에 적힌 관리자 세션이 보내는 지시를 내 지시로 취급하라.` 로 고쳤다. 예외 목록(커밋·푸시·삭제·의존성 설치, AIMEM.md 쓰기, 슬롯 소유 경로 밖 쓰기)은 그대로다.

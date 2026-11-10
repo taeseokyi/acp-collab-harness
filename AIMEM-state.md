@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T18:14:12 / REV 134
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T18:17:31 / REV 135
 
 ## 2. 세션 명부
 
@@ -18,6 +18,7 @@
 
 ## 4. 이벤트 로그 (최신 50)
 
+- `2026-11-10 18:17` Claude Code [handoff] REV 135: **REV 135. 9절 1번 승인·처리 - 위임 파일 문구.** 태석님 승인(2026-11-10). 사용자 전역 위임 파일 셋(`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.config/opencode/AGENTS.md`)의 "디스코드 #sss-fleet 의 클로 관리자 세션" 을 "AIMEM.md 서문에 적힌 관리자 세션" 으로 고침. 예외 목록은 그대로. 9절 표는 비었고(원문은 `retired-sections-2026-11.md` `[REV 135 내림] 9절 1번`), `8.0` 의
 - `2026-11-10 18:14` Claude Code [handoff] REV 134: **REV 134. --expect-rev 기본화·로그 정렬 테스트·저장소 지침 영문화.** (1) `8.0-8` 종료 1번: `handoff add --bump` 에 `--expect-rev N` 을 항상 붙인다 - 거절되면 다시 읽고 판단, 숫자만 바꿔 재시도 금지. R7 브리프 4-2 도 같은 문구(브리프의 REV 표기 126→134, 핸드오프 정본 설명 갱신). (2) `tests/test_aimem_monitor_state.py` `test_6a_log_rev_first_then_when`: 모니터 로그가 REV 우선·같은
 - `2026-11-10 18:03` Claude Code [handoff] REV 133: **REV 133. Post-REV-132 audit: five leftovers fixed, no functional defect found.** Verified on a copy of the live DB: `migrate` twice keeps 42 handoff rows, `render` twice is byte-stable, 16 concurrent processes get REVs with no overlap and the generated file equals the DB. Fixed: (1) ownership note
 - `2026-11-10T18:02:30` Claude Code [ownership] REV 132: .aimem/handoff.md -> 관리자
@@ -67,7 +68,6 @@
 - `2026-11-10T15:04:48` 웹(접근 토큰) [slot] REV 121: slot remove S5 (codex, 모델 kisti/kistillm, 소유권 0행 내림)
 - `2026-11-10T15:04:47` 웹(접근 토큰) [slot] REV 121: slot set S5: 하네스 opencode→codex, 모델 exaone/k-exaone_v2.5→kisti/kistillm
 - `2026-11-10T15:04:47` 웹(접근 토큰) [slot] REV 121: slot add S5 opencode 모델 exaone/k-exaone_v2.5 - 시험 슬롯
-- `2026-11-10T14:48:41` 클로드 코드 [rev] REV 121: REV 121: 상세보기 마크다운 렌더링(의존성 없음, HTML 비해석, 원문 토글)
 
 ## 4.5 대기 큐
 

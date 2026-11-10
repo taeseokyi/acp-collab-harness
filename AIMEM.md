@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/o
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 134** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-10 18:14 KST
+- **REV: 135** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-10 18:17 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **a Claude ACP session** (harness claude, model Opus 5.5 = `opus[1m]`),
@@ -317,8 +317,8 @@ directly, in parallel (`[REV 129 내림] 8.0`).
   An outage is recorded (run id, error, time) in the handoff log and the task stays `BLOCKED`
 - **Check ("high-five") report format:** exactly one line, nothing before or after:
   `하이파이브 S<n> OK | REV <N> | 토큰 <t> | 시각 <KST HH:MM> | cwd <pwd> | 모델 <own model or unknown>`
-- **Delegation files** still name Clo's session - `Section 9` item 1. `sessions_spawn(runtime:"acp")` opens only
-  the Manager session; workers never go through the gateway
+- **Delegation files** name "the Manager session written in the AIMEM.md header"; their exception list is
+  unchanged. `sessions_spawn(runtime:"acp")` opens only the Manager session; workers never go through the gateway
 - **Ownership binds the Manager too:** never edit a file a worker is writing; keep Manager work on disjoint files or
   wait. **A graph node's `verify` is scoped to its own deliverables** - the full suite runs only at round close
 - **Archiving finished work:** `DONE` tasks, closed requests and finished graphs move after 14 days with
@@ -471,9 +471,9 @@ never executes an item here on its own.
 
 | # | Item | Why | Risk | Status |
 | - | ---- | --- | ---- | ------ |
-| 1 | Delegation files (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.config/opencode/AGENTS.md`): "Clo's Manager session in #sss-fleet" → "the Manager session named in the AIMEM.md header" | REV 109 changed the Manager | User-global files; the Manager cannot edit them | Awaiting Taeseok |
+| - | (none) | - | - | - |
 
-Approved and removed items: `retired-sections-2026-11.md` `[REV 128 내림] 9절`; older history in
+Approved and removed items: `retired-sections-2026-11.md` `[REV 128 내림] 9절`, `[REV 135 내림] 9절 1번`; older history in
 `retired-sections-2026-09.md`.
 
 ---
