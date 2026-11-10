@@ -188,9 +188,29 @@ class ArchiveRequestsGraphsTest(AimemDbCliTest):
         with aimem_db.connect() as con:
             body = con.execute("SELECT body FROM events WHERE kind='archive'").fetchone()[0]
         self.assertIn("요청 1건, 그래프 1개", body)
-        # days=0 이면 방금 끝난 요청도 내린다
-        plan0 = aimem_db.archive_plan(0, now=aimem_db.dt.datetime.now() + aimem_db.dt.timedelta(seconds=1))
+        # days=0 이면 방금 끝난 요청도 내린다 (같은 초라도 - 1초 더하는 우회 없이)
+        plan0 = aimem_db.archive_plan(0)
         self.assertEqual([r["id"] for r in plan0["requests"]], ["Q-3"])
+
+    def test_cutoff_is_inclusive_same_second(self):
+        """REV 119 메모의 결함: 기준 시각과 같은 초에 끝난 태스크·요청·그래프가 `<` 비교로 빠져 두 번 돌려야 했다."""
+        now = aimem_db.dt.datetime(2026, 11, 10, 12, 0, 0)
+        stamp = now.isoformat(timespec="seconds")
+        with aimem_db.connect() as con:
+            con.execute("INSERT INTO tasks(id,title,slot,status,created,updated) VALUES(?,?,?,?,?,?)",
+                        ("T-SAME", "같은 초", "S1", "DONE", stamp, stamp))
+            con.commit()
+        rdir, gdir = self.root / ".aimem" / "requests", self.root / ".aimem" / "graph"
+        gdir.mkdir(parents=True)
+        (rdir / "Q-S.json").write_text(json.dumps({"id": "Q-S", "status": "DONE", "title": "같은 초", "updated": stamp.replace("T", " ")}), encoding="utf-8")
+        (gdir / "G-S.json").write_text(json.dumps({"id": "G-S", "updated": stamp, "nodes": [{"id": "T-S", "status": "done"}]}), encoding="utf-8")
+        plan = aimem_db.archive_plan(0, now=now)
+        self.assertEqual(([r["id"] for r in plan["tasks"]], [r["id"] for r in plan["requests"]], [g["id"] for g in plan["graphs"]]),
+                         (["T-SAME"], ["Q-S"], ["G-S"]))
+        # 기준보다 1초 뒤에 끝난 것은 여전히 남는다
+        later = (now + aimem_db.dt.timedelta(seconds=1)).isoformat(timespec="seconds")
+        (gdir / "G-L.json").write_text(json.dumps({"id": "G-L", "updated": later, "nodes": [{"id": "T-L", "status": "done"}]}), encoding="utf-8")
+        self.assertNotIn("G-L", [g["id"] for g in aimem_db.archive_plan(0, now=now)["graphs"]])
 
     def test_cmd_dry_run_moves_nothing(self):
         self._seed_files()

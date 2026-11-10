@@ -513,13 +513,16 @@ def _iso(v):
 
 
 def archive_plan(days=14, now=None):
-    """무엇을 내릴지 계산만 한다 (파일·DB 를 건드리지 않는다). 태스크·요청·그래프 세 묶음."""
+    """무엇을 내릴지 계산만 한다 (파일·DB 를 건드리지 않는다). 태스크·요청·그래프 세 묶음.
+
+    기준 시각은 **포함**(`<=`)이다 - `<` 였을 때 `--days 0` 이 같은 초에 끝난 행을 빠뜨려 두 번 돌려야 했다(REV 119 메모).
+    시각은 모두 초 단위 ISO(`_now()`, 요청 파일은 `_iso` 로 정규화)라 문자열 비교로 충분하다."""
     now = now or dt.datetime.now()
     cutoff = (now - dt.timedelta(days=days)).isoformat(timespec="seconds")
     plan = {"days": days, "cutoff": cutoff, "tasks": [], "requests": [], "graphs": []}
     with connect() as con:
         for r in con.execute("SELECT id,title,slot,status,inherited,artifacts,updated FROM tasks "
-                             "WHERE status='DONE' AND COALESCE(updated,created,'') < ? ORDER BY id", (cutoff,)):
+                             "WHERE status='DONE' AND COALESCE(updated,created,'') <= ? ORDER BY id", (cutoff,)):
             plan["tasks"].append(dict(r))
     rdir = ROOT / ".aimem" / "requests"
     if rdir.is_dir():
@@ -529,7 +532,7 @@ def archive_plan(days=14, now=None):
             except (OSError, ValueError):
                 continue
             when = _iso(d.get("updated") or d.get("created"))
-            if str(d.get("status") or "").upper() in ARCHIVE_REQUEST_CLOSED and when < cutoff:
+            if str(d.get("status") or "").upper() in ARCHIVE_REQUEST_CLOSED and when <= cutoff:
                 plan["requests"].append({"id": d.get("id") or f.stem, "file": f.name, "status": d.get("status"), "title": d.get("title"), "when": when})
     gdir = ROOT / ".aimem" / "graph"
     if gdir.is_dir():
@@ -542,7 +545,7 @@ def archive_plan(days=14, now=None):
             if not nodes or not all(str(n.get("status")) in ARCHIVE_TERMINAL_NODE for n in nodes):
                 continue
             when = _iso(g.get("updated") or g.get("created"))
-            if when >= cutoff:
+            if when > cutoff:
                 continue
             gid = g.get("id") or f.stem
             side = sorted(x.name for x in gdir.glob(f"{gid}.*") if x.name != f.name) + sorted(x.name for x in gdir.glob(f"{gid}-*.task.md"))
