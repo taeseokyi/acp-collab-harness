@@ -612,6 +612,141 @@ def cmd_queue(a):
     return 0
 
 
+
+# ---------------------------------------------------------------- slots (2026-11-10, 태석님 지시 "슬롯 하네스 추가·삭제 + 모델 지정")
+HARNESSES = ("claude", "codex", "opencode")
+SLOT_RE = re.compile(r"S\d{1,3}\Z")
+
+
+def _slots_json_path():
+    return ROOT / "tools" / "fleet_slots.json"
+
+
+def _sync_slots_json(con):
+    """`tools/fleet_slots.json` 은 DB 의 **거울**이다 - `fleet.py spawn`/`reader` 가 파일로 읽는 자리라 같이 맞춘다."""
+    out = {}
+    for r in con.execute("SELECT slot,harness,model FROM slots ORDER BY slot"):
+        d = {"harness": r["harness"]}
+        if r["model"]:
+            d["model"] = r["model"]
+        out[r["slot"]] = d
+    p = _slots_json_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(out, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+
+def _slot_event(con, actor, body):
+    con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)", (_now(), actor, rev(con), "slot", body))
+
+
+def slot_list():
+    with connect() as con:
+        return [dict(r) for r in con.execute("SELECT * FROM slots ORDER BY slot")]
+
+
+def next_slot_id():
+    with connect() as con:
+        nums = [int(r["slot"][1:]) for r in con.execute("SELECT slot FROM slots") if SLOT_RE.match(r["slot"])]
+    return f"S{(max(nums) + 1) if nums else 1}"
+
+
+def _check_slot_args(slot, harness, model):
+    if slot is not None and not SLOT_RE.match(str(slot)):
+        raise ValueError(f"슬롯 id 는 S<번호> 꼴이어야 합니다: {slot!r}")
+    if harness is not None and harness not in HARNESSES:
+        raise ValueError(f"하네스는 {'/'.join(HARNESSES)} 중 하나여야 합니다: {harness!r}")
+    if model is not None and (not isinstance(model, str) or len(model) > 120 or not re.fullmatch(r"[A-Za-z0-9._:/\-\[\]]+", model)):
+        raise ValueError(f"모델 id 꼴이 아닙니다: {model!r}")
+
+
+def slot_add(slot=None, harness=None, model=None, role="", note="", actor="관리자"):
+    """슬롯 추가. slot 을 생략하면 다음 번호. 돌려주는 값은 새 행(dict)."""
+    import secrets
+    if not harness:
+        raise ValueError("하네스가 필요합니다")
+    _check_slot_args(slot, harness, model)
+    with connect() as con:
+        slot = slot or next_slot_id()
+        if con.execute("SELECT 1 FROM slots WHERE slot=?", (slot,)).fetchone():
+            raise ValueError(f"{slot} 은 이미 있습니다")
+        token = secrets.token_hex(3)
+        con.execute("INSERT INTO slots(slot,token,harness,model,role,note,updated) VALUES(?,?,?,?,?,?,?)",
+                    (slot, token, harness, model or None, role or "", note or "", _now()))
+        _slot_event(con, actor, f"slot add {slot} {harness} 모델 {model or '(하네스 기본)'}" + (f" - {role}" if role else ""))
+        _sync_slots_json(con)
+        con.commit()
+        return dict(con.execute("SELECT * FROM slots WHERE slot=?", (slot,)).fetchone())
+
+
+def slot_set(slot, harness=None, model=None, role=None, note=None, actor="관리자", clear_model=False):
+    """슬롯 변경 - 준 값만 바꾼다. `clear_model=True` 면 모델을 하네스 기본으로 되돌린다."""
+    _check_slot_args(slot, harness, model)
+    with connect() as con:
+        cur = con.execute("SELECT * FROM slots WHERE slot=?", (slot,)).fetchone()
+        if not cur:
+            raise ValueError(f"{slot} 이 명부에 없습니다")
+        changes = []
+        if harness and harness != cur["harness"]:
+            con.execute("UPDATE slots SET harness=? WHERE slot=?", (harness, slot)); changes.append(f"하네스 {cur['harness']}→{harness}")
+        if clear_model:
+            con.execute("UPDATE slots SET model=NULL WHERE slot=?", (slot,)); changes.append(f"모델 {cur['model'] or '-'}→(하네스 기본)")
+        elif model is not None and model != cur["model"]:
+            con.execute("UPDATE slots SET model=? WHERE slot=?", (model, slot)); changes.append(f"모델 {cur['model'] or '-'}→{model}")
+        if role is not None and role != cur["role"]:
+            con.execute("UPDATE slots SET role=? WHERE slot=?", (role, slot)); changes.append("역할")
+        if note is not None and note != cur["note"]:
+            con.execute("UPDATE slots SET note=? WHERE slot=?", (note, slot)); changes.append("비고")
+        if changes:
+            con.execute("UPDATE slots SET updated=? WHERE slot=?", (_now(), slot))
+            _slot_event(con, actor, f"slot set {slot}: " + ", ".join(changes))
+            _sync_slots_json(con)
+            con.commit()
+        return dict(con.execute("SELECT * FROM slots WHERE slot=?", (slot,)).fetchone()), changes
+
+
+def slot_open_tasks(slot):
+    with connect() as con:
+        return [r["id"] for r in con.execute("SELECT id FROM tasks WHERE slot=? AND status NOT IN ('DONE') ORDER BY id", (slot,))]
+
+
+def slot_remove(slot, actor="관리자", force=False):
+    """슬롯 삭제. 끝나지 않은 태스크가 배정돼 있으면 `force` 없이는 거절한다. 소유권 행은 같이 내린다."""
+    _check_slot_args(slot, None, None)
+    with connect() as con:
+        cur = con.execute("SELECT * FROM slots WHERE slot=?", (slot,)).fetchone()
+        if not cur:
+            raise ValueError(f"{slot} 이 명부에 없습니다")
+        open_tasks = [r["id"] for r in con.execute("SELECT id FROM tasks WHERE slot=? AND status NOT IN ('DONE')", (slot,))]
+        if open_tasks and not force:
+            raise ValueError(f"{slot} 에 끝나지 않은 태스크가 있습니다: {', '.join(open_tasks)} (force 로 강제)")
+        n_own = con.execute("DELETE FROM ownership WHERE owner=?", (slot,)).rowcount
+        con.execute("DELETE FROM slots WHERE slot=?", (slot,))
+        _slot_event(con, actor, f"slot remove {slot} ({cur['harness']}, 모델 {cur['model'] or '-'}, 소유권 {n_own}행 내림" + (f", 미완 태스크 {len(open_tasks)}건 강제" if open_tasks else "") + ")")
+        _sync_slots_json(con)
+        con.commit()
+        return {"slot": slot, "ownership_removed": n_own, "open_tasks": open_tasks}
+
+
+def cmd_slot(a):
+    if a.action == "list":
+        for r in slot_list():
+            print(f"  {r['slot']}  {r['token']}  {r['harness']:<9} 모델 {r['model'] or '(하네스 기본)'}  {r['role'] or ''}")
+        return 0
+    try:
+        if a.action == "add":
+            r = slot_add(a.slot, a.harness, a.model, a.role or "", a.note or "", a.actor)
+            print(f"추가: {r['slot']} {r['harness']} 모델 {r['model'] or '(하네스 기본)'} 토큰 {r['token']}")
+        elif a.action == "set":
+            r, ch = slot_set(a.slot, a.harness, a.model, a.role, a.note, a.actor, clear_model=bool(a.default_model))
+            print(f"변경: {a.slot} " + (", ".join(ch) if ch else "바뀐 것 없음"))
+        elif a.action == "remove":
+            r = slot_remove(a.slot, a.actor, force=bool(a.force))
+            print(f"삭제: {a.slot} (소유권 {r['ownership_removed']}행 내림)")
+    except ValueError as e:
+        print(f"거절: {e}")
+        return 1
+    return 0
+
 def main():
     p = argparse.ArgumentParser(description="AIMEM 운영 상태 SQLite")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -625,6 +760,11 @@ def main():
     q = sub.add_parser("request"); q.add_argument("action", choices=["set", "list"]); q.add_argument("--id"); q.add_argument("--title")
     q.add_argument("--detail"); q.add_argument("--requester"); q.add_argument("--status", choices=["NEW","PLANNED","IN-PROGRESS","DONE","REJECTED"]); q.add_argument("--actor", default="관리자")
     o = sub.add_parser("ownership"); o.add_argument("action", choices=["set", "list"]); o.add_argument("--path"); o.add_argument("--owner"); o.add_argument("--note"); o.add_argument("--actor", default="관리자")
+    sl = sub.add_parser("slot", help="슬롯 추가/변경/삭제/목록 - DB 정본 + tools/fleet_slots.json 거울 (웹 함대 현황에서도 됨)")
+    sl.add_argument("action", choices=["add", "set", "remove", "list"]); sl.add_argument("--slot"); sl.add_argument("--harness", choices=HARNESSES)
+    sl.add_argument("--model", help="openclaw 모델 키(예 anthropic/claude-opus-5-5, kisti/kistillm) 또는 claude 별칭(opus/sonnet/haiku)")
+    sl.add_argument("--default-model", action="store_true", help="set: 모델을 하네스 기본으로 되돌린다"); sl.add_argument("--role"); sl.add_argument("--note")
+    sl.add_argument("--force", action="store_true", help="remove: 미완 태스크가 있어도 삭제"); sl.add_argument("--actor", default="관리자")
     r = sub.add_parser("archive", help="DONE 이 된 지 N일 지난 태스크를 .aimem/archive/board-<YYYY-MM>.md 로 옮긴다 (8.0)")
     r.add_argument("--days", type=int, default=14); r.add_argument("--dry-run", action="store_true"); r.add_argument("--actor", default="관리자")
     u = sub.add_parser("queue", help="4.5 대기 큐 (관리자만 씁니다)")
@@ -640,7 +780,7 @@ def main():
             p.error("queue drop 에는 --pos 가 필요합니다")
     return {"init": cmd_init, "migrate": lambda a: migrate(), "render": lambda a: render(), "state": cmd_state,
             "check": cmd_check, "event": cmd_event, "task": cmd_task, "request": cmd_request,
-            "ownership": cmd_ownership, "queue": cmd_queue, "archive": cmd_archive}[a.cmd](a) or 0
+            "ownership": cmd_ownership, "queue": cmd_queue, "archive": cmd_archive, "slot": cmd_slot}[a.cmd](a) or 0
 
 
 if __name__ == "__main__":

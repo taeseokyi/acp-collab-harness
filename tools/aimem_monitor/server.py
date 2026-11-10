@@ -50,6 +50,8 @@ import os
 import pathlib
 import posixpath
 import re
+import subprocess
+import shutil
 import secrets
 import socket
 import ssl
@@ -1114,6 +1116,190 @@ def manager_status(root=ROOT):
 FLEET_ACTIONS = ("prepare", "run", "pause", "stop", "round")
 _REQ_FLEET_RE = re.compile(r"\A/api/fleet/(prepare|run|pause|stop|round)\Z")
 
+# -- 슬롯 관리 (2026-11-10, 태석님 지시 "슬롯 하네스 추가·삭제, 모델 지정") ----------------------------
+# 정본은 `.aimem/aimem.db` slots - `tools/aimem_db.py slot *` 과 같은 함수를 부른다. 모델은 **OpenClaw 가 설정한
+# 모델 목록**(`openclaw models list --json`)에서 고른다. 쓰기는 인증 뒤에서만, 감사 로그에 남긴다.
+_REQ_SLOT_RE = re.compile(r"\A/api/slots/(S\d{1,3})/(set|remove)\Z")
+SLOT_HARNESSES = ("claude", "codex", "opencode")
+MODELS_CACHE_SEC = 60
+_models_cache = {"at": None, "value": None}
+_models_lock = threading.Lock()
+
+
+def _aimem_db(root):
+    tools_dir = str(pathlib.Path(root) / "tools")
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    import aimem_db  # noqa: PLC0415
+    return aimem_db
+
+
+def _models_for_harness(key):
+    """openclaw 모델 키를 어느 하네스가 받을 수 있나. claude CLI 는 Anthropic 모델만, codex/opencode 는 그 밖(kistillm·EXAONE·…)."""
+    prov = key.split("/", 1)[0].lower()
+    if prov in ("anthropic", "claude-cli"):
+        return ["claude"]
+    return ["codex", "opencode"]
+
+
+OPENCLAW_CONFIG = pathlib.Path.home() / ".openclaw" / "openclaw.json"
+
+
+def _models_from_openclaw_config(path=None):
+    """`~/.openclaw/openclaw.json` 의 `models.providers.<p>.models[]` → {key: {name}}. 비밀(baseUrl·apiKey)은 읽지 않는다.
+    `openclaw models list` 는 인증이 안 붙은 공급자(EXAONE 등)를 '설정됨' 으로 안 보여 주는데, 그게 기본 모델이다(2026-11-10 실측)."""
+    out = {}
+    try:
+        cfg = json.loads((path or OPENCLAW_CONFIG).read_text(encoding="utf-8"))
+        for prov, v in ((cfg.get("models") or {}).get("providers") or {}).items():
+            for m in (v or {}).get("models") or []:
+                mid = m.get("id") if isinstance(m, dict) else m
+                if mid:
+                    out[f"{prov}/{mid}"] = {"name": (m.get("name") if isinstance(m, dict) else None) or str(mid)}
+        prim = (((cfg.get("agents") or {}).get("defaults") or {}).get("model") or {}).get("primary")
+        if isinstance(prim, str) and prim:
+            out.setdefault(prim, {"name": prim})["default"] = True
+    except (OSError, ValueError, AttributeError):
+        pass
+    return out
+
+
+def openclaw_models(now=None, cache_sec=MODELS_CACHE_SEC):
+    """OpenClaw 가 설정한 모델 = `openclaw models list --json` ∪ `openclaw.json` providers. 60초 캐시.
+    둘 다 실패하면 빈 목록 + error 로 낮춘다(화면은 떠야 한다)."""
+    now = now or datetime.datetime.now()
+    with _models_lock:
+        at, val = _models_cache["at"], _models_cache["value"]
+        if val is not None and at is not None and (now - at).total_seconds() < cache_sec:
+            return val
+    exe = shutil.which("openclaw")
+    out = {"ok": False, "models": [], "error": None, "source": "openclaw models list --json + ~/.openclaw/openclaw.json providers",
+           "fetched": now.isoformat(timespec="seconds")}
+    by_key = {}
+    if not exe:
+        out["error"] = "openclaw 가 PATH 에 없습니다"
+    else:
+        try:
+            r = subprocess.run([exe, "models", "list", "--json"], capture_output=True, text=True, timeout=20)
+            data = json.loads(r.stdout or "{}")
+            items = data.get("models") if isinstance(data, dict) else data
+            for m in items or []:
+                if not isinstance(m, dict) or not m.get("key"):
+                    continue
+                key = str(m["key"])
+                tags = [str(t) for t in (m.get("tags") or []) if isinstance(t, str)]
+                by_key[key] = {"key": key, "name": str(m.get("name") or key), "provider": key.split("/", 1)[0],
+                               "aliases": [t[6:] for t in tags if t.startswith("alias:")],
+                               "context": m.get("contextWindow"), "harnesses": _models_for_harness(key), "from": ["list"]}
+            out["ok"] = True
+        except (OSError, subprocess.TimeoutExpired, ValueError) as e:
+            out["error"] = f"{type(e).__name__}: {str(e)[:120]}"
+    cfg = _models_from_openclaw_config()
+    for key, info in cfg.items():
+        if key in by_key:
+            by_key[key]["from"].append("config")
+        else:
+            by_key[key] = {"key": key, "name": info["name"], "provider": key.split("/", 1)[0], "aliases": [], "context": None,
+                           "harnesses": _models_for_harness(key), "from": ["config"]}
+        if info.get("default"):
+            by_key[key]["default"] = True
+    if cfg:
+        out["ok"] = True
+    out["models"] = sorted(by_key.values(), key=lambda m: (0 if m["provider"] in ("anthropic", "claude-cli") else 1, m["key"]))
+    with _models_lock:
+        _models_cache["at"], _models_cache["value"] = now, out
+    return out
+
+
+def _slot_running(slot, root):
+    """그 슬롯으로 지금 도는 작업자가 있나 (`reader` 의 runs 기준)."""
+    try:
+        for r in _reader().collect(root).get("runs") or []:
+            if r.get("slot") == slot and r.get("state") == "running":
+                return r.get("id")
+    except Exception:  # noqa: BLE001 - 판단 못 하면 '없음' 으로 둔다
+        return None
+    return None
+
+
+def _slot_payload_fields(payload):
+    def pick(k, limit):
+        v = payload.get(k)
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError(f"{k} 은(는) 문자열이어야 합니다")
+        v = v.strip()
+        if len(v) > limit:
+            raise ValueError(f"{k} 이(가) {limit}자를 넘습니다")
+        return v
+    return pick("slot", 6), pick("harness", 16), pick("model", 120), pick("role", 200), pick("note", 1000)
+
+
+def _model_allowed(model, harness):
+    """빈 값(하네스 기본)·claude 별칭은 통과. 그 밖은 openclaw 설정 목록에 있어야 하고 그 하네스가 받을 수 있어야 한다."""
+    if not model:
+        return True, ""
+    if harness == "claude" and model in ("opus", "sonnet", "haiku"):
+        return True, ""
+    ms = openclaw_models()
+    hit = next((m for m in ms["models"] if m["key"] == model), None)
+    if hit is None:
+        if not ms["ok"]:
+            return False, f"모델 목록을 읽지 못해 확인할 수 없습니다: {ms['error']}"
+        return False, f"openclaw 에 설정된 모델이 아닙니다: {model}"
+    if harness not in hit["harnesses"]:
+        return False, f"{model} 은(는) {harness} 하네스가 받을 수 없습니다 (가능: {', '.join(hit['harnesses'])})"
+    return True, ""
+
+
+def slot_action(action, slot, payload, by, root=ROOT):
+    """(HTTP 코드, 응답). action: add | set | remove. 운영 저장소에서만 쓴다."""
+    if pathlib.Path(root).resolve() != ROOT:
+        return 403, {"ok": False, "error": "운영 저장소가 아닙니다"}
+    if not isinstance(payload, dict):
+        return 400, {"ok": False, "error": "JSON 객체가 아닙니다"}
+    db = _aimem_db(root)
+    try:
+        p_slot, harness, model, role, note = _slot_payload_fields(payload)
+        if action == "add":
+            if not harness or harness not in SLOT_HARNESSES:
+                return 400, {"ok": False, "error": f"하네스는 {'/'.join(SLOT_HARNESSES)} 중 하나"}
+            ok, why = _model_allowed(model, harness)
+            if not ok:
+                return 400, {"ok": False, "error": why}
+            row = db.slot_add(p_slot or None, harness, model or None, role or "", note or "", by)
+            return 201, {"ok": True, "slot": {k: v for k, v in row.items() if k != "token"}}
+        if action == "set":
+            cur = next((r for r in db.slot_list() if r["slot"] == slot), None)
+            if cur is None:
+                return 404, {"ok": False, "error": f"{slot} 이 명부에 없습니다"}
+            if harness and harness not in SLOT_HARNESSES:
+                return 400, {"ok": False, "error": f"하네스는 {'/'.join(SLOT_HARNESSES)} 중 하나"}
+            new_harness = harness or cur["harness"]
+            running = _slot_running(slot, root)
+            if running and harness and harness != cur["harness"]:
+                return 409, {"ok": False, "error": f"{slot} 에 작업자가 돌고 있습니다 ({running}) - 하네스는 끝난 뒤 바꾸십시오"}
+            clear = payload.get("model") == ""   # 빈 문자열 = 하네스 기본으로
+            if not clear:
+                ok, why = _model_allowed(model, new_harness)
+                if not ok:
+                    return 400, {"ok": False, "error": why}
+            row, changes = db.slot_set(slot, harness, None if clear else model, role, note, by, clear_model=clear)
+            return 200, {"ok": True, "slot": {k: v for k, v in row.items() if k != "token"}, "changes": changes}
+        if action == "remove":
+            running = _slot_running(slot, root)
+            if running:
+                return 409, {"ok": False, "error": f"{slot} 에 작업자가 돌고 있습니다 ({running}) - 끝난 뒤 삭제하십시오"}
+            res = db.slot_remove(slot, by, force=bool(payload.get("force")))
+            return 200, {"ok": True, **res}
+    except ValueError as e:
+        msg = str(e)
+        code = 409 if "끝나지 않은 태스크" in msg else (404 if "명부에 없습니다" in msg else 400)
+        return code, {"ok": False, "error": msg}
+    return 404, {"ok": False, "error": f"없는 동작입니다: {action}"}
+
+
 
 def _fleet_ctl(root):
     tools_dir = str(pathlib.Path(root) / "tools")
@@ -1657,6 +1843,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._github_callback()
         if path == "/api/state":
             return self._json(200, collect_state(self.root))
+        if path == "/api/models":
+            return self._json(200, openclaw_models())
         if path == "/api/health":
             state = collect_state(self.root)
             return self._json(200, {"ok": not state.get("errors"),
@@ -1733,7 +1921,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                               extra=[self._cookie_header(SESSION_COOKIE, "", 0)])
         edit = _REQ_EDIT_RE.match(path)
         fleet_act = _REQ_FLEET_RE.match(path)
-        if path != "/api/requests" and not edit and not fleet_act:
+        slot_m = _REQ_SLOT_RE.match(path)
+        slot_add_path = path == "/api/slots"
+        if path != "/api/requests" and not edit and not fleet_act and not slot_m and not slot_add_path:
             return self._json(404, {"ok": False, "error": f"없는 경로입니다: {path}"})
         # CSRF (S4 검수 4번). 세션 쿠키가 `SameSite=Strict` 라 1차 방어는 되지만,
         # 쿠키 정책 하나에만 기대지 않습니다. `<form enctype="text/plain">` 으로는
@@ -1751,6 +1941,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(403, json.dumps({"ok": False, "error": "Origin 이 Host 와 다릅니다"},
                                                   ensure_ascii=False),
                                   extra=[("Connection", "close")])
+        if slot_m or slot_add_path:
+            # 슬롯 관리 - 함대 제어와 같이 속도 제한 없이, CSRF·인증은 거친다. 감사 로그에 남긴다.
+            payload, sent = self._read_json_body()
+            if sent:
+                return None
+            who = self._subject()
+            by = f"웹({subject_label(who)})" if who else "웹"
+            action, slot = ("add", None) if slot_add_path else (slot_m.group(2), slot_m.group(1))
+            code, result = slot_action(action, slot, payload if isinstance(payload, dict) else {}, by, self.root)
+            self._audit("slot-" + action, f"{slot or (result.get('slot') or {}).get('slot') or '-'} {code}")
+            return self._json(code, result)
         if fleet_act:
             # 함대 제어는 속도 제한을 걸지 않습니다 - '완전 중지' 가 한도에 막히면 안 됩니다.
             # CSRF(위 두 검사)와 인증(`_auth_gate`)은 그대로 거칩니다.

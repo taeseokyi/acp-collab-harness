@@ -7,6 +7,9 @@
   - 함대 제어 `tools/fleet_ctl.py` 호출(준비/실행/일시 중지/중지/라운드 실행 - `.aimem/fleet-mode.json`,
     `.aimem/relay/`)
   - 로그인 세션 쿠키 발급(파일 쓰기 없음, hmac 서명)
+  - **슬롯 관리**(2026-11-10 태석님 지시): `POST /api/slots`(추가) / `/api/slots/<S>/set` / `/api/slots/<S>/remove` →
+    `aimem_db.slot_*` (DB `slots` 정본 + `tools/fleet_slots.json` 거울). 모델은 `GET /api/models`(OpenClaw 가 설정한
+    모델 = `openclaw models list` ∪ `openclaw.json` providers)에서만 고른다. 도는 작업자가 있는 슬롯은 삭제·하네스 변경 거절
 
 계층:
   reader.py   파일 -> 딕셔너리 (AIMEM.md 파싱 / `.aimem/runs` 스캔 / ETA 추정)   [S1]

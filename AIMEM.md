@@ -3,7 +3,7 @@
 이 폴더(`/home/tsyi/work/opencode`)에서 일하는 **모든 AI 세션의 단일 진실 소스**입니다.
 관리자와 작업자가 여기서 만나고, 여기서만 조율합니다.
 
-- **REV: 121** (개정 번호. 지시 메시지의 REV 와 다르면 작업을 멈추고 되묻습니다 - `0.1` 참조)
+- **REV: 122** (개정 번호. 지시 메시지의 REV 와 다르면 작업을 멈추고 되묻습니다 - `0.1` 참조)
 - 최종 갱신: 2026-11-10 11:40 KST
 - **약칭 `sss` = sub-session slots** (태석님 명명 2026-09-28). 슬롯은 2026-11-09 16시부터
   **하네스 CLI 일회성 작업자**(claude / codex / opencode CLI)이고 관리자가 `tools/fleet.py spawn`
@@ -227,6 +227,7 @@ python3 tools/aimem_db.py task set --id T-069 --slot S1 --status DONE  # 관리�
 시간 역순(최신 위)으로 관리자가 추가합니다. **REV 를 올릴 때는 `event --bump` 와 이 절을
 같이 씁니다** - DB 가 REV 의 정본이고 `render` 가 서문 6행을 거기에 맞춥니다.
 
+- `2026-11-10 16:10` 클로드 코드(태석님 지시 "슬롯 하네스 추가·삭제, 모델 지정 - openclaw 설정 모델"): **REV 122. 슬롯 관리를 웹·CLI 로.** (1) `aimem_db.py slot add|set|remove|list` 신설 - DB `slots` 정본, `fleet_slots.json` 거울 동기화, `events` 기록, 미완 태스크 가드(`--force`), 소유권 행 동반 삭제. `fleet.py slot` 은 여기에 위임(2절 표를 고치던 옛 코드는 REV 114 이후 깨져 있었다 - 표가 없어 `max()` 가 터짐). (2) 모니터 `GET /api/models`(OpenClaw 설정 모델 - `models list` 가 인증 없는 EXAONE 을 빼고 보여 줘 `openclaw.json` providers 와 합집합), `POST /api/slots`·`/api/slots/<S>/set|remove`(인증·CSRF·감사 로그, 도는 작업자 있으면 409). 모델은 하네스별로 거른다(claude=Anthropic, codex/opencode=그 밖). (3) 화면: 함대 현황 '관리' 열(변경)·'+ 슬롯 추가' → 패널 폼(하네스/모델 선택/역할/비고/삭제). (4) `fleet.normalize_model` - openclaw 키를 하네스 꼴로(codex 는 `-m`+`-c model_provider=`), `spawn` 기본 모델은 하네스 불문 슬롯 모델. reader 는 DB `slots.model` 을 먼저 본다. 실측: API 로 S5 추가(opencode·EXAONE)→변경(codex·kistillm, spawn argv `-m kistillm -c model_provider=kisti`)→삭제, 웹 폼으로 추가·삭제, 콘솔 오류 0. 테스트 289→304. `8.0` 모델·슬롯 문단 갱신.
 - `2026-11-10 15:30` 클로드 코드(태석님 지시 "상세는 마크다운으로"): **REV 121. 상세보기 마크다운 렌더링.** 외부 라이브러리 없이(1절 CDN 금지) `app.js` 에 렌더러를 넣었다 - 제목·문단(줄바꿈은 `<br>` 로 보존)·목록(들여쓰기 중첩, `-`↔`1.` 분리)·코드 펜스·인용·표(정렬)·구분선·인라인 코드/굵게/기울임/링크(http[s]만, `javascript:` 는 글자 그대로). **HTML 은 해석하지 않는다** - 전부 `textContent` 로 넣어 `<img onerror>`·`<script>` 가 글자로 남는다(실측). 적용: 실행 상세 보고·지시 본문, 요청 전문, 큐 항목, 핸드오프 로그, 관리자 단계·이벤트 - 블록마다 **'원문 보기' 토글**. stderr 는 기계 출력이라 그대로. 교훈 1건: 인라인을 정규식 하나로 짰더니 백틱 많은 3,900자 관리자 단계에서 백트래킹으로 화면이 멈춰 선형 스캐너로 바꿨다(5만 자 59ms). Playwright 실측: 관리자 상세 표 2·제목 6, 콘솔 오류 0. 서버 변경 없음. **보완(15:50):** 요청 카드 미리보기도 마크다운으로 + 높이 접기(`-webkit-line-clamp` 은 표·목록 같은 블록 자식에서 안 접힘) - 그리고 **접기가 원래부터 안 되고 있었다**: 요청 트리 탭이 숨겨진 채 렌더되면 높이가 0 으로 재어져 접기를 풀었다 → 숨겨졌을 땐 본문 길이로 판단. 웹 폼으로 줄바꿈·마크다운 본문을 실제 전송해 저장(줄바꿈 16개 보존)·카드(107px 접힘, 전체 보기 켜짐)·상세(표·목록·코드·인용 렌더) 셋 다 확인.
 - `2026-11-10 15:00` 클로드 코드(태석님 지시 "상세는 줄바꿈·전문"): **REV 120. 상세보기 잘림 제거 + 줄바꿈 보장.** 잘림 4곳을 없앴다 - (1) 핸드오프 로그 400자(`reader` LOG_MAX 두 경로 + `aimem_db.state_dict` 의 `substr(body,1,400)`) → 전문(실측 최대 2,459자, 목록은 CSS 말줄임), (2) 관리자 세션 단계 본문 1200/300/120자·이벤트 400자 → 전문, 기본 최근 40단계·30건에 `GET /api/managers/<id>?all=1` 로 전부(실측 127단계·69건), 화면에 '전체 보기' 단추, (3) 실행 상세 stderr 끝 2000자 → 전문(키 이름 `stderr_tail` 은 계약대로 유지), (4) 요청·큐·태스크는 이미 전문. 줄바꿈 - 관리자 단계 본문 `.mgr-body` 에 `pre-wrap`(표·목록이 한 줄로 뭉개지던 것), 상세 `pre` 의 `max-height 45vh` 중첩 스크롤 제거. Playwright 실측: 관리자·로그·실행 상세 모두 pre-wrap, 가로 넘침 0, 콘솔 오류 0. 테스트 288→289.
 - `2026-11-10 14:30` 클로드 코드(태석님 지시 "끝난 업무는 모두 제거"): **REV 119. 보드·큐·요청 트리 1차 정리.** (1) REVIEW 잔류 31건은 전부 DONE 요청·끝난 그래프(G-004~007 100%, G-003·G-005 는 후속 라운드에서 해소)의 태스크라 DONE 으로 닫고, DONE 59건 전부 `archive --days 0` 로 `.aimem/archive/board-2026-11.md` 에 내렸다 - 보드 0건. (2) DONE 요청 10건 → `.aimem/archive/requests-2026-11/`, 그래프 6개(R-002·G-003~007, 브리프·로그·잠금·inputs 포함) → `.aimem/archive/graph-2026-11/`. (3) 큐 14→12 - 4번(허용목록 `PYTHONPATH=tools python3`: `fleet.py:376` 에 이미 있음)·8번(`step()` IndexError: `fleet_graph.py:238·671` 가드 있음)은 코드로 끝난 것이라 내림. 나머지 12건은 미구현이거나(2·3·5·7·11·12·13·14) 결정 대기(6)·미확인(1·9·10)이라 둔다. (4) `8.0` 보관·폐기 항에 요청·그래프 경로를 추가. `archive` 가 같은 초에 바뀐 행을 `<` 비교로 빠뜨린다(두 번 돌려 해소) - 큐에 올리지 않고 적어만 둔다.
@@ -474,10 +475,17 @@ drift 검사로는 잡히지 않습니다. 그래서 관리자가 스스로 묶�
   `claude -p --model sonnet`(중첩 표식 제거, 편집 자동 승인 + 읽기·검증 Bash 허용 목록)으로 돈다.
   기록은 `.aimem/runs/<id>.{brief.md,out,err,rc,json}` 이고 `.gitignore` 대상이다
 - **모델:** 관리자 Opus 5.5. 작업자는 슬롯별 - S1 claude `opus`(=opus-5.5, 판단형), S4 claude `sonnet`
-  (=sonnet-5.5, 속도용), S2·S3 는 `kisti/kistillm`(비용 절약, 태석님 원칙). 정본은 `tools/fleet_slots.json`
-  (`python3 tools/fleet.py slot list` 로 본다)이고 `spawn --model` 이 그보다 우선한다. **슬롯 추가와 하네스·모델
-  변경은 태석님 지시로 클로가 `fleet.py slot add|set` 으로 한다**(`0.5`). 관리자는 다음 REV 에서 `4절` 에 기록한다. 판단이 갈릴 수 있는 태스크는 S1 에, 범위가 좁은 실행은 S2·S3 에 준다. **실행 모델의 정본은 하네스 설정**(`fleet.py children` 이
-  읽는 세 곳)이고 OpenClaw `sessions_list` 의 `model` 은 읽지 않는다
+  (=sonnet-5.5, 속도용), S2·S3 는 `kisti/kistillm`(비용 절약, 태석님 원칙). **슬롯의 정본은 `.aimem/aimem.db` `slots`**
+  (하네스·모델·역할·비고, REV 122)이고 `tools/fleet_slots.json` 은 그 거울이다(`fleet.py spawn`·`reader` 가 파일로 읽는다).
+  `spawn --model` 이 슬롯 모델보다 우선한다. **슬롯 추가·삭제·하네스·모델 변경은 태석님이 웹 함대 현황('+ 슬롯 추가'·'변경')
+  에서 직접 하거나 클로가 `python3 tools/aimem_db.py slot add|set|remove`(= `fleet.py slot`) 로 한다**(`0.5`). 모델은
+  **OpenClaw 가 설정한 모델**(`openclaw models list` ∪ `openclaw.json` providers)에서만 고른다 - claude 하네스는 Anthropic
+  모델(또는 별칭 opus/sonnet/haiku), codex·opencode 는 그 밖(kistillm·EXAONE 등). 슬롯 모델은 openclaw 키(`provider/model`)로
+  적고 `fleet.normalize_model` 이 하네스 꼴로 바꾼다(claude: `claude-opus-5-5`, codex: `-m kistillm -c model_provider=kisti`,
+  opencode: 그대로). 도는 작업자가 있는 슬롯은 삭제·하네스 변경을 거절하고, 미완 태스크가 있으면 `force` 없이 못 지운다.
+  모든 변경은 DB `events`(kind `slot`)와 모니터 감사 로그에 남는다. 관리자는 다음 REV 에서 `4절` 에 기록한다. 판단이 갈릴 수
+  있는 태스크는 S1 에, 범위가 좁은 실행은 S2·S3 에 준다. **슬롯에 모델이 없으면 실행 모델의 정본은 하네스 설정**(`fleet.py
+  children` 이 읽는 세 곳)이고 OpenClaw `sessions_list` 의 `model` 은 읽지 않는다
 - **지시는 `spawn` 의 브리프 한 번, 보고는 프로세스 최종 출력 한 번입니다.** 이어하기는 새
   `spawn` 이고 직전 결과(산출물 유무·남은 일)를 브리프에 적는다. 작업자끼리는 말하지 않는다
 - **병렬이 기본입니다.** 의존이 없는 태스크는 한 턴에 `spawn` 을 여러 번 내고 한 번의 `wait`

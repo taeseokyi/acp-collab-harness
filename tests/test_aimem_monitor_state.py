@@ -204,15 +204,29 @@ class DbIsCanonical(_Base):
         self.assertNotIn("`", e["text"])
         self.assertFalse(e["text"].startswith("-"))
 
-    def test_8_model_from_harness_config_not_db(self):
+    def test_8_db_slot_model_is_canonical(self):
+        """REV 122 (2026-11-10, 태석님 지시 슬롯 모델 지정): DB `slots.model` 이 정본이다.
+        (REV 114~121 은 반대로 DB 모델을 무시하고 하네스 설정을 읽었다 - 그때는 DB 에 모델을 적는 길이 없었다.)"""
         self.seed()
         s = reader.collect(self.root)
-        self.assertNotEqual(s["slots"][0]["model"], "엉터리")
-        expected = reader.harness_model("claude")[0]
-        self.assertEqual(s["slots"][0]["model"], expected)
+        self.assertEqual(s["slots"][0]["model"], "엉터리")
+        self.assertIn("aimem.db", s["slots"][0]["model_source"])
 
-    def test_8b_fleet_slots_json_beats_harness_default(self):
+    def test_8a_without_db_model_harness_config_is_used(self):
         self.seed()
+        con = sqlite3.connect(self.db)
+        with con:
+            con.execute("UPDATE slots SET model=NULL")
+        con.close()
+        s = reader.collect(self.root)
+        self.assertEqual(s["slots"][0]["model"], reader.harness_model("claude")[0])
+
+    def test_8b_fleet_slots_json_beats_harness_default_when_db_has_no_model(self):
+        self.seed()
+        con = sqlite3.connect(self.db)
+        with con:
+            con.execute("UPDATE slots SET model=NULL")
+        con.close()
         (self.root / "tools").mkdir()
         (self.root / "tools" / "fleet_slots.json").write_text(
             '{"SDB": {"model": "slot-json-model"}}', encoding="utf-8")

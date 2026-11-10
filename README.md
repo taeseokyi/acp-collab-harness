@@ -81,6 +81,8 @@ pid 는 `.aimem/monitor.pid`, 로그는 `.aimem/monitor.log`. 내릴 때는 pid 
 | `cert info` / `cert renew [--ca-dir DIR] [--ip IP] [--dns 이름] [--self-signed]` | 서버 인증서 보기·재발급 (EC P-256, 825일, 옛 것은 `.bak`). `--ca-dir` 의 `ca.crt`·`ca.key` 로 서명하고 그 조건을 `.aimem/tls/cert-profile.json` 에 기억해 다음부터는 인자 없이 `cert renew` 만 치면 됨(SAN 누적). `--self-signed` 는 예전 방식 |
 | `audit [-n 30]` | 감사 로그 `.aimem/access.log` - 로그인 성공·실패, 로그아웃, 요청 생성·수정, 함대 제어, 토큰 교체 |
 
+슬롯(작업자 하네스·모델)은 웹 **함대 현황**의 '변경'·'+ 슬롯 추가' 로, 또는 `python3 tools/aimem_db.py slot add|set|remove|list` 로 다룹니다. 모델 선택지는 OpenClaw 가 설정한 모델(`openclaw models list` + `~/.openclaw/openclaw.json` providers)입니다.
+
 - **비밀은 셸이 아니라 파일에서 읽습니다** - `.aimem/tls/monitor.env`(0600; `KISTI_API_KEY`,
   `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`). KISTI 키가 없으면 `~/.openclaw/.env` 에서 읽습니다.
   그룹·기타가 읽을 수 있는 파일은 읽지 않습니다. **`.aimem/tls/` 는 git 제외**입니다

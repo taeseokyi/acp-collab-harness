@@ -102,3 +102,48 @@ class AimemDbCliTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SlotCommandTest(AimemDbCliTest):
+    """`aimem_db.py slot add|set|remove|list` (2026-11-10, 태석님 지시) - DB 정본 + fleet_slots.json 거울."""
+
+    def _json(self):
+        return json.loads((self.root / "tools" / "fleet_slots.json").read_text(encoding="utf-8"))
+
+    def test_add_set_remove_roundtrip_and_mirror(self):
+        r = aimem_db.slot_add(None, "claude", "anthropic/claude-opus-5-5", "판단형", "", actor="t")
+        self.assertEqual(r["slot"], "S1")
+        self.assertEqual(len(r["token"]), 6)
+        r2 = aimem_db.slot_add(None, "codex", None, "", "", actor="t")
+        self.assertEqual(r2["slot"], "S2")
+        self.assertEqual(self._json(), {"S1": {"harness": "claude", "model": "anthropic/claude-opus-5-5"}, "S2": {"harness": "codex"}})
+        row, changes = aimem_db.slot_set("S2", model="kisti/kistillm", role="테스트", actor="t")
+        self.assertEqual(row["model"], "kisti/kistillm")
+        self.assertEqual(len(changes), 2)
+        row, changes = aimem_db.slot_set("S2", clear_model=True, actor="t")
+        self.assertIsNone(row["model"])
+        self.assertEqual(self._json()["S2"], {"harness": "codex"})
+        res = aimem_db.slot_remove("S2", actor="t")
+        self.assertEqual([s["slot"] for s in aimem_db.slot_list()], ["S1"])
+        self.assertNotIn("S2", self._json())
+        with aimem_db.connect() as con:
+            kinds = [r["kind"] for r in con.execute("SELECT kind FROM events")]
+        self.assertEqual(kinds.count("slot"), 5)   # add, add, set, set, remove
+
+    def test_validation_and_open_task_guard(self):
+        with self.assertRaises(ValueError):
+            aimem_db.slot_add("X1", "claude")
+        with self.assertRaises(ValueError):
+            aimem_db.slot_add("S1", "gemini")
+        aimem_db.slot_add("S1", "claude", actor="t")
+        with self.assertRaises(ValueError):
+            aimem_db.slot_add("S1", "claude", actor="t")   # 중복
+        with self.assertRaises(ValueError):
+            aimem_db.slot_set("S1", model="bad model with space", actor="t")
+        with aimem_db.connect() as con:
+            con.execute("INSERT INTO tasks(id,request_id,title,slot,status,inherited,artifacts,created,updated) VALUES('T-1',NULL,'x','S1','ASSIGNED','','',?,?)", (aimem_db._now(), aimem_db._now()))
+            con.commit()
+        with self.assertRaises(ValueError):
+            aimem_db.slot_remove("S1", actor="t")            # 미완 태스크
+        self.assertEqual(aimem_db.slot_remove("S1", actor="t", force=True)["open_tasks"], ["T-1"])
+        self.assertEqual(aimem_db.next_slot_id(), "S1")

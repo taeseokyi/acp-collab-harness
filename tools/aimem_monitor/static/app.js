@@ -154,6 +154,8 @@ const state = {
   detailReturnFocus: null,
   runsShowAll: false,
   logShowAll: false,
+  models: null,          // GET /api/models 결과 (슬롯 편집 폼의 모델 선택지)
+  slotMsg: null,
   boardFilter: 'open',
   graphOpen: new Set(),
   graphKnown: new Set(),
@@ -1457,6 +1459,116 @@ function renderManager(data) {
   box.appendChild(meta);
 }
 
+// ---- 슬롯 관리 (2026-11-10, 태석님 지시) - 추가/변경/삭제, 모델은 openclaw 설정 목록에서
+async function loadModels(force = false) {
+  if (state.models && !force) return state.models;
+  if (DEMO) { state.models = { ok: true, models: [] }; return state.models; }
+  try {
+    const res = await fetch('/api/models', { headers: { Accept: 'application/json' } });
+    state.models = await res.json();
+  } catch (err) {
+    state.models = { ok: false, models: [], error: err && err.message ? err.message : String(err) };
+  }
+  return state.models;
+}
+
+async function slotRequest(url, payload) {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(payload) });
+  const body = await res.json().catch(() => ({ ok: false, error: 'HTTP ' + res.status }));
+  return { ok: res.ok && body.ok !== false, body };
+}
+
+function modelOptions(models, harness, current) {
+  const sel = document.createElement('select');
+  sel.className = 'slot-model';
+  const def = document.createElement('option');
+  def.value = ''; def.textContent = '(하네스 기본 모델)';
+  sel.appendChild(def);
+  const list = (models && Array.isArray(models.models) ? models.models : []).filter((m) => !m.harnesses || m.harnesses.includes(harness));
+  if (harness === 'claude') {
+    for (const alias of ['opus', 'sonnet', 'haiku']) {
+      const o = document.createElement('option'); o.value = alias; o.textContent = `${alias} (Claude CLI 별칭)`; sel.appendChild(o);
+    }
+  }
+  for (const m of list) {
+    const o = document.createElement('option');
+    o.value = m.key;
+    o.textContent = m.key + (m.aliases && m.aliases.length ? ` (${m.aliases.join(', ')})` : '') + (m.context ? ` · ${Math.round(m.context / 1000)}k` : '');
+    sel.appendChild(o);
+  }
+  if (current && !Array.from(sel.options).some((o) => o.value === current)) {
+    const o = document.createElement('option'); o.value = current; o.textContent = current + ' (목록에 없음 - 현재 값)'; sel.appendChild(o);
+  }
+  sel.value = current || '';
+  return sel;
+}
+
+function openSlotForm(existing) {
+  const isNew = !existing;
+  openPanel(isNew ? '슬롯 추가' : `슬롯 ${existing.slot} 변경`, (body) => {
+    const form = document.createElement('form');
+    form.className = 'slot-form';
+    const field = (label, el) => {
+      const w = document.createElement('label'); w.className = 'slot-field';
+      const l = document.createElement('span'); l.textContent = label; w.appendChild(l); w.appendChild(el); form.appendChild(w); return el;
+    };
+    const slotIn = document.createElement('input'); slotIn.placeholder = '비우면 다음 번호'; slotIn.pattern = 'S\\d{1,3}';
+    if (!isNew) { slotIn.value = existing.slot; slotIn.disabled = true; }
+    field('슬롯 id', slotIn);
+    const harnessSel = document.createElement('select');
+    for (const h of ['claude', 'codex', 'opencode']) { const o = document.createElement('option'); o.value = h; o.textContent = h; harnessSel.appendChild(o); }
+    harnessSel.value = existing ? existing.harness : 'claude';
+    field('하네스', harnessSel);
+    const modelWrap = document.createElement('div'); modelWrap.className = 'slot-model-wrap';
+    const modelNote = document.createElement('div'); modelNote.className = 'hint'; modelNote.textContent = '모델 목록을 읽는 중…';
+    modelWrap.appendChild(modelNote);
+    field('모델 (openclaw 설정)', modelWrap);
+    const roleIn = document.createElement('input'); roleIn.value = existing ? show(existing.role, '') : ''; roleIn.placeholder = '예: 병렬 작업자 (속도)'; field('역할', roleIn);
+    const noteIn = document.createElement('input'); noteIn.value = existing ? show(existing.note, '') : ''; noteIn.placeholder = '비고'; field('비고', noteIn);
+    const actions = document.createElement('div'); actions.className = 'slot-actions';
+    const save = document.createElement('button'); save.type = 'submit'; save.className = 'btn-primary'; save.textContent = isNew ? '추가' : '저장';
+    const msg = document.createElement('div'); msg.className = 'slot-msg';
+    actions.appendChild(save);
+    if (!isNew) {
+      const del = document.createElement('button'); del.type = 'button'; del.className = 'btn-danger'; del.textContent = '이 슬롯 삭제';
+      del.addEventListener('click', async () => {
+        if (!window.confirm(`${existing.slot} 을(를) 명부에서 지웁니다. 끝나지 않은 태스크가 있으면 거절됩니다. 계속할까요?`)) return;
+        del.disabled = true;
+        const r = await slotRequest(`/api/slots/${existing.slot}/remove`, {});
+        if (!r.ok && /끝나지 않은 태스크/.test(r.body.error || '') && window.confirm(r.body.error + '\n\n그래도 강제로 지울까요?')) {
+          const r2 = await slotRequest(`/api/slots/${existing.slot}/remove`, { force: true });
+          Object.assign(r, r2);
+        }
+        if (r.ok) { closeDetail(); state.slotMsg = { ok: true, text: `${existing.slot} 삭제됨` }; await refresh(); }
+        else { del.disabled = false; msg.textContent = r.body.error || '실패'; msg.classList.add('is-error'); }
+      });
+      actions.appendChild(del);
+    }
+    form.appendChild(actions); form.appendChild(msg);
+    let modelSel = null;
+    const rebuildModels = (models, keepCurrent = true) => {
+      modelWrap.textContent = '';
+      const cur = !keepCurrent ? '' : (modelSel ? modelSel.value : (existing ? show(existing.model_raw || existing.model, '') : ''));
+      modelSel = modelOptions(models, harnessSel.value, cur);
+      modelWrap.appendChild(modelSel);
+      if (models && models.ok === false) { const e = document.createElement('div'); e.className = 'hint is-error'; e.textContent = '모델 목록 실패: ' + show(models.error, ''); modelWrap.appendChild(e); }
+      const src = document.createElement('div'); src.className = 'hint'; src.textContent = '출처: openclaw models list (설정된 모델). claude 는 Anthropic 모델만, codex/opencode 는 그 밖.'; modelWrap.appendChild(src);
+    };
+    harnessSel.addEventListener('change', () => rebuildModels(state.models, false));   // 하네스가 바뀌면 모델은 다시 고른다
+    loadModels().then(rebuildModels);
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault(); save.disabled = true; msg.textContent = ''; msg.classList.remove('is-error');
+      const payload = { harness: harnessSel.value, model: modelSel ? modelSel.value : '', role: roleIn.value.trim(), note: noteIn.value.trim() };
+      let r;
+      if (isNew) { if (slotIn.value.trim()) payload.slot = slotIn.value.trim().toUpperCase(); r = await slotRequest('/api/slots', payload); }
+      else r = await slotRequest(`/api/slots/${existing.slot}/set`, payload);
+      if (r.ok) { closeDetail(); state.slotMsg = { ok: true, text: isNew ? `${(r.body.slot || {}).slot} 추가됨` : `${existing.slot} 저장됨` + (r.body.changes && r.body.changes.length ? ' (' + r.body.changes.join(', ') + ')' : ' - 바뀐 것 없음') }; await refresh(); }
+      else { save.disabled = false; msg.textContent = r.body.error || '실패'; msg.classList.add('is-error'); }
+    });
+    body.appendChild(form);
+  });
+}
+
 function latestBySlot(data) {
   const map = new Map();
   for (const r of (Array.isArray(data.runs) ? data.runs : [])) {
@@ -1485,6 +1597,7 @@ function renderSlots(data) {
   const slots = Array.isArray(data.slots) ? data.slots : [];
   if (!slots.length) {
     wrap.appendChild(emptyP('슬롯 명부 없음'));
+    const bar = document.createElement('div'); bar.className = 'slot-bar'; bar.appendChild(linkButton('+ 슬롯 추가', () => openSlotForm(null))); wrap.appendChild(bar);
     return;
   }
   const running = runningBySlot(data);
@@ -1517,14 +1630,29 @@ function renderSlots(data) {
       sub.title = show(r.label, '');
       now.appendChild(sub);
     }
-    return [mono(s.slot), now, show(s.harness), modelCell, show(s.role), plainText(s.note) || '-'];
+    const manage = document.createElement('div');
+    manage.className = 'slot-manage';
+    const edit = linkButton('변경', () => openSlotForm(s));
+    edit.title = r ? '작업자가 도는 중 - 모델·역할·비고는 바꿀 수 있고 하네스는 끝난 뒤' : '하네스·모델·역할·비고 변경, 삭제';
+    manage.appendChild(edit);
+    return [mono(s.slot), now, show(s.harness), modelCell, show(s.role), plainText(s.note) || '-', manage];
   });
   const rowClasses = runIds.map((id) => (id ? 'row-running' : ''));
-  wrap.appendChild(newTable(['슬롯', '지금', '하네스', '모델', '역할', '비고'], rows, rowClasses, {
-    widths: ['64px', '230px', '100px', '250px', '180px', null],
+  wrap.appendChild(newTable(['슬롯', '지금', '하네스', '모델', '역할', '비고', '관리'], rows, rowClasses, {
+    widths: ['64px', '230px', '100px', '250px', '180px', null, '64px'],
     ellipsis: [3, 4, 5],
     rowRunIds: runIds,
   }));
+  // 관리 열의 버튼은 행 클릭(실행 상세)과 겹치지 않게
+  wrap.querySelectorAll('.slot-manage button').forEach((b) => b.addEventListener('click', (e) => e.stopPropagation()));
+  const bar = document.createElement('div');
+  bar.className = 'slot-bar';
+  bar.appendChild(linkButton('+ 슬롯 추가', () => openSlotForm(null)));
+  if (state.slotMsg) {
+    const m = document.createElement('span'); m.className = 'slot-msg' + (state.slotMsg.ok ? '' : ' is-error'); m.textContent = state.slotMsg.text; bar.appendChild(m);
+    setTimeout(() => { if (state.slotMsg && state.slotMsg.text === m.textContent) { state.slotMsg = null; } }, 8000);
+  }
+  wrap.appendChild(bar);
 }
 
 const RUNS_PAGE = 20;

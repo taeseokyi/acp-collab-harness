@@ -1,10 +1,16 @@
 {
  "S1": {
-  "model": "opus",
-  "harness": "claude"
+  "harness": "claude",
+  "model": "opus"
+ },
+ "S2": {
+  "harness": "codex"
+ },
+ "S3": {
+  "harness": "opencode"
  },
  "S4": {
-  "model": "sonnet",
-  "harness": "claude"
+  "harness": "claude",
+  "model": "sonnet"
  }
 }

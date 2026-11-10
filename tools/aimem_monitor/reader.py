@@ -502,13 +502,15 @@ def collect(root: pathlib.Path | None = None) -> dict:
     slot_models = _load_slot_models(root, errors)
     if db is not None:
         slot_rows = [[_s(r.get("slot")), _s(r.get("token")), _s(r.get("harness")),
-                      _s(r.get("role")), "", _s(r.get("note"))] for r in db.get("slots") or []]
+                      _s(r.get("role")), "", _s(r.get("note")), _s(r.get("model"))] for r in db.get("slots") or []]
     else:
-        slot_rows = _table_rows(_section(lines, r"2\."), 6, errors, "2절 명부")
+        slot_rows = [c + [""] for c in _table_rows(_section(lines, r"2\."), 6, errors, "2절 명부")]
     slots = []
     for c in slot_rows:
         harness = c[2]
-        if c[0] in slot_models:  # 슬롯별 정본이 하네스 하나당 모델 하나보다 우선 (claude 에 S1 opus / S4 sonnet)
+        if len(c) > 6 and c[6]:   # DB `slots.model` 이 정본 (웹/CLI `slot set`, 2026-11-10)
+            model, src = c[6], "aimem.db slots.model (슬롯 지정 모델)"
+        elif c[0] in slot_models:  # 슬롯별 거울 파일이 하네스 하나당 모델 하나보다 우선 (claude 에 S1 opus / S4 sonnet)
             model, src = slot_models[c[0]], SLOT_MODEL_SOURCE
         else:
             model, src = harness_model(harness)

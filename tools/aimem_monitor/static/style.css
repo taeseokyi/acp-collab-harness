@@ -1268,3 +1268,17 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .md-toggle { font-size: var(--st-fs-xs, 12px); color: var(--st-ink-muted); }
 .mgr-list .mgr-body.md-host, .mgr-list div.mgr-body { display: block; margin-top: 2px; }
 .mgr-list div.mgr-body .md > :last-child { margin-bottom: 0; }
+
+/* ---- 슬롯 관리 (2026-11-10) ---- */
+.slot-manage { text-align: center; }
+.slot-bar { display: flex; align-items: center; gap: 12px; margin-top: var(--st-s-2); }
+.slot-msg { font-size: var(--st-fs-sm); color: var(--st-accent-ink, var(--st-ink)); }
+.slot-msg.is-error, .hint.is-error { color: var(--st-danger, #e0283f); }
+.slot-form { display: grid; gap: 10px; max-width: 640px; }
+.slot-field { display: grid; grid-template-columns: 140px 1fr; align-items: start; gap: 10px; font-size: var(--st-fs-sm); }
+.slot-field > span { color: var(--st-ink-muted); padding-top: 6px; }
+.slot-field input, .slot-field select { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--st-line); border-radius: var(--st-r-sm); background: var(--st-surface); color: var(--st-ink); }
+.slot-model-wrap { display: grid; gap: 4px; }
+.slot-actions { display: flex; gap: 10px; margin-top: 4px; }
+.btn-danger { color: var(--st-danger, #e0283f); border-color: var(--st-danger, #e0283f); background: transparent; }
+.btn-danger:hover { background: color-mix(in srgb, var(--st-danger, #e0283f) 10%, transparent); }

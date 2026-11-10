@@ -382,16 +382,36 @@ _CLAUDE_WORKER_TOOLS = ",".join([
 ])
 
 
+def normalize_model(harness, model):
+    """슬롯에 적힌 모델(openclaw 키 `provider/model` 또는 claude 별칭)을 하네스가 받는 꼴로.
+    claude CLI 는 `claude-opus-5-5`(id) 또는 `opus`(별칭) - `anthropic/` 접두는 뗀다. opencode 는 `provider/model` 그대로.
+    codex 는 호출부에서 `-m model -c model_provider=provider` 로 쪼갠다."""
+    if not model:
+        return model
+    m = str(model).strip()
+    if harness == "claude":
+        if m.startswith("anthropic/"):
+            m = m[len("anthropic/"):]
+        if m.startswith("claude-cli/"):
+            m = m[len("claude-cli/"):]
+    return m
+
+
 def _worker_argv(harness, model, brief_path):
     """하네스별 비대화식 실행 명령. **브리프 본문은 argv 에 넣지 않습니다** - stdin 이나 파일 경로로 넘깁니다.
     (11-09 R-002/N3: 브리프에 든 `aimem_monitor` 글자가 작업자 argv 에 있어 `pkill -f aimem_monitor` 로
     작업자가 자기 자신을 죽였다. 경로만 넘기면 그런 자기 참조가 없다.)
     돌려주는 값은 (argv, stdin_path) 이고 stdin_path 가 None 이 아니면 그 파일을 표준입력으로 붙입니다."""
     brief_path = str(brief_path)
+    model = normalize_model(harness, model)
     if harness == "codex":
         argv = ["codex", "exec", "--skip-git-repo-check", "--ephemeral", "-C", str(ROOT), "--sandbox", "workspace-write"]
         if model:
-            argv += ["-m", model]
+            # openclaw 키 `kisti/kistillm` → codex 는 모델과 공급자를 따로 받는다 (config.toml 의 model_provider 이름과 같다)
+            prov, _, mid = model.rpartition("/")
+            argv += ["-m", mid]
+            if prov:
+                argv += ["-c", f"model_provider={prov}"]
         return argv + ["-"], brief_path  # `-` = 프롬프트를 stdin 에서 읽는다
     if harness == "opencode":
         argv = ["opencode", "run"]
@@ -533,7 +553,7 @@ def cmd_spawn(args):
         "", task.strip(), ""])
     brief_path = RUNS / f"{run_id}.brief.md"
     brief_path.write_text(brief, encoding="utf-8")
-    model = args.model or (SLOT_DEFAULT_MODEL.get(args.slot) if harness == "claude" else None)
+    model = args.model or _load_slot_models().get(args.slot)   # 슬롯 모델(DB 거울 fleet_slots.json) - 하네스 불문, 없으면 하네스 기본
     argv, stdin_path = _worker_argv(harness, model, brief_path)
     out, err, rc = RUNS / f"{run_id}.out", RUNS / f"{run_id}.err", RUNS / f"{run_id}.rc"
     shell = (" ".join(shlex.quote(a) for a in argv)
@@ -626,71 +646,19 @@ def cmd_report(args):
     return 0
 
 def cmd_slot(args):
-    """슬롯 추가/변경 - 2절 명부 행과 `tools/fleet_slots.json` 을 함께 고칩니다. **클로(태석님 대리인)가 실행합니다.**
+    """슬롯 추가/변경/삭제/목록 - 정본은 `.aimem/aimem.db` 의 slots (2026-11-10). `tools/aimem_db.py slot` 에 위임한다.
+    2절 명부 표는 REV 114 에 내려가 더는 마크다운을 고치지 않는다. 웹 함대 현황에서도 같은 함수를 부른다.
 
-      python3 tools/fleet.py slot add --slot S5 --harness claude --model opus --role "판단형 작업자"
+      python3 tools/fleet.py slot add --slot S5 --harness claude --model anthropic/claude-opus-5-5 --role "판단형 작업자"
       python3 tools/fleet.py slot set --slot S4 --model haiku
+      python3 tools/fleet.py slot remove --slot S5
       python3 tools/fleet.py slot list
     """
-    import datetime, secrets
-    slots = {}
-    try:
-        slots = json.loads(SLOTS_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        slots = {k: {"model": v} for k, v in SLOT_DEFAULT_MODEL.items()}
-    r = roster()
-    if args.action == "list":
-        for slot, (token, harness, _k) in sorted(r.items()):
-            m = slots.get(slot, {}).get("model")
-            print(f"  {slot}  {token}  {harness:<9} 모델 {SLOT_MODEL_LABEL.get(m, m) if m else '(하네스 기본)'}")
-        return 0
-    if not args.slot or not re.fullmatch(r"S\d+", args.slot):
-        sys.exit("--slot S<n> 형식이어야 합니다")
-    if args.harness and args.harness not in HARNESSES:
-        sys.exit(f"하네스는 {HARNESSES} 중 하나")
-    if args.model and args.harness == "claude" and args.model not in SLOT_MODEL_LABEL:
-        sys.exit(f"claude 모델은 {tuple(SLOT_MODEL_LABEL)} 중 하나 (Claude CLI 별칭)")
-    text = AIMEM.read_text(encoding="utf-8")
-    today = datetime.date.today().strftime("%m-%d")
-    if args.action == "add":
-        if args.slot in r:
-            sys.exit(f"{args.slot} 은 이미 명부에 있습니다 (set 을 쓰십시오)")
-        if not args.harness:
-            sys.exit("add 에는 --harness 가 필요합니다")
-        token = secrets.token_hex(3)
-        model_note = f"`--model {args.model}`(={SLOT_MODEL_LABEL.get(args.model, args.model).split('/')[-1]})" if args.model else "하네스 기본 모델"
-        row = (f"| {args.slot} | `{token}` | {args.harness} | {args.role or '병렬 작업자'} | - | "
-               f"{today} 클로 추가(태석님 지시). {args.harness} CLI, {model_note}. 소유 경로는 태스크마다 6절에 등재 |")
-        lines = text.splitlines()
-        last = max(i for i, l in enumerate(lines) if re.match(r"\|\s*S\d+\s*\|", l))
-        lines.insert(last + 1, row)
-        text = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
-        if args.model:
-            slots[args.slot] = {"model": args.model, "harness": args.harness}
-        else:
-            slots[args.slot] = {"harness": args.harness}
-    elif args.action == "set":
-        if args.slot not in r:
-            sys.exit(f"{args.slot} 이 명부에 없습니다 (add 를 쓰십시오)")
-        entry = slots.setdefault(args.slot, {})
-        if args.model:
-            entry["model"] = args.model
-        if args.harness:
-            entry["harness"] = args.harness
-            text = re.sub(rf"(\|\s*{args.slot}\s*\|\s*`[0-9a-f]+`\s*\|\s*)([^|]*?)(\s*\|)", rf"\g<1>{args.harness}\3", text, count=1)
-        if args.model:
-            # 비고 끝에 모델 변경 기록을 덧붙인다
-            text = re.sub(rf"(\|\s*{args.slot}\s*\|.*?)\s*\|\s*$",
-                          rf"\1 {today} 모델→`{args.model}`(클로, 태석님 지시) |", text, count=1, flags=re.M)
-    else:
-        sys.exit("action 은 add / set / list")
-    AIMEM.write_text(text, encoding="utf-8")
-    SLOTS_FILE.write_text(json.dumps(slots, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-    lint = sh("python3", "tools/aimem_lint.py", "AIMEM.md")
-    print(f"{args.action} {args.slot} 완료. 린터: {(lint.stdout or lint.stderr).strip().splitlines()[-1] if (lint.stdout or lint.stderr) else '?'}")
-    print("관리자가 다음 REV 에서 4절에 기록합니다. 6절 소유 경로는 태스크 배정 때 등재합니다.")
-    _db_sync()
-    return 0 if lint.returncode == 0 else 1
+    import aimem_db
+    ns = argparse.Namespace(action=args.action, slot=args.slot, harness=args.harness, model=args.model,
+                            default_model=False, role=args.role, note=None, force=getattr(args, "force", False),
+                            actor="클로드/클로(태석님 지시)")
+    return aimem_db.cmd_slot(ns)
 
 
 def cmd_reap(args):
@@ -758,11 +726,12 @@ def main():
     rp.add_argument("id")
     sub.add_parser("reap", help="보고 없이 사라진(lost) 실행을 거둔다 - 경과 시간 고정")
     sl = sub.add_parser("slot", help="슬롯 추가/변경/목록 - 2절 명부 + tools/fleet_slots.json (클로 실행)")
-    sl.add_argument("action", choices=["add", "set", "list"])
+    sl.add_argument("action", choices=["add", "set", "remove", "list"])
     sl.add_argument("--slot")
     sl.add_argument("--harness", choices=HARNESSES)
     sl.add_argument("--model", help="claude: opus|sonnet|haiku (CLI 별칭). codex/opencode: 하네스 모델 id")
     sl.add_argument("--role", help="역할 칸 문구")
+    sl.add_argument("--force", action="store_true", help="remove: 미완 태스크가 있어도 삭제")
     a = p.parse_args()
     return {"status": cmd_status, "close": cmd_close, "brief": cmd_brief,
             "children": cmd_children, "spawn": cmd_spawn, "runs": cmd_runs,
