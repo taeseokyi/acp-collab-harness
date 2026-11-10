@@ -14,33 +14,33 @@ AIMEM.md 는 **규약 본문**만 남기고, 운영 상태(명부·보드·큐·
 import argparse
 import contextlib
 import datetime as dt
-import fcntl
 import json
 import os
 import pathlib
 import re
 import sqlite3
 import sys
-import threading
-import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DB = ROOT / ".aimem" / "aimem.db"
 AIMEM = ROOT / "AIMEM.md"
-#: 핸드오프 로그의 살아 있는 본문 (REV 129). AIMEM.md 4절은 관리 방법만 적고 항목은 여기 쌓인다 - 문서를 가볍게 유지하기 위해서다.
+#: 핸드오프 로그 (REV 132). **정본은 DB `events(kind='handoff')` 하나다.** `.aimem/handoff.md` 는 거기서 만드는
+#: 읽기 전용 생성물(최신 HANDOFF_MAX 건)이고, 창에서 밀려난 항목은 같은 트랜잭션에서 월별 아카이브로 내보낸다.
+#: 저장소가 하나라 파일·DB 불일치가 생길 수 없고, 동시 쓰기는 SQLite 쓰기 트랜잭션이 직렬화한다 -
+#: REV 131 의 파일 잠금·멱등 롤오버·대조 검사는 두 곳에 쓰던 구조의 비용이었으므로 걷어냈다.
 HANDOFF = ROOT / ".aimem" / "handoff.md"
-HANDOFF_MAX = 12        # 이 수를 넘으면 롤오버 (AIMEM.md 5절 상한)
-HANDOFF_KEEP = 4        # 롤오버 뒤 남기는 최신 항목 수
+HANDOFF_MAX = 12          # handoff.md 에 보이는 최신 항목 수 (AIMEM.md 5절)
 HANDOFF_ENTRY_MAX = 1200  # 항목당 문자 수 상한 (5절). `handoff add --allow-long` 으로만 넘긴다
 HANDOFF_ENTRY_RE = re.compile(r"^- `(\d{4}-\d{2}-\d{2} \d{2}:\d{2})`")
-HANDOFF_HEADER = ("# Handoff Log (live)\n\n"
-                  "Newest first. Written only by `python3 tools/aimem_db.py handoff add`. When more than "
-                  f"{HANDOFF_MAX} entries accumulate, `handoff rollover` (also run by `archive`) moves the older ones to "
-                  f"`.aimem/archive/handoff-YYYY-MM.md`, keeping the newest {HANDOFF_KEEP}. The protocol is AIMEM.md Section 4.\n\n")
+HANDOFF_HEADER = ("# Handoff Log (generated)\n\n"
+                  "Generated from `events(kind=handoff)` in `.aimem/aimem.db` - **do not edit; edits are overwritten.** "
+                  "Add an entry with `python3 tools/aimem_db.py handoff add`. Newest first, latest "
+                  f"{HANDOFF_MAX}; older entries are exported to `.aimem/archive/handoff-YYYY-MM.md`. "
+                  "The protocol is AIMEM.md Section 4.\n\n")
 
 
 def parse_handoff_entries(text):
-    """`- \`YYYY-MM-DD HH:MM\` …` 로 시작하는 항목(2칸 들여쓴 이어지는 줄 포함)을 파일 순서대로 돌려준다."""
+    """`- \`YYYY-MM-DD HH:MM\` …` 로 시작하는 항목(2칸 들여쓴 이어지는 줄 포함)을 파일 순서대로 돌려준다 (복구용 `migrate` 가 쓴다)."""
     entries, cur = [], None
     for line in text.splitlines():
         if HANDOFF_ENTRY_RE.match(line):
@@ -58,182 +58,152 @@ def parse_handoff_entries(text):
     return entries
 
 
-def handoff_entries():
-    return parse_handoff_entries(HANDOFF.read_text(encoding="utf-8")) if HANDOFF.exists() else []
+def _handoff_line(row):
+    """events 행 → 로그 한 줄. 옛 행은 본문에 머리(`- \`시각\` 작성자:`)가 들어 있어 그대로 쓴다."""
+    body = row["body"] or ""
+    if HANDOFF_ENTRY_RE.match(body):
+        return body
+    stamp = str(row["at"])[:16].replace("T", " ")
+    return f"- `{stamp}` {row['actor'] or '관리자'}: {body}"
 
 
-#: 핸드오프 쓰기 잠금 (REV 131). add / rollover / archive 의 "읽고-고쳐-쓰기" 전체를 직렬화한다.
-#: flock 은 프로세스가 죽으면 커널이 풀어 주므로 교착이 남지 않는다. 같은 스레드의 중첩 호출
-#: (add → rollover, archive → rollover)은 깊이 카운터로 통과시킨다 - 다른 스레드·프로세스는 기다린다.
-HANDOFF_LOCK_TIMEOUT = 30.0
-_handoff_lock_state = threading.local()
+def _handoff_rows(con):
+    """최신 먼저. REV 가 실제 순서다(옛 항목의 시각은 손으로 적은 값이라 어긋난 것이 있다); 같은 REV 는 시각·seq 순."""
+    rows = con.execute("SELECT seq, at, actor, rev, body FROM events WHERE kind='handoff'").fetchall()
+    return sorted(rows, key=lambda r: (r["rev"] if r["rev"] is not None else -1,
+                                       str(r["at"])[:16].replace("T", " "), r["seq"]), reverse=True)
+
+
+def handoff_entries(con=None):
+    """DB 의 핸드오프 항목 전부, 최신 먼저."""
+    if con is not None:
+        return [_handoff_line(r) for r in _handoff_rows(con)]
+    with contextlib.closing(connect()) as c:
+        return [_handoff_line(r) for r in _handoff_rows(c)]
+
+
+def render_handoff_text(con):
+    lines = [_handoff_line(r) for r in _handoff_rows(con)[:HANDOFF_MAX]]
+    return HANDOFF_HEADER + ("\n".join(lines) + "\n" if lines else "")
 
 
 @contextlib.contextmanager
-def handoff_lock(timeout=None):
-    depth = getattr(_handoff_lock_state, "depth", 0)
-    if depth:
-        _handoff_lock_state.depth = depth + 1
-        try:
-            yield
-        finally:
-            _handoff_lock_state.depth -= 1
-        return
-    lock_path = HANDOFF.parent / "handoff.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
-    deadline = time.monotonic() + (HANDOFF_LOCK_TIMEOUT if timeout is None else timeout)
+def _write_txn():
+    """쓰기 잠금을 먼저 잡는 트랜잭션(`BEGIN IMMEDIATE`). 이 안에서 읽고 쓰는 것은 다른 작성자와 겹치지 않는다."""
+    con = connect()
+    con.isolation_level = None
     try:
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise RuntimeError(f"handoff: 다른 세션이 핸드오프 로그를 쓰는 중입니다 ({lock_path} 잠금을 "
-                                       f"{HANDOFF_LOCK_TIMEOUT:.0f}초 안에 얻지 못함) - 잠시 뒤 다시 하십시오") from None
-                time.sleep(0.05)
-        _handoff_lock_state.depth = 1
+        con.execute("BEGIN IMMEDIATE")
         try:
-            yield
-        finally:
-            _handoff_lock_state.depth = 0
+            yield con
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+        con.execute("COMMIT")
     finally:
-        os.close(fd)   # 닫으면 flock 도 풀린다
+        con.close()
 
 
-def _write_handoff(entries):
-    HANDOFF.parent.mkdir(parents=True, exist_ok=True)
-    # 임시 파일에 쓰고 이름을 바꾼다 - 쓰는 도중 죽어도 반쯤 쓰인 handoff.md 가 남지 않는다 (REV 131)
-    tmp = HANDOFF.with_name(f"{HANDOFF.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-    tmp.write_text(HANDOFF_HEADER + ("\n".join(entries) + "\n" if entries else ""), encoding="utf-8")
-    os.replace(tmp, HANDOFF)
+def _sync_handoff_files(con):
+    """DB → `.aimem/handoff.md`(최신 창) + 창 밖 항목의 월별 아카이브 내보내기. **호출자가 쓰기 트랜잭션을 쥐고 있어야 한다** -
+    그래서 파일 쓰기까지 DB 쓰기 잠금 하나로 직렬화된다. 내보낸 건수를 돌려준다."""
+    con.execute("CREATE TABLE IF NOT EXISTS handoff_archived(seq INTEGER PRIMARY KEY)")
+    rows = _handoff_rows(con)
+    done = {r[0] for r in con.execute("SELECT seq FROM handoff_archived")}
+    exported = 0
+    arch = ROOT / ".aimem" / "archive"
+    for r in reversed(rows[HANDOFF_MAX:]):   # 오래된 것부터
+        if r["seq"] in done:
+            continue
+        line = _handoff_line(r)
+        f = arch / f"handoff-{line[3:10]}.md"
+        arch.mkdir(parents=True, exist_ok=True)
+        old = f.read_text(encoding="utf-8") if f.exists() else f"# Handoff log archive - {line[3:10]}\n\n"
+        if line not in old:      # 내보낸 뒤 커밋 전에 죽었다가 다시 도는 경우에도 두 번 붙지 않는다
+            f.write_text(old.rstrip("\n") + "\n" + line + "\n", encoding="utf-8")
+        con.execute("INSERT OR IGNORE INTO handoff_archived(seq) VALUES(?)", (r["seq"],))
+        exported += 1
+    text = render_handoff_text(con)
+    if not HANDOFF.exists() or HANDOFF.read_text(encoding="utf-8") != text:
+        HANDOFF.parent.mkdir(parents=True, exist_ok=True)
+        tmp = HANDOFF.with_name(f"{HANDOFF.name}.{os.getpid()}.tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, HANDOFF)   # 반쯤 쓰인 파일이 남지 않는다
+    return exported
+
+
+def handoff_sync():
+    """`render` 와 `handoff sync` 가 부른다 - 생성 파일을 DB 에 맞춘다."""
+    with _write_txn() as con:
+        return _sync_handoff_files(con)
 
 
 def _import_handoff_entries(con, entries):
-    """항목들을 events(kind='handoff') 로 적재한다. 중복 판정은 (항목 시각, 본문 앞 80자). 적재 건수를 돌려준다."""
+    """복구용: 파일의 항목을 events(kind='handoff') 로 적재한다(DB 를 잃었을 때 `migrate`). 이미 있는 항목은 건너뛴다."""
     n = 0
     for e in reversed(list(entries)):  # 오래된 것부터 seq 가 커지도록
         m = HANDOFF_ENTRY_RE.match(e)
         at = m.group(1)
-        text = e[m.end():].lstrip()   # 머리(시각)를 뗀 본문. 작성자 표기는 본문에 남는다 (옛 항목은 작성자를 따로 모른다)
+        text = e[m.end():].lstrip()   # 머리(시각)를 뗀 본문
         rm = re.search(r"\*\*REV (\d+)", e)
-        exists = con.execute("SELECT 1 FROM events WHERE kind='handoff' AND at=? AND (substr(body,1,80)=? OR substr(body,1,80)=?)",
-                             (at, text[:80], e[:80])).fetchone()
+        exists = con.execute(
+            "SELECT 1 FROM events WHERE kind='handoff' AND replace(substr(at,1,16),'T',' ')=? AND "
+            "(substr(body,1,80)=? OR substr(body,1,80)=? OR substr(COALESCE(actor,'관리자')||': '||body,1,80)=?)",
+            (at, text[:80], e[:80], text[:80])).fetchone()
         if not exists:
             con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
-                        (at, "관리자", int(rm.group(1)) if rm else None, "handoff", text))
+                        (at, "관리자", int(rm.group(1)) if rm else None, "handoff", e))
             n += 1
     return n
 
 
-def handoff_rollover_plan(keep=HANDOFF_KEEP, max_entries=HANDOFF_MAX):
-    """항목이 max_entries 를 넘으면 keep 개를 남기고 나머지(오래된 쪽)를 돌려준다. 아니면 빈 리스트."""
-    entries = handoff_entries()
-    return entries[keep:] if len(entries) > max_entries else []
-
-
-def handoff_rollover_apply(to_move, actor="관리자"):
-    """아카이브 파일에 먼저 쓰고 확인한 뒤 handoff.md 에서 뺀다 (아카이브 수명주기). 옮긴 건수를 돌려준다.
-
-    잠금 안에서 **지금 파일에 남아 있는 항목만** 옮긴다 - 계획을 세운 뒤 다른 세션이 이미 옮겼으면 건너뛰고,
-    아카이브에 이미 있는 항목은 다시 덧붙이지 않는다 (동시 실행·재실행에 멱등, REV 131)."""
-    if not to_move:
-        return 0
-    with handoff_lock():
-        current = handoff_entries()
-        to_move = [e for e in to_move if e in current]
-        if not to_move:
-            return 0
-        arch = ROOT / ".aimem" / "archive"
-        arch.mkdir(parents=True, exist_ok=True)
-        by_month = {}
-        for e in to_move:
-            by_month.setdefault(HANDOFF_ENTRY_RE.match(e).group(1)[:7], []).append(e)
-        for month, es in sorted(by_month.items()):
-            f = arch / f"handoff-{month}.md"
-            old = f.read_text(encoding="utf-8").rstrip("\n") + "\n\n" if f.exists() else f"# Handoff log archive - {month}\n\n"
-            fresh = [e for e in es if e not in old]
-            if fresh:
-                f.write_text(old + "\n".join(fresh) + "\n", encoding="utf-8")
-            text = f.read_text(encoding="utf-8")
-            missing = [e[:40] for e in es if e[:80] not in text]
-            if missing:
-                raise RuntimeError(f"handoff rollover: {f.name} 에 {missing} 가 안 들어갔습니다 - handoff.md 에서 빼지 않습니다")
-        moved = set(to_move)
-        _write_handoff([e for e in current if e not in moved])
-        with connect() as con:
-            con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
-                        (_now(), actor, rev(con), "archive",
-                         f"핸드오프 로그 {len(to_move)}건 → .aimem/archive/handoff-<YYYY-MM>.md (최신 {HANDOFF_KEEP}건 유지)"))
-            con.commit()
-        return len(to_move)
-
-
 def handoff_add(body, actor="관리자", bump=False, allow_long=False, when=None, expect_rev=None):
-    """핸드오프 항목 하나를 handoff.md 맨 위와 events 에 적고, 상한을 넘으면 롤오버한다. (REV, 롤오버 건수) 를 돌려준다.
+    """핸드오프 항목 하나를 DB 에 넣고 생성 파일을 맞춘다. (REV, 아카이브로 내보낸 건수) 를 돌려준다.
 
-    동시 쓰기 차단 (REV 131): 전체가 `handoff_lock` 안에서 돈다(항목 유실·롤오버 중복 방지). REV 는 `BEGIN IMMEDIATE`
-    안에서 읽어 올린다(잠금을 우회한 쓰기가 있어도 같은 REV 를 둘이 받지 않는다). `expect_rev` 를 주면 그 사이
-    다른 세션이 REV 를 올렸을 때 아무것도 쓰지 않고 거절한다."""
+    전부 쓰기 트랜잭션 하나 안이다 - REV 읽기·올리기, 행 삽입, 파일 생성이 다른 작성자와 겹치지 않고, 중간에
+    실패하면 통째로 되돌아간다. `expect_rev` 를 주면 그 사이 다른 세션이 REV 를 올렸을 때 쓰지 않고 거절한다."""
     body = (body or "").strip()
     if not body:
         raise ValueError("handoff add: 본문이 비었습니다")
     if len(body) > HANDOFF_ENTRY_MAX and not allow_long:
         raise ValueError(f"handoff add: 항목 {len(body)}자 - 상한 {HANDOFF_ENTRY_MAX}자 (5절). 경위는 해당 절이나 아카이브에 쓰고 로그에는 무엇이 바뀌었나만 남기십시오. 정말 필요하면 --allow-long")
-    with handoff_lock():
-        at = when or dt.datetime.now().strftime("%Y-%m-%d %H:%M")
-        entry = f"- `{at}` {actor}: {body}"
-        con = connect()
-        try:
-            con.isolation_level = None          # 트랜잭션을 직접 연다
-            con.execute("BEGIN IMMEDIATE")      # 쓰기 잠금을 먼저 잡고 REV 를 읽는다
-            cur = rev(con) or 0
-            if expect_rev is not None and cur != expect_rev:
-                con.execute("ROLLBACK")
-                raise ValueError(f"handoff add: REV 불일치 - 예상 {expect_rev}, 지금 {cur}. 그 사이 다른 세션이 썼습니다. "
-                                 f"`handoff list --last 3` 으로 무엇이 바뀌었는지 읽고 다시 하십시오 (아무것도 쓰지 않았습니다)")
-            new = cur + 1 if bump else cur
-            if bump:
-                con.execute("INSERT INTO meta(key,value) VALUES('rev',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(new),))
-            # events 본문은 머리(시각·작성자) 없이 적는다 - at/actor 열이 이미 있어 render 가 두 번 찍지 않게 (REV 130)
-            con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)", (at, actor, new, "handoff", body))
-            con.execute("COMMIT")
-        finally:
-            con.close()
-        _write_handoff([entry] + handoff_entries())
-        rolled = handoff_rollover_apply(handoff_rollover_plan(), actor)
-        return new, rolled
+    at = when or dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+    with _write_txn() as con:
+        cur = rev(con) or 0
+        if expect_rev is not None and cur != expect_rev:
+            raise ValueError(f"handoff add: REV 불일치 - 예상 {expect_rev}, 지금 {cur}. 그 사이 다른 세션이 썼습니다. "
+                             f"`handoff list --last 3` 으로 무엇이 바뀌었는지 읽고 다시 하십시오 (아무것도 쓰지 않았습니다)")
+        new = cur + 1 if bump else cur
+        if bump:
+            con.execute("INSERT INTO meta(key,value) VALUES('rev',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(new),))
+        con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)", (at, actor, new, "handoff", body))
+        exported = _sync_handoff_files(con)
+    return new, exported
 
 
 def cmd_handoff(a):
-    """핸드오프 로그 (AIMEM.md 4절의 관리 방법 구현). add / list / rollover."""
+    """핸드오프 로그 (AIMEM.md 4절). add / list / sync."""
     if a.action == "add":
         if not a.body:
             sys.exit("handoff add 에는 --body 가 필요합니다")
         try:
-            new, rolled = handoff_add(a.body, a.actor, a.bump, a.allow_long, expect_rev=a.expect_rev)
-        except (ValueError, RuntimeError) as e:
+            new, exported = handoff_add(a.body, a.actor, a.bump, a.allow_long, expect_rev=a.expect_rev)
+        except ValueError as e:
             sys.exit(str(e))
-        print(f"handoff: 항목 추가 (REV {new}, {HANDOFF})" + (f" / 롤오버 {rolled}건" if rolled else ""))
+        print(f"handoff: 항목 추가 (REV {new}) → {HANDOFF}" + (f" / 아카이브로 {exported}건" if exported else ""))
         return 0
     if a.action == "list":
         entries = handoff_entries()
-        for e in entries[: a.last] if a.last else entries:
+        for e in entries if a.all else entries[: a.last or HANDOFF_MAX]:
             print(e)
         if not entries:
-            print(f"handoff: 항목 없음 ({HANDOFF})")
+            print("handoff: 항목 없음")
         return 0
-    plan = handoff_rollover_plan(a.keep if a.keep is not None else HANDOFF_KEEP)
-    if not plan:
-        print(f"handoff rollover: 항목 {len(handoff_entries())}건 (상한 {HANDOFF_MAX}) - 옮길 것 없음")
-        return 0
-    print("handoff rollover: 옮길 항목 " + ", ".join(HANDOFF_ENTRY_RE.match(e).group(1) for e in plan))
-    if a.dry_run:
-        return 0
-    n = handoff_rollover_apply(plan, a.actor)
-    print(f"handoff rollover: {n}건 → .aimem/archive/handoff-<YYYY-MM>.md, 최신 {len(handoff_entries())}건 유지")
+    exported = handoff_sync()
+    print(f"handoff sync: {HANDOFF} 를 DB 에 맞춤 (최신 {HANDOFF_MAX}건)" + (f" / 아카이브로 {exported}건" if exported else ""))
     return 0
+
+
 STATE_MD = ROOT / "AIMEM-state.md"
 
 SCHEMA = """
@@ -379,7 +349,7 @@ def migrate(verbose=True):
             con.execute("INSERT INTO queue(pos,task,slot_hint,inherited,note) VALUES(?,?,?,?,?)",
                         (pos, cells[1], cells[2] if len(cells) > 2 else "", cells[3] if len(cells) > 3 else "", cells[4] if len(cells) > 4 else ""))
         # 핸드오프 로그 → events(kind='handoff'). 정본 파일은 .aimem/handoff.md (REV 129); AIMEM.md 4절에 남은 옛 항목도 받는다
-        entries = list(handoff_entries())
+        entries = parse_handoff_entries(HANDOFF.read_text(encoding="utf-8")) if HANDOFF.exists() else []
         m = re.search(r"^## 4\. (?:핸드오프 로그|Handoff Log)", text, re.M)
         if m:
             body = text[m.end():]
@@ -608,6 +578,7 @@ def render():
     body = render_text()
     STATE_MD.write_text(body, encoding="utf-8")
     bumped = sync_rev_in_aimem()
+    handoff_sync()   # .aimem/handoff.md 도 DB 에서 만드는 생성물이다 (REV 132)
     print(f"render: {STATE_MD} ({body.count(chr(10))} lines)"
           + (f" / AIMEM.md 서문 REV -> {bumped}" if bumped else ""))
     return 0
@@ -752,8 +723,7 @@ def archive_plan(days=14, now=None):
             plan["graphs"].append({"id": gid, "file": f.name, "request": g.get("request"), "when": when,
                                    "counts": {k: sum(1 for n in nodes if n.get("status") == k) for k in ARCHIVE_TERMINAL_NODE},
                                    "side_files": side, "inputs": inputs})
-    plan["handoff"] = handoff_rollover_plan()   # 핸드오프 로그가 상한을 넘었으면 오래된 항목도 함께 내린다 (REV 129)
-    plan["total"] = len(plan["tasks"]) + len(plan["requests"]) + len(plan["graphs"]) + len(plan["handoff"])
+    plan["total"] = len(plan["tasks"]) + len(plan["requests"]) + len(plan["graphs"])
     return plan
 
 
@@ -761,7 +731,7 @@ def archive_apply(plan, actor="관리자"):
     """계획대로 옮긴다. 태스크는 아카이브 md 에 먼저 쓰고 확인한 뒤 DB 에서 내린다(`아카이브 수명주기`); 요청·그래프 파일은 이동."""
     arch = ROOT / ".aimem" / "archive"
     arch.mkdir(parents=True, exist_ok=True)
-    out = {"tasks": [], "requests": [], "graphs": [], "files": 0, "handoff": 0}
+    out = {"tasks": [], "requests": [], "graphs": [], "files": 0}
     cell = lambda v: str(v or "-").replace("|", "\\|").replace("\n", " ")
     rows = plan["tasks"]
     if rows:
@@ -809,7 +779,6 @@ def archive_apply(plan, actor="관리자"):
             if src.exists():
                 src.replace(dest / "inputs" / name); out["files"] += 1
         out["graphs"].append(g["id"])
-    out["handoff"] = handoff_rollover_apply(plan.get("handoff") or [], actor)
     if out["tasks"] or out["requests"] or out["graphs"]:
         with connect() as con:
             con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
@@ -829,7 +798,7 @@ def cmd_archive(a):
     """
     plan = archive_plan(a.days)
     if not plan["total"]:
-        print(f"archive: {a.days}일 지난 끝난 것 없음, 핸드오프 로그 {len(handoff_entries())}건 (기준 {plan['cutoff']})")
+        print(f"archive: {a.days}일 지난 끝난 것 없음 (기준 {plan['cutoff']})")
         return 0
     if plan["tasks"]:
         print("archive: 태스크 <- " + ", ".join(r["id"] for r in plan["tasks"]))
@@ -837,16 +806,13 @@ def cmd_archive(a):
         print("archive: 요청 <- " + ", ".join(r["id"] for r in plan["requests"]))
     for g in plan["graphs"]:
         print(f"archive: 그래프 <- {g['id']} (+파일 {len(g['side_files']) + len(g['inputs'])})")
-    if plan["handoff"]:
-        print(f"archive: 핸드오프 로그 <- {len(plan['handoff'])}건 (최신 {HANDOFF_KEEP}건 유지)")
     if a.dry_run:
         return 0
     try:
         out = archive_apply(plan, a.actor)
     except RuntimeError as e:
         sys.exit(str(e))
-    print(f"archive: 태스크 {len(out['tasks'])}건, 요청 {len(out['requests'])}건, 그래프 {len(out['graphs'])}개, "
-          f"핸드오프 {out['handoff']}건 옮김 (파일 {out['files']})")
+    print(f"archive: 태스크 {len(out['tasks'])}건, 요청 {len(out['requests'])}건, 그래프 {len(out['graphs'])}개 옮김 (파일 {out['files']})")
     return 0
 
 
@@ -1069,12 +1035,11 @@ def main():
     sl.add_argument("--force", action="store_true", help="remove: 미완 태스크가 있어도 삭제"); sl.add_argument("--actor", default="관리자")
     r = sub.add_parser("archive", help="DONE 이 된 지 N일 지난 태스크를 .aimem/archive/board-<YYYY-MM>.md 로 옮긴다 (8.0)")
     r.add_argument("--days", type=int, default=14); r.add_argument("--dry-run", action="store_true"); r.add_argument("--actor", default="관리자")
-    h = sub.add_parser("handoff", help="핸드오프 로그 (.aimem/handoff.md + events). AIMEM.md 4절은 방법만 적는다")
-    h.add_argument("action", choices=["add", "list", "rollover"]); h.add_argument("--body"); h.add_argument("--actor", default="관리자")
+    h = sub.add_parser("handoff", help="핸드오프 로그 - 정본은 DB events, .aimem/handoff.md 는 생성물 (AIMEM.md 4절)")
+    h.add_argument("action", choices=["add", "list", "sync"]); h.add_argument("--body"); h.add_argument("--actor", default="관리자")
     h.add_argument("--bump", action="store_true", help="add: REV 를 하나 올린다"); h.add_argument("--allow-long", dest="allow_long", action="store_true", help=f"add: {HANDOFF_ENTRY_MAX}자 상한을 넘긴다")
-    h.add_argument("--last", type=int, help="list: 최신 N건만"); h.add_argument("--keep", type=int, help=f"rollover: 남길 최신 건수 (기본 {HANDOFF_KEEP})")
-    h.add_argument("--dry-run", action="store_true")
-    h.add_argument("--expect-rev", dest="expect_rev", type=int, help="add: 지금 REV 가 이 값이 아니면 쓰지 않고 거절 (다른 세션이 그 사이 썼는지 확인)")
+    h.add_argument("--expect-rev", dest="expect_rev", type=int, help="add: 지금 REV 가 이 값이 아니면 쓰지 않고 거절")
+    h.add_argument("--last", type=int, help=f"list: 최신 N건 (기본 {HANDOFF_MAX})"); h.add_argument("--all", action="store_true", help="list: 전부")
     u = sub.add_parser("queue", help="4.5 대기 큐 (관리자만 씁니다)")
     u.add_argument("action", choices=["list", "add", "drop"])
     u.add_argument("--task"); u.add_argument("--slot-hint", dest="slot_hint"); u.add_argument("--inherited")

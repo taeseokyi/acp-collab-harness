@@ -40,6 +40,5 @@ USER.md
 .aimem/monitor.log
 .aimem/access.log
 
-# 핸드오프 쓰기 잠금 파일 (REV 131) - 내용 없는 flock 대상
-.aimem/handoff.lock
+# 핸드오프 생성 파일의 임시본 (REV 132)
 .aimem/handoff.md.*.tmp

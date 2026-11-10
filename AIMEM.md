@@ -2,10 +2,10 @@
 
 The single source of truth for every AI session that works in `/home/tsyi/work/opencode`. The Manager and the
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
-`AIMEM-state.md` is the DB's read-only snapshot and `.aimem/handoff.md` is the handoff log.
+`AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 131** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-10 17:48 KST
+- **REV: 132** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-10 17:58 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **a Claude ACP session** (harness claude, model Opus 5.5 = `opus[1m]`),
@@ -162,28 +162,25 @@ Status values: `TODO` / `ASSIGNED` / `IN-PROGRESS` / `REVIEW` / `DONE` / `BLOCKE
 
 ## 4. Handoff Log
 
-> **Entries live in `.aimem/handoff.md`, never here.** This section states only the method. The machine-readable
-> copy is `events(kind=handoff)` in the DB, shown as `4. 이벤트 로그` in **`AIMEM-state.md`**.
+> **Source of truth: `events(kind=handoff)` in `.aimem/aimem.db`.** `.aimem/handoff.md` (latest 12) and section
+> `4. 이벤트 로그` of **`AIMEM-state.md`** are generated views. This section states only the method.
 
 The handoff log is the narrative continuity record: the next round's Manager starts blank (`8.0-7`) and reads the
-latest entries first. One tool keeps it light:
+latest entries first.
 
 ```bash
-python3 tools/aimem_db.py handoff list --last 2                      # read at round start
-python3 tools/aimem_db.py handoff add --bump --actor "Manager (R8)" --body "**REV N. <title>.** <what changed>"
-python3 tools/aimem_db.py handoff rollover [--keep 4] [--dry-run]    # `archive` runs the same rollover
+python3 tools/aimem_db.py handoff list --last 2        # read at round start (`--all` for everything)
+python3 tools/aimem_db.py handoff add --bump --expect-rev N --actor "Manager (R8)" --body "**REV N+1. <title>.** <what changed>"
 ```
 
-- `add` prepends `` - `YYYY-MM-DD HH:MM` <actor>: <body> `` to the file, records it in `events`, and with `--bump`
-  raises the REV (then run `render`). Bodies over 1,200 characters are refused (`--allow-long` overrides): the log
-  says **what changed**; history goes to the relevant section or the archive
-- Above 12 entries, `add` and `archive` roll the older ones over to `.aimem/archive/handoff-YYYY-MM.md`, keeping the
-  newest 4 - archive first, verify, then remove. Nothing is deleted
-- **Concurrent writers are serialized.** `add`, `rollover` and `archive` hold one file lock (`.aimem/handoff.lock`)
-  for the whole read-modify-write, the REV is raised inside a DB write transaction, and the file is replaced
-  atomically - no lost entry, no duplicate REV, no double rollover. `add --expect-rev N` refuses to write when
-  another session raised the REV meanwhile. Hand edits bypass the lock; the linter then reports
-  `HANDOFF_DB_MISMATCH` (entry in the file without its `events` row)
+- `add` inserts one row and regenerates `.aimem/handoff.md` inside a single DB write transaction; `--bump` raises
+  the REV in the same transaction (run `render` afterwards for the other snapshots). Bodies over 1,200 characters
+  are refused (`--allow-long` overrides): the log says **what changed**; history goes to a section or the archive
+- **One store, so nothing can diverge.** Concurrent writers are serialized by the database: no lost entry, no
+  duplicate REV. `--expect-rev N` refuses to write when another session raised the REV meanwhile
+- `.aimem/handoff.md` is never edited - the next `add` or `render` overwrites it, and the linter reports a file
+  that differs from the DB (`HANDOFF_SNAPSHOT_STALE`). Entries that leave the 12-entry window are exported once to
+  `.aimem/archive/handoff-YYYY-MM.md` and stay in the DB; nothing is deleted
 - Wherever this file says "record it in `Section 4`", it means `handoff add`. Entries written into this file are a
   linter violation (`HANDOFF_IN_AIMEM`)
 
@@ -220,7 +217,7 @@ Binding on every session; only the Manager adds items.
 | Cap | Value | Enforced by |
 | --- | ----- | ----------- |
 | AIMEM.md total lines | **800** | linter `SIZE_TOTAL_LINES`, pre-commit hook. The linter also notes when dates or REV citations pile up (history creeping back) |
-| Handoff entries in `.aimem/handoff.md` | **12**, keep **4** | `handoff add` / `archive` roll over automatically; entries inside AIMEM.md are `HANDOFF_IN_AIMEM` |
+| Handoff entries shown in `.aimem/handoff.md` | latest **12** | generated from the DB; older entries are exported to the archive automatically. Entries inside AIMEM.md are `HANDOFF_IN_AIMEM` |
 | Characters per handoff entry | **1,200** | `handoff add` refuses (`--allow-long` overrides) |
 
 ---
@@ -326,7 +323,7 @@ directly, in parallel (`[REV 129 내림] 8.0`).
   wait. **A graph node's `verify` is scoped to its own deliverables** - the full suite runs only at round close
 - **Archiving finished work:** `DONE` tasks, closed requests and finished graphs move after 14 days with
   `python3 tools/aimem_db.py archive [--days 14] [--dry-run]` (tasks → `board-<YYYY-MM>.md`, requests →
-  `requests-<YYYY-MM>/`, graphs with their files → `graph-<YYYY-MM>/`, handoff rollover included). Inclusive
+  `requests-<YYYY-MM>/`, graphs with their files → `graph-<YYYY-MM>/`). Inclusive
   cutoff. Run by the Manager at round close and by Taeseok from the web ("끝난 것 정리…")
 
 #### 8.0-1 Slots Are Narrow; Only the Manager Sees the Whole

@@ -424,30 +424,23 @@ def lint_repo(path, root=None, notes: Optional[List[str]] = None) -> List[Violat
                 f"`python3 tools/aimem_db.py render` 가 서문 REV 를 맞춘다(render 를 안 돌린 상태)",
             ))
 
-    # HANDOFF_DB_MISMATCH (REV 131) - handoff.md 의 항목마다 events(kind=handoff) 에 같은 시각·본문의 행이 있어야 한다.
-    # 도구(`handoff add`)를 거치지 않고 파일을 손으로 고친 것, 동시 쓰기로 한쪽만 남은 것을 커밋 전에 드러낸다.
+    # HANDOFF_SNAPSHOT_STALE (REV 132) - `.aimem/handoff.md` 는 DB events 에서 만드는 생성물이다. 손으로 고쳤거나
+    # render 를 안 돌렸으면 DB 렌더 결과와 달라진다. (정본이 하나라 "파일에만 있는 항목" 은 복구 대상이 아니라 덮일 것이다.)
     handoff_path = root_path / ".aimem" / "handoff.md"
-    if handoff_path.is_file():
-        try:
-            entries = aimem_db.parse_handoff_entries(handoff_path.read_text(encoding="utf-8"))
-            with aimem_db.connect() as con:
-                rows = con.execute("SELECT at, body FROM events WHERE kind='handoff'").fetchall()
-        except Exception as e:
-            notes.append(f"HANDOFF_DB 대조 스킵: 읽기 실패({e.__class__.__name__}: {e}) - 위반 아님, 정보")
-            entries, rows = [], []
-        by_at = {}
-        for r in rows:
-            by_at.setdefault(str(r["at"])[:16].replace("T", " "), []).append(str(r["body"] or ""))
-        orphan = []
-        for e in entries:
-            stamp = aimem_db.HANDOFF_ENTRY_RE.match(e).group(1)
-            if not any(b[:60] and b[:60] in e for b in by_at.get(stamp, [])):
-                orphan.append(stamp)
-        if orphan:
+    try:
+        with aimem_db.connect() as con:
+            want = aimem_db.render_handoff_text(con)
+            has_rows = con.execute("SELECT 1 FROM events WHERE kind='handoff' LIMIT 1").fetchone() is not None
+    except Exception as e:
+        notes.append(f"HANDOFF 대조 스킵: DB 읽기 실패({e.__class__.__name__}: {e}) - 위반 아님, 정보")
+        want, has_rows = None, False
+    if want is not None and (handoff_path.is_file() or has_rows):
+        have = handoff_path.read_text(encoding="utf-8") if handoff_path.is_file() else ""
+        if have != want:
             violations.append(Violation(
-                "HANDOFF_DB_MISMATCH", None,
-                f"`.aimem/handoff.md` 항목 {len(orphan)}건이 DB events 에 없음({', '.join(orphan[:5])}). 핸드오프는 "
-                f"`python3 tools/aimem_db.py handoff add` 로만 쓴다 - 손으로 넣었다면 `aimem_db.py migrate` 로 적재하십시오",
+                "HANDOFF_SNAPSHOT_STALE", None,
+                "`.aimem/handoff.md` 가 DB 렌더 결과와 다름 - 이 파일은 생성물이라 손으로 고치지 않는다. "
+                "`python3 tools/aimem_db.py render` 를 돌리십시오 (항목 추가는 `aimem_db.py handoff add`)",
             ))
 
     # STATE_SNAPSHOT_* - 생성 시각 줄(STAMP_PREFIX) 하나만 양쪽에서 빼고 비교한다.
