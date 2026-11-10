@@ -42,3 +42,7 @@ USER.md
 
 # 핸드오프 생성 파일의 임시본 (REV 132)
 .aimem/handoff.md.*.tmp
+
+# 웹워들 브라우저 검증의 증거 스크린샷 (R8) - 돌릴 때마다 다시 생기는 실행 산출물
+projects/웹워들/tests/screenshots/
+projects/웹워들/**/__pycache__/

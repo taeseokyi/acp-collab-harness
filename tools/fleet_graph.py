@@ -401,6 +401,51 @@ def report_block_reason(report):
     return w.group(1).upper() if w else None
 
 
+_TOOLCALL_TAIL = re.compile(r"^</?(?:tool_call|function|parameter)\b|^<function=", re.IGNORECASE)
+
+
+def report_ended_in_tool_call(report):
+    """보고의 마지막 줄이 **글자로 찍힌 도구 호출**이면 True.
+
+    R9 실측(T-116, codex+kistillm): 모델이 도구 호출을 본문에 `<tool_call>…</tool_call>` 글자로 내면 하네스는
+    그것을 최종 답으로 받아 54초 만에 rc 0 으로 끝납니다 - 파일은 한 줄도 안 바뀌었는데, 노드의 `verify` 가
+    "스크립트가 돈다" 같은 느슨한 것이면 `done` 이 됐습니다. 일을 시작도 못 한 시도이므로 실패로 보고 다시 굴립니다.
+    """
+    if not report:
+        return False
+    lines = [l.strip() for l in str(report).splitlines() if l.strip()]
+    return bool(lines) and bool(_TOOLCALL_TAIL.match(lines[-1]))
+
+
+def wrote_nothing(n, att):
+    """첫 시도가 **쓰라고 받은 경로를 하나도 안 건드리고** 끝났으면 True.
+
+    R9 실측(T-117·T-118): 작업자가 준비 단계에서 rc 0 으로 끝나 파일은 그대로인데, `verify` 가 이미 있던
+    스크립트로 통과해 `done` 이 됐습니다(그래프 넷 중 셋). `write` 가 있는 노드의 **첫 시도**에만 봅니다 -
+    재시도는 앞 시도가 남긴 것이 이미 맞을 수 있고, `write` 가 없는 노드(검수)는 쓸 것이 없습니다.
+    시작 시각을 모르거나 경로를 못 읽으면 False (모르면 막지 않는다).
+    """
+    write = [w for w in (n.get("write") or []) if isinstance(w, str) and w.strip()]
+    if not write or len(n.get("attempts") or []) != 1:
+        return False
+    try:
+        since = dt.datetime.fromisoformat(str(att["started"])).timestamp() - 2
+    except (KeyError, ValueError, TypeError):
+        return False
+    try:
+        for w in write:
+            # pathlib 의 `**` 는 폴더만 돌려준다 - `x/**` 는 그 아래 파일까지 보게 `x/**/*` 로
+            hits = ROOT.glob(w + "/*" if w.endswith("**") else w) if any(c in w for c in "*?[") else [ROOT / w]
+            for i, f in enumerate(hits):
+                if i >= 5000:
+                    return False            # 너무 많다 - 판정을 포기한다
+                if f.is_file() and f.stat().st_mtime >= since:
+                    return False
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 _LOGGED_ONCE = set()
 
 
@@ -741,7 +786,16 @@ def step(g, concurrency=None, allow_spawn=None):
             _log(g, f"BLOCKED {n['id']} - {first[:60]}")
             changed = True
             continue
-        vrc, vtail = (_verify(n) if rc == 0 else (-1, "실행 rc != 0"))
+        if rc == 0 and report_ended_in_tool_call(att["report"]):
+            # 도구 호출을 글자로 찍고 끝난 시도 - 한 일이 없다. verify 가 느슨해도 done 이 되지 않게 (R9 T-116)
+            vrc, vtail = -2, "작업자가 도구 호출을 본문에 글자로 찍고 끝났다 - 한 일이 없다. 처음부터 다시 하라"
+            _log(g, f"aborted {n['id']} ({att['run_id']}) - 보고가 도구 호출 글자로 끝남")
+        elif rc == 0 and wrote_nothing(n, att):
+            vrc, vtail = -3, ("작업자가 쓰라고 받은 경로(" + ", ".join(n.get("write") or [])[:300] + ")를 하나도 고치지 않고 끝났다. "
+                              "고칠 것이 정말 없다면 보고 첫 줄에 그 이유를 적어라")
+            _log(g, f"no-op {n['id']} ({att['run_id']}) - write 경로가 하나도 안 바뀜")
+        else:
+            vrc, vtail = (_verify(n) if rc == 0 else (-1, "실행 rc != 0"))
         att["verify_rc"], att["verify_tail"] = vrc, vtail
         if rc == 0 and vrc == 0:
             n["status"] = "done"

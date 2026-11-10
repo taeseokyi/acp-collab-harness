@@ -593,5 +593,49 @@ class FleetGraphContractTests(unittest.TestCase):
         self.assertEqual(fleet_graph._busy_slots(graph), set())
 
 
+
+class ReportEndedInToolCall(unittest.TestCase):
+    """R9 T-116: kistillm 이 도구 호출을 글자로 내고 54초 만에 rc 0 으로 끝났는데 느슨한 verify 가 done 을 줬다."""
+
+    def test_detects_only_a_trailing_textual_tool_call(self):
+        aborted = ("확인 통과했습니다. 이제 읽겠습니다.\n\n<tool_call>\n<function=update_plan>\n<parameter=plan>\n[]\n"
+                   "</parameter>\n</function>\n</tool_call>\n\n")
+        self.assertTrue(fleet_graph.report_ended_in_tool_call(aborted))
+        self.assertTrue(fleet_graph.report_ended_in_tool_call("읽겠습니다\n<function=shell>"))
+        for fine in ("", None, "DONE\n- 다 했다", "본문에 `<tool_call>` 이라는 낱말을 인용\nDONE",
+                     "<tool_call>\n</tool_call>\nDONE - 그 뒤에 진짜 보고가 있다"):
+            self.assertFalse(fleet_graph.report_ended_in_tool_call(fine), fine)
+
+
+
+class WroteNothing(unittest.TestCase):
+    """R9 T-117·T-118: 준비만 하다 rc 0 으로 끝난 시도가, 이미 있던 스크립트로 verify 를 통과해 done 이 됐다."""
+
+    def test_first_attempt_that_touched_no_write_path_is_a_noop(self):
+        import datetime, os, tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as t:
+            root = pathlib.Path(t)
+            (root / "p" / "shots").mkdir(parents=True)
+            f = root / "p" / "a.py"
+            f.write_text("old", encoding="utf-8")
+            old = datetime.datetime.now().timestamp() - 3600
+            os.utime(f, (old, old))
+            att = {"started": datetime.datetime.now().isoformat(timespec="seconds"), "run_id": "x"}
+            node = {"id": "T-1", "write": ["p/a.py", "p/shots/**"], "attempts": [att]}
+            with mock.patch.object(fleet_graph, "ROOT", root):
+                self.assertTrue(fleet_graph.wrote_nothing(node, att))
+                (root / "p" / "shots" / "s.png").write_text("x", encoding="utf-8")     # 글롭 경로에 새 파일
+                self.assertFalse(fleet_graph.wrote_nothing(node, att))
+                (root / "p" / "shots" / "s.png").unlink()
+                f.write_text("new", encoding="utf-8")                                    # 정확한 경로를 고침
+                self.assertFalse(fleet_graph.wrote_nothing(node, att))
+                os.utime(f, (old, old))
+                self.assertFalse(fleet_graph.wrote_nothing({**node, "attempts": [att, att]}, att))   # 재시도는 안 본다
+                self.assertFalse(fleet_graph.wrote_nothing({**node, "write": []}, att))              # 쓸 것이 없는 노드
+                self.assertFalse(fleet_graph.wrote_nothing(node, {"run_id": "x"}))                   # 시작 시각을 모르면 막지 않는다
+                self.assertFalse(fleet_graph.wrote_nothing(node, {"started": "어제"}))
+
+
 if __name__ == "__main__":
     unittest.main()

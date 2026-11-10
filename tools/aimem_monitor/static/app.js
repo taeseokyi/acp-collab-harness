@@ -1244,8 +1244,16 @@ function renderFleetControl(data) {
     const reqs = (data && Array.isArray(data.requests)) ? data.requests : [];
     const fresh = reqs.filter((q) => String(q.status || '').toUpperCase() === 'NEW');
     const txt = document.createElement('span');
-    txt.textContent = `R${brief.round} 가 할 일 = 새 작업 요청 ${fresh.length}건`
-      + (fresh.length ? ` (${fresh.slice(0, 3).map((q) => show(q.title)).join(' / ')}${fresh.length > 3 ? ' …' : ''})` : ' - 요청이 없으면 관리자는 점검만 하고 끝냅니다')
+    // 라운드가 도는 중에는 '지금 도는 라운드' 를 먼저 보인다 - 다음 번호만 보여 R7 이 도는데 R8 로 읽혔다 (2026-11-10 R7 실측)
+    const curRound = (md === 'running' && f.relay && f.relay.round) ? f.relay : null;
+    if (curRound) {
+      const now = document.createElement('div');
+      now.className = 'fc-hint-now';
+      now.textContent = `지금 R${curRound.round} 실행 중` + (curRound.workspace ? ` · 라운드 보고 ${curRound.workspace}/` : '');
+      hint.appendChild(now);
+    }
+    txt.textContent = `${curRound ? '다음 ' : ''}R${brief.round} 가 할 일 = 새 작업 요청 ${fresh.length}건`
+      + (fresh.length ? ` (${fresh.slice(0, 3).map((q) => show(q.title)).join(' / ')}${fresh.length > 3 ? ' …' : ''})` : (curRound ? '' : ' - 요청이 없으면 관리자는 점검만 하고 끝냅니다'))
       + ' ';
     hint.appendChild(txt);
     const go = document.createElement('button');
@@ -1259,7 +1267,7 @@ function renderFleetControl(data) {
     const projs = Array.from(new Set(fresh.map((q) => q.project).filter(Boolean)));
     const where = [];
     if (projs.length) where.push(`결과물 ${projs.map((n) => `projects/${n}/`).join(', ')}`);
-    if (brief.workspace) where.push(`라운드 보고 ${brief.workspace}/`);
+    if (brief.workspace && !curRound) where.push(`라운드 보고 ${brief.workspace}/`);
     if (where.length) {
       const tail = document.createElement('div');
       tail.className = 'fc-hint-where';
