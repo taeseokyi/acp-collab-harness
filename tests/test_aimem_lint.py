@@ -891,3 +891,16 @@ class TestHandoffInAimem(unittest.TestCase):
     def test_not_checked_without_declaration(self):
         text = NO_DECL_DOC.replace("## 4. 핸드오프 로그\n", "## 4. 핸드오프 로그\n\n- `2026-11-10 19:00` 관리자: 로그\n")
         self.assertEqual(lint_text(text), [])
+
+
+class TestWeightNote(unittest.TestCase):
+    """REV 130: 날짜·REV 인용이 권고치를 넘으면 노트(위반 아님)."""
+
+    def test_note_when_history_piles_up(self):
+        heavy = VALID_DOC + "\n" + "\n".join(f"- 2026-01-{i:02d} REV {i} 경위" for i in range(1, 32))
+        notes = []
+        self.assertEqual(lint_text(heavy, notes), [])
+        self.assertTrue(any("가벼움" in n for n in notes))
+        notes = []
+        lint_text(VALID_DOC, notes)
+        self.assertFalse(any("가벼움" in n for n in notes))

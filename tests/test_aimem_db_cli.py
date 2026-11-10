@@ -244,7 +244,7 @@ class HandoffLogTest(AimemDbCliTest):
         self.assertTrue(text.startswith("# Handoff Log (live)"))
         self.assertIn("- `2026-11-10 19:00` t: **REV 2. first.** body", text)
         row = self.row("SELECT at, rev, body FROM events WHERE kind='handoff'")
-        self.assertEqual((row["at"], row["rev"]), ("2026-11-10 19:00", 1))
+        self.assertEqual((row["at"], row["rev"], row["body"]), ("2026-11-10 19:00", 1, "**REV 2. first.** body"))  # 머리 없이
         self.assertEqual(aimem_db.handoff_entries()[0], "- `2026-11-10 19:00` t: **REV 2. first.** body")
 
     def test_add_refuses_long_entry_unless_allowed(self):

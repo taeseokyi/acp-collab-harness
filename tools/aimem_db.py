@@ -67,13 +67,15 @@ def _import_handoff_entries(con, entries):
     """항목들을 events(kind='handoff') 로 적재한다. 중복 판정은 (항목 시각, 본문 앞 80자). 적재 건수를 돌려준다."""
     n = 0
     for e in reversed(list(entries)):  # 오래된 것부터 seq 가 커지도록
-        at = HANDOFF_ENTRY_RE.match(e).group(1)
+        m = HANDOFF_ENTRY_RE.match(e)
+        at = m.group(1)
+        text = e[m.end():].lstrip()   # 머리(시각)를 뗀 본문. 작성자 표기는 본문에 남는다 (옛 항목은 작성자를 따로 모른다)
         rm = re.search(r"\*\*REV (\d+)", e)
-        exists = con.execute("SELECT 1 FROM events WHERE kind='handoff' AND at=? AND substr(body,1,80)=?",
-                             (at, e[:80])).fetchone()
+        exists = con.execute("SELECT 1 FROM events WHERE kind='handoff' AND at=? AND (substr(body,1,80)=? OR substr(body,1,80)=?)",
+                             (at, text[:80], e[:80])).fetchone()
         if not exists:
             con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
-                        (at, "관리자", int(rm.group(1)) if rm else None, "handoff", e))
+                        (at, "관리자", int(rm.group(1)) if rm else None, "handoff", text))
             n += 1
     return n
 
@@ -125,7 +127,8 @@ def handoff_add(body, actor="관리자", bump=False, allow_long=False, when=None
         new = cur + 1 if bump else cur
         if bump:
             con.execute("INSERT INTO meta(key,value) VALUES('rev',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(new),))
-        con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)", (at, actor, new, "handoff", entry))
+        # events 본문은 머리(시각·작성자) 없이 적는다 - at/actor 열이 이미 있어 render 가 두 번 찍지 않게 (REV 130)
+        con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)", (at, actor, new, "handoff", body))
         con.commit()
     _write_handoff([entry] + handoff_entries())
     rolled = handoff_rollover_apply(handoff_rollover_plan(), actor)

@@ -553,8 +553,8 @@ def finalize(path: Path, original_text: str, lines, dry_run: bool, success_msg: 
 
 DEPRECATED = {
     "rev-bump": "python3 tools/aimem_db.py event --kind note --body '...' --bump",
-    "handoff-add": "python3 tools/aimem_db.py event --kind handoff --body '...'",
-    "archive-rollover": "(필요 없음 - 로그는 DB events 테이블에 쌓이고 render 가 최신 50건만 보인다)",
+    "handoff-add": "python3 tools/aimem_db.py handoff add --body '...' [--bump]  (.aimem/handoff.md + events, REV 129)",
+    "archive-rollover": "python3 tools/aimem_db.py handoff rollover [--keep 4]  (archive 명령도 같은 롤오버를 돈다)",
     "queue-pop": "(aimem_db.py 에 큐 명령이 아직 없음 - 관리자에게 요청)",
     "queue-add": "(aimem_db.py 에 큐 명령이 아직 없음 - 관리자에게 요청)",
     "roster-set": "(aimem_db.py 에 명부 명령이 아직 없음 - 관리자에게 요청)",

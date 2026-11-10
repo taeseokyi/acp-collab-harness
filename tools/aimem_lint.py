@@ -255,8 +255,24 @@ def lint_text(text: str, notes: Optional[List[str]] = None) -> List[Violation]:
             )
         _check_state_sections(lines, fenced, violations)
         _check_handoff_entries(lines, fenced, violations)
+        if notes is not None:
+            _note_weight(lines, fenced, notes)
 
     return violations
+
+
+#: 가벼움 지표 (REV 130). 위반이 아니라 노트다 - 본문에 날짜·REV 인용이 쌓이면 역사 서술이 규약 자리로 돌아오고 있다는 신호.
+WEIGHT_DATES_MAX = 20
+WEIGHT_REV_MENTIONS_MAX = 30
+
+
+def _note_weight(lines: List[str], fenced: List[bool], notes: List[str]) -> None:
+    body = [l for i, l in enumerate(lines) if not fenced[i]]
+    dates = sum(len(re.findall(r"\b20\d\d-\d\d-\d\d\b", l)) for l in body)
+    revs = sum(len(re.findall(r"\bREV \d+", l)) for l in body)
+    if dates > WEIGHT_DATES_MAX or revs > WEIGHT_REV_MENTIONS_MAX:
+        notes.append(f"가벼움: 본문에 날짜 {dates}개 / REV 인용 {revs}개 (권고 {WEIGHT_DATES_MAX}/{WEIGHT_REV_MENTIONS_MAX} 이하) - "
+                     f"경위는 .aimem/archive/ 로, 본문에는 규칙과 포인터만 (위반 아님, 정보)")
 
 
 def _check_handoff_entries(lines: List[str], fenced: List[bool], violations: List[Violation]) -> None:
