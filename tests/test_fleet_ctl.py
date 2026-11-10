@@ -170,3 +170,29 @@ class FleetCtlTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CanStopTest(unittest.TestCase):
+    """`can.stop` 은 죽일 것이 있을 때만 (2026-11-10 점검 5번)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = pathlib.Path(tmp.name)
+        (self.tmp / "runs").mkdir()
+        (self.tmp / "graph").mkdir()
+        for module, attr, value in ((fleet, "RUNS", self.tmp / "runs"), (fleet_graph, "GRAPHS", self.tmp / "graph"),
+                                    (fleet_ctl, "_aimem_dir", lambda: self.tmp)):
+            p = mock.patch.object(module, attr, value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_stop_only_when_something_is_running(self):
+        fleet_ctl.set_mode("ready", "test")
+        self.assertFalse(fleet_ctl.public_state()["can"]["stop"])
+        fleet_ctl.set_mode("stopped", "test")
+        self.assertFalse(fleet_ctl.public_state()["can"]["stop"])
+        fleet_ctl.set_mode("running", "test")
+        self.assertTrue(fleet_ctl.public_state()["can"]["stop"])
+        fleet_ctl.set_mode("paused", "test")
+        self.assertTrue(fleet_ctl.public_state()["can"]["stop"])

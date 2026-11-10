@@ -71,7 +71,7 @@ from . import (AUTH_EXEMPT_PATHS, AUTH_UNAUTH_REDIRECT_PATHS, CERT_FILE,
                REQUEST_RATE_MAX, REQUEST_RATE_WINDOW_SEC,
                REQUEST_STATES, RUN_DETAIL_KEYS, RUN_ID_RE, SECURITY_HEADERS,
                SESSION_COOKIE, SESSION_SUBJECT_GITHUB_PREFIX, SESSION_SUBJECT_TOKEN,
-               SESSION_TTL_SEC, SESSION_VERSION, TLS_DIR, TOKEN_FILE)
+               SESSION_TTL_SEC, SESSION_VERSION, TLS_DIR, TOKEN_FILE, REQUEST_ROW_KEYS)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 STATIC = pathlib.Path(__file__).resolve().parent / "static"
@@ -639,6 +639,13 @@ def scrub_public(state, root=None):
     for k in PUBLIC_FORBIDDEN["top"]:
         state.pop(k, None)
     _truncate_request_details(state.get("requests"))
+    reqs = state.get("requests")
+    if isinstance(reqs, list):
+        # 행 키 계약(`REQUEST_ROW_KEYS`) - 표에 없는 키는 공개면에 나가지 않는다는 규칙을
+        # 최상위뿐 아니라 요청 행에도 적용합니다 (2026-11-10 점검 3번).
+        for i, r in enumerate(reqs):
+            if isinstance(r, dict):
+                reqs[i] = {k: v for k, v in r.items() if k in REQUEST_ROW_KEYS}
     slots = state.get("slots")
     if isinstance(slots, list):
         for s in slots:
@@ -1133,9 +1140,12 @@ def fleet_action(action, by, root=ROOT):
     ctl = _fleet_ctl(root)
     extra = []
     if action == "prepare":
-        k = kisti_status()
-        extra.append(ctl._check("KISTI LLM 서버 (S2 kistillm)", k.get("ok") is not False and not k.get("pending"),
-                                k.get("error") or k.get("phase") or "", required=False))
+        # 준비 점검은 사람이 누른 한 번이므로 캐시가 아니라 **지금** 읽습니다(sync). 전에는 배경 갱신
+        # 중(`pending`)이면 장애로 찍혀 "reading the prompt" 가 빨간 줄로 떴습니다 (2026-11-10 점검 2번).
+        k = kisti_status(sync=True)
+        ok = k.get("ok") is not False
+        detail = k.get("error") or (f"응답 정상 · busy {k.get('busy')} · 대기 {k.get('queued')}" if ok else "")
+        extra.append(ctl._check("KISTI LLM 서버 (S2 kistillm)", ok, detail, required=False))
     try:
         out = {"prepare": lambda: ctl.prepare(by, extra), "run": lambda: ctl.resume(by),
                "pause": lambda: ctl.pause(by), "stop": lambda: ctl.stop(by),

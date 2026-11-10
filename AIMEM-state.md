@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T11:32:22 / REV 116
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-10T13:37:58 / REV 117
 
 ## 2. 세션 명부
 
@@ -77,6 +77,7 @@
 
 ## 4. 이벤트 로그 (최신 50)
 
+- `2026-11-10T13:37:58` 클로드 코드 [rev] REV 117: REV 117: 모니터 설계-기능 점검 5건 처리(닫힌 요청 진행율/ETA, 준비 점검 KISTI sync, REQUEST_ROW_KEYS, 머리말·1절 갱신, can.stop) + 공유 CA 인증서·윈도우 프록시
 - `2026-11-10T11:22:56` 웹(웹) [fleet-mode] REV 116: running -> paused (일시 중지) 새 작업자 투입 보류, 돌고 있는 작업자는 끝까지
 - `2026-11-10T11:22:48` 웹(웹) [fleet-mode] REV 116: paused -> running (실행) 진행 중 라운드 재개
 - `2026-11-10T11:21:31` 클로드 코드(태석 10:35 일시 중지 지시) [fleet-mode] REV 116: running -> paused (일시 중지) 새 작업자 투입 보류, 돌고 있는 작업자는 끝까지
@@ -126,7 +127,6 @@
 - `2026-11-10T10:40:39` 관리자(R6) [queue] REV 114: queue +19 `report_block_reason` 소문자 평문 거짓 양성 (`blocked: none`·`reject: no`·`needs-review: none`)
 - `2026-11-10T10:40:39` 관리자(R6) [queue] REV 114: queue +18 `fleet_graph.harness_durations()` - 깨진 run 메타(`pid` 가 문자열) 하나로 `progress`/`status`/`list` 가 TypeError
 - `2026-11-10T10:40:39` 관리자(R6) [queue] REV 114: queue +17 `fleet_graph` 결함 11 - `refused` 로 `blocked` 가 된 노드를 아무도 거두지 않는다 (`unblock`/`reset` 명령 없음)
-- `2026-11-10T10:22:35` 관리자(R6) [queue] REV 114: queue +16 `aimem_monitor` HTTP 테스트가 샌드박스(codex/S2)에서 소켓 금지로 22건 error - TCP 불가 시 폴백 `PipeConnection` 에 `settimeout` 없음
 - `2026-11-09 21:50` 관리자 [handoff] REV 114: - `2026-11-09 21:50` 관리자(R5): **REV 114. DB 2단계 완료 + 공개면 2차.** (1) **운영 상태 표 4개를 내렸다**(2·3·4.5·6절, 772→705줄). 순서를 지켰다 - `reader`(T-069,S1)·`fleet.py`(T-070,관리자)·`aimem_board`(T-071,S1)가 DB 를 읽게 된 **뒤에** 내렸고 원문은 `retired-sections-2026-11.md` 로 먼저 옮겼다. **린터 `STATE_TABLE_IN_AIMEM` 4→0, rc 0**(완료 판정). 큐
 - `2026-11-09T21:48:23` 관리자(R5) [handoff] REV 114: REV 114: DB 2단계 완료(AIMEM.md 상태 표 4개 제거, 린터 STATE_TABLE_IN_AIMEM 4->0) + 공개면 2차(root/token/kisti.url 키·값 제거, 요청 분당 제한). 자세한 것은 AIMEM.md 4절.
 - `2026-11-09T19:42:03` 관리자(R4) [handoff] REV 113: REV 113: 외부 공개(HTTPS+접근제어) + 린터 2단계. 자세한 것은 AIMEM.md 4절.

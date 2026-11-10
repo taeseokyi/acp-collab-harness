@@ -14,7 +14,7 @@ import re
 import statistics
 from datetime import datetime, timedelta
 
-from . import PROGRESS_WEIGHTS
+from . import PROGRESS_WEIGHTS, REQUEST_CLOSED_STATES
 from . import RUN_ID_RE as _RUN_ID_PATTERN
 
 LOG_MAX = 400
@@ -322,6 +322,14 @@ def _estimate(req: dict, runs_by_id: dict, slot_harness: dict, eta: dict, now: d
         pct = round(sum(w) / len(subs) * 100, 1)
     else:
         pct = 0.0
+
+    # 닫힌 요청(DONE/REJECTED)은 **요청 상태가 정본**입니다 - 서브태스크가 REVIEW 로 남아 있어도
+    # 85% 와 "ETA 525초 남음" 을 내지 않습니다(2026-11-10 점검: 요청 10건 전부 DONE 인데 진행율
+    # 0~90%·ETA 잔여가 떠서 화면이 "끝났다"와 "남았다"를 동시에 말했습니다).
+    status = str(req.get("status") or "").upper()
+    if status in REQUEST_CLOSED_STATES:
+        return {"progress_pct": 100.0 if status == "DONE" else pct, "eta_sec": None, "eta_at": None,
+                "eta_basis": f"요청 {status} - 종료된 요청은 ETA 를 내지 않습니다", "eta_over": []}
 
     by_h, overall = eta["by_harness"], eta["overall"]["median_sec"]
     remaining = [s for s in subs if s.get("status") != "DONE"]

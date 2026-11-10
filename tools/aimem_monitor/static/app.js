@@ -1689,7 +1689,8 @@ function renderRequests(data) {
     pctLabel.textContent = pct === null ? '-' : fmtPct(pct);
     const etaLabel = document.createElement('span');
     etaLabel.className = 'eta';
-    etaLabel.textContent = 'ETA ' + etaText(req);
+    const closed = REQ_CLOSED.has(String(req.status || '').toUpperCase());
+    etaLabel.textContent = closed ? '종료' : 'ETA ' + etaText(req);   // 끝난 요청에 남은 시간을 내지 않는다
     progressRow.appendChild(bar);
     progressRow.appendChild(pctLabel);
     progressRow.appendChild(etaLabel);

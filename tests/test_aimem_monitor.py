@@ -862,3 +862,41 @@ class TestRequestRateLimit(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClosedRequestContractTests(unittest.TestCase):
+    """2026-11-10 설계-기능 점검: 닫힌 요청은 상태가 진행율·ETA 를 정하고, 요청 행 키는 REQUEST_ROW_KEYS 가 정본."""
+
+    def _estimate(self, status, subs):
+        from aimem_monitor import reader
+        eta = {"by_harness": {"claude": {"median_sec": 100, "samples": 3, "source": []}},
+               "overall": {"median_sec": 100, "samples": 3}}
+        req = base_request("R-X", subs)
+        req["status"] = status
+        return reader._estimate(req, {}, {"S1": "claude"}, eta, datetime.datetime(2026, 11, 10, 12, 0, 0))
+
+    def test_done_request_is_100_and_has_no_eta_even_with_review_subtasks(self):
+        subs = [{"id": "T-1", "status": "REVIEW", "slot": "S1"}, {"id": "T-2", "status": "DONE", "slot": "S1"}]
+        out = self._estimate("DONE", subs)
+        self.assertEqual(out["progress_pct"], 100.0)
+        self.assertIsNone(out["eta_sec"])
+        self.assertIsNone(out["eta_at"])
+        self.assertEqual(out["eta_over"], [])
+        self.assertIn("DONE", out["eta_basis"])
+        # 열린 요청은 예전 그대로 (REVIEW 0.8 + DONE 1.0 = 90%, ETA 있음)
+        out = self._estimate("IN-PROGRESS", subs)
+        self.assertEqual(out["progress_pct"], 90.0)
+        self.assertEqual(out["eta_sec"], 100)
+
+    def test_rejected_request_has_no_eta(self):
+        out = self._estimate("REJECTED", [{"id": "T-1", "status": "TODO", "slot": "S1"}])
+        self.assertIsNone(out["eta_sec"])
+        self.assertEqual(out["progress_pct"], 0.0)
+
+    def test_scrub_public_drops_request_keys_outside_contract(self):
+        from aimem_monitor import REQUEST_ROW_KEYS, server
+        row = {k: None for k in REQUEST_ROW_KEYS}
+        row.update({"id": "R-1", "detail": "x", "internal_path": "/home/x", "token": "zzz"})
+        state = {"requests": [row], "slots": [], "kisti": {}, "errors": []}
+        out = server.scrub_public(state, root=pathlib.Path("/nonexistent"))
+        self.assertEqual(set(out["requests"][0].keys()), set(REQUEST_ROW_KEYS))

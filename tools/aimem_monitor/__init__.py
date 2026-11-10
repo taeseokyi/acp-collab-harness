@@ -1,7 +1,12 @@
 """AIMEM 함대 모니터 - 공통 계약 (관리자 소유, `AIMEM.md` `6절`).
 
-표준 라이브러리만 씁니다. 이 패키지는 **읽기 전용**이 원칙이고, 유일한 쓰기는
-`.aimem/requests/<id>.json` 생성 하나뿐입니다(`server.py`).
+표준 라이브러리만 씁니다. 이 패키지는 **읽기 전용**이 원칙입니다 - 함대 상태(보드·큐·runs·
+그래프)는 절대 고치지 않습니다. 쓰는 것은 **사람이 웹에서 누른 것**에 한합니다(전부 `server.py`,
+감사 로그 `.aimem/access.log` 에 남김):
+  - `.aimem/requests/<id>.json` 생성(POST) 과 **NEW 요청**의 제목·본문 수정(POST, 2026-11-10 승인)
+  - 함대 제어 `tools/fleet_ctl.py` 호출(준비/실행/일시 중지/중지/라운드 실행 - `.aimem/fleet-mode.json`,
+    `.aimem/relay/`)
+  - 로그인 세션 쿠키 발급(파일 쓰기 없음, hmac 서명)
 
 계층:
   reader.py   파일 -> 딕셔너리 (AIMEM.md 파싱 / `.aimem/runs` 스캔 / ETA 추정)   [S1]
@@ -38,8 +43,10 @@ STATE_KEYS = {
     "log": "[{when, text}]  - 핸드오프 로그, 최신 먼저",
     "runs": "[{id, slot, harness, model, label, rev, write, started, state, rc, elapsed_sec, report_head}]",
     "eta": "{by_harness:{<h>:{median_sec, samples, source}}, overall:{median_sec, samples}}",
-    "requests": "[{id, created, requester, title, detail, detail_truncated, detail_len, "
-                "status, subtasks, progress_pct, eta_sec, eta_at, eta_basis}]",
+    "requests": "[{" + ", ".join(REQUEST_ROW_KEYS := (
+                    "id", "created", "updated", "requester", "title", "detail", "detail_truncated", "detail_len",
+                    "status", "subtasks", "graph", "progress_pct", "eta_sec", "eta_at", "eta_basis", "eta_over")) + "}]"
+                "  - 행 키는 REQUEST_ROW_KEYS 가 정본, scrub_public 이 그 밖의 키를 떼어냅니다",
     "errors": "[문자열]  - 파싱 중 삼킨 문제. 비어 있어야 정상",
 }
 
@@ -130,6 +137,8 @@ GRAPH_DIR = ".aimem/graph"
 
 #: 요청 파일 `.aimem/requests/<id>.json` 의 상태 값.
 REQUEST_STATES = ("NEW", "PLANNED", "IN-PROGRESS", "DONE", "REJECTED")
+#: 닫힌 요청 - 진행율·ETA 는 서브태스크가 아니라 **이 상태가** 정합니다 (`reader._estimate`, 2026-11-10).
+REQUEST_CLOSED_STATES = ("DONE", "REJECTED")
 
 #: 서브태스크 상태 -> 진행율 가중치. `3절` 상태 값과 같은 어휘를 씁니다.
 #: 평균 x 100 이 요청 단위 진행율입니다.

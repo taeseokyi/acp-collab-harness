@@ -233,7 +233,8 @@ def public_state(manager_labels=(), manager_running_now=False):
         "prepare": md in ("stopped", "paused", "ready") and not manager_running_now and not rr,
         "run": md in ("ready", "paused", "stopped"),
         "pause": md == "running",
-        "stop": md != "stopped",
+        # 완전 중지는 "돌고 있는 것을 죽이는" 동작 - 죽일 게 없는 ready 에선 끕니다 (2026-11-10 점검 5번)
+        "stop": md in ("running", "paused") or bool(rr),
         "round": md == "ready" and bool(b["file"]) and not manager_running_now,
     }
     return {"mode": md, "label": MODE_LABEL.get(md), "at": m.get("at"), "by": m.get("by"), "note": m.get("note"),
