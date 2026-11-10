@@ -204,6 +204,24 @@ class DbIsCanonical(_Base):
         self.assertNotIn("`", e["text"])
         self.assertFalse(e["text"].startswith("-"))
 
+    def test_6a_log_rev_first_then_when(self):
+        """REV 132~: 로그는 `.aimem/handoff.md` 와 같은 순서 - REV 가 먼저, 같은 REV 안에서는 `when`.
+        옛 항목의 시각은 손으로 적은 값이라 높은 REV 가 더 이른 시각을 가질 수 있다(시각만으로 정렬하면 뒤집힌다)."""
+        self.seed(with_rows=False)
+        con = sqlite3.connect(self.db)
+        with con:
+            con.executemany(
+                "INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
+                [("2026-11-10T18:00:00", "관리자", 126, "handoff", "낮은REV늦은시각"),
+                 ("2026-11-10T17:00:00", "관리자", 131, "handoff", "높은REV이른시각"),
+                 ("2026-11-10T09:00:00", "관리자", 126, "handoff", "낮은REV이른시각"),
+                 ("2026-11-10T23:00:00", "관리자", None, "handoff", "REV없음가장늦은시각"),
+                 ("2026-11-10T08:00:00", "관리자", None, "handoff", "REV없음이른시각")])
+        con.close()
+        texts = [e["text"].split(": ", 1)[1] for e in reader.collect(self.root)["log"]]
+        self.assertEqual(texts, ["높은REV이른시각", "낮은REV늦은시각", "낮은REV이른시각",
+                                 "REV없음가장늦은시각", "REV없음이른시각"])
+
     def test_8_db_slot_model_is_canonical(self):
         """REV 122 (2026-11-10, 태석님 지시 슬롯 모델 지정): DB `slots.model` 이 정본이다.
         (REV 114~121 은 반대로 DB 모델을 무시하고 하네스 설정을 읽었다 - 그때는 DB 에 모델을 적는 길이 없었다.)"""

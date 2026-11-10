@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/o
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 133** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-10 18:03 KST
+- **REV: 134** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-10 18:14 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **a Claude ACP session** (harness claude, model Opus 5.5 = `opus[1m]`),
@@ -432,8 +432,10 @@ The standing routine every round brief points to; briefs list only the round's t
 - (e) re-examine newly arrived `NEW` requests by start step 3
 
 **Close**
-1. Full tests and linter; `aimem_db.py handoff add --bump --body "**REV N. …**"` (≤1,200 chars); `render`; new rules
-   registered in `8.0`
+1. Full tests and linter; `aimem_db.py handoff add --bump --expect-rev N --body "**REV N+1. …**"` (≤1,200 chars);
+   `render`; new rules registered in `8.0`. **`--expect-rev` is always given** - N is the REV this session last
+   saw. A refusal means another session wrote meanwhile: re-read `handoff list --last 2` and the header, then
+   decide; never retry with the new number blindly
 2. `python3 tools/aimem_db.py archive` once (counts in the report), then `aimem_db.py migrate && render`
 3. Report: `Status: DONE|PARTIAL|BLOCKED` + (1) task table (2) reproduced verification (3) waiting time (4) queue
    progress (5) next round's plan (6) operating metrics - slot utilization, Manager-only intervals, retries
