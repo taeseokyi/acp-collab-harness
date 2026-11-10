@@ -1744,6 +1744,61 @@ const BOARD_FILTERS = [
   { key: 'all', label: '전체', test: () => true },
 ];
 
+// ---- 끝난 것 정리 (아카이브, 2026-11-10) - 8.0 보관·폐기를 웹에서. 미리보기(dry_run) → 확인 → 실행
+async function archiveRequest(days, dryRun) {
+  const res = await fetch('/api/archive', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ days, dry_run: dryRun }) });
+  const body = await res.json().catch(() => ({ ok: false, error: 'HTTP ' + res.status }));
+  return { ok: res.ok && body.ok !== false, body };
+}
+
+function openArchivePanel() {
+  openPanel('끝난 것 정리 (아카이브)', (body) => {
+    const intro = document.createElement('p');
+    intro.className = 'hint';
+    intro.textContent = '8.0 보관·폐기: DONE 태스크는 archive/board-<월>.md 로, 닫힌 요청은 archive/requests-<월>/ 로, 노드가 전부 끝난 그래프는 브리프·로그·inputs 까지 archive/graph-<월>/ 로 옮깁니다. 지우지 않습니다.';
+    body.appendChild(intro);
+    const row = document.createElement('div'); row.className = 'slot-actions';
+    const sel = document.createElement('select');
+    for (const [v, t] of [[14, '14일 지난 것 (규칙 기본)'], [7, '7일 지난 것'], [0, '지금 끝난 것 전부']]) { const o = document.createElement('option'); o.value = String(v); o.textContent = t; sel.appendChild(o); }
+    const preview = linkButton('미리보기', () => run(true));
+    const apply = document.createElement('button'); apply.type = 'button'; apply.className = 'btn-primary'; apply.textContent = '실행'; apply.disabled = true;
+    row.appendChild(sel); row.appendChild(preview); row.appendChild(apply); body.appendChild(row);
+    const out = document.createElement('div'); out.className = 'archive-out'; body.appendChild(out);
+    const render = (r, dry) => {
+      out.textContent = '';
+      if (!r.ok) { const e = document.createElement('p'); e.className = 'hint is-error'; e.textContent = r.body.error || '실패'; out.appendChild(e); return; }
+      const plan = r.body.plan || {};
+      const h = document.createElement('p');
+      h.textContent = (dry ? '옮길 것: ' : '옮김: ') + `태스크 ${(plan.tasks || []).length}건 · 요청 ${(plan.requests || []).length}건 · 그래프 ${(plan.graphs || []).length}개 (기준 ${fmtDateTime(plan.cutoff)})`;
+      out.appendChild(h);
+      const list = (title, items, fmt) => {
+        if (!items.length) return;
+        const sec = document.createElement('section'); sec.className = 'detail-section';
+        const h3 = document.createElement('h3'); h3.textContent = title; sec.appendChild(h3);
+        const ul = document.createElement('ul'); ul.className = 'mgr-list';
+        for (const it of items) { const li = document.createElement('li'); li.textContent = fmt(it); ul.appendChild(li); }
+        sec.appendChild(ul); out.appendChild(sec);
+      };
+      list('태스크', plan.tasks || [], (t) => `${t.id} · ${plainText(t.title)} · ${show(t.slot)}`);
+      list('요청', plan.requests || [], (q) => `${q.id} · ${show(q.title)} · ${show(q.status)}`);
+      list('그래프', plan.graphs || [], (g) => `${g.id} · ${plainText(g.request)} · 파일 ${g.files}`);
+      apply.disabled = !dry || !(plan.total > 0);
+    };
+    const run = async (dry) => {
+      preview.disabled = true; apply.disabled = true;
+      const days = Number(sel.value);
+      if (!dry && !window.confirm(`${days === 0 ? '지금 끝난 것 전부' : days + '일 지난 것'}를 아카이브로 옮깁니다. 계속할까요?`)) { preview.disabled = false; apply.disabled = false; return; }
+      const r = await archiveRequest(days, dry);
+      render(r, dry);
+      preview.disabled = false;
+      if (!dry && r.ok) { state.slotMsg = null; await refresh(); }
+    };
+    apply.addEventListener('click', () => run(false));
+    sel.addEventListener('change', () => { apply.disabled = true; out.textContent = ''; });
+    run(true);
+  });
+}
+
 function renderBoard(data) {
   const wrap = $('board-table-wrap');
   const filterBox = $('board-filter');
@@ -1763,6 +1818,7 @@ function renderBoard(data) {
       });
       filterBox.appendChild(chip);
     }
+    filterBox.appendChild(linkButton('끝난 것 정리…', openArchivePanel));
   }
   const filter = BOARD_FILTERS.find((f) => f.key === state.boardFilter) || BOARD_FILTERS[0];
   const board = all.filter(filter.test).slice().reverse();   // 최신 태스크가 위

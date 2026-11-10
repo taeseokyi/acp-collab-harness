@@ -1120,6 +1120,33 @@ _REQ_FLEET_RE = re.compile(r"\A/api/fleet/(prepare|run|pause|stop|round)\Z")
 # 정본은 `.aimem/aimem.db` slots - `tools/aimem_db.py slot *` 과 같은 함수를 부른다. 모델은 **OpenClaw 가 설정한
 # 모델 목록**(`openclaw models list --json`)에서 고른다. 쓰기는 인증 뒤에서만, 감사 로그에 남긴다.
 _REQ_SLOT_RE = re.compile(r"\A/api/slots/(S\d{1,3})/(set|remove)\Z")
+
+
+def archive_action(payload, by, root=ROOT):
+    """`POST /api/archive` {days, dry_run} → `aimem_db.archive_plan/apply`. 끝난 태스크·요청·그래프를 아카이브로 (8.0).
+    dry_run 은 계획만 돌려준다(쓰기 없음). 운영 저장소에서만."""
+    if pathlib.Path(root).resolve() != ROOT:
+        return 403, {"ok": False, "error": "운영 저장소가 아닙니다"}
+    if not isinstance(payload, dict):
+        return 400, {"ok": False, "error": "JSON 객체가 아닙니다"}
+    days = payload.get("days", 14)
+    if not isinstance(days, int) or isinstance(days, bool) or days < 0 or days > 3650:
+        return 400, {"ok": False, "error": "days 는 0~3650 정수"}
+    dry = bool(payload.get("dry_run", False))
+    db = _aimem_db(root)
+    plan = db.archive_plan(days)
+    summary = {"days": days, "cutoff": plan["cutoff"], "total": plan["total"],
+               "tasks": [{"id": t["id"], "title": t["title"], "slot": t["slot"], "updated": t["updated"]} for t in plan["tasks"]],
+               "requests": [{"id": r["id"], "title": r["title"], "status": r["status"], "when": r["when"]} for r in plan["requests"]],
+               "graphs": [{"id": g["id"], "request": g["request"], "when": g["when"], "counts": g["counts"],
+                           "files": 1 + len(g["side_files"]) + len(g["inputs"])} for g in plan["graphs"]]}
+    if dry:
+        return 200, {"ok": True, "dry_run": True, "plan": summary}
+    try:
+        out = db.archive_apply(plan, by)
+    except RuntimeError as e:
+        return 500, {"ok": False, "error": str(e)}
+    return 200, {"ok": True, "dry_run": False, "plan": summary, "moved": out}
 SLOT_HARNESSES = ("claude", "codex", "opencode")
 MODELS_CACHE_SEC = 60
 _models_cache = {"at": None, "value": None}
@@ -1923,7 +1950,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         fleet_act = _REQ_FLEET_RE.match(path)
         slot_m = _REQ_SLOT_RE.match(path)
         slot_add_path = path == "/api/slots"
-        if path != "/api/requests" and not edit and not fleet_act and not slot_m and not slot_add_path:
+        archive_path = path == "/api/archive"
+        if path != "/api/requests" and not edit and not fleet_act and not slot_m and not slot_add_path and not archive_path:
             return self._json(404, {"ok": False, "error": f"없는 경로입니다: {path}"})
         # CSRF (S4 검수 4번). 세션 쿠키가 `SameSite=Strict` 라 1차 방어는 되지만,
         # 쿠키 정책 하나에만 기대지 않습니다. `<form enctype="text/plain">` 으로는
@@ -1941,6 +1969,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(403, json.dumps({"ok": False, "error": "Origin 이 Host 와 다릅니다"},
                                                   ensure_ascii=False),
                                   extra=[("Connection", "close")])
+        if archive_path:
+            payload, sent = self._read_json_body()
+            if sent:
+                return None
+            who = self._subject()
+            code, result = archive_action(payload if isinstance(payload, dict) else {}, f"웹({subject_label(who)})" if who else "웹", self.root)
+            if not result.get("dry_run", True):
+                self._audit("archive", f"{code} days={result.get('plan', {}).get('days')} moved={json.dumps(result.get('moved', {}), ensure_ascii=False)[:200]}")
+            return self._json(code, result)
         if slot_m or slot_add_path:
             # 슬롯 관리 - 함대 제어와 같이 속도 제한 없이, CSRF·인증은 거친다. 감사 로그에 남긴다.
             payload, sent = self._read_json_body()

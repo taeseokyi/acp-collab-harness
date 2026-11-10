@@ -503,30 +503,72 @@ def cmd_request(a):
     return 0
 
 
-def cmd_archive(a):
-    """`8.0` 「끝난 작업의 보관·폐기」 구현 (REV 115 결정, 요청 Q-261110-549a, 큐 12).
+ARCHIVE_TERMINAL_NODE = ("done", "failed", "blocked")
+ARCHIVE_REQUEST_CLOSED = ("DONE", "REJECTED")
 
-    `DONE` 으로 바뀐 지 `--days`(기본 14)일이 지난 태스크를 `.aimem/archive/board-<YYYY-MM>.md`
-    에 **먼저 덧붙이고**, 파일에 들어간 것을 확인한 뒤에 DB 에서 내립니다(`아카이브 수명주기`).
-    `--dry-run` 은 무엇을 옮길지만 보여 줍니다.
-    """
-    cutoff = (dt.datetime.now() - dt.timedelta(days=a.days)).isoformat(timespec="seconds")
+
+def _iso(v):
+    """요청 파일의 `2026-11-09 17:01` 과 ISO `2026-11-09T17:01:55` 를 같은 자로 비교하기 위한 정규화."""
+    return str(v or "").replace(" ", "T")
+
+
+def archive_plan(days=14, now=None):
+    """무엇을 내릴지 계산만 한다 (파일·DB 를 건드리지 않는다). 태스크·요청·그래프 세 묶음."""
+    now = now or dt.datetime.now()
+    cutoff = (now - dt.timedelta(days=days)).isoformat(timespec="seconds")
+    plan = {"days": days, "cutoff": cutoff, "tasks": [], "requests": [], "graphs": []}
     with connect() as con:
-        rows = con.execute("SELECT id,title,slot,status,inherited,artifacts,updated FROM tasks "
-                           "WHERE status='DONE' AND COALESCE(updated,created,'') < ? ORDER BY id", (cutoff,)).fetchall()
-        if not rows:
-            print(f"archive: {a.days}일 지난 DONE 태스크 없음 (기준 {cutoff})")
-            return 0
+        for r in con.execute("SELECT id,title,slot,status,inherited,artifacts,updated FROM tasks "
+                             "WHERE status='DONE' AND COALESCE(updated,created,'') < ? ORDER BY id", (cutoff,)):
+            plan["tasks"].append(dict(r))
+    rdir = ROOT / ".aimem" / "requests"
+    if rdir.is_dir():
+        for f in sorted(rdir.glob("*.json")):
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            when = _iso(d.get("updated") or d.get("created"))
+            if str(d.get("status") or "").upper() in ARCHIVE_REQUEST_CLOSED and when < cutoff:
+                plan["requests"].append({"id": d.get("id") or f.stem, "file": f.name, "status": d.get("status"), "title": d.get("title"), "when": when})
+    gdir = ROOT / ".aimem" / "graph"
+    if gdir.is_dir():
+        for f in sorted(gdir.glob("*.json")):
+            try:
+                g = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            nodes = g.get("nodes") or []
+            if not nodes or not all(str(n.get("status")) in ARCHIVE_TERMINAL_NODE for n in nodes):
+                continue
+            when = _iso(g.get("updated") or g.get("created"))
+            if when >= cutoff:
+                continue
+            gid = g.get("id") or f.stem
+            side = sorted(x.name for x in gdir.glob(f"{gid}.*") if x.name != f.name) + sorted(x.name for x in gdir.glob(f"{gid}-*.task.md"))
+            inputs = sorted(x.name for x in (gdir / "inputs").glob(f"{gid}-*")) if (gdir / "inputs").is_dir() else []
+            for n in nodes:
+                for key in (n.get("id"), n.get("task")):
+                    if key and (gdir / "inputs" / f"{key}.md").exists() and f"{key}.md" not in inputs:
+                        inputs.append(f"{key}.md")
+            plan["graphs"].append({"id": gid, "file": f.name, "request": g.get("request"), "when": when,
+                                   "counts": {k: sum(1 for n in nodes if n.get("status") == k) for k in ARCHIVE_TERMINAL_NODE},
+                                   "side_files": side, "inputs": inputs})
+    plan["total"] = len(plan["tasks"]) + len(plan["requests"]) + len(plan["graphs"])
+    return plan
+
+
+def archive_apply(plan, actor="관리자"):
+    """계획대로 옮긴다. 태스크는 아카이브 md 에 먼저 쓰고 확인한 뒤 DB 에서 내린다(`아카이브 수명주기`); 요청·그래프 파일은 이동."""
+    arch = ROOT / ".aimem" / "archive"
+    arch.mkdir(parents=True, exist_ok=True)
+    out = {"tasks": [], "requests": [], "graphs": [], "files": 0}
+    cell = lambda v: str(v or "-").replace("|", "\\|").replace("\n", " ")
+    rows = plan["tasks"]
+    if rows:
         by_month = {}
         for r in rows:
-            by_month.setdefault((r["updated"] or cutoff)[:7], []).append(r)
-        for month, rs in sorted(by_month.items()):
-            print(f"archive: {month} <- {', '.join(r['id'] for r in rs)}")
-        if a.dry_run:
-            return 0
-        arch = ROOT / ".aimem" / "archive"
-        arch.mkdir(parents=True, exist_ok=True)
-        cell = lambda v: str(v or "-").replace("|", "\\|").replace("\n", " ")
+            by_month.setdefault((r["updated"] or plan["cutoff"])[:7], []).append(r)
         for month, rs in sorted(by_month.items()):
             f = arch / f"board-{month}.md"
             if not f.exists():
@@ -541,13 +583,67 @@ def cmd_archive(a):
             text = f.read_text(encoding="utf-8")
             missing = [r["id"] for r in rs if f"| {r['id']} |" not in text]
             if missing:
-                sys.exit(f"archive: {f.name} 에 {missing} 가 안 들어갔습니다 - DB 에서 내리지 않습니다")
+                raise RuntimeError(f"archive: {f.name} 에 {missing} 가 안 들어갔습니다 - DB 에서 내리지 않습니다")
         ids = [r["id"] for r in rows]
-        con.execute(f"DELETE FROM tasks WHERE id IN ({','.join('?' * len(ids))})", ids)
-        con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
-                    (_now(), a.actor, rev(con), "archive", f"DONE {a.days}일 경과 {len(ids)}건 -> board-*.md: {', '.join(ids)}"))
-        con.commit()
-        print(f"archive: {len(ids)}건 옮김")
+        with connect() as con:
+            con.execute(f"DELETE FROM tasks WHERE id IN ({','.join('?' * len(ids))})", ids)
+            con.commit()
+        out["tasks"] = ids
+    rdir, gdir = ROOT / ".aimem" / "requests", ROOT / ".aimem" / "graph"
+    for r in plan["requests"]:
+        src = rdir / r["file"]
+        if not src.exists():
+            continue
+        dest = arch / f"requests-{r['when'][:7] or 'undated'}"
+        dest.mkdir(exist_ok=True)
+        src.replace(dest / src.name)
+        out["requests"].append(r["id"]); out["files"] += 1
+    for g in plan["graphs"]:
+        dest = arch / f"graph-{g['when'][:7] or 'undated'}"
+        (dest / "inputs").mkdir(parents=True, exist_ok=True)
+        for name in [g["file"]] + g["side_files"]:
+            src = gdir / name
+            if src.exists():
+                src.replace(dest / name); out["files"] += 1
+        for name in g["inputs"]:
+            src = gdir / "inputs" / name
+            if src.exists():
+                src.replace(dest / "inputs" / name); out["files"] += 1
+        out["graphs"].append(g["id"])
+    if out["tasks"] or out["requests"] or out["graphs"]:
+        with connect() as con:
+            con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
+                        (_now(), actor, rev(con), "archive",
+                         f"{plan['days']}일 경과 - 태스크 {len(out['tasks'])}건, 요청 {len(out['requests'])}건, 그래프 {len(out['graphs'])}개 아카이브"
+                         + (f" (태스크 {', '.join(out['tasks'])})" if out["tasks"] else "")))
+            con.commit()
+    return out
+
+
+def cmd_archive(a):
+    """`8.0` 「끝난 작업의 보관·폐기」 구현 (REV 115 결정, 요청 Q-261110-549a, 큐 12. REV 123 에서 요청·그래프까지).
+
+    `--days`(기본 14)일 지난 **DONE 태스크**는 `.aimem/archive/board-<YYYY-MM>.md` 에 먼저 덧붙이고 확인한 뒤 DB 에서 내리고,
+    **DONE/REJECTED 요청 파일**은 `archive/requests-<YYYY-MM>/` 로, **노드가 전부 끝난 그래프**는 브리프·로그·잠금·inputs 까지
+    `archive/graph-<YYYY-MM>/` 로 옮깁니다. `--dry-run` 은 무엇을 옮길지만 보여 줍니다. 웹 보드·큐 탭의 '끝난 것 정리' 가 같은 함수를 씁니다.
+    """
+    plan = archive_plan(a.days)
+    if not plan["total"]:
+        print(f"archive: {a.days}일 지난 끝난 것 없음 (기준 {plan['cutoff']})")
+        return 0
+    if plan["tasks"]:
+        print("archive: 태스크 <- " + ", ".join(r["id"] for r in plan["tasks"]))
+    if plan["requests"]:
+        print("archive: 요청 <- " + ", ".join(r["id"] for r in plan["requests"]))
+    for g in plan["graphs"]:
+        print(f"archive: 그래프 <- {g['id']} (+파일 {len(g['side_files']) + len(g['inputs'])})")
+    if a.dry_run:
+        return 0
+    try:
+        out = archive_apply(plan, a.actor)
+    except RuntimeError as e:
+        sys.exit(str(e))
+    print(f"archive: 태스크 {len(out['tasks'])}건, 요청 {len(out['requests'])}건, 그래프 {len(out['graphs'])}개 옮김 (파일 {out['files']})")
     return 0
 
 

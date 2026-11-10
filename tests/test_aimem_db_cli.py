@@ -147,3 +147,54 @@ class SlotCommandTest(AimemDbCliTest):
             aimem_db.slot_remove("S1", actor="t")            # 미완 태스크
         self.assertEqual(aimem_db.slot_remove("S1", actor="t", force=True)["open_tasks"], ["T-1"])
         self.assertEqual(aimem_db.next_slot_id(), "S1")
+
+
+class ArchiveRequestsGraphsTest(AimemDbCliTest):
+    """REV 123: `archive` 가 닫힌 요청 파일과 끝난 그래프(부속 파일·inputs 포함)도 내린다."""
+
+    def _seed_files(self):
+        rdir, gdir = self.root / ".aimem" / "requests", self.root / ".aimem" / "graph"
+        (gdir / "inputs").mkdir(parents=True)
+        (rdir / "Q-1-old.json").write_text(json.dumps({"id": "Q-1", "status": "DONE", "title": "옛 요청", "created": "2026-01-01 10:00", "updated": "2026-01-02 10:00"}), encoding="utf-8")
+        (rdir / "Q-2-new.json").write_text(json.dumps({"id": "Q-2", "status": "NEW", "title": "열린 요청", "created": "2026-01-01 10:00"}), encoding="utf-8")
+        (rdir / "Q-3-recent.json").write_text(json.dumps({"id": "Q-3", "status": "DONE", "title": "방금 끝난 요청", "created": aimem_db._now(), "updated": aimem_db._now()}), encoding="utf-8")
+        (gdir / "G-1.json").write_text(json.dumps({"id": "G-1", "request": "끝난 그래프", "created": "2026-01-01T10:00:00", "updated": "2026-01-02T10:00:00",
+                                                   "nodes": [{"id": "T-10", "status": "done"}, {"id": "T-11", "status": "failed"}]}), encoding="utf-8")
+        for name in ("G-1.log", "G-1.lock", "G-1-T-10-a1.task.md"):
+            (gdir / name).write_text("x", encoding="utf-8")
+        (gdir / "inputs" / "G-1-nodes.json").write_text("{}", encoding="utf-8")
+        (gdir / "inputs" / "T-10.md").write_text("brief", encoding="utf-8")
+        (gdir / "G-2.json").write_text(json.dumps({"id": "G-2", "request": "도는 그래프", "created": "2026-01-01T10:00:00", "updated": "2026-01-02T10:00:00",
+                                                   "nodes": [{"id": "T-20", "status": "running"}]}), encoding="utf-8")
+        (gdir / "inputs" / "T-20.md").write_text("brief", encoding="utf-8")
+
+    def test_plan_and_apply(self):
+        self._seed_files()
+        plan = aimem_db.archive_plan(14)
+        self.assertEqual([r["id"] for r in plan["requests"]], ["Q-1"])        # NEW 와 최근 DONE 은 남는다
+        self.assertEqual([g["id"] for g in plan["graphs"]], ["G-1"])          # running 노드가 있는 G-2 는 남는다
+        self.assertEqual(sorted(plan["graphs"][0]["side_files"]), ["G-1-T-10-a1.task.md", "G-1.lock", "G-1.log"])
+        self.assertEqual(sorted(plan["graphs"][0]["inputs"]), ["G-1-nodes.json", "T-10.md"])
+        out = aimem_db.archive_apply(plan, actor="t")
+        self.assertEqual((out["requests"], out["graphs"], out["files"]), (["Q-1"], ["G-1"], 7))
+        arch = self.root / ".aimem" / "archive"
+        self.assertTrue((arch / "requests-2026-01" / "Q-1-old.json").exists())
+        self.assertTrue((arch / "graph-2026-01" / "G-1.json").exists())
+        self.assertTrue((arch / "graph-2026-01" / "inputs" / "T-10.md").exists())
+        self.assertFalse((self.root / ".aimem" / "graph" / "G-1.lock").exists())
+        self.assertTrue((self.root / ".aimem" / "graph" / "G-2.json").exists())
+        self.assertTrue((self.root / ".aimem" / "graph" / "inputs" / "T-20.md").exists())
+        self.assertTrue((self.root / ".aimem" / "requests" / "Q-2-new.json").exists())
+        with aimem_db.connect() as con:
+            body = con.execute("SELECT body FROM events WHERE kind='archive'").fetchone()[0]
+        self.assertIn("요청 1건, 그래프 1개", body)
+        # days=0 이면 방금 끝난 요청도 내린다
+        plan0 = aimem_db.archive_plan(0, now=aimem_db.dt.datetime.now() + aimem_db.dt.timedelta(seconds=1))
+        self.assertEqual([r["id"] for r in plan0["requests"]], ["Q-3"])
+
+    def test_cmd_dry_run_moves_nothing(self):
+        self._seed_files()
+        out = self.run_cmd(aimem_db.cmd_archive, days=14, dry_run=True, actor="t")
+        self.assertIn("요청 <- Q-1", out)
+        self.assertIn("그래프 <- G-1", out)
+        self.assertTrue((self.root / ".aimem" / "requests" / "Q-1-old.json").exists())

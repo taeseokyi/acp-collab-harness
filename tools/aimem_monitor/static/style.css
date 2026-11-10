@@ -1282,3 +1282,6 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .slot-actions { display: flex; gap: 10px; margin-top: 4px; }
 .btn-danger { color: var(--st-danger, #e0283f); border-color: var(--st-danger, #e0283f); background: transparent; }
 .btn-danger:hover { background: color-mix(in srgb, var(--st-danger, #e0283f) 10%, transparent); }
+
+.archive-out { margin-top: var(--st-s-3); }
+#board-filter .btn-link { margin-left: auto; }

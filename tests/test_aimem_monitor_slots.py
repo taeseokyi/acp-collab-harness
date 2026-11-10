@@ -114,3 +114,20 @@ class FleetModelNormalizeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ArchiveActionTest(SlotActionTest):
+    def test_archive_action_dry_run_and_apply(self):
+        rdir = self.root / ".aimem" / "requests"; rdir.mkdir()
+        (rdir / "Q-9.json").write_text('{"id":"Q-9","status":"DONE","title":"t","created":"2026-01-01 10:00","updated":"2026-01-02 10:00"}', encoding="utf-8")
+        code, body = server.archive_action({"days": 14, "dry_run": True}, "웹", self.root)
+        self.assertEqual(code, 200)
+        self.assertTrue(body["dry_run"])
+        self.assertEqual([r["id"] for r in body["plan"]["requests"]], ["Q-9"])
+        self.assertTrue((rdir / "Q-9.json").exists())
+        code, body = server.archive_action({"days": 14}, "웹", self.root)
+        self.assertEqual(code, 200)
+        self.assertEqual(body["moved"]["requests"], ["Q-9"])
+        self.assertFalse((rdir / "Q-9.json").exists())
+        self.assertEqual(server.archive_action({"days": "x"}, "웹", self.root)[0], 400)
+        self.assertEqual(server.archive_action({"days": True}, "웹", self.root)[0], 400)
