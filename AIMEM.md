@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/o
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 155** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-11 17:14 KST
+- **REV: 157** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-11 21:48 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **a Claude ACP session** (harness claude, model Opus 5.5 = `opus[1m]`),
@@ -307,7 +307,7 @@ directly, in parallel (`[REV 129 내림] 8.0`).
   against `Section 6`. codex runs `codex exec --sandbox workspace-write`, opencode `opencode run`, claude
   `claude -p` with auto-accepted edits and a read/verify Bash allow-list. Records: `.aimem/runs/<id>.*` (ignored)
 - **Models:** the `slots` table in the DB is the source of truth (harness, model, role, remark); `fleet_slots.json`
-  mirrors it. S1 claude opus (judgment), S4 claude sonnet (speed), S2/S3 kistillm and EXAONE (cost). Only
+  mirrors it. S1 claude opus (judgment), S4 claude sonnet (speed), S2/S3 kistillm through codex and opencode (cost). Only
   OpenClaw-configured models (`openclaw models list` ∪ `openclaw.json` providers) may be chosen; `fleet.normalize_model`
   converts the openclaw key to the harness form. Harness and model are Taeseok's decision (`8.0-8` control table)
 - **One brief in, one report out.** Continuing is a new `spawn` whose brief states the previous result. Workers do
@@ -452,8 +452,7 @@ used and **the round's tasks are the `NEW` requests**; with nothing to do the Ma
 - **Free slots build and fix; paid slots (S1, S4) judge, design and review adversarially.** A build or fix given
   to a paid slot is listed with its reason in report item (6). Never move a failed free task to a paid slot
 - **Small nodes:** one new file, about 200 lines, about 10 checks. Split larger work; split a file two slots
-  would both write. Do not tell a worker to "plan first"; S2 has no plan tool and edits through the shell,
-  S3's single response is capped (16,384 tokens)
+  would both write. Do not tell a worker to "plan first" - have it edit files right away
 - **`verify` asks whether the worker did the work,** by exit code, never by grepping piped output
   (`… > /tmp/x.txt 2>&1 && …`). A node that writes checks is verified by "it ran and the number of checks grew",
   not "the product passed"; a product defect is reported `NEEDS-FIX: …` and fixed by a later node whose `verify`
@@ -495,7 +494,7 @@ used and **the round's tasks are the `NEW` requests**; with nothing to do the Ma
 | Request splitting and status | Manager | `aimem_db.py request set`, graphs | - |
 | Archive run | Manager (close 2) / Taeseok (web) | `aimem_db.py archive` / `POST /api/archive` | `events(kind=archive)` |
 | Fleet mode (prepare, run, stop) | Taeseok | web fleet bar | `fleet_graph run` output, rc 3 when spawning is forbidden |
-| Chained rounds (`이어 달리기`) | Taeseok switches it on per project with a round cap | web fleet bar / `fleet_ctl.py chain` | the next round's request is filed by `함대 이어 달리기`; it stops itself when goals are all checked, the report is not DONE, no goal moved, or the cap is reached |
+| Chained rounds (`이어 달리기`) | Taeseok switches it on with a round cap and picks the targets: the fleet's own work, any number of projects, or everything | web fleet bar / `fleet_ctl.py chain` | while the targets have open requests or unchecked goals, the next round is launched when one ends; it stops itself when nothing is left, the report is not DONE, a round closed no request and checked no goal, or the cap is reached |
 | Commit and push | Claude Code, with Taeseok's permission | git | - |
 
 ### 8.1 Opening Slots
@@ -513,7 +512,7 @@ never executes an item here on its own.
 
 | # | Item | Why | Risk | Status |
 | - | ---- | --- | ---- | ------ |
-| - | (none) | - | - | - |
+| 1 | `python3 -m playwright install firefox` | The queue's "run the monitor's browser checks in Firefox too" cannot start: only chromium is installed. Installing is a hard limit (`0.2`), so R12 stopped and reported instead | Downloads ~90 MB into `~/.cache/ms-playwright`; no repo or config change. Declining only means the CSP `sandbox` directive and the ticket path stay checked in chromium alone | Waiting (R12) |
 
 Approved and removed items: `retired-sections-2026-11.md` `[REV 128 내림] 9절`, `[REV 135 내림] 9절 1번`; older history in
 `retired-sections-2026-09.md`.

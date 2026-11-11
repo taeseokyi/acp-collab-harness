@@ -250,7 +250,7 @@ class TestStateContract(unittest.TestCase):
         for item in state["errors"]:
             self.assertIsInstance(item, str)
 
-    def test_aimem_header_and_goal(self):
+    def test_aimem_header(self):
         state = self.collect()
         aimem = state["aimem"]
         self.assertIsInstance(aimem, dict)
@@ -259,9 +259,6 @@ class TestStateContract(unittest.TestCase):
         self.assertEqual(aimem["lines"], len(AIMEM_FIXTURE.splitlines()))
         self.assertIsInstance(aimem["updated"], str)
         self.assertIn("2026-11-09", aimem["updated"])
-        goal = aimem["goal"]
-        self.assertEqual(goal["text"], "함대 모니터링 웹 UI 를 만든다")
-        self.assertEqual(goal["status"], "진행 중")
 
     def test_slots_discard_session_key_and_skip_table_noise(self):
         slots = self.collect()["slots"]
@@ -408,7 +405,7 @@ class TestStateContract(unittest.TestCase):
         self.assertTrue(r1["eta_basis"].strip())
         self.assertTrue(r1["eta_at"] is None or isinstance(r1["eta_at"], str))
         r2 = entry_by_id(requests, "id", "R-2")
-        self.assertEqual(r2["eta_sec"], 0)
+        self.assertIsNone(r2["eta_sec"])
         self.assertTrue(r2["eta_basis"].strip())
         r3 = entry_by_id(requests, "id", "R-3")
         self.assertEqual(r3["eta_sec"], 0)
@@ -428,7 +425,6 @@ class TestStateContract(unittest.TestCase):
         state = self.collect()
         text = json.dumps(state, ensure_ascii=False)
         self.assertIsInstance(text, str)
-        self.assertIn("함대 모니터링", text)
         self.assertNotIn("\\u", text)
 
 
@@ -560,7 +556,7 @@ class _Srv:
 
 @unittest.skipIf(server is None, "server.py 아직 없음")
 class TestPublicStateLeaks(unittest.TestCase):
-    """`/api/state` 에서 `root`·`slots[].token`·`kisti.url` 이 빠진다 (항목 1~5)."""
+    """`/api/state` 에서 `root`·`slots[].token` 이 빠진다 (항목 1~5)."""
 
     @classmethod
     def setUpClass(cls):
@@ -598,25 +594,16 @@ class TestPublicStateLeaks(unittest.TestCase):
         for tok in self.tokens:
             self.assertNotIn(tok, text, f"확인토큰 {tok[:2]}**** 이 응답 본문에 남았다")
 
-    # 4
-    def test_kisti_has_no_url_key(self):
-        kisti = self.state["kisti"]
-        self.assertIsInstance(kisti, dict)
-        self.assertNotIn("url", kisti)
-        self.assertNotIn(server.KISTI_STATUS_URL, json.dumps(self.state, ensure_ascii=False))
-
     def test_scrub_public_masks_values_not_only_keys(self):
         state = {"root": "/srv/secret/repo", "slots": [{"slot": "S9", "token": "abc123"}],
-                 "kisti": {"url": "https://internal.example/status"},
                  "runs": [{"report_head": "pwd=/srv/secret/repo tok=abc123", "label": "x"}],
                  "errors": ["열기 실패 /srv/secret/repo/a abc123"]}
         out = server.scrub_public(state, "/srv/secret/repo")
         text = json.dumps(out, ensure_ascii=False)
-        for leaked in ("/srv/secret/repo", "abc123", "internal.example"):
+        for leaked in ("/srv/secret/repo", "abc123"):
             self.assertNotIn(leaked, text)
         self.assertNotIn("root", out)
         self.assertNotIn("token", out["slots"][0])
-        self.assertNotIn("url", out["kisti"])
 
     # 5
     def test_failure_branch_and_normal_branch_have_same_top_level_keys(self):
@@ -629,7 +616,6 @@ class TestPublicStateLeaks(unittest.TestCase):
                          f"어긋난 키: {sorted(set(failed) ^ set(normal))}")
         for branch in (normal, failed):
             self.assertNotIn("root", branch)
-            self.assertNotIn("url", branch["kisti"])
 
     def test_non_dict_and_sparse_reader_results_also_match(self):
         normal = set(server.collect_state(REPO))
@@ -894,28 +880,42 @@ class ClosedRequestContractTests(unittest.TestCase):
         self.assertIsNone(out["eta_sec"])
         self.assertEqual(out["progress_pct"], 0.0)
 
+    def test_eta_none_before_split(self):
+        # 분담 전(서브태스크 0) 요청은 ETA 를 0 이 아니라 '없음' 으로 낸다
+        eta = {"by_harness": {}, "overall": {"median_sec": 100, "samples": 3}}
+        out = reader._estimate({"status": "NEW", "subtasks": []}, {}, {}, eta, datetime.datetime.now())
+        self.assertIsNone(out["eta_sec"])
+        self.assertIsNone(out["eta_at"])
+        self.assertIn("분담 전", out["eta_basis"])
+
+    def test_eta_zero_when_all_subtasks_done(self):
+        # 서브태스크가 있고 전부 DONE 이면 ETA 0 이다
+        eta = {"by_harness": {}, "overall": {"median_sec": 100, "samples": 3}}
+        req = {"status": "IN-PROGRESS", "subtasks": [{"id": "T-1", "status": "DONE", "slot": "S2"}]}
+        out = reader._estimate(req, {}, {}, eta, datetime.datetime.now())
+        self.assertEqual(out["eta_sec"], 0)
+
     def test_scrub_public_drops_request_keys_outside_contract(self):
         from aimem_monitor import REQUEST_ROW_KEYS, server
         row = {k: None for k in REQUEST_ROW_KEYS}
         row.update({"id": "R-1", "detail": "x", "internal_path": "/home/x", "token": "zzz"})
-        state = {"requests": [row], "slots": [], "kisti": {}, "errors": []}
+        state = {"requests": [row], "slots": [], "errors": []}
         out = server.scrub_public(state, root=pathlib.Path("/nonexistent"))
         self.assertEqual(set(out["requests"][0].keys()), set(REQUEST_ROW_KEYS))
 
 
 @unittest.skipIf(reader is None, "reader.py 아직 없음")
 class EnglishAimemLabelsTest(unittest.TestCase):
-    """REV 128: AIMEM.md 가 영어로 바뀌어도 reader 가 REV·갱신 시각·목표·상태를 읽는다 (한국어 라벨도 그대로 받는다)."""
+    """REV 128: AIMEM.md 가 영어로 바뀌어도 reader 가 REV·갱신 시각을 읽는다 (한국어 라벨도 그대로 받는다)."""
 
-    def test_parse_english_header_and_goal(self):
+    def test_parse_english_header(self):
         lines = ["# AIMEM.md - Shared Working Memory", "", "- **REV: 128** (revision number)",
                  "- Last updated: 2026-11-10 19:00 KST", "", "## 1. Current Goal", "",
                  "- **Goal (round 4):** one screen", "  for the fleet", "- **Status:** operating", "",
                  "## 2. Session Roster", ""]
         errors = []
         a = reader._parse_aimem(lines, errors)
-        self.assertEqual((a["rev"], a["updated"], a["goal"]["text"], a["goal"]["status"]),
-                         (128, "2026-11-10 19:00 KST", "one screen for the fleet", "operating"))
+        self.assertEqual((a["rev"], a["updated"]), (128, "2026-11-10 19:00 KST"))
         self.assertEqual(errors, [])
 
 

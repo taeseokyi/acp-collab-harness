@@ -702,6 +702,12 @@ def _check_timeout(g, n, att):
     _mark_lost(att["run_id"])
     att["kill_outcome"] = outcome
     att.update({"ended": _now(), "rc": 124, "state": "timeout", "timeout": True})
+    # 끊긴 작업자가 그때까지 적은 말을 남긴다 - 재시도 브리프가 "직전 보고" 로 넘긴다. 전에는 한도로 끊기면 아무것도
+    # 안 넘어가, 45분 동안 알아낸 것("탐침 훅을 goto 전에 걸어 죽었다")을 다음 작업자가 처음부터 다시 찾았다 (R13 T-164).
+    try:
+        att["report"] = (fleet.run_report(att["run_id"]) or "")[-4000:]
+    except Exception:  # noqa: BLE001 - 보고를 못 읽어도 재시도는 가야 한다
+        pass
     if outcome == "foreign":
         _log(g, f"timeout {n['id']} - pid {pid} 가 그 실행의 것이 아닙니다 (죽이지 않음)")
     _log(g, f"timeout {n['id']} after {int(elapsed)}s (run {att['run_id']}, pid {pid if pid is not None else '?'}, {outcome})")

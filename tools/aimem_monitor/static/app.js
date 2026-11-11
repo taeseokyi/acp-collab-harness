@@ -71,20 +71,6 @@ const DEMO_STATE = {
     },
     overall: { median_sec: 55, samples: 4 },
   },
-  kisti: {
-    ok: true,
-    fetched: '2026-11-09T17:20:31',
-    age_sec: 3,
-    error: null,
-    busy: false,
-    queued: 0,
-    phase: 'reading the prompt',
-    prompt_tokens: 197084,
-    generated: 0,
-    max_tokens: 8192,
-    reasoning_recoveries: 0,
-    thinking_budget: 6144,
-  },
   graphs: [
     {
       id: 'R-002',
@@ -152,6 +138,7 @@ const state = {
   detailBound: false,
   detailSeq: 0,
   detailReturnFocus: null,
+  panelCleanups: [],
   runsShowAll: false,
   logShowAll: false,
   models: null,          // GET /api/models 결과 (슬롯 편집 폼의 모델 선택지)
@@ -271,7 +258,25 @@ function newTable(headers, rows, rowClasses, opts = {}) {
       else td.classList.add('col-text');
       if (ellipsis.has(index)) {
         td.classList.add('elide');
-        td.title = raw instanceof Node ? raw.textContent : show(raw, '');
+        const full = raw instanceof Node ? raw.textContent : show(raw, '');
+        td.title = full;
+        // 폰에는 호버가 없어 title 을 볼 길이 없다 - 눌러서 그 자리에 펼친다 (요청 Q-261111-2e0f)
+        if (full && full !== '-') {
+          td.tabIndex = 0;
+          td.setAttribute('role', 'button');
+          td.setAttribute('aria-expanded', 'false');
+          td.setAttribute('aria-label', '전문 보기: ' + full);
+          const toggleFull = (event) => {
+            event.preventDefault();
+            event.stopPropagation();          // 행 전체의 '상세 보기' 가 같이 열리지 않게
+            const open = td.classList.toggle('elide-open');
+            td.setAttribute('aria-expanded', open ? 'true' : 'false');
+          };
+          td.addEventListener('click', toggleFull);
+          td.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') toggleFull(event);
+          });
+        }
       }
       if (raw instanceof Node) td.appendChild(raw);
       else td.textContent = show(raw);
@@ -349,7 +354,17 @@ function ensureDetailPanel() {
   return overlay;
 }
 
+function runPanelCleanups() {
+  const fns = state.panelCleanups;
+  state.panelCleanups = [];
+  for (const f of fns) {
+    try { f(); } catch { /* 하나가 던져도 나머지는 돈다 */ }
+  }
+}
+window.addEventListener('pagehide', runPanelCleanups);
+
 function closeDetail() {
+  runPanelCleanups();
   const returnFocus = state.detailReturnFocus;
   state.detailReturnFocus = null;
   state.detailOpen = false;
@@ -381,6 +396,7 @@ async function fetchRequestFull(req) {
 // ---- 상세 패널 공통 (2026-11-10: 탭마다 상세보기가 빠진 곳을 메움)
 // 하나의 오버레이(`detail-overlay`)를 모든 상세가 같이 쓴다 - 포커스 저장·가둠·Esc 는 bindDetailControls 가 맡는다.
 function openPanel(title, build) {
+  runPanelCleanups();
   state.detailReturnFocus = document.activeElement;
   const overlay = bindDetailControls();
   state.detailOpen = true;
@@ -798,6 +814,7 @@ function openManagerList(sessions) {
 }
 
 function openRequestDetail(req) {
+  runPanelCleanups();
   if (!req) return;
   state.detailReturnFocus = document.activeElement;  // T-083 포커스 저장 그대로
   const overlay = bindDetailControls();
@@ -956,6 +973,7 @@ async function serverErrorReason(res) {
 }
 
 async function openDetail(runId) {
+  runPanelCleanups();
   state.detailReturnFocus = document.activeElement;
   const overlay = bindDetailControls();
   const body = $('detail-body');
@@ -1064,7 +1082,6 @@ function renderMeta(data) {
   const box = $('aimem-meta');
   box.textContent = '';
   const aimem = data.aimem || {};
-  const goal = aimem.goal || {};
 
   const rev = document.createElement('div');
   rev.className = 'meta-stat';
@@ -1072,20 +1089,23 @@ function renderMeta(data) {
   box.appendChild(metaItem('AIMEM REV', rev));
   box.appendChild(metaItem('최종 갱신', show(aimem.updated)));
 
-  const goalWrap = document.createElement('div');
-  goalWrap.className = 'goal-value';
-  const goalText = document.createElement('span');
-  goalText.textContent = plainText(goal.text) || '-';
-  goalWrap.appendChild(goalText);
-  if (goal.status) {
-    const goalStatus = document.createElement('span');
-    goalStatus.className = 'goal-status';
-    goalStatus.textContent = plainText(goal.status);
-    goalWrap.appendChild(goalStatus);
-  }
-  const goalItem = metaItem('현재 목표', goalWrap);
-  goalItem.classList.add('meta-goal');
-  box.appendChild(goalItem);
+  const fl = data.fleet || {};
+  const lr = fl.last_round || null;
+  const roundWrap = document.createElement('div');
+  roundWrap.className = 'goal-value';
+  const roundText = document.createElement('span');
+  roundText.textContent = lr && lr.round
+    ? 'R' + lr.round + (lr.at ? ' · ' + fmtDateTime(lr.at) : '')
+    : '띄운 라운드 없음';
+  roundWrap.appendChild(roundText);
+  const roundStatus = document.createElement('span');
+  roundStatus.className = 'goal-status';
+  roundStatus.textContent = lr && lr.report_status ? '보고 ' + lr.report_status
+                                                   : (fl.label || show(fl.mode, '-'));
+  roundWrap.appendChild(roundStatus);
+  const roundItem = metaItem('이번 라운드', roundWrap);
+  roundItem.classList.add('meta-goal');
+  box.appendChild(roundItem);
 
   const brandRev = $('brand-rev');
   if (brandRev) brandRev.textContent = aimem.rev ? 'REV ' + aimem.rev : '';
@@ -1158,8 +1178,8 @@ function focusRequestForm() {
 // 이어 달리기 (REV 155) - 프로젝트 목표가 남으면 라운드가 끝난 뒤 다음 라운드를 함대가 스스로 띄운다.
 // `#fleet-control` 은 5초마다 통째로 다시 그려지므로, 이 줄은 그 **바깥**에 한 번 만들고 내용이 바뀔 때만 다시 그린다 -
 // 프로젝트를 고르는 중에 목록이 닫히거나 입력이 지워지지 않게.
-async function chainAction(on, project, maxRounds) {
-  state.chainBusy = true;
+async function chainAction(on, target, maxRounds) {
+  state.chainBusy = on ? 'on' : 'off';
   state.chainMsg = null;
   if (state.data) renderFleetChain(state.data);
   try {
@@ -1170,7 +1190,10 @@ async function chainAction(on, project, maxRounds) {
       const res = await fetch('/api/fleet/chain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify(on ? { on: true, project, max_rounds: maxRounds } : { on: false }),
+        body: JSON.stringify(on
+          ? { on: true, all: !!target.all, fleet: !!target.fleet, projects: target.projects || [], max_rounds: maxRounds,
+            renew: !!target.renew, autonomous: !!target.auto }
+          : { on: false }),
       });
       body = await res.json().catch(() => ({ ok: false, error: 'HTTP ' + res.status }));
     }
@@ -1178,10 +1201,20 @@ async function chainAction(on, project, maxRounds) {
   } catch (err) {
     state.chainMsg = err && err.message ? err.message : String(err);
   } finally {
-    state.chainBusy = false;
+    state.chainBusy = null;
     for (let i = 0; i < 50 && state.busy; i += 1) await new Promise((r) => setTimeout(r, 100));
     await refresh();
   }
+}
+
+// 대상은 셋 가운데 고른다 (2026-11-11 태석님): 전체(프로젝트+함대) · 함대 · 프로젝트(여러 개 체크).
+// 아무것도 안 고르고 켜면 단추가 꺼져 있는 것이 아니라 그 자리에 이유가 나온다.
+function chainTargetText(t) {
+  if (t.all) return '전체(프로젝트+함대)';
+  const parts = [];
+  if (t.fleet) parts.push('함대');
+  for (const p of t.projects || []) parts.push('프로젝트 ' + p);
+  return parts.join(' + ');
 }
 
 function renderFleetChain(data) {
@@ -1200,89 +1233,271 @@ function renderFleetChain(data) {
     .concat((data && Array.isArray(data.projects) ? data.projects : []).map((p) => p && p.name))
     .concat((data && Array.isArray(data.requests) ? data.requests : []).map((q) => q && q.project))
     .filter(Boolean))).sort();
-  const sig = JSON.stringify([f.mode, !!ch.on, ch.project, ch.max_rounds, ch.rounds_done, ch.stopped_why, names,
+  const sig = JSON.stringify([f.mode, !!ch.on, ch.label, ch.all, ch.fleet, ch.projects, ch.max_rounds, ch.autonomous, ch.renew, ch.cycles, ch.total_rounds, f.chain_modes, ch.rounds_done, ch.stopped_why, ch.stopped_kind, ch.stopped_at, names,
     !!state.chainBusy, state.chainMsg]);
   if (el.dataset.sig === sig) return;
   el.dataset.sig = sig;
-  const keep = state.chainForm || {};
+  const keep = state.chainForm || { all: false, fleet: false, projects: [], max: 3 };
   el.textContent = '';
   if (!f.mode) return;
+  const head = document.createElement('div');
+  head.className = 'fleet-chain-line fleet-chain-head';
   const title = document.createElement('span');
   title.className = 'fleet-chain-title';
   title.textContent = '이어 달리기';
-  el.appendChild(title);
+  head.appendChild(title);
+  el.appendChild(head);
   if (ch.on) {
-    el.appendChild(badge('켜짐', 'running'));
-    const t = document.createElement('span');
-    t.className = 'fc-hint';
-    t.textContent = `프로젝트 ${show(ch.project)} · 최대 ${show(ch.max_rounds)} 라운드 (지금까지 ${ch.rounds_done || 0} 라운드 끝남) - `
-      + '라운드가 끝나면 목표를 보고 남은 것을 다음 라운드로 띄웁니다';
-    el.appendChild(t);
+    head.appendChild(badge('켜짐', 'running'));
+    const label = ch.label || chainTargetText({ all: ch.all, fleet: ch.fleet, projects: ch.projects }) || (ch.project ? '프로젝트 ' + ch.project : '전체(프로젝트+함대)');
+    const what = document.createElement('span');
+    what.className = 'fleet-chain-what';
+    const cap = ch.max_rounds || 3;
+    what.textContent = `${label} · 상한 ${cap} 라운드 · 닿으면 ${ch.autonomous ? '새로 이어 감 (완전 자율 종주)' : (ch.renew || !ch.max_rounds) ? '새로 이어 감 (끝날 때까지)' : '멈춤'}`;
+    head.appendChild(what);
     const off = document.createElement('button');
     off.type = 'button';
-    off.className = 'fc-btn';
-    off.textContent = state.chainBusy ? '끄는 중…' : '끄기';
+    off.className = 'fc-btn fleet-chain-on';
+    off.textContent = state.chainBusy === 'off' ? '끄는 중…' : '끄기';
     off.disabled = !!state.chainBusy;
     off.addEventListener('click', () => chainAction(false));
-    el.appendChild(off);
+    head.appendChild(off);
+    const t = document.createElement('div');
+    t.className = 'fc-hint fleet-chain-note';
+    t.textContent = ((ch.cycles ? `${ch.cycles + 1}번째 묶음 · ` : '') + `이번 묶음 ${ch.rounds_done || 0}/${cap} 라운드 끝남`
+      + (ch.total_rounds ? ` (모두 ${ch.total_rounds} 라운드)` : '')
+      + ' · 라운드가 끝나면 고른 대상에 열린 요청이나 체크 안 된 목표가 남았는지 보고, 새 관리자로 다음 라운드를 띄웁니다');
+    el.appendChild(t);
   } else {
-    const sel = document.createElement('select');
-    sel.className = 'fleet-chain-project';
-    sel.setAttribute('aria-label', '이어 달릴 프로젝트');
-    const none = document.createElement('option');
-    none.value = '';
-    none.textContent = names.length ? '프로젝트 고르기' : '프로젝트 없음';
-    sel.appendChild(none);
-    for (const n of names) {
-      const o = document.createElement('option');
-      o.value = n;
-      o.textContent = n;
-      sel.appendChild(o);
+    // ---- 지난번에 왜 멈췄나: 다 끝낸 것인지, 상한·안전 상한인지, 막힌 것인지 종류별로 다르게 알린다 (2026-11-11 태석님)
+    if (ch.stopped_why) {
+      const KIND = {
+        done: ['done', '다 끝냈습니다', '남은 일이 없어 스스로 멈췄습니다. 새 요청이 생기면 다시 켜면 됩니다'],
+        cap: ['warn', '상한 라운드를 채워 멈췄습니다', "남은 일이 있습니다. 계속하려면 다시 켜거나, '새로 이어 달리기' 로 켜면 상한마다 새로 이어 갑니다"],
+        safety: ['warn', '안전 상한(모두 30 라운드)에 닿아 멈췄습니다', '남은 일이 있습니다. 진행 상황을 한 번 확인한 뒤 다시 켜면 이어 갑니다'],
+        stuck: ['bad', '진전이 없어 멈췄습니다', '한 라운드 동안 닫힌 요청도 늘어난 목표도 없었습니다. 그 라운드의 종료 보고를 보고 요청을 고치거나 나눈 뒤 다시 켜십시오'],
+        report: ['bad', '관리자 보고가 DONE 이 아니어서 멈췄습니다', `그 라운드의 종료 보고(rounds/R${ch.stopped_round || '<N>'}/REPORT.md)를 확인하십시오. 고친 뒤 다시 켜면 이어 갑니다`],
+        error: ['bad', '다음 라운드를 띄우지 못해 멈췄습니다', "준비 점검이나 관리자 기동에서 막혔습니다. 위의 '준비' 를 눌러 무엇이 막는지 확인하십시오"],
+        wait: ['bad', '라운드가 끝나지 않아 기다리기를 그만두었습니다', '관리자 세션이 살아 있는지 확인하십시오'],
+        off: ['info', '사람이 껐습니다', ''],
+      };
+      const [tone, head1, next] = KIND[ch.stopped_kind] || ['info', '지난번에 멈춘 이유', ''];
+      const note = document.createElement('div');
+      note.className = 'fleet-chain-stop is-' + tone;
+      note.setAttribute('role', 'status');
+      const h = document.createElement('div');
+      h.className = 'fleet-chain-stop-head';
+      h.textContent = head1
+        + (ch.stopped_round ? ` · R${ch.stopped_round} 뒤` : '')
+        + (ch.stopped_at ? ` · ${fmtDateTime(ch.stopped_at)}` : '');
+      note.appendChild(h);
+      const body = document.createElement('div');
+      body.className = 'fleet-chain-stop-body';
+      const ran = ch.total_rounds || ch.rounds_done || 0;
+      body.textContent = show(ch.stopped_why) + (ran ? ` (이어 띄운 라운드 ${ran}회` + (ch.cycles ? `, 묶음 ${ch.cycles + 1}개` : '') + ')' : '');
+      note.appendChild(body);
+      if (next) {
+        const n2 = document.createElement('div');
+        n2.className = 'fleet-chain-stop-next';
+        n2.textContent = next;
+        note.appendChild(n2);
+      }
+      el.appendChild(note);
     }
-    if (keep.project && names.includes(keep.project)) sel.value = keep.project;
+    // ---- 대상: 함대 + 프로젝트들을 격자로 늘어놓고, '모두 선택 / 모두 해제' 단추 하나로 한꺼번에 켜고 끈다 (2026-11-11 태석님)
+    const keepAll = !!keep.all;
+    const picked = new Set(keepAll ? [''].concat(names) : (keep.fleet ? [''] : []).concat(keep.projects || []));
+    const items = [{ value: '', text: '함대', tip: '프로젝트가 없는 요청 - 함대 자체의 일' }]
+      .concat(names.map((n) => ({ value: n, text: n, tip: `프로젝트 ${n} 의 열린 요청과 남은 목표` })));
+    const sec1 = document.createElement('div');
+    sec1.className = 'fleet-chain-sec';
+    const bar = document.createElement('div');
+    bar.className = 'fleet-chain-bar';
+    const lab1 = document.createElement('span');
+    lab1.className = 'fleet-chain-lab';
+    lab1.textContent = '대상';
+    bar.appendChild(lab1);
+    const count = document.createElement('span');
+    count.className = 'fc-hint fleet-chain-count';
+    bar.appendChild(count);
+    const allBtn = document.createElement('button');
+    allBtn.type = 'button';
+    allBtn.className = 'fc-btn fleet-chain-all';
+    bar.appendChild(allBtn);
+    sec1.appendChild(bar);
+    const grid = document.createElement('div');
+    grid.className = 'fleet-chain-grid';
+    grid.setAttribute('role', 'group');
+    grid.setAttribute('aria-label', '이어 달릴 대상');
+    const boxes = [];
+    for (const it of items) {
+      const lab = document.createElement('label');
+      lab.className = 'fleet-chain-opt' + (it.value === '' ? ' is-fleet' : '');
+      lab.title = it.tip;
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = picked.has(it.value);
+      cb.dataset.value = it.value;
+      const tx = document.createElement('span');
+      tx.className = 'fleet-chain-opt-text';
+      tx.textContent = it.text;
+      lab.appendChild(cb);
+      lab.appendChild(tx);
+      if (it.value !== '') {
+        const kind = document.createElement('span');
+        kind.className = 'fleet-chain-kind';
+        kind.textContent = '프로젝트';
+        lab.appendChild(kind);
+      }
+      grid.appendChild(lab);
+      boxes.push(cb);
+    }
+    sec1.appendChild(grid);
+    el.appendChild(sec1);
+
+    // ---- 상한 라운드는 언제나 있다. 고르는 것은 "상한에 닿으면 무엇을 하느냐" 다 (2026-11-11 태석님:
+    //      "끝까지 옵션도 내부적으로는 상한 라운드를 지켜야 해")
+    const sec2 = document.createElement('div');
+    sec2.className = 'fleet-chain-sec';
+    const capLine = document.createElement('div');
+    capLine.className = 'fleet-chain-bar';
+    const lab2 = document.createElement('span');
+    lab2.className = 'fleet-chain-lab';
+    lab2.textContent = '상한';
+    capLine.appendChild(lab2);
     const num = document.createElement('input');
     num.type = 'number';
     num.min = '1';
     num.max = '10';
     num.value = String(keep.max || 3);
     num.className = 'fleet-chain-max';
-    num.setAttribute('aria-label', '연속 라운드 상한');
-    num.title = '연속으로 띄울 라운드 수의 상한 (1~10)';
+    num.setAttribute('aria-label', '상한 라운드');
+    num.title = '한 묶음에서 이어 띄울 라운드 수 (1~10). 라운드마다 새 관리자가 뜹니다';
+    capLine.appendChild(num);
+    const capTxt = document.createElement('span');
+    capTxt.className = 'fc-hint';
+    capTxt.textContent = '라운드 (한 묶음)';
+    capLine.appendChild(capTxt);
+    sec2.appendChild(capLine);
+    const lab3 = document.createElement('span');
+    lab3.className = 'fleet-chain-lab';
+    lab3.textContent = '상한에 닿으면';
+    sec2.appendChild(lab3);
+    const modes = document.createElement('div');
+    modes.className = 'fleet-chain-modes';
+    modes.setAttribute('role', 'radiogroup');
+    modes.setAttribute('aria-label', '상한에 닿으면 할 일');
+    const known = Array.isArray(f.chain_modes) ? f.chain_modes : [];
+    const radios = {};
+    const curMode = keep.mode || 'stop';
+    const addMode = (key, text, sub, tip) => {
+      const lab = document.createElement('label');
+      lab.className = 'fleet-chain-opt fleet-chain-mode';
+      lab.title = tip;
+      const r = document.createElement('input');
+      r.type = 'radio';
+      r.name = 'fleet-chain-mode';
+      r.value = key;
+      r.checked = curMode === key;
+      lab.appendChild(r);
+      const tx = document.createElement('span');
+      tx.className = 'fleet-chain-mode-text';
+      const b1 = document.createElement('span');
+      b1.textContent = text;
+      const b2 = document.createElement('span');
+      b2.className = 'fleet-chain-mode-sub';
+      b2.textContent = sub;
+      tx.appendChild(b1);
+      tx.appendChild(b2);
+      lab.appendChild(tx);
+      modes.appendChild(lab);
+      radios[key] = r;
+    };
+    addMode('stop', '멈춤', '상한만큼 돌고 끝', '상한 라운드를 채우면 멈춥니다. 남은 일이 있으면 다시 켭니다');
+    addMode('renew', '새로 이어 달리기', '끝날 때까지',
+      '상한을 채우면 새 묶음으로 넘어가 라운드 수를 다시 세며 이어 갑니다. 남은 일이 없을 때까지 갑니다. 보고가 DONE 이 아니거나 진전이 없으면 멈춥니다');
+    if (known.includes('autonomous')) {                      // 서버가 아는 방식만 보인다
+      addMode('autonomous', '완전 자율 종주', '막혀도 한 번 더',
+        '새 묶음으로 이어 가며 끝까지 갑니다. 보고가 DONE 이 아니거나 진전이 없어도 한 번은 더 가 보고, 연달아 두 번 막히면 멈춥니다');
+    }
+    if (!Object.values(radios).some((r) => r.checked)) radios.stop.checked = true;
+    sec2.appendChild(modes);
+    el.appendChild(sec2);
+
     const on = document.createElement('button');
     on.type = 'button';
-    on.className = 'fc-btn';
-    on.textContent = state.chainBusy ? '켜는 중…' : '켜기';
-    const sync = () => {
-      state.chainForm = { project: sel.value, max: Number(num.value) || 3 };
-      on.disabled = !!state.chainBusy || !sel.value;
+    on.className = 'fc-btn btn-primary fleet-chain-on';
+    on.textContent = state.chainBusy === 'on' ? '켜는 중…' : '이어 달리기 켜기';
+    on.disabled = !!state.chainBusy;
+
+    const read = () => {
+      const vals = boxes.filter((c) => c.checked).map((c) => c.dataset.value);
+      const mode = (Object.values(radios).find((r) => r.checked) || radios.stop).value;
+      return {
+        all: boxes.length > 0 && vals.length === boxes.length,      // 다 고르면 '전체' - 나중에 생기는 프로젝트도 포함
+        fleet: vals.includes(''),
+        projects: vals.filter((v) => v !== ''),
+        mode,
+        renew: mode !== 'stop',
+        auto: mode === 'autonomous',
+        max: Number(num.value) || 0,
+      };
     };
-    sel.addEventListener('change', sync);
+    const sync = () => {
+      const t = read();
+      const n = (t.fleet ? 1 : 0) + t.projects.length;
+      count.textContent = t.all ? `전체 ${boxes.length}개 · 새 프로젝트도 포함` : `${boxes.length}개 중 ${n}개 선택`;
+      allBtn.textContent = t.all ? '모두 해제' : '모두 선택';
+      allBtn.setAttribute('aria-pressed', t.all ? 'true' : 'false');
+      state.chainForm = t;
+    };
+    // 무언가 고치면 앞서 뜬 안내("하나 이상 체크하십시오")는 지운다 - 고쳤는데도 빨간 글이 남아 있으면 헷갈린다
+    const clearMsg = () => {
+      if (!state.chainMsg) return;
+      state.chainMsg = null;
+      for (const m of el.querySelectorAll('.fleet-chain-err')) m.remove();
+      el.dataset.sig = '';
+    };
+    el.addEventListener('change', clearMsg, { once: false });
+    allBtn.addEventListener('click', () => {
+      const turnOn = !boxes.every((c) => c.checked);
+      for (const c of boxes) c.checked = turnOn;
+      clearMsg();
+      sync();
+    });
+    for (const c of boxes) c.addEventListener('change', sync);
+    for (const r of Object.values(radios)) r.addEventListener('change', sync);
     num.addEventListener('input', sync);
+    const fail = (msg) => {
+      state.chainMsg = msg;
+      el.dataset.sig = '';
+      renderFleetChain(data);
+    };
     on.addEventListener('click', () => {
       sync();
-      if (!window.confirm(`프로젝트 ${sel.value} 의 목표가 남아 있는 동안 라운드를 최대 ${state.chainForm.max}번까지 이어 띄웁니다.\n`
-        + '라운드마다 유료 관리자(Opus)가 한 번씩 뜹니다. 목표가 다 체크되거나, 보고가 DONE 이 아니거나, 체크가 늘지 않으면 스스로 멈춥니다.\n'
-        + "켠 뒤 '라운드 실행' 을 누르면 그 라운드부터 이어 갑니다. 켤까요?")) return;
-      chainAction(true, sel.value, state.chainForm.max);
+      const t = state.chainForm;
+      if (!t.fleet && !t.projects.length) return fail("무엇을 이어 달릴지 하나 이상 체크하십시오 - 함대나 프로젝트를 고르거나 '모두 선택' 을 누르십시오");
+      if (!(t.max >= 1 && t.max <= 10)) return fail('상한 라운드는 1~10 으로 적어 주십시오');
+      // 서버가 아직 '새로 이어 달리기' 를 모르면(다시 띄우기 전) 옛 방식(상한 0 = 끝날 때까지)으로 보낸다
+      const rounds = (t.renew && !known.includes('renew')) ? 0 : t.max;
+      const how = t.auto ? `상한 ${t.max} 라운드씩, 닿으면 새로 이어 가며 완전 자율 종주로`
+        : t.renew ? `상한 ${t.max} 라운드씩, 닿으면 새로 이어 가며 끝날 때까지` : `최대 ${t.max}번까지`;
+      if (!window.confirm(`${chainTargetText(t)} 에 열린 요청이나 체크 안 된 목표가 남아 있는 동안 라운드를 ${how} 이어 띄웁니다.\n`
+        + '라운드마다 유료 관리자(Opus)가 한 번씩 뜹니다. '
+        + (t.auto ? '보고가 DONE 이 아니거나 진전이 없어도 한 번은 더 가고, 연달아 두 번 막히면 멈춥니다. 남은 일이 없으면 끝납니다.\n'
+          : '남은 일이 없거나, 보고가 DONE 이 아니거나, 한 라운드에 닫힌 요청도 늘어난 목표도 없으면 스스로 멈춥니다.\n')
+        + "지금 도는 라운드가 있으면 그 라운드부터, 없으면 '라운드 실행' 을 누른 라운드부터 이어 갑니다. 켤까요?")) return undefined;
+      return chainAction(true, t, rounds);
     });
     sync();
-    el.appendChild(sel);
-    const lab = document.createElement('span');
-    lab.className = 'fc-hint';
-    lab.textContent = '최대';
-    el.appendChild(lab);
-    el.appendChild(num);
-    const lab2 = document.createElement('span');
-    lab2.className = 'fc-hint';
-    lab2.textContent = '라운드';
-    el.appendChild(lab2);
-    el.appendChild(on);
+    const foot = document.createElement('div');
+    foot.className = 'fleet-chain-foot';
     const hint = document.createElement('div');
     hint.className = 'fc-hint fleet-chain-note';
-    hint.textContent = ch.stopped_why
-      ? `지난번에 멈춘 이유: ${ch.stopped_why}`
-      : '프로젝트 목표(PROGRESS.md 의 체크리스트)가 남아 있으면 라운드가 끝난 뒤 다음 라운드를 스스로 띄웁니다. 꺼져 있습니다';
-    el.appendChild(hint);
+    hint.textContent = '꺼져 있습니다. 켜 두면 라운드가 끝났을 때 고른 대상에 열린 요청이나 체크 안 된 목표가 남아 있는 동안 다음 라운드를 스스로 띄웁니다';
+    foot.appendChild(hint);
+    foot.appendChild(on);
+    el.appendChild(foot);
   }
   if (state.chainMsg) {
     const m = document.createElement('div');
@@ -1532,6 +1747,7 @@ function detailRows(parent, title, rows) {
 }
 
 async function openManagerDetail(cur, all = false) {
+  runPanelCleanups();
   if (!cur || !cur.id) return;
   state.detailReturnFocus = document.activeElement;
   const overlay = bindDetailControls();
@@ -1952,7 +2168,16 @@ function renderRuns(data) {
     head.title = show(r.report_head, '');
     const proj = document.createElement('span');
     proj.className = r.project ? 'proj-tag' : 'proj-tag none';
-    proj.textContent = (r.project || '함대') + (r.round ? ` · R${r.round}` : '');
+    const projName = document.createElement('span');
+    projName.className = 'proj-name';
+    projName.textContent = r.project || '함대';
+    proj.appendChild(projName);
+    if (r.round) {
+      const projRound = document.createElement('span');
+      projRound.className = 'proj-round';
+      projRound.textContent = ` · R${r.round}`;
+      proj.appendChild(projRound);
+    }
     proj.title = r.project
       ? `프로젝트 ${r.project} (projects/${r.project}/)` + (r.round ? ` · 라운드 R${r.round}` : '')
       : '프로젝트 없음 - 함대 자체의 일이거나 옛 기록' + (r.round ? ` · 라운드 R${r.round}` : '');
@@ -2036,9 +2261,31 @@ async function archiveRequest(days, dryRun) {
 
 function openArchivePanel() {
   openPanel('끝난 것 정리 (아카이브)', (body) => {
-    const intro = document.createElement('p');
-    intro.className = 'hint';
-    intro.textContent = '8.0 보관·폐기: DONE 태스크는 archive/board-<월>.md 로, 닫힌 요청은 archive/requests-<월>/ 로, 노드가 전부 끝난 그래프는 브리프·로그·inputs 까지 archive/graph-<월>/ 로 옮깁니다. 지우지 않습니다.';
+    // 무엇이 정리되는지 풀어서 적는다 (2026-11-11 태석님: 요청·그래프도 같이 정리되는 줄 몰랐다)
+    const intro = document.createElement('div');
+    intro.className = 'hint archive-intro';
+    const lead = document.createElement('p');
+    lead.textContent = '끝난 일을 화면에서 치웁니다. 보드의 태스크만이 아니라 요청 트리의 요청과 그래프도 함께 정리됩니다.';
+    intro.appendChild(lead);
+    const ul = document.createElement('ul');
+    for (const [what, where] of [
+      ['끝난 태스크 (DONE)', '보드에서 사라지고 archive/board-<월>.md 에 남습니다'],
+      ['닫힌 작업 요청 (DONE·REJECTED)', '요청 트리에서 사라지고 archive/requests-<월>/ 로 옮겨집니다'],
+      ['노드가 모두 끝난 그래프 (분담 트리)', '요청 트리의 태스크 그래프에서 사라지고, 브리프·로그·입력 파일과 함께 archive/graph-<월>/ 로 옮겨집니다'],
+    ]) {
+      const li = document.createElement('li');
+      const b = document.createElement('strong');
+      b.textContent = what;
+      li.appendChild(b);
+      li.appendChild(document.createTextNode(' - ' + where));
+      ul.appendChild(li);
+    }
+    intro.appendChild(ul);
+    const tail = document.createElement('p');
+    tail.textContent = '지우는 것이 아니라 .aimem/archive/ 로 옮기는 것이라 나중에 찾아볼 수 있습니다. 아직 도는 그래프와 열린 요청은 건드리지 않고, '
+      + '프로젝트 진행률에는 정리한 요청도 계속 셉니다. 먼저 미리보기로 무엇이 옮겨지는지 확인한 뒤 실행하십시오. '
+      + '(관리자는 라운드를 닫을 때 14일 지난 것만 자동으로 정리합니다 - 최근에 끝난 것은 여기서 직접 정리합니다.)';
+    intro.appendChild(tail);
     body.appendChild(intro);
     const row = document.createElement('div'); row.className = 'slot-actions';
     const sel = document.createElement('select');
@@ -2101,7 +2348,9 @@ function renderBoard(data) {
       });
       filterBox.appendChild(chip);
     }
-    filterBox.appendChild(linkButton('끝난 것 정리…', openArchivePanel));
+    const arch = linkButton('끝난 것 정리…', openArchivePanel);
+    arch.title = '끝난 태스크·닫힌 요청·끝난 그래프를 한꺼번에 아카이브로 옮깁니다 (지우지 않음). 요청 트리에 쌓인 것도 여기서 정리됩니다';
+    filterBox.appendChild(arch);
   }
   const filter = BOARD_FILTERS.find((f) => f.key === state.boardFilter) || BOARD_FILTERS[0];
   const board = all.filter(filter.test).slice().reverse();   // 최신 태스크가 위
@@ -2168,66 +2417,6 @@ function renderQueue(data) {
     ellipsis: [1, 4],
     rowOpen: queue.map((q) => ({ fn: () => openQueueDetail(q, state.data), title: '큐 항목 전문 보기' })),
   }));
-}
-
-function kistiItem(label, value) {
-  const span = document.createElement('span');
-  span.className = 'kisti-item';
-  const lab = document.createElement('span');
-  lab.className = 'kisti-label';
-  lab.textContent = label + ': ';
-  const val = document.createElement('span');
-  val.className = 'kisti-value';
-  val.textContent = show(value);
-  span.appendChild(lab);
-  span.appendChild(val);
-  return span;
-}
-
-function renderKisti(data) {
-  const box = $('kisti-card');
-  box.textContent = '';
-  const k = data && data.kisti ? data.kisti : null;
-  if (!k) {
-    box.appendChild(emptyP('KISTI 상태 없음'));
-    return;
-  }
-  const ok = k.ok !== false;
-  const pending = k.pending === true;
-  const line = document.createElement('div');
-  line.className = 'kisti-line';
-
-  if (!ok) line.appendChild(badge('오류', 'error'));
-  else if (pending) line.appendChild(badge('조회 중', 'pending'));
-  else if (k.busy === true) line.appendChild(badge('바쁨', 'busy'));
-  else line.appendChild(badge('대기', 'idle'));
-  if (k.stale === true) line.appendChild(badge('지난 값', 'stale'));
-
-  line.appendChild(kistiItem('대기열', pending ? '-' : show(k.queued)));
-  line.appendChild(kistiItem('단계', pending ? '-' : show(k.phase)));
-  line.appendChild(kistiItem('프롬프트', (pending ? '-' : show(k.prompt_tokens)) + ' 토큰'));
-  line.appendChild(
-    kistiItem('생성', (pending ? '-' : show(k.generated)) + '/' + (pending ? '-' : show(k.max_tokens)))
-  );
-  if (k.age_sec !== null && k.age_sec !== undefined) {
-    const age = document.createElement('span');
-    age.className = 'kisti-age';
-    age.textContent = show(k.age_sec) + (k.stale === true ? '초 전 값' : '초 전 읽음');
-    line.appendChild(age);
-  }
-  box.appendChild(line);
-
-  if (!ok) {
-    const err = document.createElement('div');
-    err.className = 'kisti-error';
-    err.textContent = show(k.error, '상태 조회 실패');
-    box.appendChild(err);
-  } else if (k.busy === true || Number(k.queued) > 0) {
-    const warn = document.createElement('div');
-    warn.className = 'kisti-warn';
-    warn.textContent = 'kistillm 이 바쁩니다 - 대기열이 아니라 긴 프롬프트를 읽는 중일 수 있습니다 (AIMEM 8.0-3)';
-    box.appendChild(warn);
-  }
 }
 
 function fmtGraphPct(value) {
@@ -2483,6 +2672,18 @@ function requestEditForm(req) {
   return form;
 }
 
+// 서브태스크가 하나도 없을 때 그 자리에 뭐라고 적을지 - 상태마다 다릅니다 (요청 Q-261111-0afe)
+function subtaskEmptyText(req) {
+  switch (String(req && req.status || '').toUpperCase()) {
+    case 'NEW': return '관리자 분담 대기';
+    case 'PLANNED': return '분담 계획됨 - 아직 서브태스크가 없습니다';
+    case 'IN-PROGRESS': return '진행 중 - 서브태스크 없이 관리자가 직접 하는 일입니다';
+    case 'DONE': return '서브태스크 없이 끝난 요청입니다';
+    case 'REJECTED': return '서브태스크 없이 거절된 요청입니다';
+    default: return '서브태스크 없음';
+  }
+}
+
 function renderRequests(data) {
   const list = $('requests-list');
   // 편집 중에는 5초 폴링이 폼을 지우지 않게 다시 그리지 않는다
@@ -2608,7 +2809,8 @@ function renderRequests(data) {
       const line = document.createElement('div');
       line.className = 'req-meta';
       const subs = Array.isArray(req.subtasks) ? req.subtasks.length : 0;
-      line.textContent = (pct === null ? '' : fmtPct(pct) + ' · ') + '서브태스크 ' + subs + '건';
+      line.textContent = (pct === null ? '' : fmtPct(pct) + ' · ')
+        + (subs ? '서브태스크 ' + subs + '건' : subtaskEmptyText(req));
       titleWrap.appendChild(line);
       list.appendChild(article);
       return;
@@ -2627,7 +2829,8 @@ function renderRequests(data) {
     const etaLabel = document.createElement('span');
     etaLabel.className = 'eta';
     const closed = REQ_CLOSED.has(String(req.status || '').toUpperCase());
-    etaLabel.textContent = closed ? '종료' : 'ETA ' + etaText(req);   // 끝난 요청에 남은 시간을 내지 않는다
+    const eta = etaText(req);
+    etaLabel.textContent = closed ? '종료' : (eta === '-' ? 'ETA 미정' : 'ETA ' + eta);   // 끝난 요청에 남은 시간을 내지 않는다
     progressRow.appendChild(bar);
     progressRow.appendChild(pctLabel);
     progressRow.appendChild(etaLabel);
@@ -2643,7 +2846,7 @@ function renderRequests(data) {
     body.hidden = !open;
     const subtasks = Array.isArray(req.subtasks) ? req.subtasks : [];
     if (!subtasks.length) {
-      body.appendChild(emptyP('관리자 분담 대기'));
+      body.appendChild(emptyP(subtaskEmptyText(req)));
     } else {
       const subRows = subtasks.map((st) => {
         const run = st.run_id ? runs.get(st.run_id) : null;
@@ -2840,23 +3043,103 @@ function openProjectFiles(pr, filePath) {
   });
 }
 
+const ALLOWED_MSG_KEYS = {
+  ready: ['aimem', 'op'],
+  put: ['aimem', 'op', 'key', 'value'],
+};
+
 function openProjectApp(pr) {
   const name = show(pr.name, '');
   const app = pr.app || {};
   openPanel('프로젝트 ' + name + ' 실행', (body) => {
     body.classList.add('detail-app');
     const note = (text, cls) => { const p = document.createElement('p'); p.className = cls || 'empty'; p.textContent = text; return p; };
-    body.appendChild(note(`projects/${name}/${show(app.root, '')}/${show(app.entry, '')} · 격리된 칸에서 돌아갑니다 - 기록(통계·설정)은 저장되지 않습니다`, 'proj-meta'));
+    body.appendChild(note(`projects/${name}/${show(app.root, '')}/${show(app.entry, '')} · 격리된 칸에서 돌아갑니다 - 기록(통계·설정)은 이 브라우저에만 남습니다`, 'proj-meta'));
 
     const tab = document.createElement('a');
     tab.href = '/app/' + encodeURIComponent(name) + '/';
     tab.target = '_blank';
     tab.rel = 'noopener noreferrer';
     tab.textContent = '새 탭에서 열기';
-    tab.title = '더 큰 화면으로 봅니다. 여기서도 격리되어 기록은 저장되지 않습니다';
+    tab.title = '더 큰 화면으로 봅니다. 여기서도 격리되어 새 탭에서는 기록이 남지 않습니다';
     body.appendChild(tab);
 
     if (DEMO) { body.appendChild(note('데모 화면에서는 실행할 수 없습니다')); return; }
+
+    const part = 'aimem.app.v1.' + encodeURIComponent(name);
+    function okKey(k) {
+      return typeof k === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(k);
+    }
+    function okVal(v) {
+      return v === null || (typeof v === 'string' && v.length <= 8192);
+    }
+    function loadPart(part) {
+      const dict = new Map();
+      let parsed;
+      try {
+        const raw = localStorage.getItem(part);
+        if (raw === null) return dict;
+        parsed = JSON.parse(raw);
+      } catch {
+        return dict;
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return dict;
+      for (const k of Object.keys(parsed)) {
+        if (okKey(k) && okVal(parsed[k])) dict.set(k, parsed[k]);
+      }
+      return dict;
+    }
+    const dict = loadPart(part);
+    let timer = null;
+    function flushPut(part, dict) {
+      try {
+        localStorage.setItem(part, JSON.stringify(Object.fromEntries(dict)));
+      } catch (err) {
+        console.warn('보관함 쓰기 실패:', err);
+      }
+    }
+    function putIfFits(dict, key, value) {
+      const had = dict.has(key);
+      const old = had ? dict.get(key) : undefined;
+      const beforeSize = dict.size;
+      const beforeLen = JSON.stringify(Object.fromEntries(dict)).length;
+      if (value === null) dict.delete(key);
+      else dict.set(key, value);
+      const afterSize = dict.size;
+      const afterLen = JSON.stringify(Object.fromEntries(dict)).length;
+      if ((afterSize > 64 || afterLen > 65536) && afterSize >= beforeSize && afterLen >= beforeLen) {
+        if (had) dict.set(key, old);
+        else dict.delete(key);
+        return;
+      }
+      if (!timer) timer = setTimeout(() => { timer = null; flushPut(part, dict); }, 250);
+    }
+    const rate = (() => {
+      let readyCount = 0;
+      let firstReady = 0;
+      const puts = [];
+      return {
+        ready() {
+          const now = Date.now();
+          if (readyCount >= 2) return false;
+          if (readyCount === 0) {
+            readyCount = 1;
+            firstReady = now;
+            return true;
+          }
+          if (now - firstReady < 1000) return false;
+          readyCount = 2;
+          return true;
+        },
+        put() {
+          const now = Date.now();
+          while (puts.length && now - puts[0] >= 1000) puts.shift();
+          if (puts.length >= 20) return false;
+          puts.push(now);
+          return true;
+        },
+      };
+    })();
 
     const fr = document.createElement('iframe');
     fr.className = 'proj-app-frame';
@@ -2864,6 +3147,27 @@ function openProjectApp(pr) {
     fr.setAttribute('sandbox', 'allow-scripts allow-popups allow-modals');
     fr.setAttribute('referrerpolicy', 'no-referrer');
     fr.title = (app.title || name) + ' 미리보기';
+    function onMsg(ev) {
+      const src = ev.source;
+      if (!src || src !== fr.contentWindow || !fr.isConnected) return;
+      if (ev.origin !== 'null') return;
+      const m = ev.data;
+      if (!m || typeof m !== 'object' || Array.isArray(m) || m.aimem !== 'store.v1') return;
+      const allowed = ALLOWED_MSG_KEYS[m.op];
+      if (!Array.isArray(allowed) || Object.keys(m).some((k) => !allowed.includes(k))) return;
+      if (m.op === 'ready' && rate.ready()) {
+        src.postMessage({ aimem: 'store.v1', op: 'snapshot', items: Object.fromEntries(dict) }, '*');
+      } else if (m.op === 'put' && rate.put() && okKey(m.key) && okVal(m.value)) {
+        putIfFits(dict, m.key, m.value);
+      }
+    }
+    window.addEventListener('message', onMsg);
+    state.panelCleanups.push(() => {
+      window.removeEventListener('message', onMsg);
+      clearTimeout(timer);
+      flushPut(part, dict);
+      fr.remove();
+    });
     body.appendChild(fr);
   });
 }
@@ -2989,7 +3293,6 @@ function renderAll(data) {
   renderProjects(data);
   renderMeta(data);
   renderSlots(data);
-  renderKisti(data);
   renderRuns(data);
   renderBoard(data);
   renderQueue(data);

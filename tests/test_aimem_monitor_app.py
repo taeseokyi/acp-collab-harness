@@ -374,5 +374,56 @@ class ProjectAppTests(unittest.TestCase):
                 self.assertIn("default-src 'self';", csp)
 
 
+class TicketLimitAndLogRedactionTests(unittest.TestCase):
+    key = b"0123456789abcdef0123456789abcdef"
+    name = "알파"
+    ticket_body = "1234.abcdef0123456789abcdef0123456789"
+
+    def test_ticket_within_ttl_is_valid(self):
+        now = int(time.time())
+        ticket = server.app_ticket(self.name, now + server.PROJECT_APP_TICKET_TTL_SEC, self.key)
+        self.assertTrue(server.app_ticket_ok(ticket, self.name, self.key, now=now))
+
+    def test_expired_ticket_is_rejected(self):
+        now = int(time.time())
+        ticket = server.app_ticket(self.name, now - 10, self.key)
+        self.assertFalse(server.app_ticket_ok(ticket, self.name, self.key, now=now))
+
+    def test_ticket_beyond_ttl_window_is_rejected(self):
+        # 서명 키가 샜을 때 10년짜리 영구 티켓이 통과하지 않아야 한다.
+        now = int(time.time())
+        ticket = server.app_ticket(
+            self.name, now + server.PROJECT_APP_TICKET_TTL_SEC + 3600, self.key)
+        self.assertFalse(server.app_ticket_ok(ticket, self.name, self.key, now=now))
+
+    def test_ticket_inside_ttl_grace_is_valid(self):
+        now = int(time.time())
+        ticket = server.app_ticket(
+            self.name, now + server.PROJECT_APP_TICKET_TTL_SEC + 30, self.key)
+        self.assertTrue(server.app_ticket_ok(ticket, self.name, self.key, now=now))
+
+    def test_ticket_log_hides_plain_tilde_path(self):
+        line = f"GET /app/~{self.ticket_body}/웹워들/ HTTP/1.1"
+        redacted = server._TICKET_LOG_RE.sub("/app/~***", line)
+        self.assertIn("/app/~***", redacted)
+        self.assertNotIn(self.ticket_body, redacted)
+
+    def test_ticket_log_hides_upper_percent_encoded_path(self):
+        line = f"GET /app/%7E{self.ticket_body}/웹워들/ HTTP/1.1"
+        redacted = server._TICKET_LOG_RE.sub("/app/~***", line)
+        self.assertIn("/app/~***", redacted)
+        self.assertNotIn(self.ticket_body, redacted)
+
+    def test_ticket_log_hides_lower_percent_encoded_path(self):
+        line = f"GET /app/%7e{self.ticket_body}/웹워들/ HTTP/1.1"
+        redacted = server._TICKET_LOG_RE.sub("/app/~***", line)
+        self.assertIn("/app/~***", redacted)
+        self.assertNotIn(self.ticket_body, redacted)
+
+    def test_ticket_log_leaves_ticketless_path_alone(self):
+        line = "GET /app/웹워들/ HTTP/1.1"
+        self.assertEqual(server._TICKET_LOG_RE.sub("/app/~***", line), line)
+
+
 if __name__ == "__main__":
     unittest.main()

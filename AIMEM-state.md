@@ -1,14 +1,14 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-11T17:29:00 / REV 155
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-11T22:54:45 / REV 157
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
 | S1 | `a41f0c` | claude | opus | 린터 / 보드 CLI / 판단형 | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
-| S2 | `d27e93` | codex | (하네스 기본) | 테스트 / 파이프라인 | 11-09 16시 CLI 작업자. `codex exec`, kistillm |
-| S3 | `5b8c1e` | opencode | (하네스 기본) | 커밋 훅 / 검수 | 11-09 16시 CLI 작업자. `opencode run`, kistillm |
+| S2 | `d27e93` | codex | (하네스 기본) | 만들기·고치기 (무료) | R13: kistillm. 만들기·고치기의 기본 슬롯 |
+| S3 | `5b8c1e` | opencode | (하네스 기본) | 만들기·검사 (무료) | R13: 모델이 EXAONE -> kistillm (태석님 2026-11-11 21:00). S2 와 모델이 같고 하네스만 다릅니다 - 브리프에 EXAONE 전용 문구(출력 상한) 를 쓰지 않습니다 |
 | S4 | `6cd650` | claude | sonnet | 병렬 작업자 (속도) | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
 
 ## 3. 작업 보드
@@ -65,75 +65,120 @@
 | T-143 | Q-261111-8481 | 재검수: 고친 넷 + 새 검사의 변이 시험 | S1 | DONE |  |
 | T-144 | Q-261111-8481 | 남은 결함 둘: Host 꼴 엄격 검사 + 미리보기 최소 높이 428px | S2 | DONE |  |
 | T-145 | Q-261111-8481 | 검사 구멍 셋: 티켓 로그 가리기·발급 갈래 단독·짧은 화면 키 크기 | S2 | DONE |  |
+| T-146 | Q-261111-4e63 | style.css: 화면 키 32px 하한 + 가로로 넓고 낮은 창의 좌우 배치 | S2 | DONE |  |
+| T-147 | Q-261111-4e63 | ui.js: 뒤집기가 pop 을 끊어 class 가 남는 결함 수정 | S3 | DONE |  |
+| T-148 | Q-261111-4e63 | game.js: 하드 모드를 엄하게 (노랑 개수·같은 자리 되놓기) | S2 | DONE |  |
+| T-149 | Q-261111-4e63 | 낱말 거르기: 고유명사·굴절형·고어 꼴을 정답 후보에서 빼기 | S2 | DONE |  |
+| T-150 | Q-261111-4e63 | browser_layout.py: 키 높이·좌우 배치·뒤집기 뒤 칸 크기 실측 검사 | S3 | DONE |  |
+| T-151 | Q-261111-4e63 | test_game.mjs: 엄해진 하드 모드 검사 | S3 | DONE |  |
+| T-152 | Q-261111-4e63 | 설계: 미리보기에서도 기록이 남는 postMessage 길 | S1 | DONE |  |
+| T-153 | Q-261111-4e63 | 적대적 검토: T-152 설계가 보안 경계를 새로 뚫지 않는가 | S4 | DONE |  |
+| T-154 | Q-261111-e1f1 | 모니터 티켓 심층 방어: exp 상한 + %7E 로그 가리기 | S2 | DONE |  |
+| T-155 | Q-261111-e1f1 | GitHub 로그인 세션으로의 실행 티켓 발급 단위 시험 | S2 | DONE |  |
+| T-156 | Q-261111-e1f1 | 허용 목록에서 빠진 GitHub 계정의 옛 세션을 끊기 (_subject 재확인) | S2 | DONE |  |
+| T-157 | Q-261111-e1f1 | 재검수: 허용 목록 재확인 수정 적대적 재검수 (변이 시험) | S1 | DONE |  |
+| T-158 | Q-261111-4e63 | 설계 문서를 T-153 검토 지적대로 고치기 | S1 | DONE |  |
+| T-159 | Q-261111-e1f1 | test_aimem_monitor_auth 픽스처: 임시 루트에 GitHub 허용 목록 만들기 | S2 | DONE |  |
+| T-160 | Q-261111-e1f1 | 대소문자 검사를 실제 쓰임대로 (쿠키 gh:TaeSeok, 목록 taeseok) | S2 | DONE |  |
+| T-161 | Q-261111-663d | 웹워들 storage.js·ui.js: 미리보기(격리 칸) 부모 모드 저장 | S2 | DONE |  |
+| T-162 | Q-261111-663d | test_storage.mjs: 부모 모드 단위 시험 (가짜 parent) | S3 | DONE |  |
+| T-163 | Q-261111-663d | app.js: panelCleanups + openProjectApp 보관함 리스너 | S2 | DONE |  |
+| T-164 | Q-261111-663d | browser_monitor_app.py: 미리보기 기록 유지·칸 격리 실측 | S3 | BLOCKED | 없음 - 2회 실패(a1 45분 타임아웃, a2 빈손). 무료 슬롯 실패를 유료로 옮기지 않음(8.0) |
+| T-165 | Q-261111-663d | 적대적 검수: 미리보기 보관함이 새 길을 뚫지 않는가 | S1 | DONE |  |
+| T-166 | Q-261111-2665 | server.py·reader.py: KISTI 상태 폴링·준비 점검·aimem.goal 제거 | S2 | DONE |  |
+| T-167 | Q-261111-2665 | app.js·index.html·style.css: KISTI 카드 제거 + 현재 목표 -> 이번 라운드 | S2 | DONE |  |
+| T-168 | Q-261111-0afe | reader.py·app.js: 분담 전 요청의 ETA 0초 버그와 상태별 표시 | S2 | DONE |  |
+| T-169 | Q-261111-d64b | app.js·style.css: 프로젝트 칸 볼드 기준 + 생략 제목 전문 보기 | S2 | DONE |  |
+| T-170 | Q-261111-2e0f | browser_monitor_ui.py: 바뀐 화면 다섯 가지 실측 | S3 | DONE |  |
+| T-171 | Q-261111-663d | storage.js 결함 2·3: 스냅숏 없으면 메모리 모드, 지우기는 put+null | S2 | DONE |  |
+| T-172 | Q-261111-663d | app.js 결함 4·5·6: 남는 필드 거름, 굳은 칸 풀기, 정리 훅 구멍 | S2 | DONE |  |
+| T-173 | Q-261111-2665 | browser_monitor_ui.py: KISTI 검사가 작업 기록 글자에 걸리던 것 | S3 | DONE |  |
+| T-174 | Q-261111-663d | 재검수: 고친 결함 넷의 변이 시험 | S1 | DONE |  |
+| T-175 | Q-261111-663d | storage.js: init 의 지난 daily 정리가 접두를 빠뜨려 한 번도 안 지워지던 결함 | S2 | DONE |  |
+| T-176 | Q-261111-663d | test_storage.mjs: 지난 daily 정리와 '스냅숏 없으면 put 안 보냄' 검사 | S3 | DONE |  |
+| T-177 | Q-261111-7859 | aimem_db.py: 끝난 것 정리가 딸린 실행 기록·이벤트를 함께 옮긴다 | S2 | ASSIGNED |  |
+| T-178 | Q-261111-7859 | aimem_db.py: 핸드오프·전달 기록·로그 줄까지 + VACUUM·종류별 건수 | S2 | ASSIGNED |  |
+| T-179 | Q-261111-7859 | server.py: /api/archive 가 종류별 건수를 돌려주고 audit 에 남긴다 | S2 | ASSIGNED |  |
+| T-180 | Q-261111-7859 | test_aimem_db_cli.py: 연동 아카이브 단위 시험 (열린 작업의 기록은 남는다) | S3 | ASSIGNED |  |
+| T-181 | Q-261111-731b | app.js·index.html·style.css: 요청 트리에서 끝난 것 치우기 + 진행 표시 현실화 | S2 | ASSIGNED |  |
+| T-182 | Q-261111-7859 | test_archive_api.py(새): /api/archive 가 종류별 건수를 돌려준다 | S3 | ASSIGNED |  |
+| T-183 | Q-261111-fa37 | browser_monitor_ui.py: 바뀐 요청 트리 실측 + ETA 검사를 임시 저장소로 | S3 | ASSIGNED |  |
+| T-184 | Q-261111-b56e | browser_monitor_preview.py(새): 미리보기 기록이 남고 칸이 섞이지 않는다 | S2 | ASSIGNED |  |
+| T-185 | Q-261111-b56e | browser_monitor_preview_guard.py(새): 중첩 iframe·팝업·자기 put 이 무시된다 | S3 | ASSIGNED |  |
+| T-186 | Q-261111-7859 | 적대적 검수: 연동 아카이브가 열린 작업·감사 기록·REV 길을 깨뜨리지 않는가 | S1 | ASSIGNED |  |
 
 ## 4. 이벤트 로그 (최신 50)
 
+- `2026-11-11 22:54` 클로드 코드 [handoff] REV 157: **REV 157 (덧붙임, R14 도중 커밋). 클로드 코드가 운영하며 고친 것.** (1) **이어 달리기 다시 만듦**: 대상을 함대 · 프로젝트(여러 개 체크) · 전체로 고른다(`chain_work`, 격자 체크 칸 + '모두 선택/해제'). 남은 일 = 대상의 열린 요청 + 체크 안 된 목표. **상한 라운드(1~10)는 언제나 지키고**, 닿으면 멈춤 / 새 묶음으로 이어 감(`renew`, 끝날 때까지) / 완전 자율 종주(`autonomous`: 막혀도 한 번 더, 연달아 두 번이면 멈춤). 모두 30 라운드가 안전
+- `2026-11-11T22:45:43` 관리자 R14 [graph] REV 157: R14 G-032 T-177: 작업자 a1 은 일을 다 했고(rc 0) verify 의 고정물이 틀렸습니다 - 갓 만든 임시 DB 에는 meta.rev 행이 없는데 smoke 가 'REV 가 사라졌습니다' 로 단언했습니다. a2 재시도를 pid 1064437 로 중단하고, T-177·T-178 의 smoke 가 rev 행을 먼저 넣도록 고친 뒤 관리자가 직접 돌려 rc 0 을 확인하고 노드를 닫았습니다.
+- `2026-11-11T22:23:40` 관리자 R14 [graph] REV 157: R14 G-032 시작: 노드 10 (T-177~T-186). 요청 Q-261111-7859·731b(연동 아카이브)·fa37(진행 표시)·b56e(웹워들 미리보기 실측). 상한 안 - 새 일 그래프 1·태스크 10
+- `2026-11-11T22:23:40` 관리자 R14 [request] REV 157: Q-261111-b56e IN-PROGRESS
+- `2026-11-11T22:23:40` 관리자 R14 [request] REV 157: Q-261111-fa37 IN-PROGRESS
+- `2026-11-11T22:23:40` 관리자 R14 [request] REV 157: Q-261111-731b IN-PROGRESS
+- `2026-11-11T22:23:40` 관리자 R14 [request] REV 157: Q-261111-7859 IN-PROGRESS
+- `2026-11-11T22:23:22` 관리자 R14 [task] REV 157: T-186 ASSIGNED S1 적대적 검수: 연동 아카이브가 열린 작업·감사 기록·REV 길을 깨뜨리지 않는가
+- `2026-11-11T22:23:22` 관리자 R14 [task] REV 157: T-185 ASSIGNED S3 browser_monitor_preview_guard.py(새): 중첩 iframe·팝업·자기 put 이 무시된다
+- `2026-11-11T22:23:22` 관리자 R14 [task] REV 157: T-184 ASSIGNED S2 browser_monitor_preview.py(새): 미리보기 기록이 남고 칸이 섞이지 않는다
+- `2026-11-11T22:23:22` 관리자 R14 [task] REV 157: T-183 ASSIGNED S3 browser_monitor_ui.py: 바뀐 요청 트리 실측 + ETA 검사를 임시 저장소로
+- `2026-11-11T22:23:22` 관리자 R14 [task] REV 157: T-182 ASSIGNED S3 test_archive_api.py(새): /api/archive 가 종류별 건수를 돌려준다
+- `2026-11-11T22:23:22` 관리자 R14 [task] REV 157: T-181 ASSIGNED S2 app.js·index.html·style.css: 요청 트리에서 끝난 것 치우기 + 진행 표시 현실화
+- `2026-11-11T22:23:22` 관리자 R14 [task] REV 157: T-180 ASSIGNED S3 test_aimem_db_cli.py: 연동 아카이브 단위 시험 (열린 작업의 기록은 남는다)
+- `2026-11-11T22:23:22` 관리자 R14 [task] REV 157: T-179 ASSIGNED S2 server.py: /api/archive 가 종류별 건수를 돌려주고 audit 에 남긴다
+- `2026-11-11T22:23:22` 관리자 R14 [task] REV 157: T-178 ASSIGNED S2 aimem_db.py: 핸드오프·전달 기록·로그 줄까지 + VACUUM·종류별 건수
+- `2026-11-11T22:23:22` 관리자 R14 [task] REV 157: T-177 ASSIGNED S2 aimem_db.py: 끝난 것 정리가 딸린 실행 기록·이벤트를 함께 옮긴다
+- `2026-11-11T22:19:44` 관리자 [ownership] REV 157: tests/browser_monitor_preview_guard.py -> S3
+- `2026-11-11T22:09:40` 관리자 R14 [request] REV 157: Q-261111-b56e PLANNED
+- `2026-11-11T22:09:39` 관리자 R14 [request] REV 157: Q-261111-fa37 PLANNED
+- `2026-11-11T22:09:39` 관리자 R14 [request] REV 157: Q-261111-731b PLANNED
+- `2026-11-11T22:09:39` 관리자 R14 [request] REV 157: Q-261111-7859 PLANNED
+- `2026-11-11T22:09:36` 관리자 [ownership] REV 157: rounds/R14/REVIEW-archive.md -> S1
+- `2026-11-11T22:09:36` 관리자 [ownership] REV 157: tests/browser_monitor_preview.py -> S2
+- `2026-11-11T22:09:36` 관리자 [ownership] REV 157: tests/test_archive_api.py -> S3
+- `2026-11-11T22:09:36` 관리자 [ownership] REV 157: tests/test_aimem_db_cli.py -> S3
+- `2026-11-11T22:09:36` 관리자 [ownership] REV 157: tools/aimem_db.py -> S2
+- `2026-11-11 21:48` 관리자 [handoff] REV 157: **REV 157. R13 - 태석님 모니터 요청 다섯을 닫고, 웹워들 미리보기 기록 저장을 구현·검수·재검수했습니다(목표는 못 닫음).** 요청 5건 DONE(`2665` kistillm 감시 제거 · `e099` 현재 목표 → 이번 라운드 · `0afe` ETA · `d64b` 볼드 기준 · `2e0f` 생략 제목), `663d`(웹워들) IN-PROGRESS. 그래프 셋(새 일 G-029 10 + 후속 G-030·G-031 6), T-161~T-176. **0afe 는 진짜 버그였습니다** - 분담 전 요청이 `eta_sec=
+- `2026-11-11T21:47:30` 관리자 [queue] REV 156: queue +5 storage.js 의 키 꼴 검사와 8,192자 상한을 단위 시험이 보지 않습니다 - 관리자 변이 M5·M6 를 넣어도 40개가 그대로 초록입니다. 모니터가 같은 것을 다시 거르므로 제품은 안전하지만, 결과물 쪽 방어선이 언제 사라졌는지 아무도 모릅니다
+- `2026-11-11T21:47:30` 관리자 [queue] REV 156: queue +4 미리보기 보관함을 **브라우저에서** 재는 검사 (설계 preview-storage.md 7절). R13 T-164 가 S3 에서 두 번 실패(45분 타임아웃·빈손)해 이 길은 자동 검사가 0개입니다 - 변이 10개 중 0개를 잡습니다. 모니터 '/' 를 열고 openProjectApp 으로 띄운 뒤 재야 하며, 노드를 '한 판 두고 새로 고침' / '칸 격리' / '중첩 iframe 무시' 셋으로 쪼개 주십시오
+- `2026-11-11T21:47:22` 관리자 [request] REV 156: Q-261111-663d IN-PROGRESS
+- `2026-11-11T21:47:21` 관리자 [request] REV 156: Q-261111-2e0f DONE
+- `2026-11-11T21:47:21` 관리자 [request] REV 156: Q-261111-d64b DONE
+- `2026-11-11T21:47:21` 관리자 [request] REV 156: Q-261111-0afe DONE
+- `2026-11-11T21:47:21` 관리자 [request] REV 156: Q-261111-e099 DONE
+- `2026-11-11T21:47:21` 관리자 [request] REV 156: Q-261111-2665 DONE
+- `2026-11-11T21:47:21` 관리자 [task] REV 156: T-164 BLOCKED
+- `2026-11-11T21:47:21` 관리자 [task] REV 156: T-176 DONE
+- `2026-11-11T21:47:21` 관리자 [task] REV 156: T-175 DONE
+- `2026-11-11T21:47:21` 관리자 [task] REV 156: T-174 DONE
+- `2026-11-11T21:47:21` 관리자 [task] REV 156: T-173 DONE
+- `2026-11-11T21:47:21` 관리자 [task] REV 156: T-172 DONE
+- `2026-11-11T21:47:21` 관리자 [task] REV 156: T-171 DONE
+- `2026-11-11T21:47:20` 관리자 [task] REV 156: T-170 DONE
+- `2026-11-11T21:47:20` 관리자 [task] REV 156: T-169 DONE
+- `2026-11-11T21:47:20` 관리자 [task] REV 156: T-168 DONE
+- `2026-11-11T21:47:20` 관리자 [task] REV 156: T-167 DONE
+- `2026-11-11T21:47:20` 관리자 [task] REV 156: T-166 DONE
+- `2026-11-11T21:47:20` 관리자 [task] REV 156: T-165 DONE
+- `2026-11-11T21:47:20` 관리자 [task] REV 156: T-163 DONE
+- `2026-11-11 18:52` 관리자 [handoff] REV 156: **REV 156. R12 - 웹워들 후속 다섯을 닫고(21/22), 모니터에서 인증 결함 하나를 찾아 고치고 재검수까지.** 요청 둘(`Q-261111-4e63`·`Q-261111-e1f1`) 모두 DONE. 그래프 넷(G-025 새 일 10 + 후속 G-026·G-027·G-028 다섯), 태스크 T-146~T-160. **가장 큰 것은 인증**: T-155 가 쓴 시험이 `gh:` 세션의 허용 목록을 **로그인 때만** 보던 것을 드러냈습니다 - 계정을 지워도 서명된 쿠키가 12시간 그대로 들어 `/app/` 티켓도 `/api
 - `2026-11-11 17:29` 클로드 코드 [handoff] REV 155: **REV 155 (덧붙임). R11 을 지켜보며 고친 함대 개선.** (1) **인증 우회 긴급 수정**: 검수 A 가 찾은 `GET /app/<이름>/../~x/` 무인증 티켓 발급이 공개 운영 서버에 올라가 있어 라운드를 기다리지 않고 막았다(`_auth_gate` 는 원본 경로·같은 정규식으로 판단, 발급 직전 세션 재확인, 진짜 소켓 회귀 시험 `tests/test_aimem_monitor_app_gate.py`). 재검수 C 가 변형 41가지로 확인. (2) **라운드 상한을 엔진이 지킨다**: 새 일은 그래프 3·태스크
 - `2026-11-11 17:14` 관리자 R11 [handoff] REV 155: **REV 155. 모니터 결과물 실행(`/app` 경로 티켓)을 적대적으로 검수하고, 찾은 결함 넷을 같은 라운드에서 고쳐 재검수까지 닫았다** (요청 `Q-261111-8481`). **가장 큰 것은 인증 우회**: 무인증 소켓이 `GET /app/<이름>/../~x/` 한 번으로 유효한 12시간 티켓을 발급받아 공개 서버의 결과물을 읽을 수 있었다(인증 문은 정규화 경로를, 라우팅은 원본 경로를 봐서 생긴 어긋남). 공개 운영 중이라 라운드 도중 클로드 코드가 먼저 막았고(`rounds/R11/NOTE-claude-code.m
-- `2026-11-11T17:13:06` 관리자 R11 [graph] REV 154: G-024 끝남(2/2 1차 성공). T-144: _app_origin 이 Host 를 정규식 한 벌로 쪼개 [::1].evil.com·127.0.0.1:abc 를 거절, 미리보기 min-height 428px(짧은 화면 키 20px→32px 실측). T-145: 검사 구멍 셋을 메움(티켓 로그 가리기·게이트 없이도 발급 갈래가 세션을 요구·짧은 화면 키 32px). 관리자 재현: 전체 단위 478 OK, 브라우저 app 8/8·ui 10/10·auth 9/9, Host 표 9/9, 운영 access.log 무변화. 요청 Q-261
-- `2026-11-11T17:13:06` 관리자 R11 [request] REV 154: Q-261111-8481 DONE
-- `2026-11-11T17:12:59` 관리자 R11 [queue] REV 154: queue +3 모니터 브라우저 검사를 크로미엄 말고 파이어폭스로도 한 번: CSP sandbox 지시어와 티켓 경로 동작 확인
-- `2026-11-11T17:12:59` 관리자 R11 [queue] REV 154: queue +2 웹워들 키 높이 하한을 clamp(32px, …) 로 (projects/웹워들/web/css). 모니터가 min-height 428px 로 받쳐 주고 있을 뿐, 결과물 자체 하한은 아직 20px
-- `2026-11-11T17:12:59` 관리자 R11 [queue] REV 154: queue +1 모니터 티켓 심층 방어 두 가지: 발급 티켓에 exp 상한(exp <= now+TTL+60) 검사, _TICKET_LOG_RE 를 %7E 인코딩 꼴까지 넓히기
-- `2026-11-11T17:12:58` 관리자 R11 [task] REV 154: T-145 DONE
-- `2026-11-11T17:12:58` 관리자 R11 [task] REV 154: T-144 DONE
-- `2026-11-11T17:12:58` 관리자 R11 [task] REV 154: T-143 DONE
-- `2026-11-11T17:12:58` 관리자 R11 [task] REV 154: T-140 DONE
-- `2026-11-11T16:59:30` 관리자 R11 [task] REV 154: T-145 ASSIGNED S2 검사 구멍 셋: 티켓 로그 가리기·발급 갈래 단독·짧은 화면 키 크기
-- `2026-11-11T16:59:30` 관리자 R11 [task] REV 154: T-144 ASSIGNED S2 남은 결함 둘: Host 꼴 엄격 검사 + 미리보기 최소 높이 428px
-- `2026-11-11T16:59:30` 관리자 R11 [ownership] REV 154: tests/browser_monitor_ui.py -> S2
-- `2026-11-11T16:37:49` 관리자 R11 [graph] REV 154: G-023 T-139: 작업자(S2)는 1차에 세 수정을 다 했는데 노드가 두 번 실패했다 - 원인은 관리자가 쓴 verify 명령(`unittest … | tail -3 | grep -qE '^OK'`)이 테스트 fixture 가 stdout 에 찍는 'ok: /tmp/…' 줄에 밀려 OK 줄을 못 본 것. 관리자가 산출물을 직접 재현 확인(Host 허용 목록: evil.com 이면 CSP 에 출처 없음·IP/localhost 는 그대로, 로그 가리기: 티켓이 /app/~*** 로, style.css min-height 380px
-- `2026-11-11T16:37:49` 관리자 R11 [task] REV 154: T-139 DONE
-- `2026-11-11T16:37:49` 관리자 R11 [task] REV 154: T-142 DONE
-- `2026-11-11T16:37:49` 관리자 R11 [task] REV 154: T-141 DONE
-- `2026-11-11T16:08:35` 관리자 R11 [task] REV 154: T-143 ASSIGNED S1 재검수: 고친 넷 + 새 검사의 변이 시험
-- `2026-11-11T16:08:35` 관리자 R11 [task] REV 154: T-142 ASSIGNED S3 browser_monitor_auth: 새 탭(최상위) 격리 검사 3개
-- `2026-11-11T16:08:35` 관리자 R11 [task] REV 154: T-141 ASSIGNED S3 browser_monitor_ui: 폰 폭 미리보기 높이·잘림·가로 스크롤 검사 3개
-- `2026-11-11T16:08:35` 관리자 R11 [task] REV 154: T-140 ASSIGNED S2 단위 검사 6개 추가: TLS 쿠키·TLS/Host CSP 출처·티켓 수명·sw.js
-- `2026-11-11T16:08:35` 관리자 R11 [task] REV 154: T-139 ASSIGNED S2 검수 결함 수정: 티켓 로그 가리기 + Host 허용 목록 + 미리보기 최소 높이
-- `2026-11-11T16:08:35` 관리자 R11 [ownership] REV 154: rounds/R11/REVIEW-C.md -> S1
-- `2026-11-11T16:08:35` 관리자 R11 [ownership] REV 154: tests/browser_monitor_ui.py -> S3
-- `2026-11-11T16:02:05` 관리자 R11 [graph] REV 154: G-022 끝남(노드 3/3 전부 1차 성공). T-136 S1 검수 A: 결함 2건(높음 1 - 무인증 /app/<이름>/../~x/ 로 티켓 발급되는 인증 우회, 낮음 1 - 티켓이 monitor.log 에 원문). T-137 S4 검수 B: 결함 2건(낮음 - Host 가 그대로 CSP 출처, 미리보기 최소 높이에서 결과물 키 20px) + 검사 구멍 6개. T-138 S3: browser_monitor_auth.py 임시 루트로 - 운영 access.log 무변화 확인. 검수 A 결함 1 은 라운드 중 클로드 코드가 운영 서
-- `2026-11-11T16:02:05` 관리자 R11 [task] REV 154: T-130 DONE
-- `2026-11-11T16:02:05` 관리자 R11 [task] REV 154: T-128 DONE
-- `2026-11-11T16:02:05` 관리자 R11 [task] REV 154: T-138 DONE
-- `2026-11-11T16:02:05` 관리자 R11 [task] REV 154: T-137 DONE
-- `2026-11-11T16:02:05` 관리자 R11 [task] REV 154: T-136 DONE
-- `2026-11-11T15:44:08` 관리자 R11 [ownership] REV 154: rounds/R11/REVIEW-B.md -> S4
-- `2026-11-11T15:44:08` 관리자 R11 [ownership] REV 154: rounds/R11/REVIEW-A.md -> S1
-- `2026-11-11T15:44:04` 관리자 R11 [task] REV 154: T-138 ASSIGNED S3 browser_monitor_auth.py 를 임시 루트에서 돌리기 (운영 .aimem/access.log 오염 제거)
-- `2026-11-11T15:44:04` 관리자 R11 [task] REV 154: T-137 ASSIGNED S4 적대적 검수 B: TLS·프록시 Host·좁은 화면(720px)·검사의 진위(변이 시험)
-- `2026-11-11T15:44:04` 관리자 R11 [task] REV 154: T-136 ASSIGNED S1 적대적 검수 A: /app/ 경로 티켓 인가·유출·격리(새 탭·팝업)
-- `2026-11-11T15:44:04` 관리자 R11 [request] REV 154: Q-261111-8481 PLANNED
 - `2026-11-11 15:32` 클로드 코드 [handoff] REV 154: **REV 154. 무료 작업자가 빈손으로 끝나던 원인 셋을 찾아 고쳤다 (R10 결과물과 함께 커밋).** (1) S2 codex+kistillm 이 도구 호출을 글자로 찍고 끝나던 것: codex 가 내주는 도구에 `update_plan`·`apply_patch` 가 없는데 `~/.codex/models-kisti.json` 기본 지시문이 그것을 쓰라고 했다(실패 7건 전부 이 둘). 지시문에서 계획 도구 절을 빼고 편집은 `exec_command` 로 `apply_patch` heredoc 을 돌리라고 고쳤다 - 같은 과제 실
 - `2026-11-11 08:13` 관리자 R10 [handoff] REV 153: **REV 153. 함대 모니터 웹에서 프로젝트 결과물을 바로 돌릴 수 있게 됐다** (요청 `Q-261111-5593`, 태석). 프로젝트가 `projects/<이름>/app.json`(`root`·`entry`·`title`) 한 장을 두면 모니터가 그 폴더를 `/app/<이름>/` 로 내려 주고, 프로젝트 칸의 **실행** 단추가 격리된 칸에서 띄운다. 웹워들이 첫 손님(16/16). 그래프 셋·태스크 열(T-126~T-135, 상한 꽉 참). **핵심 교훈 둘.** (1) **S1 적대적 검수가 '이번 라운드의 핵심 기능이 
-- `2026-11-11T08:13:23` 관리자 R10 [graph] REV 152: G-021 끝(2/2 done). T-134(S2): /app/ 인가를 세션 쿠키에서 경로 티켓(/app/~<만료>.<hmac32>/<이름>/)으로 바꾸고 ACAO:null + CSP sandbox 지시어를 더해 검수 결함 1·2 를 닫음. 패널 높이(3)·미디어 쿼리 순서(4)도 수정. T-135(S3): 인증 켠 브라우저 검사 6개 신규. 관리자 재현: 단위 456 OK, browser app 8/8 ui 6/6 auth 6/6, 무인증 302, 위조 티켓 403, CSP 헤더 1개.
-- `2026-11-11T08:13:23` 관리자 R10 [request] REV 152: Q-261111-5593 DONE
-- `2026-11-11T08:13:23` 관리자 R10 [task] REV 152: T-135 DONE
-- `2026-11-11T08:13:23` 관리자 R10 [task] REV 152: T-134 DONE
-- `2026-11-11T07:40:09` 관리자 R10 [task] REV 152: T-135 ASSIGNED S3 브라우저 실측 C: 인증을 켠 채로 미리보기가 뜨는가 (6개)
-- `2026-11-11T07:40:09` 관리자 R10 [task] REV 152: T-134 ASSIGNED S2 검수 결함 1~4 수정: /app/ 경로 티켓 + ACAO null + CSP sandbox + 패널 높이
-- `2026-11-11T07:40:09` 관리자 R10 [ownership] REV 152: tests/browser_monitor_auth.py -> S3
-- `2026-11-11T07:38:08` 관리자 R10 [graph] REV 152: G-020 끝(3/3 done). S1 적대적 검수(T-133)가 중대 결함 넷을 찾음: (1) sandbox iframe 은 불투명 출처라 type=module 스크립트가 CORS 로 막히고, 인증을 켜면 SameSite=Strict 쿠키가 안 실려 CSS 까지 302 - 미리보기가 실제로는 안 뜬다(관리자 재확인: browser_monitor_ui 4/6). (2) '새 탭'은 같은 출처라 결과물 JS 가 사람의 세션으로 /api/* 를 호출할 수 있다. (3) iframe 이 패널 밖으로 34px 잘린다. (4) 좁은 화면 높
-- `2026-11-11T07:38:08` 관리자 R10 [task] REV 152: T-133 DONE
-- `2026-11-11T07:38:08` 관리자 R10 [task] REV 152: T-132 DONE
-- `2026-11-11T07:38:08` 관리자 R10 [task] REV 152: T-131 DONE
 - `2026-11-11 05:58` 클로드 코드 [handoff] REV 152: **REV 152. R7~R9 를 지켜보며 찾은 함대 결함을 고쳤다 (웹워들 15/15 완성분과 함께 커밋).** (1) 엔진 `fleet_graph.py`: 보고가 도구 호출 글자로 끝난 시도(`report_ended_in_tool_call`, 로그 `aborted`)와 `write` 경로를 하나도 안 고친 첫 시도(`wrote_nothing`, 로그 `no-op`)는 rc 0·verify 통과여도 실패로 보고 다시 굴린다 - R9 G-014 에서 네 노드 중 셋이 빈손으로 done 이 됐다. (2) 표준 브리프: 만들기·고치기는
 - `2026-11-11 04:43` 관리자 [handoff] REV 151: **REV 151. 웹워들을 15/15 로 닫았다** (요청 Q-261111-f77f). 그래프 다섯(G-014~018)·태스크 열하나(T-115~125). 결과물은 `projects/웹워들/tests/` - 브라우저 검사 **125 → 240개**(core 67 · layout 18 · ui 155, 전부 초록). **`web/` 은 한 줄도 안 바꿨다** - 통째로 '검사가 참·거짓을 가리게 만드는' 일이었다. 뒤집기는 `animationstart`+`getAnimations()` 로, 통계는 네 값이 서로 다른 판·진 판·4번
 - `2026-11-11 01:59` 관리자 [handoff] REV 150: **REV 150. 웹워들을 처음으로 브라우저에서 눈으로 봤다** (요청 Q-261110-c450). 그래프 셋(G-011~013)·태스크 열(T-105~114). 결과물은 `projects/웹워들/tests/` - 크로미움으로 도는 검증 세 벌 **125검사**(core 48 · layout 18 · ui 59)와 공용 하네스·README. 오늘의 정답·포트는 하드코딩이 없어 날이 바뀌어도 돈다. **테스트가 31개 전부 초록인 채로 화면 결함 다섯이 숨어 있었다**: 토스트가 보드 첫 줄을 가림(진 판은 영영), 공유 단추가 판
 - `2026-11-10 23:04` 관리자 [handoff] REV 149: **REV 149. 웹워들 프로젝트를 새로 열고 돌아가는 워들 한 벌을 만들었다** (요청 Q-261110-0437). 그래프 셋·태스크 아홉(T-096~T-104). 결과물은 `projects/웹워들/` - 순수 로직 `web/js/game.js`(S1), 시스템 사전에서 뽑은 단어 목록(정답 2,488·허용 5,641, S2), 화면 넷(S4), 테스트 셋(S3·S1·S2). 의존성도 네트워크도 없다. 적대적 검수가 찾은 결함 11건을 같은 라운드에 모두 고쳤다 - 손상된 localStorage 값으로 일곱 번째 제출이 들어와 
 - `2026-11-10 22:08` 클로드 코드 [handoff] REV 148: **REV 148. 프로젝트 진행률을 목표 대비로, 라운드 도중 요청도 라운드 기록에.** (1) 관리자가 `projects/<이름>/PROGRESS.md` 맨 위 `## 목표` 체크리스트에 프로젝트를 끝내는 데 필요한 목표를 예측해 적고 라운드마다 체크를 맞춘다(표준 브리프 1-1, 8.0-8). 웹 프로젝트 카드의 진행률은 그 목록의 끝난 수/전체(`basis: goals`, '목표 2/5 · 40%'), 목표가 없으면 예전처럼 요청 평균('요청 기준 N%', `request_percent` 는 늘 실음). (2) `task s
-- `2026-11-10 21:53` 클로드 코드 [handoff] REV 147: **REV 147. `monitorctl.sh restart` 가 내리기만 하고 올리지 못하던 것.** 원인: 출력을 `| head -1` 처럼 중간에 닫히는 파이프로 받으면 stop 의 다음 줄을 찍다 SIGPIPE 로 스크립트가 죽어 start 까지 가지 못했다. `trap '' PIPE` + 출력 함수 `say`(실패 무시)로 출력이 끊겨도 동작은 끝까지 한다. 내리는 순간의 `tr: 읽기 오류` 소음도 버림. `restart | head -1` 3회 연속 재기동 확인. 준비 점검의 '2건 미통과' 는 15:37(REV 123
-- `2026-11-10 21:47` 클로드 코드 [handoff] REV 146: **REV 146. 웹에서 프로젝트 결과물을 보고, 요청 수정 화면에서 프로젝트를 바꾼다.** (1) `GET /api/projects/<이름>/files` · `/file?path=` - `projects/<이름>/` 의 파일 목록(최대 500, README·PROGRESS 먼저, 숨김·링크·의존성 폴더 제외)과 본문(텍스트만, 200KB 까지, 상세 응답과 같은 가림). 경로는 폴더 안 상대 경로만 - 절대 경로·`..`·숨김 조각·심볼릭 링크 거절. (2) 함대 탭 프로젝트 카드에 '결과물 보기' → 상세 패널에서 목록, 행을
-- `2026-11-10 21:40` 클로드 코드 [handoff] REV 145: **REV 145. 프로젝트 구조 종합 검토 - 라운드 흐름 결함 5건과 화면 가독성 정비.** (1) 웹 요청 폼은 파일만 만들고 `request list` 는 DB 만 읽어 표준 브리프 라운드의 관리자가 NEW 를 못 봤다 → `aimem_db.load_request_files` 를 `request list/set`·`task set` 앞에서 부른다. (2) `request set --project` 추가(파일 없으면 만든다). (3) 관리자가 안 뜬 라운드는 `round.json` 에 `state: failed` → 프로젝트 
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
-| 1 | 모니터 티켓 심층 방어 두 가지: 발급 티켓에 exp 상한(exp <= now+TTL+60) 검사, _TICKET_LOG_RE 를 %7E 인코딩 꼴까지 넓히기 | S2 | R11 검수 A·재검수 권고. 결함 아님 - 키가 샌 경우의 피해만 줄임 |
-| 2 | 웹워들 키 높이 하한을 clamp(32px, …) 로 (projects/웹워들/web/css). 모니터가 min-height 428px 로 받쳐 주고 있을 뿐, 결과물 자체 하한은 아직 20px | S3 | R11 재검수 남은 결함 1. 웹워들 프로젝트 쪽 일이라 이번 라운드(함대 요청) 범위 밖 |
-| 3 | 모니터 브라우저 검사를 크로미엄 말고 파이어폭스로도 한 번: CSP sandbox 지시어와 티켓 경로 동작 확인 | S3 | R11 검수 A·B 가 '못 본 것' 으로 남김 |
+| 1 | 모니터 브라우저 검사를 크로미엄 말고 파이어폭스로도 한 번: CSP sandbox 지시어와 티켓 경로 동작 확인 | S3 | R11 검수 A·B 가 '못 본 것' 으로 남김 |
+| 2 | 실행 티켓이 주체를 안 묶습니다: 허용 목록에서 계정을 지워도 그 전에 받아 둔 12시간 티켓은 그대로 듣습니다(쿠키·API 는 즉시 끊김). 티켓 서명 payload 에 주체를 넣고 /app/ 에서 세션 주체와 대조 (R12 T-157 결함 2) | S2 |  |
+| 3 | 허용 목록에 걸려 끊긴 요청이 audit 에 안 남습니다 - monitor.log 의 401 뿐이라 왜 못 들어오는지 아무도 못 봅니다 (R12 T-157 결함 3) | S2 |  |
+| 4 | 미리보기 보관함을 **브라우저에서** 재는 검사 (설계 preview-storage.md 7절). R13 T-164 가 S3 에서 두 번 실패(45분 타임아웃·빈손)해 이 길은 자동 검사가 0개입니다 - 변이 10개 중 0개를 잡습니다. 모니터 '/' 를 열고 openProjectApp 으로 띄운 뒤 재야 하며, 노드를 '한 판 두고 새로 고침' / '칸 격리' / '중첩 iframe 무시' 셋으로 쪼개 주십시오 | S3 | R13 T-165·T-174 결함 1. 웹워들 목표가 이것 때문에 안 닫힘 |
+| 5 | storage.js 의 키 꼴 검사와 8,192자 상한을 단위 시험이 보지 않습니다 - 관리자 변이 M5·M6 를 넣어도 40개가 그대로 초록입니다. 모니터가 같은 것을 다시 거르므로 제품은 안전하지만, 결과물 쪽 방어선이 언제 사라졌는지 아무도 모릅니다 | S3 | R13 관리자 변이 시험 |
 
 ## 6. 파일 소유권
 
@@ -160,6 +205,7 @@
 | `projects/**` | 관리자 | 프로젝트 결과물 projects/<이름>/ - 여러 라운드에 걸쳐 쌓임 (REV 142). 관리자가 하위 경로를 슬롯에 배정 |
 | `projects/웹워들/README.md` | S3 | R10 |
 | `projects/웹워들/app.json` | S3 | R10 |
+| `projects/웹워들/docs/**` | S1 | R12 T-152 미리보기 기록 저장 설계 문서 (새 경로) |
 | `projects/웹워들/tests/README.md` | S1 | R8 검증 모음 사용법 |
 | `projects/웹워들/tests/browser_core.py` | S2 | R9 T-118 S3 장애(세 번 빈손 종료)로 S2 이관 |
 | `projects/웹워들/tests/browser_harness.py` | S3 | R9 T-115 shot() 뷰포트 선택지 (S2→S3, 브라우저를 띄울 수 있는 슬롯) |
@@ -170,37 +216,48 @@
 | `projects/웹워들/tests/screenshots/ui/**` | S2 | R8 증거 스크린샷 |
 | `projects/웹워들/tests/smoke_integration.mjs` | S3 | R8 T-113 dvh 대비 불변식 재작성 (S1→S3 이관) |
 | `projects/웹워들/tests/test_game.mjs` | S3 | R7 로직 테스트 (만든 슬롯과 다른 슬롯) |
+| `projects/웹워들/tests/test_storage.mjs` | S3 | R13 T-162 부모 모드 단위 시험 (만든 슬롯과 다른 슬롯) |
 | `projects/웹워들/tests/test_words.py` | S2 | R7 단어 목록 테스트 |
 | `projects/웹워들/tools/**` | S2 | R7 단어 목록 생성기 |
 | `projects/웹워들/web/css/**` | S4 | R7 테마·타일·키보드 |
-| `projects/웹워들/web/css/style.css` | S3 | R8 T-113 dvh 대비 복구 (S2→S3) |
+| `projects/웹워들/web/css/style.css` | S2 | R12 T-146 키 높이 하한·좌우 배치 (S3→S2, 검사는 S3 가 써 교차 검증) |
 | `projects/웹워들/web/index.html` | S4 | R7 화면 |
-| `projects/웹워들/web/js/game.js` | S1 | R7 순수 판정 로직 |
-| `projects/웹워들/web/js/storage.js` | S4 | R7 통계·진행 저장 |
-| `projects/웹워들/web/js/ui.js` | S4 | R7 DOM·입력·애니메이션 |
+| `projects/웹워들/web/js/game.js` | S2 | R12 T-148 하드 모드 (S1 유료→S2 무료, 만들기·고치기는 무료 슬롯) |
+| `projects/웹워들/web/js/storage.js` | S2 | R13 T-161 부모 모드 저장 (S4 유료→S2 무료, 만들기·고치기는 무료 슬롯) |
+| `projects/웹워들/web/js/ui.js` | S2 | R13 T-161 await init() 호출 자리 (storage.js 와 같은 슬롯) |
 | `projects/웹워들/web/js/words.js` | S2 | R7 단어 목록 생성물 |
 | `rounds/**` | 관리자 | 라운드 기록 폴더 rounds/R<N>/ - brief.md·REPORT.md 만 (결과물은 projects/) |
 | `rounds/R10/REVIEW.md` | S1 | R10 |
 | `rounds/R11/REVIEW-A.md` | S1 | R11 T-136 적대적 검수 A |
 | `rounds/R11/REVIEW-B.md` | S4 | R11 T-137 적대적 검수 B |
 | `rounds/R11/REVIEW-C.md` | S1 | R11 T-143 재검수 |
+| `rounds/R12/REVIEW-auth.md` | S1 | R12 T-157 재검수 (새 경로) |
+| `rounds/R12/REVIEW-design.md` | S4 | R12 T-153 설계 적대적 검토 (새 경로) |
+| `rounds/R13/REVIEW-preview-2.md` | S1 | R13 T-174 재검수 |
+| `rounds/R13/REVIEW-preview.md` | S1 | R13 T-165 적대적 검수 |
+| `rounds/R14/REVIEW-archive.md` | S1 | R14 T-186 적대적 검수 |
 | `skills/**` | 관리자 | **현재 비어 있음** (REV 101 에서 `acp-slot-lifecycle` 제거). 되살아나면 이 행이 그대로 적용된다 |
 | `tests/browser_monitor_app.py` | S3 | R10 T-131 |
 | `tests/browser_monitor_auth.py` | S3 | R10 T-135 |
-| `tests/browser_monitor_ui.py` | S2 | R11 T-145 짧은 화면 키 크기 검사 (S3→S2) |
+| `tests/browser_monitor_preview.py` | S2 | R14 T-185 웹워들 미리보기 보관함 브라우저 실측 (새 파일, app.js 보관함을 쓴 R13 S2 와 같은 슬롯이나 검사 대상은 R13 산출물) |
+| `tests/browser_monitor_preview_guard.py` | S3 | R14 T-185 미리보기 보관함 방어 실측 (새 파일) |
+| `tests/browser_monitor_ui.py` | S3 | R13 T-170 화면 실측 (app.js 를 고친 S2 와 다른 슬롯) |
+| `tests/test_aimem_db_cli.py` | S3 | R14 T-180 (aimem_db.py 를 고친 S2 와 다른 슬롯) |
 | `tests/test_aimem_lint.py` | S2 | T-005B. R5 에 S4 로 잠시 이관(KISTI 장애) → 2026-11-10 09:15 S2 복구로 환원(태석님 지시) |
 | `tests/test_aimem_monitor*.py` | S2 | 웹 UI 계약 테스트. R5 에 S4 로 잠시 이관 → 2026-11-10 09:15 S2 복구로 환원(태석님 지시) |
 | `tests/test_aimem_monitor_app.py` | S2 | R10 |
+| `tests/test_archive_api.py` | S3 | R14 T-183 /api/archive 계약 시험 (새 파일, server.py 를 고친 S2 와 다른 슬롯) |
 | `tests/test_fleet*.py` | S2 | `fleet.py` 회귀 테스트. 태석님 승인 2026-11-10 R6 브리프 (9절 2번 해소 - 승인 당시 S4 였으나 S2 복귀로 S2) |
 | `tools/aimem_board.py` | S1 | T-006 / T-009 |
-| `tools/aimem_db.py` | 관리자 | 운영 상태 SQLite (REV 112~). `migrate`/`render`/`check`/`event`. 출처는 클로드 코드 |
+| `tools/aimem_db.py` | S2 | R14 T-177·T-178 끝난 것 정리와 연동한 기록 아카이브 (관리자→S2, 만들기·고치기는 무료 슬롯) |
 | `tools/aimem_lint.py` | S1 | T-005A |
 | `tools/aimem_monitor/__init__.py` | S2 | R10 |
 | `tools/aimem_monitor/__main__.py` | 관리자 | 라운드 3 웹 UI. `python3 -m aimem_monitor` 진입점 |
-| `tools/aimem_monitor/reader.py` | S1 | 라운드 3 웹 UI. 파일 -> 딕셔너리 (파싱·ETA) |
+| `tools/aimem_monitor/reader.py` | S2 | R13 T-166·T-168 goal 제거·ETA 수정 (S1 유료→S2 무료) |
 | `tools/aimem_monitor/server.py` | S2 | R10 |
 | `tools/aimem_monitor/static/**` | S3 | 라운드 3 웹 UI. 정적 프런트엔드 (HTML/JS/CSS) |
 | `tools/aimem_monitor/static/app.js` | S2 | R10 |
+| `tools/aimem_monitor/static/index.html` | S2 | R13 T-167 KISTI 카드 제거 (app.js 와 같은 슬롯) |
 | `tools/aimem_monitor/static/style.css` | S2 | R10 |
 | `tools/aimem_monitor/static/sw.js` | S2 | R10 |
 | `tools/envcheck/__init__.py` | 관리자 | 공통 계약(`check()` / `Result`) 정의 |
@@ -231,38 +288,52 @@
 | Q-261111-f77f | 웹워들 남은 목표 넷(보드·통계·보기 설정·접근성)의 검사 구멍을 메워 15/15 로 | 클로드 코드 (태석님 위임, R8 남은 일) | DONE | 2026-11-11T02:00:19 |
 | Q-261111-5593 | 워들을 함대 모니터 웹에서 실행하기 | 태석 | DONE | 2026-11-11T05:43:39 |
 | Q-261111-8481 | 모니터 결과물 실행(/app, 경로 티켓)의 적대적 검수와 수정·재검수 | 클로드 코드 (태석님 위임, R10 남은 일) | DONE | 2026-11-11T15:37:59 |
+| Q-261111-4e63 | 웹워들 후속: 키 높이·애니메이션 결함·좌우 배치·낱말 거르기·하드 모드·미리보기 기록 저장(설계) | 클로드 코드 (태석님 위임) | DONE | 2026-11-11T17:55:31 |
+| Q-261111-e1f1 | 모니터: 티켓 심층 방어·파이어폭스 검사·GitHub 세션 티켓 발급 시험 | 클로드 코드 (태석님 위임) | DONE | 2026-11-11T17:55:31 |
+| Q-261111-fbd1 | 보드 큐, 끝난 작업 정리 기능 점검 | 태석 | DONE | 2026-11-11T18:12:27 |
+| Q-261111-2665 | 함대, kistillm 모니터링 제거 | 태석 | DONE | 2026-11-11T18:22:39 |
+| Q-261111-d64b | 함대, 작업자 실행 상태, 프로젝트 컬럼 볼드처리 점검 개선 | 태석 | DONE | 2026-11-11T18:26:59 |
+| Q-261111-0afe | 요청트리, 요청별 분담트리 ETA 상태 점검 개선 | 태석 | DONE | 2026-11-11T18:34:57 |
+| Q-261111-2e0f | 작업 트리, 태스크 그래프의 제목의 생략 내용 조회 | 태석 | DONE | 2026-11-11T18:44:15 |
+| Q-261111-e099 | 함대, 현재 목표 기능 삭제, 개선 검토 | 태석 | DONE | 2026-11-11T18:48:55 |
+| Q-261111-663d | 웹워들: 남은 목표 1개 이어 가기 (R12 뒤 자동) | 함대 이어 달리기 | IN-PROGRESS | 2026-11-11T18:57:21 |
+| Q-261111-731b | 요청 트리: 끝난 요청·그래프를 화면에서 치우기 (있는 '끝난 것 정리' 를 쓰기 쉽게, 자동 정리 기준 손보기) | 태석 | IN-PROGRESS | 2026-11-11T18:58:35 |
+| Q-261111-7859 | 끝난 것 정리와 연동: 정리되는 작업의 실행 기록·이벤트·핸드오프·로그도 함께 아카이브 (자동은 14일, Q-261111-731b 에 덧붙임) | 태석 (클로드 코드가 옮겨 적음) | IN-PROGRESS | 2026-11-11T19:15:43 |
+| Q-261111-fa37 | 요청별 분담 트리 진행상황 표시 현실화 | 태석 | IN-PROGRESS | 2026-11-11T20:31:53 |
+| Q-261111-7958 | 알림: S3(opencode)의 모델이 EXAONE 에서 kistillm 으로 바뀌었습니다 (태석님 지시) | 슬롯 관리(클로드 코드, 태석님 지시) | DONE | 2026-11-11T21:02:42 |
+| Q-261111-b56e | 웹워들: 미리보기 기록 저장을 실제 브라우저로 재서 마지막 목표 닫기 | 클로드 코드 (태석님 위임) | IN-PROGRESS | 2026-11-11T22:01:50 |
 
 ## 실행 (최근 30)
 
 | run id | 태스크 | 슬롯 | 하네스 | 모델 | 시도 | 상태 | rc | 시작 | 끝 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| T-121-S2-a1-040236 | T-121 | S2 | codex |  | 1 | done | 0 | 04:02:36 | 04:04:56 |
-| T-121-S2-a2-040506 | T-121 | S2 | codex |  | 2 | done | 0 | 04:05:06 | 04:11:13 |
-| T-122-S2-a1-041145 | T-122 | S2 | codex |  | 1 | done | 0 | 04:11:45 | 04:16:34 |
-| T-123-S1-a1-041737 | T-123 | S1 | claude | opus | 1 | done | 0 | 04:17:37 | 04:24:21 |
-| T-124-S2-a1-042703 | T-124 | S2 | codex |  | 1 | done | 0 | 04:27:03 | 04:32:41 |
-| T-125-S1-a1-043311 | T-125 | S1 | claude | opus | 1 | done | 0 | 04:33:11 | 04:37:31 |
-| T-126-S2-a1-062424 | T-126 | S2 | codex |  | 1 | done | 0 | 06:24:24 | 06:41:23 |
-| T-127-S2-a1-064202 | T-127 | S2 | codex |  | 1 | done | 0 | 06:42:02 | 06:44:14 |
-| T-129-S3-a1-064202 | T-129 | S3 | opencode |  | 1 | done | 0 | 06:42:02 | 06:42:52 |
-| T-129-S3-a2-064302 | T-129 | S3 | opencode |  | 2 | done | 0 | 06:43:02 | 06:47:39 |
-| T-127-S2-a2-064422 | T-127 | S2 | codex |  | 2 | done | 0 | 06:44:22 | 06:48:55 |
-| T-128-S2-a1-064941 | T-128 | S2 | codex |  | 1 | done | 0 | 06:49:41 | 06:55:00 |
-| T-128-S2-a2-065502 | T-128 | S2 | codex |  | 2 | done | 0 | 06:55:02 | 07:00:12 |
-| T-131-S3-a1-070633 | T-131 | S3 | opencode |  | 1 | done | 0 | 07:06:33 | 07:07:12 |
-| T-132-S2-a1-070633 | T-132 | S2 | codex |  | 1 | done | 0 | 07:06:33 | 07:09:57 |
-| T-131-S3-a2-070713 | T-131 | S3 | opencode |  | 2 | done | 0 | 07:07:13 | 07:16:55 |
-| T-133-S1-a1-071705 | T-133 | S1 | claude | opus | 1 | done | 0 | 07:17:05 | 07:26:47 |
-| T-134-S2-a1-074014 | T-134 | S2 | codex |  | 1 | done | 0 | 07:40:14 | 07:52:51 |
-| T-135-S3-a1-075339 | T-135 | S3 | opencode |  | 1 | done | 0 | 07:53:39 | 08:00:26 |
-| T-136-S1-a1-154720 | T-136 | S1 | claude | opus | 1 | done | 0 | 15:47:20 | 15:54:17 |
-| T-137-S4-a1-154720 | T-137 | S4 | claude | sonnet | 1 | done | 0 | 15:47:20 | 16:00:39 |
-| T-138-S3-a1-154720 | T-138 | S3 | opencode |  | 1 | done | 0 | 15:47:20 | 15:52:15 |
-| T-139-S2-a1-160843 | T-139 | S2 | codex |  | 1 | done | 0 | 16:08:43 | 16:12:47 |
-| T-141-S3-a1-160843 | T-141 | S3 | opencode |  | 1 | done | 0 | 16:08:43 | 16:16:42 |
-| T-139-S2-a2-161326 | T-139 | S2 | codex |  | 2 | done | 0 | 16:13:26 | 16:16:06 |
-| T-142-S3-a1-161700 | T-142 | S3 | opencode |  | 1 | done | 0 | 16:17:00 | 16:37:11 |
-| T-140-S2-a1-163810 | T-140 | S2 | codex |  | 1 | done | 0 | 16:38:10 | 16:42:37 |
-| T-143-S1-a1-164309 | T-143 | S1 | claude | opus | 1 | done | 0 | 16:43:09 | 16:55:56 |
-| T-144-S2-a1-165933 | T-144 | S2 | codex |  | 1 | done | 0 | 16:59:33 | 17:02:00 |
-| T-145-S2-a1-170233 | T-145 | S2 | codex |  | 1 | done | 0 | 17:02:33 | 17:10:38 |
+| T-155-S2-a1-181916 | T-155 | S2 | codex |  | 1 | done | 0 | 18:19:16 | 18:24:44 |
+| T-151-S3-a1-182056 | T-151 | S3 | opencode |  | 1 | done | 0 | 18:20:56 | 18:26:58 |
+| T-156-S2-a1-182952 | T-156 | S2 | codex |  | 1 | done | 0 | 18:29:52 | 18:34:27 |
+| T-158-S1-a1-182952 | T-158 | S1 | claude | opus | 1 | done | 0 | 18:29:52 | 18:32:14 |
+| T-159-S2-a1-183639 | T-159 | S2 | codex |  | 1 | done | 0 | 18:36:39 | 18:37:57 |
+| T-159-S2-a2-183856 | T-159 | S2 | codex |  | 2 | done | 0 | 18:38:56 | 18:40:15 |
+| T-157-S1-a1-184237 | T-157 | S1 | claude | opus | 1 | done | 0 | 18:42:37 | 18:47:01 |
+| T-160-S2-a1-184803 | T-160 | S2 | codex |  | 1 | done | 0 | 18:48:03 | 18:50:03 |
+| T-161-S2-a1-192006 | T-161 | S2 | codex |  | 1 | done | 0 | 19:20:06 | 19:23:53 |
+| T-162-S3-a1-192409 | T-162 | S3 | opencode |  | 1 | done | 0 | 19:24:09 | 19:37:11 |
+| T-163-S2-a1-192409 | T-163 | S2 | codex |  | 1 | done | 0 | 19:24:09 | 19:32:22 |
+| T-166-S2-a1-193307 | T-166 | S2 | codex |  | 1 | done | 0 | 19:33:07 | 19:42:46 |
+| T-162-S3-a2-193728 | T-162 | S3 | opencode |  | 2 | done | 0 | 19:37:28 | 19:50:19 |
+| T-167-S2-a1-194339 | T-167 | S2 | codex |  | 1 | done | 0 | 19:43:39 | 19:46:58 |
+| T-168-S2-a1-194736 | T-168 | S2 | codex |  | 1 | done | 0 | 19:47:36 | 19:50:56 |
+| T-164-S3-a1-195039 | T-164 | S3 | opencode |  | 1 | lost |  | 19:50:39 | 20:35:44 |
+| T-169-S2-a1-195151 | T-169 | S2 | codex |  | 1 | done | 0 | 19:51:51 | 19:53:20 |
+| T-164-S3-a2-203544 | T-164 | S3 | opencode |  | 2 | done | 0 | 20:35:44 | 20:50:23 |
+| T-165-S1-a1-210111 | T-165 | S1 | claude | opus | 1 | done | 0 | 21:01:11 | 21:07:07 |
+| T-170-S3-a1-210111 | T-170 | S3 | opencode |  | 1 | done | 0 | 21:01:11 | 21:16:16 |
+| T-171-S2-a1-211908 | T-171 | S2 | codex |  | 1 | done | 0 | 21:19:08 | 21:22:52 |
+| T-173-S3-a1-211908 | T-173 | S3 | opencode |  | 1 | done | 0 | 21:19:08 | 21:21:23 |
+| T-172-S2-a1-212302 | T-172 | S2 | codex |  | 1 | done | 0 | 21:23:02 | 21:26:03 |
+| T-174-S1-a1-212711 | T-174 | S1 | claude | opus | 1 | done | 0 | 21:27:11 | 21:31:57 |
+| T-175-S2-a1-213324 | T-175 | S2 | codex |  | 1 | done | 0 | 21:33:24 | 21:33:53 |
+| T-176-S3-a1-213407 | T-176 | S3 | opencode |  | 1 | done | 0 | 21:34:07 | 21:35:07 |
+| T-177-S2-a1-222350 | T-177 | S2 | codex |  | 1 | done | 0 | 22:23:50 | 22:38:21 |
+| T-185-S3-a1-222350 | T-185 | S3 | opencode |  | 1 | running |  | 22:23:50 |  |
+| T-177-S2-a2-223926 | T-177 | S2 | codex |  | 2 | lost |  | 22:39:26 |  |
+| T-178-S2-a1-224546 | T-178 | S2 | codex |  | 1 | running |  | 22:45:46 |  |

@@ -44,6 +44,45 @@ test("hardModeViolation", () => {
   assert.match(hardModeViolation("crank", rows), /E/);
 });
 
+test("hardModeViolation: 초록 자리 어김이 잡힌다 (회귀)", () => {
+  const rows = [{ guess: "crane", scores: ["correct", "absent", "absent", "absent", "absent"] }];
+  const msg = hardModeViolation("brane", rows);
+  assert.ok(msg && msg.includes("1번째 글자는 C 이어야 합니다"));
+});
+
+test("hardModeViolation: 노랑 글자가 아예 빠지면 잡힌다 (회귀)", () => {
+  const rows = [{ guess: "abbey", scores: ["present", "absent", "absent", "absent", "absent"] }];
+  const msg = hardModeViolation("zzzzz", rows);
+  assert.ok(msg && msg.includes("A 가 들어가야 합니다"));
+});
+
+test("hardModeViolation: 노랑이 둘인데 하나만 넣으면 잡힌다", () => {
+  const rows = [{ guess: "eerie", scores: ["present", "present", "absent", "absent", "absent"] }];
+  const msg = hardModeViolation("crane", rows);
+  assert.ok(msg && msg.includes("E 가 2개 들어가야 합니다"));
+});
+
+test("hardModeViolation: 노랑 둘을 드러내고 둘을 다 넣으면 null", () => {
+  const rows = [{ guess: "eerie", scores: ["present", "present", "absent", "absent", "absent"] }];
+  assert.equal(hardModeViolation("zzeez", rows), null);
+});
+
+test("hardModeViolation: 노랑이었던 자리에 같은 글자를 되놓으면 잡힌다", () => {
+  const rows = [{ guess: "slate", scores: ["present", "absent", "absent", "absent", "absent"] }];
+  const msg = hardModeViolation("slate", rows);
+  assert.ok(msg && msg.includes("1번째 자리가 아닙니다"));
+});
+
+test("hardModeViolation: 규칙을 다 지킨 추측은 null", () => {
+  const rows = [{ guess: "crane", scores: ["correct", "absent", "absent", "absent", "present"] }];
+  assert.equal(hardModeViolation("creps", rows), null);
+});
+
+test("hardModeViolation: rows 가 비었거나 null 이면 null", () => {
+  assert.equal(hardModeViolation("crane", []), null);
+  assert.equal(hardModeViolation("crane", null), null);
+});
+
 test("판 진행", () => {
   const g = createGame({ answer: "crane", allowed: ["crane", "slate", "audio", "ghost"] });
   for (const ch of "cra") g.addLetter(ch);

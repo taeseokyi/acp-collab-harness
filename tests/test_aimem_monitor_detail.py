@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """T-051 상세조회 계약 테스트 (요청 8d8d, 슬롯 S2).
 
-표준 라이브러리 unittest 만 사용한다. 실제 KISTI 서버를 때리지 않고,
+표준 라이브러리 unittest 만 사용한다.
 HTTP 계약은 127.0.0.1 의 임시 포트(0번)에 띄운 서버로만 검증한다.
 
 `run_detail` 이 아직 없을 때의 스킵 조건은 `hasattr(reader, "run_detail")`
@@ -298,27 +298,12 @@ class TestServerContract(unittest.TestCase):
             )
             self.thread.start()
 
-        self._old_cache = (
-            server._kisti_cache["at"],
-            server._kisti_cache["value"],
-        )
-        # 네트워크를 치지 않도록 기본 캐시를 가짜 값으로 채운다.
-        server._kisti_cache["at"] = datetime.datetime.now()
-        server._kisti_cache["value"] = {
-            "ok": False,
-            "url": "test",
-            "fetched": "2026-11-09T00:00:00",
-            "error": "테스트에서 네트워크를 치지 않습니다",
-        }
-
     def tearDown(self):
         if getattr(self, "httpd", None) is not None:
             self.httpd.shutdown()
             self.httpd.server_close()
             if getattr(self, "thread", None) is not None:
                 self.thread.join(timeout=2)
-        if getattr(self, "_old_cache", None) is not None:
-            server._kisti_cache["at"], server._kisti_cache["value"] = self._old_cache
         if getattr(self, "tmp", None) is not None:
             self.tmp.cleanup()
 
@@ -430,26 +415,6 @@ class TestServerContract(unittest.TestCase):
                 status, _, _ = self.get(path)
                 self.assertIn(status, (400, 404), f"잘못된 id 에 {status} 응답")
 
-    def test_kisti_weird_field_types_no_500(self):
-        fake = {
-            "ok": True,
-            "url": "test",
-            "fetched": "2026-11-09T00:00:00",
-            "error": None,
-            "busy": "yes",
-            "queued": {"a": 1},
-            "generated": "9",
-        }
-        with mock.patch.object(server, "kisti_status", return_value=fake):
-            status, headers, raw = self.get("/api/state")
-        self.assertEqual(status, 200)
-        ctype = headers.get("Content-Type", "").split(";")[0].strip()
-        self.assertEqual(ctype, "application/json")
-        body = json.loads(raw.decode("utf-8"))
-        self.assertIsInstance(body, dict)
-        self.assertIn("kisti", body)
-
-
 class TestGraphAndStateDefense(unittest.TestCase):
     def setUp(self):
         if server is None:
@@ -466,14 +431,6 @@ class TestGraphAndStateDefense(unittest.TestCase):
         (self.graph_dir / name).write_text(
             json.dumps(payload, ensure_ascii=False), encoding="utf-8"
         )
-
-    def fake_kisti(self):
-        return {
-            "ok": False,
-            "url": "test",
-            "fetched": "2026-11-09T00:00:00",
-            "error": "테스트에서 네트워크를 치지 않습니다",
-        }
 
     def test_collect_graphs_bad_nodes_list(self):
         self.write_graph("bad-nodes.json", {"nodes": ["x"]})
@@ -517,14 +474,13 @@ class TestGraphAndStateDefense(unittest.TestCase):
 
     def test_collect_state_survives_bad_graph(self):
         self.write_graph("bad-nodes.json", {"nodes": ["x"]})
-        with mock.patch.object(server, "kisti_status", return_value=self.fake_kisti()):
-            try:
-                state = server.collect_state(self.root)
-            except Exception as e:
-                self.fail(
-                    "collect_state 가 모양이 틀린 그래프에서 예외를 던졌습니다: "
-                    f"{type(e).__name__}: {e}"
-                )
+        try:
+            state = server.collect_state(self.root)
+        except Exception as e:
+            self.fail(
+                "collect_state 가 모양이 틀린 그래프에서 예외를 던졌습니다: "
+                f"{type(e).__name__}: {e}"
+            )
         self.assertIsInstance(state, dict)
         self.assertIn("graphs", state)
         self.assertIsInstance(state.get("errors"), list)
@@ -532,21 +488,18 @@ class TestGraphAndStateDefense(unittest.TestCase):
 
     def test_collect_state_failure_branch_keys_match_normal(self):
         expected = set(STATE_KEYS) | set(SERVER_KEYS)
-        with mock.patch.object(server, "kisti_status", return_value=self.fake_kisti()):
-            normal = server.collect_state(self.root)
+        normal = server.collect_state(self.root)
         self.assertEqual(set(normal), expected, "정상 분기 키 집합이 계약과 다릅니다")
 
-        with mock.patch.object(server, "kisti_status", return_value=self.fake_kisti()):
-            with mock.patch.object(reader, "collect", side_effect=RuntimeError("boom")):
-                raised = server.collect_state(self.root)
+        with mock.patch.object(reader, "collect", side_effect=RuntimeError("boom")):
+            raised = server.collect_state(self.root)
         self.assertIsInstance(raised, dict)
         self.assertEqual(set(raised), expected, "reader.collect 예외 분기 키 집합이 다릅니다")
         self.assertIsInstance(raised.get("errors"), list)
         self.assertTrue(raised["errors"])
 
-        with mock.patch.object(server, "kisti_status", return_value=self.fake_kisti()):
-            with mock.patch.object(reader, "collect", return_value=["not", "dict"]):
-                non_dict = server.collect_state(self.root)
+        with mock.patch.object(reader, "collect", return_value=["not", "dict"]):
+            non_dict = server.collect_state(self.root)
         self.assertIsInstance(non_dict, dict)
         self.assertEqual(
             set(non_dict), expected,
@@ -554,44 +507,6 @@ class TestGraphAndStateDefense(unittest.TestCase):
         )
         self.assertIsInstance(non_dict.get("errors"), list)
         self.assertTrue(non_dict["errors"])
-
-    def test_fetch_kisti_weird_field_types_do_not_pass_through(self):
-        payload = {
-            "busy": "yes",
-            "queued": {"a": 1},
-            "generated": "9",
-            "phase": "idle",
-        }
-
-        class FakeResponse:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-            def read(self, size=-1):
-                return json.dumps(payload).encode("utf-8")
-
-        class FakeOpener:
-            def open(self, req, timeout=None):
-                return FakeResponse()
-
-        with mock.patch.dict(os.environ, {"KISTI_API_KEY": "test-key"}):
-            with mock.patch.object(
-                server, "_no_redirect_opener", return_value=FakeOpener()
-            ):
-                result = server._fetch_kisti(url="http://test", timeout=1)
-
-        self.assertIsInstance(result, dict)
-        json.dumps(result)  # 응답이 JSON 으로 직렬화되어야 한다
-        for field, want in server.KISTI_FIELD_TYPES.items():
-            if field not in result:
-                continue
-            got = result[field]
-            if want is int and isinstance(got, bool):
-                self.fail(f"{field}: bool 은 int 로 통과시키지 않습니다")
-            self.assertIsInstance(got, want, f"{field} 타입이 {want} 가 아닙니다: {got!r}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,10 @@
+{
+ "id": "Q-261111-7958",
+ "created": "2026-11-11T21:02:42",
+ "requester": "슬롯 관리(클로드 코드, 태석님 지시)",
+ "project": "",
+ "title": "알림: S3(opencode)의 모델이 EXAONE 에서 kistillm 으로 바뀌었습니다 (태석님 지시)",
+ "detail": "태석님이 2026-11-11 21:00 에 정하셨습니다: **opencode 의 모델을 EXAONE 에서 kistillm 으로 바꾸고, EXAONE 에만 맞춘 설정·규칙은 걷어낸다.** (\"개별 사례에 맞추는 것은 좋지 않다. 복잡해질 뿐이다.\")\n\n- `~/.config/opencode/opencode.jsonc` 의 기본 모델이 `kisti/kistillm` 입니다. 21:00 이후 뜨는 S3 작업자부터 kistillm 으로 돕니다(확인: 작은 과제 36초에 DONE)\n- 이제 **S2(codex)와 S3(opencode)는 모델이 같고 하네스만 다릅니다.** 표준 브리프와 `8.0-8` 에서 EXAONE 전용 문구(출력 상한, 좁은 일만 주기)를 뺐습니다\n- 관리자가 할 일: 확인하고 이 알림을 닫습니다. S3 의 역할·비고에 EXAONE 을 적어 두었다면 `aimem_db.py slot set --slot S3 --note …` 로 고칩니다. 그 밖에 할 일은 없습니다",
+ "status": "DONE",
+ "subtasks": []
+}

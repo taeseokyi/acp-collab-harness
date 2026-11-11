@@ -363,6 +363,7 @@ def public_state(manager_labels=(), manager_running_now=False):
             "default": bool(m.get("default")), "running_runs": len(rr),
             "graphs": [{"id": g["id"], "runner": bool(g["runner"]), "counts": g["counts"]} for g in graphs],
             "brief": b, "prepare": last_prepare(), "relay": relay, "can": can, "idle": idle,
+            "chain_modes": ["stop", "renew", "autonomous"],     # 상한에 닿았을 때 할 일 - 화면은 서버가 아는 것만 보인다
             "last_round": _last_round(relay),
             "chain": {k: v for k, v in chain_state().items() if k != "log"} | {"last": (chain_state().get("log") or [None])[-1]}}
 
@@ -692,7 +693,7 @@ def _relay_worker(n):
     note("관리자 세션 확인" if rec["state"] == "spawned" else "관리자 세션이 생기지 않았습니다 - 사람이 확인해야 합니다")
     if rec["state"] != "spawned":
         if chain_state().get("on"):
-            chain_set(False, by=f"R{n} 관리자가 뜨지 않음")
+            _chain_stop(chain_state(), "error", f"R{n} 관리자가 뜨지 않았습니다 - 전달 기록(.aimem/relay/r{n}.json)을 확인하십시오", n)
         return 1
     if chain_state().get("on"):
         note("이어 달리기 켜짐 - 라운드가 끝나면 목표를 보고 다음 라운드를 띄웁니다")
@@ -705,6 +706,7 @@ def _relay_worker(n):
 # (클로드 코드가) 손으로 이었습니다: 보고와 `PROGRESS.md` 의 `## 목표` 를 읽고 → 남은 목표를 요청으로 넣고 → 준비 → 라운드.
 # 켜는 것은 사람입니다(엔진은 태석님). 유료 관리자가 라운드마다 뜨므로 **연속 상한**과 **멈춤 조건**이 꼭 있습니다.
 CHAIN_MAX_ROUNDS = 10            # 사람이 고를 수 있는 연속 상한의 최대
+CHAIN_HARD_ROUNDS = 30           # 상한을 새로 이어 가며(`renew`) 돌 때의 안전 상한(모두 합친 라운드 수) - 여기 닿으면 사람이 다시 켠다
 CHAIN_DEFAULT_ROUNDS = 3
 CHAIN_WAIT_SEC = 6 * 3600        # 한 라운드를 기다리는 최대 시간 (넘으면 이어 달리기를 끈다)
 CHAIN_POLL_SEC = 45
@@ -749,6 +751,11 @@ def project_goals(project):
         g = _GOAL_ITEM.match(line)
         if g:
             out.append((g.group(1) != " ", g.group(2).strip()))
+        elif out and line[:1] in (" ", "\t") and line.strip() and not line.lstrip().startswith(("-", "*", ">", "#")):
+            # 목표 한 항목이 여러 줄에 걸쳐 적힌 경우 - 이어지는 들여쓴 줄을 붙인다 (R12: 요청에 "…재검수를" 에서 끊긴 글이 갔다)
+            done, t = out[-1]
+            if len(t) < 600:
+                out[-1] = (done, (t + " " + line.strip())[:600])
     return out[:200]
 
 
@@ -762,27 +769,118 @@ def round_report_status(n):
     return m.group(1).upper() if m else None
 
 
-def chain_set(on, project=None, max_rounds=None, by="사람"):
-    """이어 달리기를 켜거나 끕니다. 켤 때 지금의 목표 체크 수를 기준으로 적어 둡니다."""
+def _goal_projects():
+    """목표 체크리스트(`PROGRESS.md` 의 `## 목표`)가 있는 프로젝트 이름들."""
+    out = []
+    try:
+        for d in sorted((fleet.ROOT / "projects").iterdir()):
+            if d.is_dir() and not d.is_symlink() and re.match(fleet.PROJECT_NAME_RE, d.name) and project_goals(d.name):
+                out.append(d.name)
+    except OSError:
+        pass
+    return out
+
+
+def chain_targets(st):
+    """상태에서 대상 `(fleet, projects, all)` 을 읽습니다. 옛 상태(`project` 하나, `scope`)도 받아 줍니다."""
+    if st.get("all") or st.get("scope") == "all":
+        return True, [], True
+    projects = [p for p in (st.get("projects") or []) if isinstance(p, str) and p]
+    if not projects and st.get("project"):
+        projects = [st["project"]]
+    fleet_on = bool(st.get("fleet")) or st.get("scope") == "fleet"
+    if not fleet_on and not projects and "fleet" not in st and "projects" not in st:
+        return True, [], True                      # 대상이 안 적힌 옛 상태 = 열린 요청 전부
+    return fleet_on, projects, False
+
+
+def chain_label(fleet_on, projects, all_):
+    if all_:
+        return "전체(프로젝트+함대)"
+    return " + ".join((["함대"] if fleet_on else []) + [f"프로젝트 {p}" for p in projects]) or "(대상 없음)"
+
+
+def chain_work(fleet_on=False, projects=(), all_=False):
+    """고른 대상의 남은 일. `{requests: [열린 요청 id], goals: {프로젝트: {done, total, open}}}`.
+
+    - 함대      : 프로젝트가 없는 열린 요청 (함대 자체의 일)
+    - 프로젝트들 : 그 프로젝트들의 열린 요청 + 체크 안 된 목표 (여러 개 고를 수 있다)
+    - 전체      : 열린 요청 전부 + 목표 체크리스트가 있는 모든 프로젝트의 체크 안 된 목표 (나중에 생기는 프로젝트도)
+    """
+    reqs = _open_requests()
+    if all_:
+        ids, names = [i for i, _ in reqs], _goal_projects()
+    else:
+        want = set(projects)
+        ids = [i for i, p in reqs if (not p and fleet_on) or (p and p in want)]
+        names = list(projects)
+    goals = {}
+    for name in names:
+        g = project_goals(name)
+        if g:
+            goals[name] = {"done": sum(1 for d, _ in g if d), "total": len(g), "open": [t for d, t in g if not d]}
+    return {"requests": ids, "goals": goals}
+
+
+def chain_set(on, project=None, max_rounds=None, by="사람", scope=None, projects=None, fleet_on=None, all_=None, autonomous=False,
+              renew=False):
+    """이어 달리기를 켜거나 끕니다. 대상은 **함대 · 프로젝트(여러 개) · 전체** 가운데 고릅니다 (2026-11-11 태석님).
+
+    `fleet_on`(함대), `projects`(이름 목록), `all_`(전체 = 프로젝트+함대) 로 줍니다. 옛 인자 `project`·`scope` 도 받습니다 -
+    아무것도 안 주면 전체입니다. 켤 때 지금의 열린 요청과 목표 체크 수를 기준으로 적어 둡니다.
+    """
     if not on:
         st = chain_state()
-        st.update({"on": False, "at": _now(), "by": by})
-        st.setdefault("log", []).append(f"{_now()} 끔 ({by})")
-        _chain_write(st)
+        if st.get("on"):                      # 이미 스스로 멈춘 뒤라면 그 까닭을 덮지 않는다
+            st["by"] = by
+            _chain_stop(st, "off", f"{by} 이(가) 껐습니다")
         return {"ok": True, "chain": st}
-    project = (project or "").strip()
-    if not re.match(fleet.PROJECT_NAME_RE, project):
-        return {"ok": False, "error": "이어 달리기는 프로젝트를 정해야 합니다 (목표 체크리스트가 멈춤 조건입니다). 이름은 한글·영문·숫자·`-`·`_`"}
+    names = [str(p).strip() for p in (projects or []) if isinstance(p, str) and str(p).strip()]
+    if project and str(project).strip() and str(project).strip() not in names:
+        names.append(str(project).strip())
+    if scope is not None and scope not in ("fleet", "project", "all"):
+        return {"ok": False, "error": "범위는 함대(fleet) · 프로젝트(project) · 전체(all) 가운데 하나입니다"}
+    is_all = bool(all_) or scope == "all"
+    is_fleet = bool(fleet_on) or scope == "fleet"
+    if scope == "fleet":
+        names = []
+    if scope == "project" and not names:
+        return {"ok": False, "error": "프로젝트를 하나 이상 고르십시오. 함대만 돌리려면 '함대', 다 돌리려면 '전체' 를 고르십시오"}
+    if not is_all and not is_fleet and not names:
+        if scope is None and fleet_on is None and projects is None and all_ is None:
+            is_all = True                           # 아무것도 안 주면 전체 (CLI 에서 `chain on` 만 쳤을 때)
+        else:
+            return {"ok": False, "error": "무엇을 이어 달릴지 하나 이상 고르십시오 - 함대, 프로젝트(여러 개 가능), 또는 전체"}
+    bad = [n for n in names if not re.match(fleet.PROJECT_NAME_RE, n)]
+    if bad:
+        return {"ok": False, "error": f"프로젝트 이름이 올바르지 않습니다: {', '.join(bad)[:80]} (한글·영문·숫자·`-`·`_`)"}
+    if is_all:
+        is_fleet, names = True, []
+    names = sorted(set(names))
+    # **상한 라운드는 언제나 있다** (2026-11-11 태석님: "끝까지 옵션도 내부적으로는 상한 라운드를 지켜야 해").
+    # 상한에 닿았을 때 무엇을 하느냐가 다르다: 멈춤 / 새 묶음으로 이어 감(`renew` = 끝날 때까지) / 완전 자율 종주(`autonomous`).
+    # 새 묶음은 라운드 수를 0 부터 다시 세고 새 관리자로 이어 간다. 옛 호출의 `max_rounds=0` 은 "기본 상한 + 이어 감" 으로 읽는다.
     try:
         mx = int(max_rounds if max_rounds is not None else CHAIN_DEFAULT_ROUNDS)
     except (TypeError, ValueError):
-        return {"ok": False, "error": "연속 상한은 숫자여야 합니다"}
+        return {"ok": False, "error": "상한 라운드는 숫자여야 합니다"}
+    renew = bool(renew) or bool(autonomous)
+    if mx == 0:
+        mx, renew = CHAIN_DEFAULT_ROUNDS, True
     if not 1 <= mx <= CHAIN_MAX_ROUNDS:
-        return {"ok": False, "error": f"연속 상한은 1~{CHAIN_MAX_ROUNDS} 라운드입니다"}
-    goals = project_goals(project)
-    st = {"on": True, "project": project, "max_rounds": mx, "rounds_done": 0,
-          "goals_done": sum(1 for d, _ in goals if d) if goals else -1,      # -1 = 아직 목표가 안 적힘(새 프로젝트)
-          "by": by, "at": _now(), "log": [f"{_now()} 켬 ({by}) - 프로젝트 {project}, 최대 {mx} 라운드"]}
+        return {"ok": False, "error": f"상한 라운드는 1~{CHAIN_MAX_ROUNDS} 입니다"}
+    work = chain_work(is_fleet, names, is_all)
+    st = {"on": True, "all": is_all, "fleet": is_fleet, "projects": names, "label": chain_label(is_fleet, names, is_all),
+          "max_rounds": mx, "rounds_done": 0,            # 이번 묶음에서 끝난 라운드 수 (상한 `max_rounds` 까지)
+          "renew": renew, "cycles": 0, "total_rounds": 0,  # 상한에 닿으면 새 묶음으로 이어 가는가 · 채운 묶음 수 · 모두 합친 라운드 수
+          # 완전 자율 종주: 새 묶음으로 이어 가고, 보고가 DONE 이 아니거나 진전이 없어도 **한 번은 더** 가 본다.
+          # 연달아 두 번 막히면 멈춘다(`strikes`). 안전 상한(`CHAIN_HARD_ROUNDS`)은 그대로다.
+          "autonomous": bool(autonomous), "strikes": 0,
+          "goals_done": sum(g["done"] for g in work["goals"].values()),     # 진전 = 이 수가 늘었거나
+          "open_requests": work["requests"],                                 #        이 가운데 닫힌 요청이 생겼는가
+          "by": by, "at": _now(),
+          "log": [f"{_now()} 켬 ({by}) - {chain_label(is_fleet, names, is_all)}, "
+                  + f"상한 {mx} 라운드, " + ("완전 자율 종주" if autonomous else "닿으면 새 묶음으로 이어 감(끝날 때까지)" if renew else "닿으면 멈춤")]}
     _chain_write(st)
     # 라운드가 이미 도는 중에 켰으면 그 라운드를 지켜볼 감시자를 따로 띄운다 (라운드를 띄울 때 켜져 있었다면 전달 작업자가 이어서 지켜본다)
     relay = relay_status() or {}
@@ -802,27 +900,49 @@ def chain_set(on, project=None, max_rounds=None, by="사람"):
 
 
 def chain_decide(round_n):
-    """라운드 `round_n` 이 끝난 지금 다음 라운드를 띄울까. `{action: launch|stop, why, open, done, total}` - 쓰지 않고 판정만."""
+    """라운드 `round_n` 이 끝난 지금 다음 라운드를 띄울까. `{action: launch|stop, why, requests, goals}` - 판정만.
+
+    남은 일(`chain_work`)이 있고 이번 라운드에 진전이 있었으면 잇는다. 진전 = 켤 때(또는 앞 라운드 끝에) 열려 있던
+    요청 가운데 닫힌 것이 생겼거나, 범위 안 프로젝트들의 목표 체크 합계가 늘었다.
+    """
     st = chain_state()
     if not st.get("on"):
         return {"action": "stop", "why": "이어 달리기가 꺼져 있습니다"}
-    project = st.get("project") or ""
-    goals = project_goals(project)
-    done = sum(1 for d, _ in goals if d)
-    open_ = [t for d, t in goals if not d]
-    base = {"done": done, "total": len(goals), "open": open_}
+    work = chain_work(*chain_targets(st))
+    open_ids, goals = work["requests"], work["goals"]
+    done = sum(g["done"] for g in goals.values())
+    total = sum(g["total"] for g in goals.values())
+    goals_left = sum(len(g["open"]) for g in goals.values())
+    base = {"requests": open_ids, "goals": goals, "done": done, "total": total}
+    left = f"열린 요청 {len(open_ids)}건" + (f" · 목표 {done}/{total}" if goals else "")
     status = round_report_status(round_n)
+    auto = bool(st.get("autonomous"))
+    second_chance = auto and int(st.get("strikes", 0)) < 1          # 완전 자율 종주: 막혀도 한 번은 더 간다
+    if not open_ids and not goals_left and status == "DONE":
+        return {**base, "action": "stop", "kind": "done", "why": f"남은 일이 없습니다 ({left}) - 끝났습니다"}
+    cap = int(st.get("max_rounds") or CHAIN_DEFAULT_ROUNDS)
+    renew = bool(st.get("renew")) or auto or not st.get("max_rounds")     # 옛 상태의 max_rounds 0 = 이어 감
+    ran = int(st.get("rounds_done", 0)) + 1
+    total = int(st.get("total_rounds", st.get("rounds_done", 0))) + 1
+    if renew and total >= CHAIN_HARD_ROUNDS:
+        return {**base, "action": "stop", "kind": "safety", "why": f"모두 {total} 라운드를 이어 왔습니다 - 안전 상한({CHAIN_HARD_ROUNDS})이라 멈춥니다. 계속하려면 다시 켜십시오 ({left})"}
     if status != "DONE":
-        return {**base, "action": "stop", "why": f"R{round_n} 보고가 {status or '없음'} 입니다 - 사람이 봐야 합니다"}
-    if not goals:
-        return {**base, "action": "stop", "why": f"projects/{project}/PROGRESS.md 에 `## 목표` 체크리스트가 없습니다"}
-    if not open_:
-        return {**base, "action": "stop", "why": f"목표 {done}/{len(goals)} - 프로젝트가 끝났습니다"}
-    if done <= int(st.get("goals_done", -1)):
-        return {**base, "action": "stop", "why": f"R{round_n} 동안 목표 체크가 늘지 않았습니다 ({done}/{len(goals)}) - 같은 자리를 돌지 않게 멈춥니다"}
-    if int(st.get("rounds_done", 0)) + 1 >= int(st.get("max_rounds", CHAIN_DEFAULT_ROUNDS)):
-        return {**base, "action": "stop", "why": f"연속 상한 {st.get('max_rounds')} 라운드에 닿았습니다 (목표 {done}/{len(goals)})"}
-    return {**base, "action": "launch", "why": f"목표 {done}/{len(goals)} - 남은 {len(open_)}개를 이어 갑니다"}
+        if second_chance and (open_ids or goals_left):
+            return {**base, "action": "launch", "strike": True, "why": f"R{round_n} 보고가 {status or '없음'} 입니다 - 완전 자율 종주라 한 번 더 갑니다 ({left})"}
+        return {**base, "action": "stop", "kind": "report", "why": f"R{round_n} 보고가 {status or '없음'} 입니다 - 사람이 봐야 합니다"
+                + (" (완전 자율 종주에서도 연달아 두 번째라 멈춥니다)" if auto else "")}
+    closed = [i for i in (st.get("open_requests") or []) if i not in open_ids]
+    if not closed and done <= int(st.get("goals_done", 0)):
+        if second_chance:
+            return {**base, "action": "launch", "strike": True, "why": f"R{round_n} 동안 닫힌 요청도 늘어난 목표 체크도 없습니다 - 완전 자율 종주라 한 번 더 갑니다 ({left})"}
+        return {**base, "action": "stop", "kind": "stuck", "why": f"R{round_n} 동안 닫힌 요청도 늘어난 목표 체크도 없습니다 ({left}) - 같은 자리를 돌지 않게 멈춥니다"
+                + (" (연달아 두 번째)" if auto else "")}
+    if ran >= cap:
+        if renew:
+            return {**base, "action": "launch", "new_cycle": True,
+                    "why": f"상한 {cap} 라운드를 채웠습니다 - 새 묶음({int(st.get('cycles', 0)) + 2}번째)으로 이어 갑니다 ({left})"}
+        return {**base, "action": "stop", "kind": "cap", "why": f"연속 상한 {cap} 라운드에 닿았습니다 ({left})"}
+    return {**base, "action": "launch", "why": f"{left} - 이어 갑니다"}
 
 
 def _chain_request(project, round_n, open_, done, total):
@@ -842,32 +962,55 @@ def _chain_request(project, round_n, open_, done, total):
                                   "detail": detail, "requester": "함대 이어 달리기", "project": project}, fleet.ROOT)
 
 
+#: 멈춘 까닭의 종류 (2026-11-11 태석님: "30회 돌고 멈췄는지, 다른 이유가 있어 멈춘 건지, 다 끝낸 건지 적절한 메시지")
+#:   done   남은 일이 없어 끝남          cap    상한 라운드를 채움(멈춤 방식)      safety 모두 합쳐 안전 상한(30)에 닿음
+#:   stuck  진전 없는 라운드             report 관리자 보고가 DONE 이 아니거나 없음   error  요청·라운드를 띄우지 못함
+#:   off    사람이 끔                    wait   라운드가 끝나기를 너무 오래 기다림
+CHAIN_STOP_KINDS = ("done", "cap", "safety", "stuck", "report", "error", "off", "wait")
+
+
+def _chain_stop(st, kind, why, round_n=None, left=None):
+    """이어 달리기를 끄고 **왜 멈췄는지**를 남깁니다 - 화면이 종류별로 다른 안내를 보입니다."""
+    st.update({"on": False, "at": _now(), "stopped_why": why, "stopped_kind": kind, "stopped_at": _now(),
+               "stopped_round": round_n, "stopped_left": left})
+    st.setdefault("log", []).append(f"{_now()} 멈춤[{kind}] - {why}")
+    _chain_write(st)
+
+
 def chain_step(round_n, by="이어 달리기"):
     """라운드가 끝난 뒤 한 번 부릅니다 - 멈추거나(끔), 남은 목표를 요청으로 넣고 다음 라운드를 띄웁니다."""
     d = chain_decide(round_n)
     st = chain_state()
     if d["action"] != "launch":
         if st.get("on"):
-            st.update({"on": False, "at": _now(), "stopped_why": d["why"]})
-            st.setdefault("log", []).append(f"{_now()} 멈춤 - {d['why']}")
-            _chain_write(st)
+            _chain_stop(st, d.get("kind") or "report", d["why"], round_n,
+                        {"requests": len(d.get("requests") or []), "goals_done": d.get("done"), "goals_total": d.get("total")})
         return {"ok": True, "launched": False, **d}
-    ok, res = _chain_request(st["project"], round_n, d["open"], d["done"], d["total"])
-    if not ok:
-        st.update({"on": False, "at": _now(), "stopped_why": f"요청을 못 넣었습니다: {res.get('error')}"})
-        st.setdefault("log", []).append(f"{_now()} 멈춤 - {st['stopped_why']}")
-        _chain_write(st)
-        return {"ok": False, "launched": False, "why": st["stopped_why"]}
-    st.update({"rounds_done": int(st.get("rounds_done", 0)) + 1, "goals_done": d["done"], "at": _now()})
-    st.setdefault("log", []).append(f"{_now()} R{round_n} 끝 - {d['why']} → 요청 {res.get('id')}")
+    # 체크 안 된 목표가 있는데 그 프로젝트의 열린 요청이 없으면, 남은 목표를 요청으로 넣는다 (열린 요청이 곧 할 일이다)
+    filed = []
+    open_projects = {p for _, p in _open_requests()}
+    for name, g in d["goals"].items():
+        if not g["open"] or name in open_projects:
+            continue
+        ok, res = _chain_request(name, round_n, g["open"], g["done"], g["total"])
+        if not ok:
+            _chain_stop(st, "error", f"요청을 못 넣었습니다({name}): {res.get('error')}", round_n)
+            return {"ok": False, "launched": False, "why": st["stopped_why"]}
+        filed.append(res.get("id"))
+    st.update({"rounds_done": 0 if d.get("new_cycle") else int(st.get("rounds_done", 0)) + 1,      # 새 묶음은 0 부터 다시 센다
+               "cycles": int(st.get("cycles", 0)) + (1 if d.get("new_cycle") else 0),
+               "total_rounds": int(st.get("total_rounds", st.get("rounds_done", 0))) + 1,
+               "goals_done": d["done"], "at": _now(),
+               "strikes": (int(st.get("strikes", 0)) + 1) if d.get("strike") else 0,     # 진전이 있었으면 다시 0
+               "open_requests": chain_work(*chain_targets(st))["requests"]})
+    st.setdefault("log", []).append(f"{_now()} R{round_n} 끝 - {d['why']}" + (f" → 요청 {', '.join(filed)}" if filed else ""))
     _chain_write(st)
     out = launch_round(by)
     if not out.get("ok"):
         st = chain_state()
-        st.update({"on": False, "at": _now(), "stopped_why": f"다음 라운드를 못 띄웠습니다: {out.get('error')}"})
-        st.setdefault("log", []).append(f"{_now()} 멈춤 - {st['stopped_why']}")
-        _chain_write(st)
-    return {"ok": bool(out.get("ok")), "launched": bool(out.get("ok")), "request": res.get("id"), "round": out.get("round"), **d}
+        _chain_stop(st, "error", f"다음 라운드를 못 띄웠습니다: {out.get('error')}", round_n)
+    return {"ok": bool(out.get("ok")), "launched": bool(out.get("ok")), "request": (filed[0] if filed else None), "filed": filed,
+            "round": out.get("round"), **d}
 
 
 def _chain_wait_and_step(n):
@@ -883,7 +1026,7 @@ def _chain_wait_and_step(n):
         if not chain_state().get("on"):
             return 0                      # 사람이 껐다
         if mode() != "running":           # 사람이 멈췄다 - 이어 달리기도 내려놓는다
-            chain_set(False, by="함대 모드가 실행이 아님")
+            _chain_stop(chain_state(), "off", f"함대가 '{MODE_LABEL.get(mode(), mode())}' 로 바뀌어 이어 달리기도 내려놓았습니다 (사람이 멈춤)", n)
             return 0
         _SESS_CACHE["at"] = 0
         if manager_running() or not round_over():
@@ -892,7 +1035,7 @@ def _chain_wait_and_step(n):
         res = chain_step(n)
         print(f"{_now()} chain R{n}: {json.dumps({k: v for k, v in res.items() if k != 'open'}, ensure_ascii=False)}", flush=True)
         return 0
-    chain_set(False, by=f"R{n} 을 {CHAIN_WAIT_SEC // 3600}시간 기다려도 끝나지 않음")
+    _chain_stop(chain_state(), "wait", f"R{n} 이 {CHAIN_WAIT_SEC // 3600}시간이 지나도 끝나지 않아 기다리기를 그만두었습니다 - 관리자를 확인하십시오", n)
     return 1
 
 
@@ -907,8 +1050,12 @@ def main(argv=None):
     r.add_argument("--round", type=int, required=True)
     c = sub.add_parser("chain", help="이어 달리기: 프로젝트 목표가 남으면 라운드가 끝난 뒤 다음 라운드를 스스로 띄운다")
     c.add_argument("action", choices=["on", "off", "status"])
-    c.add_argument("--project")
-    c.add_argument("--max", type=int, default=None, help=f"연속 라운드 상한 (기본 {CHAIN_DEFAULT_ROUNDS}, 최대 {CHAIN_MAX_ROUNDS})")
+    c.add_argument("--project", action="append", help="이어 달릴 프로젝트 (여러 번 줄 수 있다)")
+    c.add_argument("--fleet", action="store_true", help="함대 자체의 일(프로젝트 없는 요청)")
+    c.add_argument("--all", action="store_true", help="전체 = 프로젝트 전부 + 함대 (아무것도 안 주면 이것)")
+    c.add_argument("--autonomous", action="store_true", help="완전 자율 종주: 새 묶음으로 이어 가고, 막혀도 한 번은 더 간다 (연달아 두 번 막히면 멈춤)")
+    c.add_argument("--max", type=int, default=None, help=f"상한 라운드 (기본 {CHAIN_DEFAULT_ROUNDS}, 최대 {CHAIN_MAX_ROUNDS})")
+    c.add_argument("--renew", action="store_true", help="상한에 닿으면 멈추지 않고 새 묶음으로 이어 간다 (끝날 때까지)")
     c.add_argument("--by", default="CLI")
     w = sub.add_parser("_chainwatch")
     w.add_argument("--round", type=int, required=True)
@@ -919,7 +1066,8 @@ def main(argv=None):
         return _chain_wait_and_step(a.round)
     if a.cmd == "chain":
         out = ({"ok": True, "chain": chain_state()} if a.action == "status"
-               else chain_set(a.action == "on", a.project, a.max, a.by))
+               else chain_set(a.action == "on", None, a.max, a.by, projects=a.project, fleet_on=(a.fleet or None), all_=(a.all or None),
+                                    autonomous=a.autonomous, renew=a.renew))
         print(json.dumps(out, ensure_ascii=False, indent=1))
         return 0 if out.get("ok", True) else 1
     fn = {"status": lambda: status(), "prepare": lambda: prepare(a.by), "run": lambda: resume(a.by),

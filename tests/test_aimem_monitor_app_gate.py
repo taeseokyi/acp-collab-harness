@@ -10,6 +10,7 @@ import pathlib
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.parse
 
@@ -20,6 +21,7 @@ from aimem_monitor import server  # noqa: E402
 TOKEN = "t" * 40
 NAME = "알파"
 Q = urllib.parse.quote(NAME)
+GITHUB_LOGIN = "taeseok"
 
 
 class AppGateRegression(unittest.TestCase):
@@ -32,6 +34,9 @@ class AppGateRegression(unittest.TestCase):
         (web / "index.html").write_text("<!doctype html><p id=secret>APP-BODY</p>", encoding="utf-8")
         (root / "projects" / NAME / "app.json").write_text(json.dumps({"root": "web", "entry": "index.html"}), encoding="utf-8")
         (root / "AIMEM.md").write_text("# AIMEM\n\n- **REV: 1**\n", encoding="utf-8")
+        allowed = root / server.GITHUB_ALLOW_FILE
+        allowed.parent.mkdir(parents=True)
+        allowed.write_text(GITHUB_LOGIN + "\n", encoding="utf-8")
         handler = type("H", (server.Handler,), {"root": root, "require_auth": True, "tls": False, "access_token": TOKEN,
                                                 "guard": server.LoginGuard(), "log_message": lambda *a, **k: None})
         self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -79,6 +84,103 @@ class AppGateRegression(unittest.TestCase):
         ticket = loc.split("/")[2]
         for path in (f"/app/{ticket}/../../api/state", f"/app/{ticket}/{Q}/../../../api/state"):
             self.assertIn(self.get(path)[0], (401, 404), path)                            # 티켓으로 /api 에 못 간다
+
+    def github_headers(self, login=GITHUB_LOGIN, exp=None, token=TOKEN):
+        if exp is None:
+            exp = int(time.time()) + server.SESSION_TTL_SEC
+        value = server.sign_session(token, f"gh:{login}", exp)
+        return {"Cookie": f"{server.SESSION_COOKIE}={value}"}
+
+    def test_github_session_gets_an_app_ticket(self):
+        status, loc, body = self.get(f"/app/{Q}/", self.github_headers())
+        self.assertEqual(status, 302)
+        self.assertRegex(loc, r"\A/app/~\d+\.[0-9a-f]{32}/" + Q + r"/\Z")
+        self.assertNotIn(b"APP-BODY", body)
+
+    def test_github_app_ticket_opens_the_app(self):
+        status, loc, _ = self.get(f"/app/{Q}/", self.github_headers())
+        self.assertEqual(status, 302)
+        status, _, body = self.get(loc, self.github_headers())
+        self.assertEqual(status, 200)
+        self.assertIn(b"APP-BODY", body)
+        self.assertTrue(body.lstrip().lower().startswith(b"<!doctype html"))
+
+    def test_github_session_outside_allowlist_gets_no_ticket(self):
+        status, loc, body = self.get(f"/app/{Q}/", self.github_headers("retired-user"))
+        self.assertNotIn("/app/~", loc)
+        self.assertIn(status, (302, 401, 403))
+        if status == 302:
+            self.assertEqual(loc, "/login")
+        self.assertNotIn(b"APP-BODY", body)
+
+    def test_github_session_with_bad_signature_gets_no_ticket(self):
+        headers = self.github_headers()
+        name, value = headers["Cookie"].split("=", 1)
+        headers["Cookie"] = name + "=" + value[:-1] + ("0" if value[-1] != "0" else "1")
+        status, loc, body = self.get(f"/app/{Q}/", headers)
+        self.assertNotIn("/app/~", loc)
+        self.assertIn(status, (302, 401, 403))
+        if status == 302:
+            self.assertEqual(loc, "/login")
+        self.assertNotIn(b"APP-BODY", body)
+
+    def test_expired_github_session_gets_no_ticket(self):
+        status, loc, body = self.get(f"/app/{Q}/", self.github_headers(exp=int(time.time()) - 60))
+        self.assertNotIn("/app/~", loc)
+        self.assertIn(status, (302, 401, 403))
+        if status == 302:
+            self.assertEqual(loc, "/login")
+        self.assertNotIn(b"APP-BODY", body)
+
+    def test_github_session_outside_allowlist_gets_no_api(self):
+        status, _, _ = self.get("/api/state", self.github_headers("retired-user"))
+        self.assertNotEqual(status, 200)
+
+    def test_github_session_with_missing_allowlist_gets_no_ticket(self):
+        root = self.httpd.RequestHandlerClass.root
+        allowed = root / server.GITHUB_ALLOW_FILE
+        allowed.rename(allowed.with_name(allowed.name + ".bak"))
+        status, loc, body = self.get(f"/app/{Q}/", self.github_headers())
+        self.assertNotIn("/app/~", loc)
+        self.assertIn(status, (302, 401, 403))
+        if status == 302:
+            self.assertEqual(loc, "/login")
+        self.assertNotIn(b"APP-BODY", body)
+
+    def test_github_allowlist_match_is_case_insensitive(self):
+        root = self.httpd.RequestHandlerClass.root
+        allowed = root / server.GITHUB_ALLOW_FILE
+        allowed.write_text("TaeSeok\n", encoding="utf-8")
+        status, loc, body = self.get(f"/app/{Q}/", self.github_headers("taeseok"))
+        self.assertEqual(status, 302)
+        self.assertRegex(loc, r"\A/app/~\d+\.[0-9a-f]{32}/" + Q + r"/\Z")
+        self.assertNotIn(b"APP-BODY", body)
+        status, _, body = self.get(loc, self.github_headers("taeseok"))
+        self.assertEqual(status, 200)
+        self.assertIn(b"APP-BODY", body)
+
+    def test_github_session_mixed_case_login_still_works(self):
+        root = self.httpd.RequestHandlerClass.root
+        allowed = root / server.GITHUB_ALLOW_FILE
+        allowed.write_text("taeseok\n", encoding="utf-8")
+        headers = self.github_headers("TaeSeok")
+        status, loc, _ = self.get(f"/app/{Q}/", headers)
+        self.assertEqual(status, 302)
+        self.assertIn("/app/~", loc)
+        status, _, body = self.get(loc, headers)
+        self.assertEqual(status, 200)
+        self.assertIn(b"APP-BODY", body)
+
+    def test_github_session_mixed_case_outside_allowlist_is_refused(self):
+        root = self.httpd.RequestHandlerClass.root
+        allowed = root / server.GITHUB_ALLOW_FILE
+        allowed.write_text("someoneelse\n", encoding="utf-8")
+        status, loc, body = self.get(f"/app/{Q}/", self.github_headers("TaeSeok"))
+        self.assertNotIn("/app/~", loc)
+        self.assertIn(status, (302, 401, 403))
+        if status == 302:
+            self.assertEqual(loc, "/login")
+        self.assertNotIn(b"APP-BODY", body)
 
 
 if __name__ == "__main__":

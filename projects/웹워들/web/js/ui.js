@@ -5,7 +5,7 @@ import {
 import { ANSWERS, ALLOWED } from './words.js';
 import {
   loadStats, recordResult, loadDaily, saveDaily, loadSettings, saveSettings,
-  loadSeenHelp, saveSeenHelp,
+  loadSeenHelp, saveSeenHelp, init,
 } from './storage.js';
 
 const $ = (id) => document.getElementById(id);
@@ -15,7 +15,7 @@ const STATE_LABEL = { correct: '맞음', present: '자리 틀림', absent: '없�
 const KEY_ROWS = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'];
 const ALLOWED_SET = new Set(ALLOWED);
 
-let settings = loadSettings();
+let settings;
 let game = null;
 let dayKey = '';
 let puzzleNumber = 0;
@@ -72,7 +72,9 @@ function buildBoard() {
       const t = document.createElement('div');
       t.className = 'tile';
       t.setAttribute('role', 'gridcell');
-      t.addEventListener('animationend', () => t.classList.remove('pop', 'bounce'));
+      const dropAnim = () => t.classList.remove('pop', 'bounce');
+      t.addEventListener('animationend', dropAnim);
+      t.addEventListener('animationcancel', dropAnim);
       row.appendChild(t);
       cols.push(t);
     }
@@ -220,9 +222,10 @@ function submit() {
   for (let c = 0; c < WORD_LENGTH; c++) {
     const t = tiles[r][c];
     setTimeout(() => {
+      t.classList.remove('pop', 'bounce');
       t.classList.add('flip');
       setTimeout(() => setTile(r, c, guess[c], scores[c]), FLIP_TIME / 2);
-      setTimeout(() => t.classList.remove('flip'), FLIP_TIME);
+      setTimeout(() => t.classList.remove('flip', 'pop'), FLIP_TIME);
     }, c * FLIP_STEP);
   }
   setTimeout(() => {
@@ -452,6 +455,8 @@ function checkNewDay() {
 
 /* ---------- 시작 ---------- */
 
+await init();              // 격리된 미리보기면 부모(모니터)에서 보관함을 받아 온다
+settings = loadSettings();
 applySettings();
 buildBoard();
 buildKeyboard();

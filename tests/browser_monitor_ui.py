@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """모니터의 프로젝트 '실행' 단추가 격리된 iframe 미리보기를 여는지 브라우저에서 잽니다."""
+import datetime
 import http.server
 import pathlib
+import re
 import sys
 import threading
 from contextlib import contextmanager
@@ -203,6 +205,166 @@ def short_scenario(browser, base, checks):
         ctx.close()
 
 
+def changed_ui_scenario(browser, base, checks):
+    """바뀐 화면 다섯 가지를 브라우저에서 실제로 잽니다."""
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    try:
+        page.goto(base + "/", wait_until="load")
+        page.wait_for_selector("#projects-list .proj-item", timeout=15000)
+
+        card = page.query_selector("#kisti-section")
+        inner_card = page.query_selector("#kisti-card")
+        fleet_titles = page.eval_on_selector_all(
+            "#panel-fleet .card h2", "els => els.map(e => e.textContent.trim())"
+        )
+        kisti_titles = [t for t in fleet_titles if t.startswith("KISTI")]
+        checks.ok(
+            "KISTI 카드가 화면에 없다",
+            card is None and inner_card is None and not kisti_titles,
+            f"#kisti-section={card}, #kisti-card={inner_card}, "
+            f"함대 카드 h2={fleet_titles}, KISTI로 시작={kisti_titles}",
+        )
+
+        meta = page.locator("#aimem-meta")
+        meta_text = meta.inner_text()
+        label = page.locator(".meta-goal .meta-label").first
+        value = page.locator(".meta-goal .goal-value").first
+        label_text = label.inner_text().strip()
+        value_text = value.inner_text().strip()
+        checks.ok(
+            "'이번 라운드'가 보이고 내용이 있다",
+            meta.is_visible()
+            and "현재 목표" not in meta_text
+            and label.is_visible()
+            and label_text == "이번 라운드"
+            and value.is_visible()
+            and value_text not in ("", "-"),
+            f"meta visible={meta.is_visible()}, '현재 목표'={('현재 목표' in meta_text)}, "
+            f"label={label_text!r}, value={value_text!r}",
+        )
+
+        page.click("#tab-requests")
+        page.wait_for_selector("#requests-list .req-block", state="visible", timeout=15000)
+        zero = []
+        eta_texts = []
+        for block in page.query_selector_all("#requests-list .req-block"):
+            badge = block.query_selector(".badge")
+            status = badge.inner_text().strip() if badge else ""
+            etas = [e.inner_text().strip() for e in block.query_selector_all(".eta")]
+            eta_texts.extend(etas)
+            empty = block.query_selector(".req-body .empty")
+            if empty is not None:
+                zero.append((status, empty.inner_text().strip(), etas))
+            elif status == "DONE":
+                metas = block.query_selector_all(".req-title-wrap .req-meta")
+                zero.append((status, metas[-1].inner_text().strip() if metas else "", etas))
+
+        today = datetime.date.today().isoformat()
+        has_datetime = any(
+            re.search(r"ETA\s+\d", e)
+            or re.search(r"ETA\s+" + re.escape(today), e)
+            or re.search(r"ETA\s+\d{1,2}:\d{2}", e)
+            for e in eta_texts
+        )
+        expected = {
+            "NEW": "관리자 분담 대기",
+            "PLANNED": "분담 계획됨",
+            "DONE": "서브태스크 없이 끝난 요청입니다",
+        }
+        bad_zero = [
+            (status, msg, etas)
+            for status, msg, etas in zero
+            if status not in expected
+            or expected[status] not in msg
+            or any(e not in ("ETA 미정", "종료") for e in etas)
+        ]
+        zero_with_eta = sum(1 for _, _, etas in zero if etas)
+        checks.ok(
+            "분담 전 요청의 ETA가 '미정'이다",
+            bool(zero)
+            and zero_with_eta > 0
+            and not has_datetime
+            and not bad_zero,
+            f"서브태스크 0건 {len(zero)}개(ETA 표시 {zero_with_eta}개), .eta 전체={eta_texts}, "
+            f"날짜·시각 붙은 ETA={has_datetime}, 상태/문구 어긋남={bad_zero}",
+        )
+
+        page.click("#tab-fleet")
+        page.wait_for_selector("#runs-table-wrap", state="visible", timeout=15000)
+        project_names = page.query_selector_all("#runs-table-wrap .proj-tag:not(.none) .proj-name")
+        none_names = page.query_selector_all("#runs-table-wrap .proj-tag.none .proj-name")
+        rounds = page.query_selector_all("#runs-table-wrap .proj-round")
+
+        def weight(el):
+            return int(el.evaluate("e=>getComputedStyle(e).fontWeight"))
+
+        project_weights = [weight(e) for e in project_names]
+        none_weights = [weight(e) for e in none_names]
+        round_weights = [weight(e) for e in rounds]
+        checks.ok(
+            "프로젝트 칸의 볼드 기준",
+            bool(project_names)
+            and bool(none_names)
+            and bool(rounds)
+            and all(w >= 700 for w in project_weights)
+            and all(w <= 500 for w in none_weights)
+            and all(w <= 500 for w in round_weights),
+            f"프로젝트 이름 {project_weights}, 프로젝트 없음 {none_weights}, 라운드 꼬리표 {round_weights}",
+        )
+
+        page.set_viewport_size({"width": 390, "height": 780})
+        page.click("#tab-board")
+        page.wait_for_selector("#panel-board", state="visible", timeout=15000)
+        candidates = page.query_selector_all(
+            "#board-section .elide[role=button], #queue-section .elide[role=button]"
+        )
+        el = None
+        sw_before = cw_before = None
+        for cand in candidates:
+            if not cand.is_visible():
+                continue
+            sw = cand.evaluate("e=>e.scrollWidth")
+            cw = cand.evaluate("e=>e.clientWidth")
+            if sw > cw:
+                el = cand
+                sw_before, cw_before = sw, cw
+                break
+
+        if el is None:
+            checks.ok(
+                "생략된 제목을 눌러 펼칠 수 있다 (폰 폭 390px)",
+                False,
+                "잘린 .elide[role=button]을 보드·큐에서 찾지 못함",
+            )
+        else:
+            box_before = el.bounding_box()
+            el.click()
+            page.wait_for_selector(".elide.elide-open", timeout=3000)
+            class_after = el.get_attribute("class") or ""
+            box_after = el.bounding_box()
+            sw_after = el.evaluate("e=>e.scrollWidth")
+            cw_after = el.evaluate("e=>e.clientWidth")
+            overlay = page.query_selector("#detail-overlay")
+            overlay_display = overlay.evaluate("e=>getComputedStyle(e).display") if overlay else "missing"
+            scroll = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
+            checks.ok(
+                "생략된 제목을 눌러 펼칠 수 있다 (폰 폭 390px)",
+                box_before is not None
+                and box_after is not None
+                and box_after["height"] > box_before["height"]
+                and "elide-open" in class_after.split()
+                and sw_after <= cw_after + 1
+                and overlay_display == "none"
+                and scroll == 0,
+                f"전: scrollWidth={sw_before}, clientWidth={cw_before}, height={box_before and round(box_before['height'], 2)}; "
+                f"후: class={class_after!r}, scrollWidth={sw_after}, clientWidth={cw_after}, "
+                f"height={box_after and round(box_after['height'], 2)}; overlay={overlay_display}, 가로스크롤={scroll}px",
+            )
+    finally:
+        ctx.close()
+
+
 def main():
     checks = Checks()
     try:
@@ -213,6 +375,7 @@ def main():
                     scenario(browser, base, checks)
                     narrow_scenario(browser, base, checks)
                     short_scenario(browser, base, checks)
+                    changed_ui_scenario(browser, base, checks)
                 finally:
                     browser.close()
     except Exception as exc:

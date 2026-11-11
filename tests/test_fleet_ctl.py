@@ -281,16 +281,26 @@ class ChainTest(unittest.TestCase):
         self.assertEqual({"total": len(goals), "done": sum(1 for d, _ in goals if d)}, server._progress_goals(text))
         self.assertEqual(goals[2], (False, "목표 3"))
         self.assertEqual(fleet_ctl.project_goals("없는것"), [])
+        (self.repo / "projects" / "알파" / "PROGRESS.md").write_text(                    # 한 항목이 여러 줄
+            "# 알파\n\n## 목표\n- [ ] 기록이 남는다 - 설계 → 구현 → 검수를\n  거친 뒤에만 체크\n  - [x] 하위 항목\n- [x] 둘째\n\n> 인용은 붙이지 않는다\n", encoding="utf-8")
+        goals = fleet_ctl.project_goals("알파")
+        self.assertEqual(goals[0], (False, "기록이 남는다 - 설계 → 구현 → 검수를 거친 뒤에만 체크"))
+        self.assertEqual([d for d, _ in goals], [False, True, True])
+        text = (self.repo / "projects" / "알파" / "PROGRESS.md").read_text(encoding="utf-8")
+        self.assertEqual({"total": 3, "done": 2}, server._progress_goals(text))
 
-    def test_switching_on_needs_a_project_and_a_sane_cap(self):
-        self.assertFalse(fleet_ctl.chain_set(True, "", 3)["ok"])
+    def test_switching_on_needs_a_sane_cap_and_the_project_is_optional(self):
+        st = fleet_ctl.chain_set(True, "", 3, "test")                      # 프로젝트 없이도 켜진다 - 열린 요청이 남은 일이다
+        self.assertTrue(st["ok"])
+        self.assertEqual((st["chain"]["on"], st["chain"]["all"], st["chain"]["projects"]), (True, True, []))
+        fleet_ctl.chain_set(False, by="test")
         self.assertFalse(fleet_ctl.chain_set(True, "../x", 3)["ok"])
-        self.assertFalse(fleet_ctl.chain_set(True, "알파", 0)["ok"])
+        self.assertFalse(fleet_ctl.chain_set(True, "알파", -2)["ok"])              # 0 은 '상한 없이' 라 받는다
         self.assertFalse(fleet_ctl.chain_set(True, "알파", fleet_ctl.CHAIN_MAX_ROUNDS + 1)["ok"])
         self.assertFalse(fleet_ctl.chain_state()["on"])
         self.progress(2, 5)
         st = fleet_ctl.chain_set(True, "알파", 3, "test")["chain"]
-        self.assertEqual((st["on"], st["project"], st["max_rounds"], st["rounds_done"], st["goals_done"]), (True, "알파", 3, 0, 2))
+        self.assertEqual((st["on"], st["projects"], st["max_rounds"], st["rounds_done"], st["goals_done"]), (True, ["알파"], 3, 0, 2))
         self.assertFalse(fleet_ctl.chain_set(False, by="test")["chain"]["on"])
 
     def test_decides_to_go_on_only_while_goals_move(self):
@@ -301,14 +311,185 @@ class ChainTest(unittest.TestCase):
         self.report(7, "BLOCKED")
         self.assertIn("BLOCKED", fleet_ctl.chain_decide(7)["why"])
         self.report(7, "DONE")
-        self.assertIn("늘지 않았습니다", fleet_ctl.chain_decide(7)["why"])          # 2 → 2
+        self.assertIn("늘어난 목표 체크도 없습니다", fleet_ctl.chain_decide(7)["why"])   # 2 → 2
         self.progress(4, 5)
         d = fleet_ctl.chain_decide(7)
-        self.assertEqual((d["action"], d["done"], d["total"], d["open"]), ("launch", 4, 5, ["목표 5"]))
+        self.assertEqual((d["action"], d["done"], d["total"], d["goals"]["알파"]["open"]), ("launch", 4, 5, ["목표 5"]))
         self.progress(5, 5)
         self.assertIn("끝났습니다", fleet_ctl.chain_decide(7)["why"])
         (self.repo / "projects" / "알파" / "PROGRESS.md").write_text("# 알파\n\n## R7\n- 한 일\n", encoding="utf-8")
-        self.assertIn("체크리스트가 없습니다", fleet_ctl.chain_decide(7)["why"])
+        self.assertIn("남은 일이 없습니다", fleet_ctl.chain_decide(7)["why"])       # 목표도 열린 요청도 없다
+
+    def req(self, rid, status, project=""):
+        d = self.repo / ".aimem" / "requests"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{rid}.json").write_text(json.dumps({"id": rid, "status": status, "project": project, "title": rid}), encoding="utf-8")
+
+    def test_scopes_split_fleet_project_and_all(self):
+        """2026-11-11 태석님: "프로젝트를 고를 수 있게 하고, 함대와 all(프로젝트+함대)을 분리해." """
+        self.progress(2, 5)                                                    # 알파: 목표 2/5
+        (self.repo / "projects" / "베타").mkdir(parents=True)
+        (self.repo / "projects" / "베타" / "PROGRESS.md").write_text("# 베타\n\n## 목표\n- [x] 하나\n- [ ] 둘\n", encoding="utf-8")
+        (self.repo / "projects" / "목표없음").mkdir(parents=True)
+        self.req("Q-f", "NEW"); self.req("Q-a", "PLANNED", "알파"); self.req("Q-b", "NEW", "베타"); self.req("Q-x", "DONE", "알파")
+        w = fleet_ctl.chain_work(True, [])
+        self.assertEqual((w["requests"], w["goals"]), (["Q-f"], {}))            # 함대 = 프로젝트 없는 요청만
+        w = fleet_ctl.chain_work(False, ["알파"])
+        self.assertEqual((w["requests"], list(w["goals"])), (["Q-a"], ["알파"]))
+        self.assertEqual((w["goals"]["알파"]["done"], w["goals"]["알파"]["total"]), (2, 5))
+        w = fleet_ctl.chain_work(False, ["알파", "베타"])                         # 프로젝트 여러 개
+        self.assertEqual((sorted(w["requests"]), sorted(w["goals"])), (["Q-a", "Q-b"], ["베타", "알파"]))
+        w = fleet_ctl.chain_work(True, ["베타"])                                  # 함대 + 프로젝트 하나
+        self.assertEqual(sorted(w["requests"]), ["Q-b", "Q-f"])
+        w = fleet_ctl.chain_work(all_=True)
+        self.assertEqual((sorted(w["requests"]), sorted(w["goals"])), (["Q-a", "Q-b", "Q-f"], ["베타", "알파"]))
+        # 켤 때: 대상 검사
+        st = fleet_ctl.chain_set(True, None, 3, "t", projects=["베타", "알파", "알파"])["chain"]
+        self.assertEqual((st["all"], st["fleet"], st["projects"], st["label"]), (False, False, ["베타", "알파"], "프로젝트 베타 + 프로젝트 알파"))
+        self.assertEqual(fleet_ctl.chain_set(True, "알파", 3, "t")["chain"]["projects"], ["알파"])        # 옛 인자도 받는다
+        self.assertTrue(fleet_ctl.chain_set(True, None, 3, "t")["chain"]["all"])                          # 아무것도 안 주면 전체
+        st = fleet_ctl.chain_set(True, None, 3, "t", fleet_on=True, projects=[])["chain"]
+        self.assertEqual((st["all"], st["fleet"], st["projects"], st["open_requests"], st["goals_done"], st["label"]),
+                         (False, True, [], ["Q-f"], 0, "함대"))
+        out = fleet_ctl.chain_set(True, None, 3, "t", fleet_on=False, projects=[], all_=False)            # 아무것도 안 고름
+        self.assertFalse(out["ok"])
+        self.assertIn("하나 이상", out["error"])
+        self.assertFalse(fleet_ctl.chain_set(True, None, 3, "t", projects=["../x"])["ok"])
+        fleet_ctl.chain_set(True, None, 3, "t", fleet_on=True, projects=[])
+        # 함대 범위: 프로젝트 요청이 남아 있어도 함대 요청이 다 닫히면 끝난다
+        self.report(7, "DONE"); self.req("Q-f", "DONE")
+        self.assertIn("남은 일이 없습니다", fleet_ctl.chain_decide(7)["why"])
+        # 전체 범위: 열린 요청이 없는 프로젝트의 남은 목표는 요청으로 넣어 잇는다
+        st = fleet_ctl.chain_set(True, None, 4, "t", all_=True)["chain"]
+        self.assertEqual((sorted(st["open_requests"]), st["goals_done"]), (["Q-a", "Q-b"], 3))
+        self.req("Q-b", "DONE")                                                  # 베타의 요청이 닫혔고 베타 목표 하나가 남았다
+        with mock.patch.object(fleet_ctl, "launch_round", return_value={"ok": True, "round": 8}):
+            out = fleet_ctl.chain_step(7)
+        self.assertTrue(out["launched"])
+        self.assertEqual(len(out["filed"]), 1)                                   # 베타만 새 요청 (알파는 열린 요청 Q-a 가 있다)
+        new = [json.loads(f.read_text(encoding="utf-8")) for f in (self.repo / ".aimem" / "requests").glob("*.json")
+               if json.loads(f.read_text(encoding="utf-8")).get("requester") == "함대 이어 달리기"]
+        self.assertEqual([(r["project"], "- 둘" in r["detail"]) for r in new], [("베타", True)])
+
+    def test_the_cap_is_always_kept_and_renewed_in_cycles_when_running_to_the_end(self):
+        """2026-11-11 태석님: "끝까지 옵션도 내부적으로는 상한 라운드를 지켜야 해" - 상한에 닿으면 새 묶음으로, 새 관리자로 잇는다."""
+        for i in range(1, 8):
+            self.req(f"Q-{i}", "NEW")
+        st = fleet_ctl.chain_set(True, None, 3, "t", all_=True, renew=True)["chain"]
+        self.assertEqual((st["max_rounds"], st["renew"], st["cycles"], st["total_rounds"]), (3, True, 0, 0))
+        self.assertFalse(fleet_ctl.chain_set(True, None, 11, "t", all_=True, renew=True)["ok"])      # 상한 자체는 1~10
+        self.assertFalse(fleet_ctl.chain_set(True, None, -1, "t", all_=True)["ok"])
+        old = fleet_ctl.chain_set(True, None, 0, "t", all_=True)["chain"]                            # 옛 호출: 0 = 기본 상한 + 이어 감
+        self.assertEqual((old["max_rounds"], old["renew"]), (fleet_ctl.CHAIN_DEFAULT_ROUNDS, True))
+        fleet_ctl.chain_set(True, None, 3, "t", all_=True, renew=True)
+        seen = []
+        with mock.patch.object(fleet_ctl, "launch_round", return_value={"ok": True, "round": 0}) as launch:
+            for n in range(1, 7):                                  # 라운드마다 하나씩 닫힌다
+                self.req(f"Q-{n}", "DONE"); self.report(n, "DONE")
+                out = fleet_ctl.chain_step(n)
+                self.assertTrue(out["launched"], n)
+                c = fleet_ctl.chain_state()
+                seen.append((c["cycles"], c["rounds_done"], c["total_rounds"]))
+            self.req("Q-7", "DONE"); self.report(7, "DONE")
+            out = fleet_ctl.chain_step(7)
+        # 묶음 안의 라운드 수는 상한(3)을 넘지 않고, 세 번째마다 새 묶음으로 넘어가 0 부터 다시 센다
+        self.assertEqual(seen, [(0, 1, 1), (0, 2, 2), (1, 0, 3), (1, 1, 4), (1, 2, 5), (2, 0, 6)])
+        self.assertEqual(launch.call_count, 6)
+        self.assertIn("남은 일이 없습니다", out["why"])
+        log = " ".join(fleet_ctl.chain_state()["log"])
+        self.assertIn("새 묶음(2번째)", log)
+        # 상한에서 멈추는 방식은 전과 같다
+        self.req("Q-8", "NEW"); self.req("Q-9", "NEW")
+        fleet_ctl.chain_set(True, None, 1, "t", all_=True)
+        self.req("Q-8", "DONE"); self.report(8, "DONE")
+        self.assertIn("연속 상한 1 라운드", fleet_ctl.chain_decide(8)["why"])
+        # 진전이 없으면 이어 가는 방식이어도 멈춘다
+        fleet_ctl.chain_set(True, None, 3, "t", all_=True, renew=True); self.report(9, "DONE")
+        self.assertIn("닫힌 요청도", fleet_ctl.chain_decide(9)["why"])
+        # 안전 상한 (모두 합친 라운드 수)
+        st = fleet_ctl.chain_state(); st["total_rounds"] = fleet_ctl.CHAIN_HARD_ROUNDS - 1; st["open_requests"] = ["Q-9", "Q-old"]
+        fleet_ctl._chain_write(st)
+        self.assertIn("안전 상한", fleet_ctl.chain_decide(9)["why"])
+
+    def test_autonomous_takes_one_more_round_when_stuck_then_stops(self):
+        """2026-11-11 태석님: "완전 자율 종주도 선택 가능하게." 막혀도 한 번은 더 가고, 연달아 두 번 막히면 멈춘다."""
+        self.req("Q-1", "NEW"); self.req("Q-2", "NEW")
+        st = fleet_ctl.chain_set(True, None, 5, "t", all_=True, autonomous=True)["chain"]
+        self.assertEqual((st["autonomous"], st["renew"], st["max_rounds"], st["strikes"]), (True, True, 5, 0))   # 상한은 있고, 닿으면 새로 잇는다
+        with mock.patch.object(fleet_ctl, "launch_round", return_value={"ok": True, "round": 0}) as launch:
+            self.report(1, "PARTIAL")                                  # 보고가 DONE 이 아니다 - 한 번 더
+            out = fleet_ctl.chain_step(1)
+            self.assertTrue(out["launched"]); self.assertIn("한 번 더", out["why"])
+            self.assertEqual(fleet_ctl.chain_state()["strikes"], 1)
+            self.req("Q-1", "DONE"); self.report(2, "DONE")            # 진전 - 스트라이크가 풀린다
+            self.assertTrue(fleet_ctl.chain_step(2)["launched"])
+            self.assertEqual(fleet_ctl.chain_state()["strikes"], 0)
+            self.report(3, "DONE")                                     # 진전 없음 - 한 번 더
+            self.assertTrue(fleet_ctl.chain_step(3)["launched"])
+            self.report(4, "DONE")                                     # 또 진전 없음 - 멈춘다
+            out = fleet_ctl.chain_step(4)
+        self.assertEqual(launch.call_count, 3)
+        self.assertFalse(out["launched"])
+        self.assertIn("연달아 두 번째", out["why"])
+        self.assertFalse(fleet_ctl.chain_state()["on"])
+        # 자율이 아니면 첫 번째에서 멈춘다 (전과 같다)
+        fleet_ctl.chain_set(True, None, 0, "t", all_=True); self.report(5, "BLOCKED")
+        self.assertEqual(fleet_ctl.chain_decide(5)["action"], "stop")
+
+    def test_a_stop_records_which_kind_it_was(self):
+        """2026-11-11 태석님: 30회 돌고 멈췄는지, 다른 이유인지, 다 끝낸 건지 구별해 알려 줄 것."""
+        def stop_kind(setup, n, **kw):
+            fleet_ctl.chain_set(True, None, kw.pop("cap", 3), "t", all_=True, **kw)
+            setup()
+            with mock.patch.object(fleet_ctl, "launch_round", return_value={"ok": True, "round": 0}):
+                fleet_ctl.chain_step(n)
+            st = fleet_ctl.chain_state()
+            return st.get("on"), st.get("stopped_kind"), st.get("stopped_round")
+        self.req("Q-1", "NEW"); self.req("Q-2", "NEW")
+        self.assertEqual(stop_kind(lambda: self.report(1, "BLOCKED"), 1), (False, "report", 1))
+        self.assertEqual(stop_kind(lambda: self.report(2, "DONE"), 2), (False, "stuck", 2))                   # 아무것도 안 닫힘
+        self.assertEqual(stop_kind(lambda: (self.req("Q-1", "DONE"), self.report(3, "DONE")), 3, cap=1), (False, "cap", 3))
+        def to_ceiling():
+            st = fleet_ctl.chain_state(); st["total_rounds"] = fleet_ctl.CHAIN_HARD_ROUNDS - 1; st["open_requests"] = ["Q-2", "Q-gone"]
+            fleet_ctl._chain_write(st); self.report(4, "DONE")
+        self.assertEqual(stop_kind(to_ceiling, 4, renew=True), (False, "safety", 4))
+        self.assertEqual(stop_kind(lambda: (self.req("Q-2", "DONE"), self.report(5, "DONE")), 5), (False, "done", 5))
+        st = fleet_ctl.chain_state()
+        self.assertEqual(st["stopped_left"], {"requests": 0, "goals_done": 0, "goals_total": 0})
+        self.assertIn("멈춤[done]", st["log"][-1])
+        fleet_ctl.chain_set(False, by="웹(태석)")                                # 스스로 멈춘 뒤에 끄기를 눌러도 까닭을 덮지 않는다
+        self.assertEqual(fleet_ctl.chain_state()["stopped_kind"], "done")
+        fleet_ctl.chain_set(True, None, 3, "t", all_=True); fleet_ctl.chain_set(False, by="웹(태석)")
+        st = fleet_ctl.chain_state()
+        self.assertEqual((st["stopped_kind"], "웹(태석)" in st["stopped_why"]), ("off", True))
+        self.req("Q-3", "NEW"); fleet_ctl.chain_set(True, None, 3, "t", all_=True); self.req("Q-3", "DONE"); self.req("Q-4", "NEW"); self.report(6, "DONE")
+        with mock.patch.object(fleet_ctl, "launch_round", return_value={"ok": False, "error": "이미 실행 중인 관리자가 있습니다"}):
+            fleet_ctl.chain_step(6)
+        self.assertEqual(fleet_ctl.chain_state()["stopped_kind"], "error")
+        self.assertTrue(all(k in fleet_ctl.CHAIN_STOP_KINDS for k in ("done", "cap", "safety", "stuck", "report", "error", "off")))
+
+    def test_open_requests_keep_the_chain_going_without_a_project(self):
+        """2026-11-11 태석님: "모든 작업트리 끝내" - 남은 일은 프로젝트 목표만이 아니라 열린 요청이다."""
+        self.req("Q-1", "NEW"); self.req("Q-2", "PLANNED"); self.req("Q-3", "DONE")
+        st = fleet_ctl.chain_set(True, None, 3, "test")["chain"]
+        self.assertEqual(st["open_requests"], ["Q-1", "Q-2"])
+        self.report(7, "DONE")
+        self.assertIn("닫힌 요청도", fleet_ctl.chain_decide(7)["why"])              # 아무것도 안 닫혔다 - 멈춘다
+        self.req("Q-1", "DONE")                                                      # 하나 닫혔고 하나 남았다
+        d = fleet_ctl.chain_decide(7)
+        self.assertEqual((d["action"], d["requests"]), ("launch", ["Q-2"]))
+        with mock.patch.object(fleet_ctl, "launch_round", return_value={"ok": True, "round": 8}) as launch:
+            out = fleet_ctl.chain_step(7)
+        launch.assert_called_once()
+        self.assertTrue(out["launched"])
+        self.assertEqual(len(list((self.repo / ".aimem" / "requests").glob("*.json"))), 3)     # 요청을 새로 넣지 않는다
+        self.assertEqual(fleet_ctl.chain_state()["open_requests"], ["Q-2"])
+        self.req("Q-2", "DONE"); self.report(8, "DONE")
+        with mock.patch.object(fleet_ctl, "launch_round") as launch:
+            out = fleet_ctl.chain_step(8)
+        launch.assert_not_called()
+        self.assertIn("남은 일이 없습니다", out["why"])
+        self.assertFalse(fleet_ctl.chain_state()["on"])
 
     def test_step_files_a_request_launches_and_stops_at_the_cap(self):
         self.progress(1, 5)

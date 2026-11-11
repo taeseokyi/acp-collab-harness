@@ -36,7 +36,7 @@ class WordsTest(unittest.TestCase):
                 )
 
     def test_counts(self) -> None:
-        self.assertGreaterEqual(len(self.words("ANSWERS")), 2_000)
+        self.assertGreaterEqual(len(self.words("ANSWERS")), 1_500)
         self.assertLessEqual(len(self.words("ANSWERS")), 3_000)
         self.assertGreaterEqual(len(self.words("ALLOWED")), 5_000)
         self.assertLessEqual(len(self.words("ALLOWED")), 6_500)
@@ -58,6 +58,17 @@ class WordsTest(unittest.TestCase):
         answers = set(self.words("ANSWERS"))
         for word in ("crane", "about", "ghost", "vivid"):
             self.assertIn(word, answers)
+
+    def test_answers_exclude_inflected(self) -> None:
+        self.assertNotIn("abler", set(self.words("ANSWERS")))
+
+    def test_answers_exclude_archaic(self) -> None:
+        answers = set(self.words("ANSWERS"))
+        self.assertNotIn("doeth", answers)
+        self.assertNotIn("doest", answers)
+
+    def test_filtered_count_dropped(self) -> None:
+        self.assertLess(len(self.words("ANSWERS")), len(self.words("ALLOWED")) / 2)
 
 
 if __name__ == "__main__":

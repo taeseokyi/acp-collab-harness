@@ -34,12 +34,12 @@ HOST = "127.0.0.1"
 #: `reader.collect()` 는 이보다 **많이** 돌려줄 수 있습니다 - 예를 들어 `root`(저장소
 #: 절대경로)는 reader 내부 계산에 쓰이지만 `server.collect_state()` 가 내보내기 전에
 #: 떼어냅니다. 외부에 공개되는 순간 경로 구조가 새는 값이고 프런트는 쓰지 않습니다
-#: (S4 유출 검수 5번). 같은 이유로 `slots[].token`(작업자 확인토큰)과
-#: `kisti.url`(상류 엔드포인트)도 여기 없습니다. **이 표에 없는 키는 공개면에
-#: 나가지 않아야 합니다** - `PUBLIC_FORBIDDEN` 이 그것을 코드로 못박습니다.
+#: (S4 유출 검수 5번). 같은 이유로 `slots[].token`(작업자 확인토큰)도 여기 없습니다.
+#: **이 표에 없는 키는 공개면에 나가지 않아야 합니다** - `PUBLIC_FORBIDDEN` 이 그것을
+#: 코드로 못박습니다.
 STATE_KEYS = {
     "generated": "ISO8601(초) 수집 시각",
-    "aimem": "{rev, lines, updated, goal:{text, status}}  - DB 의 REV + AIMEM.md 1절",
+    "aimem": "{rev, lines, updated}  - DB 의 REV + AIMEM.md 1절",
     "slots": "[{slot, harness, role, note, model, model_source}]  - 명부 + 하네스 설정 모델",
     "board": "[{id, task, slot, status, handoff, artifact}]  - 작업 보드",
     "queue": "[{order, task, slots, handoff, note}]  - 대기 큐",
@@ -57,8 +57,6 @@ STATE_KEYS = {
 #: `reader.collect()` 가 아니라 **서버가 덧붙이는** 최상위 키. `reader` 는 파일만 읽고
 #: 네트워크·외부 도구를 타지 않으므로 여기 둡니다(계층 분리, REV 111).
 SERVER_KEYS = {
-    "kisti": "{ok, fetched, age_sec, stale, pending, dropped, busy, queued, phase, "
-             "prompt_tokens, generated, max_tokens, reasoning_recoveries, thinking_budget, error}",
     "graphs": "[{id, request, created, updated, percent, eta_seconds, eta_at, counts, nodes:[...], source}]",
     # 관리자 ACP 세션 (요청 Q-261110-549a, 2026-11-10). `openclaw sessions` 배경 갱신 30초 캐시.
     # 세션 키 원문은 싣지 않고 uuid 앞 8자(id)만 싣습니다.
@@ -66,7 +64,7 @@ SERVER_KEYS = {
                 "last_activity, steps, last_step}]}",
     # 함대 제어 상태 (`tools/fleet_ctl.public_state`, 2026-11-10). can = 지금 누를 수 있는 동작
     "fleet": "{mode, label, at, by, note, default, running_runs, graphs, brief, prepare, relay, "
-             "can:{prepare, run, pause, stop, round}, idle, last_round:{round, label, at, state, report_status, report}, chain:{on, project, max_rounds, rounds_done, goals_done, stopped_why, last}}",   # idle = '실행' 인데 도는 것이 없다(라운드 끝)
+             "can:{prepare, run, pause, stop, round}, idle, last_round:{round, label, at, state, report_status, report}, chain:{on, all, fleet, projects, label, max_rounds (한 묶음의 상한), renew (닿으면 새 묶음으로), autonomous, strikes, cycles, total_rounds, stopped_kind (done|cap|safety|stuck|report|error|off|wait), stopped_at, stopped_round, stopped_left, rounds_done, goals_done, open_requests, stopped_why, last}}",   # idle = '실행' 인데 도는 것이 없다(라운드 끝)
     # 프로젝트 목록 (2026-11-10) - `projects/` 아래 폴더 + 요청이 가리키는 이름. exists = 폴더가 이미 있나
     # percent = 목표 대비(`PROGRESS.md` 의 `## 목표` 체크리스트, basis "goals") - 목표가 없으면 요청들의 평균(basis "requests").
     # goals = {total, done} 또는 null. request_percent = 요청 평균(늘 실음). rounds = `rounds/R<N>/round.json`(띄운 기록) + `PROGRESS.md` 의 `## R<N>`.
@@ -79,11 +77,8 @@ SERVER_KEYS = {
 #: 공개면에서 **절대 나가면 안 되는** 것 (REV 114, S4 유출 검수 5번).
 #:  - 최상위: 키 이름
 #:  - `slots[]` 행: 키 이름
-#:  - `kisti`: 키 이름
-#: `server.collect_state()` 가 내보내기 직전에 이 세 묶음을 떼어냅니다. 키를 지우는
-#: 것만으로는 모자랍니다 - 값이 다른 필드(예: 오류 문자열)에 섞여 나가는 길이
-#: 남으므로 그쪽도 가립니다(`_scrub_upstream`).
-PUBLIC_FORBIDDEN = {"top": ("root", "paths"), "slot": ("token",), "kisti": ("url",)}
+#: `server.collect_state()` 가 내보내기 직전에 이 두 묶음을 떼어냅니다.
+PUBLIC_FORBIDDEN = {"top": ("root", "paths"), "slot": ("token",)}
 
 #: 요청 생성(`POST /api/requests`) 속도 제한 (S4 유출 검수 3번, REV 114).
 #: 개수 상한(`MAX_REQUESTS`)은 디스크가 차는 **끝점**만 막습니다 - 그 사이에
@@ -122,26 +117,7 @@ RUN_DETAIL_KEYS = ("id", "found", "slot", "harness", "model", "label", "status",
 RUN_ID_RE = (r"(?:[0-9]{8}-[0-9]{6}-S[0-9]+"
              r"|(?:T-[0-9]+[A-Z]?|ADHOC)-S[0-9]+-a[0-9]+-[0-9]{6})(-[0-9]+)?\Z")
 
-#: KISTI LLM 서버 상태 엔드포인트. S2·S3 작업자(kistillm)가 실제로 돌고 있는지 보는 창입니다.
-#: **키는 환경변수에서만 읽고 `/api/state` 로 내보내지 않습니다** - 프런트는 결과만 봅니다.
-KISTI_STATUS_URL = "https://aida.kisti.re.kr:10430/status"
 KISTI_API_KEY_ENV = "KISTI_API_KEY"
-KISTI_CACHE_SEC = 10        # 프런트가 5초 폴링이라 매번 외부를 때리지 않도록
-KISTI_TIMEOUT_SEC = 3.0     # 막히면 화면 전체가 멈추므로 짧게 끊습니다
-
-#: `/status` 응답에서 그대로 통과시킬 필드. 모르는 필드는 버립니다 - 외부 응답이
-#: 커지거나 바뀌어도 우리 스키마가 따라 흔들리지 않게 하기 위해서입니다.
-KISTI_FIELDS = ("busy", "queued", "phase", "prompt_tokens", "generated",
-                "max_tokens", "reasoning_recoveries", "thinking_budget")
-
-#: 타입까지 못박습니다. 외부가 `busy:"yes"` / `queued:{...}` 를 보내도 프런트가
-#: 숫자·불리언을 가정하고 렌더링하다 깨지지 않게, 어긋나는 필드는 버리고
-#: `dropped` 에 이름만 남깁니다 (S4 적대적 검수 9번, REV 111).
-KISTI_FIELD_TYPES = {
-    "busy": bool, "queued": int, "phase": str, "prompt_tokens": int,
-    "generated": int, "max_tokens": int, "reasoning_recoveries": int,
-    "thinking_budget": int,
-}
 
 #: 태스크 그래프 파일 위치 (`tools/fleet_graph.py` 가 씁니다). 서버는 읽기만 합니다.
 GRAPH_DIR = ".aimem/graph"

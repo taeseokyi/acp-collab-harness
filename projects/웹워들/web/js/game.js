@@ -70,25 +70,56 @@ export function keyboardState(rows) {
   return state;
 }
 
-// NYT 와 같이 초록 자리 검사를 먼저 하고, 그다음 노랑 포함 검사를 한다 - 안내가 더 구체적인 쪽이 먼저 나오게.
+// 초록 자리 -> 노랑 개수 -> 노랑 자리 되놓기 순으로 봅니다 - 안내가 더 구체적인 쪽이 먼저 나오게.
 export function hardModeViolation(guess, rows) {
   const g = String(guess).toLowerCase();
-  for (const row of rows || []) {
-    const prev = String(row.guess).toLowerCase();
-    for (let i = 0; i < prev.length; i++) {
-      if (row.scores[i] === CORRECT && g[i] !== prev[i]) {
-        return `${i + 1}번째 글자는 ${prev[i].toUpperCase()} 이어야 합니다`;
+  const prevRows = (rows || []).map((row) => ({
+    word: String(row.guess).toLowerCase(),
+    scores: row.scores,
+  }));
+
+  // 1. 초록 자리는 그대로 두어야 합니다.
+  for (const { word, scores } of prevRows) {
+    for (let i = 0; i < word.length; i++) {
+      if (scores[i] === CORRECT && g[i] !== word[i]) {
+        return `${i + 1}번째 글자는 ${word[i].toUpperCase()} 이어야 합니다`;
       }
     }
   }
-  for (const row of rows || []) {
-    const prev = String(row.guess).toLowerCase();
-    for (let i = 0; i < prev.length; i++) {
-      if (row.scores[i] === PRESENT && !g.includes(prev[i])) {
-        return `${prev[i].toUpperCase()} 가 들어가야 합니다`;
+
+  // 2. 글자마다 "최소 몇 개" 가 드러났는지 - 한 줄에서 초록+노랑을 세고 줄 사이에서는 큰 쪽을 남깁니다.
+  const need = {};
+  for (const { word, scores } of prevRows) {
+    const seen = {};
+    for (let i = 0; i < word.length; i++) {
+      if (scores[i] === CORRECT || scores[i] === PRESENT) {
+        seen[word[i]] = (seen[word[i]] || 0) + 1;
+      }
+    }
+    for (const ch of Object.keys(seen)) {
+      if (!need[ch] || seen[ch] > need[ch]) need[ch] = seen[ch];
+    }
+  }
+  for (const ch of Object.keys(need)) {
+    let have = 0;
+    for (const c of g) if (c === ch) have++;
+    if (have < need[ch]) {
+      const n = need[ch];
+      return n === 1
+        ? `${ch.toUpperCase()} 가 들어가야 합니다`
+        : `${ch.toUpperCase()} 가 ${n}개 들어가야 합니다 (지금 ${have}개)`;
+    }
+  }
+
+  // 3. 노랑이었던 자리에 같은 글자를 다시 놓을 수 없습니다 - 그 자리가 아니라는 것을 이미 알았습니다.
+  for (const { word, scores } of prevRows) {
+    for (let i = 0; i < word.length; i++) {
+      if (scores[i] === PRESENT && g[i] === word[i]) {
+        return `${word[i].toUpperCase()} 는 ${i + 1}번째 자리가 아닙니다`;
       }
     }
   }
+
   return null;
 }
 

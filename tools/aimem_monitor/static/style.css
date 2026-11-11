@@ -356,6 +356,16 @@ td {
   white-space: nowrap;
 }
 
+/* 눌러서 전문 보기 (Q-261111-2e0f) - 폰에는 호버 툴팁이 없다 */
+.elide[role="button"] { cursor: zoom-in; }
+.elide.elide-open {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  cursor: zoom-out;
+}
+
 tbody tr:last-child td {
   border-bottom: 0;
 }
@@ -713,46 +723,6 @@ form label {
 .run-info {
   color: var(--muted);
   font-size: var(--st-fs-xs);
-}
-
-.kisti-line {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--st-s-3);
-}
-
-.kisti-item {
-  font-size: var(--st-fs-md);
-  white-space: nowrap;
-}
-
-.kisti-label {
-  color: var(--muted);
-  font-size: var(--st-fs-xs);
-}
-
-.kisti-value {
-  font-variant-numeric: tabular-nums;
-}
-
-.kisti-age {
-  color: var(--muted);
-  font-size: var(--st-fs-xs);
-}
-
-.kisti-error {
-  margin-top: var(--st-s-2);
-  color: var(--danger);
-  font-size: var(--st-fs-sm);
-  overflow-wrap: anywhere;
-}
-
-.kisti-warn {
-  margin-top: var(--st-s-2);
-  color: var(--warn);
-  font-size: var(--st-fs-sm);
-  font-weight: var(--st-fw-bold);
 }
 
 .graph-block {
@@ -1151,9 +1121,6 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .pct { font-size: var(--st-fs-md); }
 .eta, .req-basis { font-size: var(--st-fs-sm); }
 
-.kisti-item { font-size: var(--st-fs-md); }
-.kisti-label, .kisti-age { font-size: var(--st-fs-sm); }
-
 /* 요청 수정 */
 .req-badges { align-items: center; }
 .req-edit-btn { font-size: var(--st-fs-sm); padding: 3px 12px; }
@@ -1224,8 +1191,6 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 
 .req-full { display: none; }
 .req-full.is-on { display: inline-block; }
-.kisti-line .is-dim { opacity: .55; }
-
 @media (max-width: 720px) {
   :root { --topbar-h: 0px; }
   .req-top .req-badges { order: -1; width: 100%; padding-left: 40px; }
@@ -1309,8 +1274,12 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .proj-summary .md h1, .proj-summary .md h2, .proj-summary .md h3 { font-size: 14px; margin: 0 0 var(--st-s-1); }
 .proj-summary .md > :last-child { margin-bottom: 0; }
 .proj-when { margin-top: 2px; }
-.proj-tag { font-size: 13px; font-weight: 500; }
-.proj-tag.none { color: var(--st-ink-muted); font-weight: 400; }
+/* 볼드 기준: 굵은 것은 '프로젝트 이름' 하나뿐이다. 함대 자체의 일과 라운드 꼬리표는 굵지 않다 (Q-261111-d64b) */
+.proj-tag { font-size: 13px; font-weight: var(--st-fw-regular); }
+.proj-tag .proj-name { font-weight: var(--st-fw-bold); }
+.proj-tag.none { color: var(--st-ink-muted); }
+.proj-tag.none .proj-name { font-weight: var(--st-fw-regular); }
+.proj-tag .proj-round { color: var(--st-ink-muted); font-weight: var(--st-fw-regular); }
 
 /* REV 145 가독성: 실행 표는 라벨 아래 run id, 표에 최소 폭(유동 칸이 0 으로 줄지 않게), 안내문 둘째 줄 */
 .run-what { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -1340,12 +1309,52 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
   background: var(--st-surface-2); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .req-edit .hint { font-weight: 400; }
 
-/* 이어 달리기 (REV 155) - 함대 제어 칸 바로 아래 한 줄 */
-.fleet-chain { display: flex; flex-wrap: wrap; align-items: center; gap: var(--st-s-2); margin: var(--st-s-2) 0;
-  padding: var(--st-s-2) var(--st-s-3); border: 1px dashed var(--st-border, #d5d9e0); border-radius: 10px; }
+/* 이어 달리기 - 함대 제어 칸 바로 아래. 대상은 격자로 맞춘 체크 칸, '모두 선택' 단추, 얼마나는 라디오 */
+.fleet-chain { display: flex; flex-direction: column; gap: var(--st-s-3); margin: var(--st-s-2) 0;
+  padding: var(--st-s-3); border: 1px solid var(--st-border, #d5d9e0); border-radius: 10px; background: var(--st-surface-2, transparent); }
 .fleet-chain:empty { display: none; }
+.fleet-chain-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--st-s-2); }
 .fleet-chain-title { font-weight: 600; }
-.fleet-chain-project { min-width: 9em; max-width: 100%; padding: 5px 8px; font-size: var(--st-fs-md); }
-.fleet-chain-max { width: 4.5em; padding: 5px 8px; font-size: var(--st-fs-md); }
-.fleet-chain-note { flex-basis: 100%; }
-.fleet-chain-err { color: var(--st-danger, #c62828); }
+.fleet-chain-what { font-weight: 600; overflow-wrap: anywhere; }
+.fleet-chain-head .fleet-chain-on { margin-left: auto; }
+.fleet-chain-sec { display: flex; flex-direction: column; gap: 6px; }
+.fleet-chain-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--st-s-2); }
+.fleet-chain-lab { font-size: var(--st-fs-sm); font-weight: 600; color: var(--st-ink-muted); }
+.fleet-chain-count { margin-right: auto; }
+.fleet-chain-all { padding: 4px 12px; font-size: var(--st-fs-sm); }
+.fleet-chain-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 6px;
+  max-height: 232px; overflow-y: auto; padding: 2px; }
+.fleet-chain-opt { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 38px; padding: 6px 10px;
+  border: 1px solid var(--st-border, #d5d9e0); border-radius: 8px; font-size: var(--st-fs-md); cursor: pointer; user-select: none;
+  background: var(--st-surface, #fff); }
+.fleet-chain-opt input[type="checkbox"], .fleet-chain-opt input[type="radio"] { flex: none; margin: 0; width: 17px; height: 17px;
+  accent-color: var(--st-accent, #0b7a5c); }
+.fleet-chain-opt-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fleet-chain-kind { flex: none; font-size: 11px; color: var(--st-ink-muted); }
+.fleet-chain-opt.is-fleet .fleet-chain-opt-text { font-weight: 600; }
+.fleet-chain-opt:has(input:checked) { border-color: var(--st-accent, #0b7a5c);
+  background: color-mix(in srgb, var(--st-accent, #0b7a5c) 10%, var(--st-surface, #fff)); }
+.fleet-chain-opt:has(input:focus-visible) { outline: 2px solid var(--st-accent, #0b7a5c); outline-offset: 2px; }
+.fleet-chain-modes { display: flex; flex-wrap: wrap; gap: 6px; }
+.fleet-chain-modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); }
+.fleet-chain-mode { min-height: 46px; }
+.fleet-chain-mode-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.fleet-chain-mode-sub { font-size: 11px; color: var(--st-ink-muted); }
+.fleet-chain-max { width: 3.6em; padding: 3px 6px; font-size: var(--st-fs-md); }
+.fleet-chain-max:disabled { opacity: 0.5; }
+.fleet-chain-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--st-s-2); }
+.fleet-chain-foot .fleet-chain-note { flex: 1 1 260px; }
+.fleet-chain-on { flex: none; }
+.fleet-chain-err { color: var(--st-danger, #c62828); font-weight: 600; }
+.fleet-chain-stop { padding: 8px 12px; border-radius: 8px; border-left: 4px solid var(--st-border, #c5cad3);
+  background: var(--st-surface, #fff); font-size: var(--st-fs-sm); line-height: 1.45; overflow-wrap: anywhere; }
+.fleet-chain-stop-head { font-weight: 700; font-size: var(--st-fs-md); }
+.fleet-chain-stop-next { color: var(--st-ink-muted); margin-top: 2px; }
+.fleet-chain-stop.is-done { border-left-color: #0b7a5c; background: color-mix(in srgb, #0b7a5c 9%, var(--st-surface, #fff)); }
+.fleet-chain-stop.is-warn { border-left-color: #b26a00; background: color-mix(in srgb, #b26a00 10%, var(--st-surface, #fff)); }
+.fleet-chain-stop.is-bad { border-left-color: #c62828; background: color-mix(in srgb, #c62828 8%, var(--st-surface, #fff)); }
+@media (max-width: 560px) {
+  .fleet-chain-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  .fleet-chain-modes { flex-direction: column; }
+  .fleet-chain-foot .fleet-chain-on, .fleet-chain-head .fleet-chain-on { width: 100%; margin-left: 0; }
+}

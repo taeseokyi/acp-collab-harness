@@ -158,8 +158,8 @@ main {
 .key {
   flex: 1;
   min-width: 0;
-  height: clamp(20px, calc((100vh - 330px) / 3), 54px);
-  height: clamp(20px, calc((100dvh - 330px) / 3), 54px);
+  height: clamp(32px, calc((100vh - 330px) / 3), 54px);
+  height: clamp(32px, calc((100dvh - 330px) / 3), 54px);
   padding: 0;
   border: 0;
   border-radius: 4px;
@@ -288,12 +288,40 @@ html[data-theme="light"]:not([data-colorblind="on"]) .primary { background: #4a7
 @media (max-width: 400px) {
   .krow { gap: 4px; margin-bottom: 6px; }
   .key {
-    height: clamp(20px, calc((100vh - 330px) / 3), 50px);
-    height: clamp(20px, calc((100dvh - 330px) / 3), 50px);
+    height: clamp(32px, calc((100vh - 330px) / 3), 50px);
+    height: clamp(32px, calc((100dvh - 330px) / 3), 50px);
     font-size: .85rem;
   }
   .key.wide { font-size: .68rem; }
 }
+/* 가로로 넓고 낮은 창 - 보드와 키보드를 좌우로 놓습니다 (R12 항목 3).
+   세로로 쌓으면 900x420 에서 칸이 18px 까지 작아집니다. */
+@media (min-width: 760px) and (max-height: 560px) {
+  :root {
+    --board-width: min(350px, calc(45vw - 24px), calc((100vh - 90px) * 5 / 6));
+  }
+  #app { max-width: 1100px; }
+  main {
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    padding: 8px 12px;
+  }
+  .board { margin: 0; flex: none; }
+  .keyboard { flex: 1 1 auto; max-width: 520px; min-width: 300px; margin: 0; }
+  .key { height: clamp(32px, calc((100vh - 120px) / 3.6), 54px); }
+}
+
+@supports (height: 100dvh) {
+  @media (min-width: 760px) and (max-height: 560px) {
+    :root {
+      --board-width: min(350px, calc(45vw - 24px), calc((100dvh - 90px) * 5 / 6));
+    }
+    .key { height: clamp(32px, calc((100dvh - 120px) / 3.6), 54px); }
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .tile.pop, .tile.flip, .row.shake, .tile.bounce { animation-duration: .01s; }
 }

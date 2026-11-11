@@ -11,7 +11,7 @@
 라우트:
     GET  /                 -> static/index.html
     GET  /static/<파일>    -> static/ 아래 파일 (경로 탈출 차단)
-    GET  /api/state        -> reader.collect() + 서버가 붙이는 kisti / graphs / managers
+    GET  /api/state        -> reader.collect() + 서버가 붙이는 graphs / managers
     GET  /api/health       -> {"ok": true, "rev": N}  (reader 가 없어도 응답한다)
     GET  /api/runs/<id>    -> reader.run_detail(). 상세 패널용 (브리프·보고·rc·경과)
     POST /api/requests     -> .aimem/requests/<id>.json 생성
@@ -72,8 +72,7 @@ from . import (AUTH_EXEMPT_PATHS, AUTH_UNAUTH_REDIRECT_PATHS, AUTH_UNAUTH_REDIRE
                GITHUB_DEVICE_POLL_PATH, GITHUB_DEVICE_START_PATH, GITHUB_DEVICE_VERIFY_URL,
                GITHUB_STATE_COOKIE,
                GITHUB_TOKEN_URL, GITHUB_USER_URL, GRAPH_DIR, HOST, HSTS_HEADER,
-               KEY_FILE, KISTI_API_KEY_ENV, KISTI_CACHE_SEC, KISTI_FIELDS,
-               KISTI_FIELD_TYPES, KISTI_STATUS_URL, KISTI_TIMEOUT_SEC,
+               KEY_FILE, KISTI_API_KEY_ENV,
                LOGIN_FAIL_DELAY_SEC, LOGIN_FAIL_MAX, LOGIN_FAIL_WINDOW_SEC, PORT,
                PUBLIC_FORBIDDEN, REQUEST_DETAIL_MAX, REQUEST_FAIL_MAX,
                REQUEST_RATE_MAX, REQUEST_RATE_WINDOW_SEC,
@@ -132,7 +131,7 @@ _LOG_SAFE = {c: f"\\x{c:02x}" for c in list(range(0x20)) + [0x7f]}
 
 #: 로그에 남는 `/app/~<티켓>/` 의 티켓을 가립니다. 티켓은 12시간짜리 인가 수단이라
 #: 로그를 읽을 수 있는 쪽이 그대로 다시 쓸 수 있습니다 (R11 검수 A 결함 2).
-_TICKET_LOG_RE = re.compile(r"/app/~[^/\s]+")
+_TICKET_LOG_RE = re.compile(r"/app/(?:~|%7[Ee])[^/\s]+")
 
 _TOKEN_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 #: subject 에 `.` 이 들어가면 쿠키 파싱이 어긋납니다. 들어올 수 있는 값은
@@ -236,6 +235,10 @@ def app_ticket_ok(ticket, name, key, now=None):
     exp = int(exp_s)
     if exp < int(time.time() if now is None else now):
         return False
+    # 발급은 TTL 안쪽에서만 합니다. 서명이 맞아도 그보다 먼 `exp` 는
+    # 이 서버가 발급한 것일 수 없습니다 (키가 샜을 때 영구 티켓을 막는 심층 방어).
+    if exp > int(time.time() if now is None else now) + PROJECT_APP_TICKET_TTL_SEC + 60:
+        return False
     want = hmac.new(key, f"app.v1.{exp}.{name}".encode("utf-8"), hashlib.sha256).hexdigest()[:32]
     return hmac.compare_digest(want.encode("ascii"), mac.encode("ascii"))
 
@@ -291,6 +294,38 @@ def build_ssl_context(root=ROOT):
     return ctx
 
 
+_PROXY_LINE_MAX = 107      # PROXY protocol v1 한 줄의 최대 길이 (CRLF 포함)
+
+
+def read_proxy_header(request, client_address):
+    """윈도우 쪽 통과 프록시(18800)가 맨 앞에 붙이는 `PROXY TCP4 <접속자> <목적지> <포트> <포트>\r\n` 한 줄을
+    읽어 **진짜 접속자 주소**를 돌려줍니다 (2026-11-11). 없으면 받은 주소 그대로.
+
+    프록시를 거치면 모든 접속이 `127.0.0.1` 로 보여 접속 기록으로는 누가 왔는지 알 수 없었고, 주소별 제한도
+    모두 한 바구니였습니다(R11 인증 우회 때 악용 여부를 프록시 로그로만 가릴 수 있었습니다).
+    **이 줄은 상대가 이 기계 자신(loopback)일 때만 믿습니다** - 바깥에서 직접 온 연결이 이 줄을 보내면 주소를
+    속이는 것이므로 읽지 않습니다(그 연결은 TLS 핸드셰이크에서 떨어집니다). `X-Forwarded-For` 는 여전히 안 믿습니다.
+    """
+    try:
+        if not ipaddress.ip_address(client_address[0]).is_loopback:
+            return client_address
+        head = request.recv(_PROXY_LINE_MAX, socket.MSG_PEEK)
+        if not head.startswith(b"PROXY "):
+            return client_address
+        end = head.find(b"\r\n")
+        if end < 0:
+            return client_address
+        line = request.recv(end + 2)[:end].decode("ascii", "replace").split(" ")     # 그 줄만 정확히 꺼낸다
+        if len(line) == 6 and line[1] in ("TCP4", "TCP6"):
+            src = ipaddress.ip_address(line[2])
+            port = int(line[4])
+            if 0 < port < 65536:
+                return (str(src), port) + tuple(client_address[2:])
+    except (OSError, ValueError, IndexError, TypeError):
+        pass
+    return client_address
+
+
 class TLSThreadingHTTPServer(http.server.ThreadingHTTPServer):
     """TLS 핸드셰이크를 **워커 스레드에서** 합니다 (S4 검수 1번, 높음).
 
@@ -344,6 +379,7 @@ class TLSThreadingHTTPServer(http.server.ThreadingHTTPServer):
     def finish_request(self, request, client_address):
         try:
             request.settimeout(self.handshake_timeout)
+            client_address = read_proxy_header(request, client_address)
             if self._redirect_plain_http(request):
                 return
             tls = self.ssl_context.wrap_socket(request, server_side=True)
@@ -677,19 +713,19 @@ class RequestRateLimiter:
 def _empty_state(root, errors):
     """실패 분기의 상태. **정상 분기와 최상위 키가 같아야 합니다.**
 
-    프런트는 `state.kisti` / `state.graphs` 를 무조건 읽습니다. 실패 분기에서 키가
+    프런트는 `state.graphs` 를 무조건 읽습니다. 실패 분기에서 키가
     빠지면 화면이 통째로 깨집니다 - 두 분기가 따로 적혀 있다 실제로 9개가
     어긋나 있었습니다 (S4 적대적 검수 7번, REV 111). 그래서 한 군데서만 만듭니다.
     """
     state = _blank_keys(root)
-    state.update({"kisti": kisti_status(), "graphs": collect_graphs(root, errors),
+    state.update({"graphs": collect_graphs(root, errors),
                   "managers": manager_status(root), "errors": errors, "projects": list_projects(root)})
     state["fleet"] = fleet_state(root, state["managers"])
     return scrub_public(state, root)
 
 
 def _blank_keys(root):
-    """`kisti`/`graphs` 를 **빼고** 나머지 최상위 키의 기본값. 둘은 비싸서 따로 붙입니다."""
+    """`graphs` 를 **빼고** 나머지 최상위 키의 기본값. 비싸서 따로 붙입니다."""
     return {
         "generated": datetime.datetime.now().isoformat(timespec="seconds"),
         "aimem": {}, "slots": [], "board": [], "queue": [],
@@ -742,7 +778,7 @@ def mask_deep(obj, mask):
     """모든 문자열 잎에 `mask` 를 먹입니다. 숫자·불리언·None 은 건드리지 않습니다.
 
     **필드 목록 대신 전체를 훑는 이유** (S4 검수 8번): 필드를 열거하면 새 키가
-    생길 때마다 빠집니다 - 실측에서 `aimem.goal.text`/`slots[].note`/`board[].handoff`/
+    생길 때마다 빠집니다 - 실측에서 `slots[].note`/`board[].handoff`/
     `requests[].detail`/`graphs[].nodes[].title` 등 16군데가 목록 밖이었습니다.
     비용은 폴링 5초에 수 ms 라 정확도를 택합니다.
     """
@@ -794,10 +830,7 @@ def scrub_public(state, root=None):
     내부에서는 필요하고 **밖으로 나가면 안 되는** 값이라, 계층의 경계인 공개 직전
     한 군데에서만 떼는 쪽이 어긋날 자리가 적습니다.
 
-    **상류 호스트는 우리가 만든 문자열에서만 가립니다** (`kisti.error`). 요청의
-    `title`/`detail` 에 들어 있는 것은 태석님이 직접 쓴 본문이라(`c5c1` 요청이
-    `aida.kisti.re.kr:10430/#monitor` 를 참조 대상으로 적었습니다) 가리면 무엇을
-    주문했는지 읽을 수 없게 됩니다 - 설정 유출과 사용자 본문은 다릅니다.
+    사용자가 쓴 `title`/`detail` 은 설정 유출이 아니므로 가리지 않습니다.
     """
     mask = _masker(root if root is not None else state.get("root"), state)
     for k in PUBLIC_FORBIDDEN["top"]:
@@ -816,12 +849,6 @@ def scrub_public(state, root=None):
             if isinstance(s, dict):
                 for k in PUBLIC_FORBIDDEN["slot"]:
                     s.pop(k, None)
-    kisti = state.get("kisti")
-    if isinstance(kisti, dict):
-        for k in PUBLIC_FORBIDDEN["kisti"]:
-            kisti.pop(k, None)
-        if isinstance(kisti.get("error"), str):
-            kisti["error"] = _scrub_upstream(kisti["error"])
     return mask_deep(state, mask)
 
 
@@ -837,11 +864,10 @@ def collect_state(root=ROOT):
     if not isinstance(state.get("errors"), list):
         state["errors"] = []
     # **키가 모자란 dict 를 그대로 통과시키던 것**을 막습니다. `{}` 나 `{"runs": []}` 를
-    # 돌려받으면 최상위 키 10개가 빠진 채 나갔고, 프런트는 `state.kisti`/`state.graphs` 를
+    # 돌려받으면 최상위 키 10개가 빠진 채 나갔고, 프런트는 `state.graphs` 를
     # 무조건 읽습니다 (S4 재검수 2번, REV 111). 실패 분기와 **같은 기본값**으로 메웁니다.
     for k, v in _blank_keys(root).items():
         state.setdefault(k, v)
-    state["kisti"] = kisti_status()
     state["graphs"] = collect_graphs(root, state["errors"])
     state["projects"] = list_projects(root, state.get("requests") if isinstance(state.get("requests"), list) else None)
     state["managers"] = manager_status(root)
@@ -901,29 +927,7 @@ def run_detail(run_id, root=ROOT):
     return mask_deep(out, mask)
 
 
-# -- KISTI LLM 서버 상태 -----------------------------------------------------
-# S2·S3 작업자가 쓰는 모델 서버입니다. **동시 요청을 처리합니다** - 태석님 확인
-# 2026-11-09 17:30: 둘이 같이 돌 때 `/status` 가 `busy:true, queued:0` 이었습니다.
-# 대기열이 아니라 동시 처리이고, 16분 지연의 원인은 직렬화가 아니라 턴당 프롬프트
-# 재독 + 긴 생성입니다 (REV 111 `4절`). 관리자는 투입 전에 이 카드를 봅니다.
-#
-# **요청 스레드는 절대 외부를 기다리지 않습니다.** 갱신은 배경 스레드 하나가 하고
-# `/api/state` 는 캐시만 읽습니다. 예전 구조는 (a) `timeout=3.0` 이 소켓 연산 하나의
-# 제한일 뿐이라 트리클 응답에 55초까지 막혔고 (b) 락이 fetch 중에 풀려 있어 동시
-# 요청마다 외부를 때렸습니다 (S4 적대적 검수 3·4번, REV 111).
-
-_kisti_lock = threading.Lock()
-_kisti_cache = {"at": None, "value": None, "refreshing_since": None, "live": 0}
-
-#: 배경 갱신이 이보다 오래 걸리면 죽은 것으로 보고 다음 갱신을 허용합니다.
-KISTI_REFRESH_STUCK_SEC = 120
-
-#: **동시에 살아 있는 갱신 스레드 상한.** 상류가 영영 안 끝나면 `STUCK` 간격마다
-#: 스레드와 소켓이 하나씩 쌓였습니다(S4 재검수 3번: 1 -> 6). 헤더 한 줄이 64KB 까지
-#: 허용되므로 한 스레드가 수 시간 살 수 있습니다. 상한에 닿으면 갱신을 포기하고
-#: stale 을 돌려줍니다 - **요청 경로는 어차피 막히지 않습니다.**
-KISTI_MAX_LIVE_REFRESH = 2
-
+# -- 외부 HTTP (깃허브 OAuth) -----------------------------------------------
 
 def _no_redirect_opener():
     """리다이렉트를 따르지 않는 opener.
@@ -939,129 +943,11 @@ def _no_redirect_opener():
     return urllib.request.build_opener(_NoRedirect)
 
 
-#: 상류 호스트(`aida.kisti.re.kr:10430`). `kisti.url` 을 공개면에서 뺐으므로
-#: **오류 문자열에 남은 같은 값도 가립니다** - 키만 지우고 예외 메시지로 새면
-#: 지운 것이 아닙니다(S4 유출 검수 5번의 요지). `URLError` 는 흔히 URL 을 싣습니다.
-_UPSTREAM_HOST = urllib.parse.urlparse(KISTI_STATUS_URL).netloc
-
-
-def _scrub_upstream(s):
-    """상류 호스트·전체 URL 을 `(상류)` 로 바꿉니다."""
-    return s.replace(KISTI_STATUS_URL, "(상류)").replace(_UPSTREAM_HOST, "(상류)") if s else s
-
-
-def _scrub(text, key):
-    """예외 문자열에 키가 섞여 있으면 지웁니다. 지금 새는 경로는 없지만 마지막 방어선입니다."""
-    s = str(text)[:120]
-    return _scrub_upstream(s.replace(key, "***") if key else s)
-
-
-def _typed_fields(payload, base):
-    """`KISTI_FIELD_TYPES` 에 맞는 필드만 통과시킵니다. 어긋나면 이름만 `dropped` 에."""
-    dropped = []
-    for f in KISTI_FIELDS:
-        if f not in payload:
-            continue
-        want, got = KISTI_FIELD_TYPES.get(f), payload[f]
-        # bool 은 int 의 하위 클래스입니다 - `queued=True` 를 숫자로 통과시키지 않습니다.
-        if want is int and isinstance(got, bool):
-            dropped.append(f)
-        elif want is None or isinstance(got, want):
-            base[f] = got
-        else:
-            dropped.append(f)
-    base["dropped"] = dropped
-
-
-def _fetch_kisti(url=KISTI_STATUS_URL, timeout=KISTI_TIMEOUT_SEC):
-    """`/status` 를 한 번 읽습니다. **키는 돌려주는 딕셔너리에 넣지 않습니다.**"""
-    key = os.environ.get(KISTI_API_KEY_ENV, "")
-    now = datetime.datetime.now()
-    base = {"ok": False, "url": url, "fetched": now.isoformat(timespec="seconds"),
-            "error": None, "dropped": []}
-    if not key:
-        base["error"] = f"{KISTI_API_KEY_ENV} 환경변수가 없습니다 (서버를 띄운 셸에 넣으십시오)"
-        return base
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}",
-                                               "Accept": "application/json"})
-    try:
-        with _no_redirect_opener().open(req, timeout=timeout) as r:
-            payload = json.loads(r.read(64 * 1024).decode("utf-8"))
-    except (urllib.error.URLError, OSError, ValueError, TimeoutError) as e:
-        base["error"] = f"{type(e).__name__}: {_scrub(e, key)}"
-        return base
-    if not isinstance(payload, dict):
-        base["error"] = f"JSON 객체가 아닙니다: {type(payload).__name__}"
-        return base
-    base["ok"] = True
-    _typed_fields(payload, base)
-    return base
-
-
-def _refresh_kisti(now):
-    """배경 스레드 본체. 끝나면 캐시에 넣고 `refreshing_since` 를 지웁니다."""
-    try:
-        fresh = _fetch_kisti()
-    except Exception as e:  # noqa: BLE001 - 배경 스레드가 죽어도 조용히 남기고 끝난다
-        fresh = {"ok": False, "url": KISTI_STATUS_URL, "dropped": [],
-                 "fetched": now.isoformat(timespec="seconds"),
-                 "error": f"{type(e).__name__}: {str(e)[:120]}"}
-    with _kisti_lock:
-        _kisti_cache["at"] = datetime.datetime.now()
-        _kisti_cache["value"] = fresh
-        _kisti_cache["refreshing_since"] = None
-        _kisti_cache["live"] = max(0, _kisti_cache["live"] - 1)
-
-
-def kisti_status(now=None, cache_sec=KISTI_CACHE_SEC, sync=False):
-    """캐시를 즉시 돌려주고, 낡았으면 **배경 갱신 하나만** 띄웁니다.
-
-    - 첫 호출은 아직 값이 없으므로 `pending: True` 를 돌려줍니다. 5초 뒤 폴링이 실값을 받습니다
-    - 갱신 중에는 `stale: True` 를 붙인 지난 값을 돌려줍니다 (요청은 막지 않습니다)
-    - `sync=True` 는 인라인으로 한 번 읽습니다 - 테스트와 `--once` 용입니다
-    """
-    now = now or datetime.datetime.now()
-    with _kisti_lock:
-        at, val = _kisti_cache["at"], _kisti_cache["value"]
-        fresh_enough = val is not None and at is not None and (now - at).total_seconds() < cache_sec
-        if fresh_enough:
-            out = dict(val)
-            out.update({"age_sec": int((now - at).total_seconds()), "stale": False, "pending": False})
-            return out
-        since = _kisti_cache["refreshing_since"]
-        stuck = since is not None and (now - since).total_seconds() > KISTI_REFRESH_STUCK_SEC
-        start_refresh = sync or since is None or stuck
-        if start_refresh and not sync:
-            if _kisti_cache["live"] >= KISTI_MAX_LIVE_REFRESH:
-                start_refresh = False   # 상류가 막혔다 - 더 쌓지 않고 stale 을 준다
-            else:
-                _kisti_cache["refreshing_since"] = now
-                _kisti_cache["live"] += 1
-    if sync:
-        _refresh_kisti(now)
-        with _kisti_lock:
-            at, val = _kisti_cache["at"], _kisti_cache["value"]
-        out = dict(val or {})
-        out.update({"age_sec": 0, "stale": False, "pending": False})
-        return out
-    if start_refresh:
-        threading.Thread(target=_refresh_kisti, args=(now,), daemon=True,
-                         name="kisti-refresh").start()
-    if val is None:
-        return {"ok": False, "url": KISTI_STATUS_URL, "fetched": None, "age_sec": None,
-                "stale": False, "pending": True, "dropped": [],
-                "error": "조회 중입니다 (다음 폴링에 값이 옵니다)"}
-    out = dict(val)
-    out.update({"age_sec": int((now - at).total_seconds()) if at else None,
-                "stale": True, "pending": True})
-    return out
-
-
 # -- 관리자 세션 (`fleet.py children` 의 관리자 행) -----------------------------
 #
 # 관리자는 S1~S4 와 별개인 Opus ACP 세션이라 `runs` 에 나오지 않습니다. 관리자가
 # 계획·검증 중이면 작업자가 0개라 화면이 멈춘 것처럼 보였습니다 (요청 Q-261110-549a).
-# `openclaw sessions` 는 한 번에 4초 걸리므로 kisti 와 같은 **배경 갱신 + 캐시** 입니다.
+# `openclaw sessions` 는 한 번에 4초 걸리므로 **배경 갱신 + 캐시** 입니다.
 
 MANAGER_CACHE_SEC = 30
 MANAGER_TIMEOUT_SEC = 25
@@ -1302,7 +1188,10 @@ def archive_action(payload, by, root=ROOT):
         return 400, {"ok": False, "error": "days 는 0~3650 정수"}
     dry = bool(payload.get("dry_run", False))
     db = _aimem_db(root)
-    plan = db.archive_plan(days)
+    try:
+        plan = db.archive_plan(days)
+    except Exception as e:  # noqa: BLE001 - 계획을 못 세워도 화면에는 이유가 보여야 한다 (전에는 연결이 그냥 끊겼다)
+        return 500, {"ok": False, "error": f"정리 계획을 세우지 못했습니다: {type(e).__name__}: {str(e)[:160]}"}
     summary = {"days": days, "cutoff": plan["cutoff"], "total": plan["total"],
                "tasks": [{"id": t["id"], "title": t["title"], "slot": t["slot"], "updated": t["updated"]} for t in plan["tasks"]],
                "requests": [{"id": r["id"], "title": r["title"], "status": r["status"], "when": r["when"]} for r in plan["requests"]],
@@ -1565,8 +1454,14 @@ def fleet_action(action, by, root=ROOT, payload=None):
         if not isinstance(p.get("on"), bool):
             return 400, {"ok": False, "error": "`on` 은 true/false 여야 합니다"}
         try:
-            out = _fleet_ctl(root).chain_set(p["on"], p.get("project") if isinstance(p.get("project"), str) else None,
-                                             p.get("max_rounds"), by)
+            names = p.get("projects")
+            names = [x for x in names if isinstance(x, str)][:50] if isinstance(names, list) else []
+            if isinstance(p.get("project"), str) and p["project"].strip():
+                names.append(p["project"])
+            # 대상: 함대(fleet) · 프로젝트 여러 개(projects) · 전체(all). 아무것도 안 골랐으면 거절하고 이유를 돌려준다
+            out = _fleet_ctl(root).chain_set(p["on"], None, p.get("max_rounds"), by, projects=names,
+                                             fleet_on=bool(p.get("fleet")), all_=bool(p.get("all")),
+                                             autonomous=bool(p.get("autonomous")), renew=bool(p.get("renew")))
         except Exception as e:  # noqa: BLE001
             return 500, {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
         return (200 if out.get("ok") else 400), out
@@ -1575,12 +1470,6 @@ def fleet_action(action, by, root=ROOT, payload=None):
     ctl = _fleet_ctl(root)
     extra = []
     if action == "prepare":
-        # 준비 점검은 사람이 누른 한 번이므로 캐시가 아니라 **지금** 읽습니다(sync). 전에는 배경 갱신
-        # 중(`pending`)이면 장애로 찍혀 "reading the prompt" 가 빨간 줄로 떴습니다 (2026-11-10 점검 2번).
-        k = kisti_status(sync=True)
-        ok = k.get("ok") is not False
-        detail = k.get("error") or (f"응답 정상 · busy {k.get('busy')} · 대기 {k.get('queued')}" if ok else "")
-        extra.append(ctl._check("KISTI LLM 서버 (S2 kistillm)", ok, detail, required=False))
         try:   # 역할 미배정 슬롯 - 관리자가 라운드 시작 때 정해야 할 것이 있음을 준비 점검표에 보인다
             db = _aimem_db(root)
             pend = [s["slot"] for s in db.slot_list() if (s.get("role") or "") == db.SLOT_ROLE_UNASSIGNED]
@@ -2381,7 +2270,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return SESSION_SUBJECT_TOKEN
             return None
         sess = verify_session(tok, self._cookie(SESSION_COOKIE))
-        return sess["subject"] if sess else None
+        if not sess:
+            return None
+        subject = sess["subject"]
+        # **GitHub 주체는 요청마다 허용 목록을 다시 봅니다.** 목록은 로그인 때만 보던 것이라,
+        # 계정을 지워도 서명된 쿠키가 TTL 동안 그대로 들었습니다 (R12 T-155 가 찾음).
+        # 파일은 작고 캐시하지 않습니다 - 지운 즉시 끊기는 것이 이 검사의 값어치입니다.
+        if subject.startswith(SESSION_SUBJECT_GITHUB_PREFIX):
+            login = subject[len(SESSION_SUBJECT_GITHUB_PREFIX):].lower()
+            if login not in github_allowed_logins(self.root):
+                return None
+        return subject
 
     def _cookie_header(self, name, value, max_age, samesite="Strict"):
         bits = [f"{name}={value}", "Path=/", "HttpOnly", f"SameSite={samesite}"]

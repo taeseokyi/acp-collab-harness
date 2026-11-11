@@ -2,6 +2,23 @@
 const PREFIX = 'webwordle.';
 const memory = new Map();
 let backend; // undefined = 아직 안 알아봄, null = 못 씀
+let parentMode = false;
+let initPromise = null;
+let parentOriginValue;
+
+function parentOrigin() {
+  if (parentOriginValue === undefined) parentOriginValue = new URL(globalThis.location.href).origin;
+  return parentOriginValue;
+}
+
+function sendToParent(op, key, value) {
+  if (!parentMode) return;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(key)) return;
+  if (op === 'put' && value !== null && (typeof value !== 'string' || value.length > 8192)) return;
+  try {
+    globalThis.parent.postMessage({ aimem: 'store.v1', op, key, value }, parentOrigin());
+  } catch { /* 부모가 없거나 거부해도 게임은 계속 */ }
+}
 
 function store() {
   if (backend !== undefined) return backend;
@@ -41,6 +58,7 @@ function write(key, value) {
     const s = store();
     if (s) s.setItem(k, text);
   } catch { /* 메모리에는 남음 */ }
+  sendToParent('put', key, text);
 }
 
 function remove(key) {
@@ -50,6 +68,62 @@ function remove(key) {
     const s = store();
     if (s) s.removeItem(k);
   } catch { /* 무시 */ }
+  sendToParent('put', key, null);
+}
+
+function todayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+export async function init() {
+  if (initPromise) return initPromise;
+  initPromise = (async () => {
+    if (store()) return;
+    if (!globalThis.parent || globalThis.parent === globalThis) return;
+
+    let snapshotTimer = null;
+    let receivedSnapshot = false;
+    await new Promise((resolve) => {
+      let done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        globalThis.removeEventListener('message', onMsg);
+        clearTimeout(snapshotTimer);
+        resolve();
+      }
+      function onMsg(ev) {
+        if (ev.source !== globalThis.parent) return;
+        const data = ev.data;
+        if (typeof data !== 'object' || data === null || Array.isArray(data)) return;
+        if (data.aimem !== 'store.v1' || data.op !== 'snapshot') return;
+        const items = data.items;
+        if (typeof items !== 'object' || items === null || Array.isArray(items)) return;
+        receivedSnapshot = true;
+        for (const [key, value] of Object.entries(items)) {
+          if (typeof value === 'string') memory.set(PREFIX + key, value);
+        }
+        finish();
+      }
+      globalThis.addEventListener('message', onMsg);
+      snapshotTimer = setTimeout(finish, 500);
+      try {
+        globalThis.parent.postMessage({ aimem: 'store.v1', op: 'ready' }, parentOrigin());
+      } catch { /* 메모리 모드로 계속 */ }
+    });
+
+    if (!receivedSnapshot) return;
+    parentMode = true;
+    const today = todayKey();
+    const dailyPrefix = PREFIX + 'daily.';
+    for (const k of [...memory.keys()]) {
+      if (!k.startsWith(dailyPrefix)) continue;
+      const day = k.slice(dailyPrefix.length);
+      if (day !== today) remove('daily.' + day);
+    }
+  })();
+  return initPromise;
 }
 
 const num = (v) => (Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0);

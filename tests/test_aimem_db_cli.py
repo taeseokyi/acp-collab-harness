@@ -142,6 +142,22 @@ class AimemDbCliTest(unittest.TestCase):
                 self.run_cmd(aimem_db.cmd_request, action="set", id="Q-e", title="x", project="엡실론")
                 self.assertFalse((self.root / "rounds" / "R9").exists())
 
+    def test_archive_plan_survives_a_node_whose_task_is_the_whole_brief(self):
+        """2026-11-11 태석님: '지금 끝난 것 전부' 미리보기가 안 됨. 노드의 `task` 가 지시 본문 전체일 때 그것을
+        입력 파일 이름으로 써서 `File name too long` 으로 죽었다(14일 기준에서는 최근 그래프가 걸러져 안 보였다)."""
+        g = self.root / ".aimem" / "graph"
+        (g / "inputs").mkdir(parents=True)
+        (g / "inputs" / "T-1.md").write_text("x", encoding="utf-8")
+        (g / "inputs" / "brief-a.md").write_text("x", encoding="utf-8")
+        long_task = "# T-2 긴 지시\n\n" + "가나다라 " * 400 + "\n../../etc/passwd"
+        (g / "G-001.json").write_text(json.dumps({"id": "G-001", "request": "r", "created": "2026-11-01T00:00:00", "nodes": [
+            {"id": "T-1", "status": "done", "task": "brief-a"},
+            {"id": "T-2", "status": "done", "task": long_task},
+            {"id": "T-3", "status": "failed", "task": None}]}), encoding="utf-8")
+        plan = aimem_db.archive_plan(0)
+        self.assertEqual([x["id"] for x in plan["graphs"]], ["G-001"])
+        self.assertEqual(sorted(plan["graphs"][0]["inputs"]), ["T-1.md", "brief-a.md"])
+
     def test_project_name_rule_is_one_rule(self):
         import fleet
         import aimem_monitor

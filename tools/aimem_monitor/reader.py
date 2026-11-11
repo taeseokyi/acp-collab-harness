@@ -86,26 +86,7 @@ def _parse_aimem(lines: list[str], errors: list, need_rev: bool = True) -> dict:
     m = re.search(r"^- (?:최종 갱신|Last updated):\s*(.+?)\s*$", text, re.M)
     updated = m.group(1) if m else ""
 
-    goal_text, goal_status = "", ""
-    body = _section(lines, r"1\.")
-    i = 0
-    while i < len(body):
-        ln = body[i]
-        gm = re.match(r"^- \*\*(?:목표|Goal)[^:]*:\*\*\s*(.*)$", ln)
-        if gm and not goal_text:
-            parts = [gm.group(1).strip()]
-            i += 1
-            while i < len(body) and body[i].startswith(" ") and body[i].strip():
-                parts.append(body[i].strip())
-                i += 1
-            goal_text = " ".join(p for p in parts if p)
-            continue
-        sm = re.match(r"^- \*\*(?:상태|Status):\*\*\s*(.*)$", ln)
-        if sm and not goal_status:
-            goal_status = sm.group(1).strip()
-        i += 1
-    return {"rev": rev, "lines": len(lines), "updated": updated,
-            "goal": {"text": goal_text, "status": goal_status}}
+    return {"rev": rev, "lines": len(lines), "updated": updated}
 
 
 def _parse_log(lines: list[str], root: pathlib.Path | None = None) -> list[dict]:
@@ -372,9 +353,13 @@ def _estimate(req: dict, runs_by_id: dict, slot_harness: dict, eta: dict, now: d
         ests.append(max(med, floor.get(h, 0)))
         used.append(h if info else "전체")
 
-    if not remaining:
+    if not subs:
+        # 분담 전에는 추정할 표본 자체가 없다. 0 을 내면 화면이 "지금 도착" 이라고 말한다
+        eta_sec = None
+        basis = "분담 전 - 관리자가 서브태스크로 나눈 뒤 추정됩니다"
+    elif not remaining:
         eta_sec = 0
-        basis = "남은 서브태스크 없음" if subs else "서브태스크 없음 - 분담 후 추정됩니다"
+        basis = "남은 서브태스크 없음"
     elif not ests:
         eta_sec = None
         basis = "표본 없음 - .aimem/runs 에 성공 실행 기록이 쌓이면 추정됩니다"
@@ -507,7 +492,7 @@ def collect(root: pathlib.Path | None = None) -> dict:
     if lines:
         aimem = _parse_aimem(lines, errors, need_rev=not (db and db.get("rev") is not None))
     else:
-        aimem = {"rev": None, "lines": 0, "updated": "", "goal": {"text": "", "status": ""}}
+        aimem = {"rev": None, "lines": 0, "updated": ""}
     if db and db.get("rev") is not None:
         aimem["rev"] = db["rev"]
 

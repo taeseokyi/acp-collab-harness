@@ -101,6 +101,74 @@ def measure(c, page, name, w, h):
     )
 
 
+def key_min_height_low_window(c, page, name="low"):
+    """T-150 (1): 낮은 창(1000x500)에서 화면 키가 32px 이상인지 (치기 전/후)."""
+    key = page.locator("#keyboard .key").first
+    box = key.bounding_box()
+    c.ok(GOAL, box is not None and box["height"] >= 32, f"[{name}] 첫 키 height={box}")
+    page.keyboard.type("a")
+    box = key.bounding_box()
+    c.ok(GOAL, box is not None and box["height"] >= 32, f"[{name}] 글자 하나 친 뒤 첫 키 height={box}")
+
+
+def board_key_side_by_side(c, page, name="wide-low", w=900, h=420):
+    """T-150 (2): 가로로 넓고 낮은 창(900x420)에서 보드·키보드 좌우 배치."""
+    board = page.locator("#board").bounding_box()
+    kb = page.locator("#keyboard").bounding_box()
+    c.ok(
+        GOAL,
+        board is not None and kb is not None and kb["x"] >= board["x"] + board["width"] - TOL,
+        f"[{name}] 키보드가 보드 오른쪽: board={board} kb={kb}",
+    )
+    c.ok(
+        GOAL,
+        board is not None
+        and kb is not None
+        and kb["y"] < board["y"] + board["height"]
+        and board["y"] < kb["y"] + kb["height"],
+        f"[{name}] 세로로 겹침(같은 줄): board={board} kb={kb}",
+    )
+    c.ok(
+        GOAL,
+        board is not None
+        and kb is not None
+        and board["x"] >= 0
+        and board["y"] >= 0
+        and board["x"] + board["width"] <= w + TOL
+        and board["y"] + board["height"] <= h + TOL
+        and kb["x"] >= 0
+        and kb["y"] >= 0
+        and kb["x"] + kb["width"] <= w + TOL
+        and kb["y"] + kb["height"] <= h + TOL,
+        f"[{name}] 둘 다 창 안({w}x{h}): board={board} kb={kb}",
+    )
+    box = page.locator("#board .tile").first.bounding_box()
+    c.ok(GOAL, box is not None and box["width"] >= 30, f"[{name}] 첫 타일 width={box} (>=30)")
+
+
+def flip_restores_tile_size(c, page, name="flip", word="crane", settle_ms=2500):
+    """T-150 (3): 뒤집기(pop)가 끝나면 첫 칸 크기가 제출 전으로 돌아온다."""
+    tile = page.locator("#board .tile").first
+    before = tile.bounding_box()
+    page.keyboard.type(word)
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(settle_ms)
+    after = tile.bounding_box()
+    c.ok(
+        GOAL,
+        before is not None
+        and after is not None
+        and abs(after["width"] - before["width"]) <= TOL
+        and abs(after["height"] - before["height"]) <= TOL,
+        f"[{name}] 제출 전={before} 후={after} (1px 안쪽)",
+    )
+    if after is None:
+        c.ok(GOAL, False, f"[{name}] 제출 후 첫 칸을 측정할 수 없어 class 확인 불가")
+        return
+    classes = tile.evaluate("el => Array.from(el.classList).join(' ')")
+    c.ok(GOAL, "pop" not in classes, f"[{name}] classList='{classes}' 에 'pop' 없음")
+
+
 def main():
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -126,6 +194,27 @@ def main():
                         page.keyboard.press("Escape")
                     finally:
                         page._close_context()
+                # T-150 (1) 낮은 창 키 높이 하한
+                page = new_page(browser, base, viewport={"width": 1000, "height": 500})
+                try:
+                    close_help_if_open(page)
+                    key_min_height_low_window(c, page, "low-1000x500")
+                finally:
+                    page._close_context()
+                # T-150 (2) 가로로 넓고 낮은 창 좌우 배치
+                page = new_page(browser, base, viewport={"width": 900, "height": 420})
+                try:
+                    close_help_if_open(page)
+                    board_key_side_by_side(c, page, "wide-low-900x420")
+                finally:
+                    page._close_context()
+                # T-150 (3) 뒤집기 뒤 칸 크기 복귀
+                page = new_page(browser, base)
+                try:
+                    close_help_if_open(page)
+                    flip_restores_tile_size(c, page, "flip-crane")
+                finally:
+                    page._close_context()
         finally:
             browser.close()
     raise SystemExit(c.finish())

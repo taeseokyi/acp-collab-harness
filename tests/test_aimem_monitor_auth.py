@@ -330,6 +330,9 @@ class AuthHttpTests(unittest.TestCase):
     def setUpClass(cls):
         cls._tmp = tempfile.TemporaryDirectory()
         cls.root = cls._tmp.name
+        # `_subject()` 가 `gh:` 주체마다 허용 목록을 다시 봅니다 (R12 T-156).
+        # 목록이 없으면 빈 집합이라 어떤 GitHub 주체도 못 들어옵니다.
+        _write(cls.root, GITHUB_ALLOW_FILE, "octocat\n")
         cls.srv = _Srv(cls.root)
 
     @classmethod
@@ -482,6 +485,12 @@ class AuthHttpTests(unittest.TestCase):
         c = server.sign_session(TOKEN, "gh:octocat", FAR)
         s, _, _ = self.get("/api/health", {"Cookie": f"{SESSION_COOKIE}={c}"})
         self.assertEqual(s, 200)
+
+    def test_github_subject_outside_allowlist_is_401(self):
+        """허용 목록에서 지운 계정의 쿠키는 서명이 멀쩡해도 끊깁니다 (R12 T-156)."""
+        c = server.sign_session(TOKEN, "gh:someoneelse", FAR)
+        s, _, _ = self.get("/api/health", {"Cookie": f"{SESSION_COOKIE}={c}"})
+        self.assertEqual(s, 401)
 
     # 13
     def test_logout_expires_cookie(self):
