@@ -17,6 +17,7 @@
     POST /api/requests     -> .aimem/requests/<id>.json 생성
     GET  /api/requests/<id> -> 요청 하나의 전문 (목록은 600자로 잘림)
     GET  /api/projects/<이름>/files, /file?path= -> 프로젝트 결과물 목록·본문 (텍스트, 가림 적용)
+    GET  /app/<이름>/<경로> -> `app.json` 이 선언한 앱 폴더의 정적 파일 (인증 뒤, /app/ CSP)
     GET  /api/managers/<id8> -> 관리자 세션 상세 (최근 단계·라운드 전달·이벤트·그래프, 도구 출력 제외)
     POST /api/requests/<id>/edit -> NEW·미분담 요청의 제목·본문 수정 (Q-261110-549a)
     POST /api/fleet/<동작> -> 함대 제어 prepare|run|pause|stop|round (tools/fleet_ctl.py)
@@ -42,6 +43,7 @@
 """
 import collections
 import datetime
+import hashlib
 import hmac
 import http.cookies
 import ipaddress
@@ -63,7 +65,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import (AUTH_EXEMPT_PATHS, AUTH_UNAUTH_REDIRECT_PATHS, CERT_FILE,
+from . import (AUTH_EXEMPT_PATHS, AUTH_UNAUTH_REDIRECT_PATHS, AUTH_UNAUTH_REDIRECT_PREFIXES, CERT_FILE,
                GITHUB_ALLOW_FILE, GITHUB_AUTHORIZE_URL, GITHUB_CALLBACK_PATH,
                GITHUB_CLIENT_ID_ENV, GITHUB_CLIENT_SECRET_ENV, GITHUB_DEVICE_CODE_URL,
                GITHUB_DEVICE_COOKIE, GITHUB_DEVICE_GRANT, GITHUB_DEVICE_MAX_PENDING,
@@ -75,6 +77,8 @@ from . import (AUTH_EXEMPT_PATHS, AUTH_UNAUTH_REDIRECT_PATHS, CERT_FILE,
                LOGIN_FAIL_DELAY_SEC, LOGIN_FAIL_MAX, LOGIN_FAIL_WINDOW_SEC, PORT,
                PUBLIC_FORBIDDEN, REQUEST_DETAIL_MAX, REQUEST_FAIL_MAX,
                REQUEST_RATE_MAX, REQUEST_RATE_WINDOW_SEC,
+               PROJECT_APP_FILE_MAX_BYTES, PROJECT_APP_MANIFEST, PROJECT_APP_URL_PREFIX,
+               PROJECT_APP_TICKET_PREFIX, PROJECT_APP_TICKET_TTL_SEC,
                REQUEST_STATES, RUN_DETAIL_KEYS, RUN_ID_RE, SECURITY_HEADERS,
                SESSION_COOKIE, SESSION_SUBJECT_GITHUB_PREFIX, SESSION_SUBJECT_TOKEN,
                SESSION_TTL_SEC, SESSION_VERSION, TLS_DIR, TOKEN_FILE, REQUEST_ROW_KEYS,
@@ -97,11 +101,20 @@ MAX_DETAIL = 20_000
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
     ".css": "text/css; charset=utf-8",
     ".json": "application/json; charset=utf-8",
+    ".map": "application/json; charset=utf-8",
     ".svg": "image/svg+xml",
     ".ico": "image/x-icon",
     ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".woff2": "font/woff2",
+    ".wasm": "application/wasm",
+    ".txt": "text/plain; charset=utf-8",
     ".webmanifest": "application/manifest+json; charset=utf-8",
 }
 
@@ -192,6 +205,42 @@ def sign_session(token, subject, exp_epoch):
     payload = f"{SESSION_VERSION}.{int(exp_epoch)}.{subject}"
     mac = hmac.new(token.encode("ascii"), payload.encode("utf-8"), "sha256").hexdigest()
     return f"{payload}.{mac}"
+
+
+_APP_TICKET_FALLBACK_KEY = secrets.token_bytes(32)
+
+
+def app_ticket(name, exp, key):
+    """`<만료 epoch>.<hmac 32자>`. `key` 는 bytes."""
+    exp = int(exp)
+    mac = hmac.new(key, f"app.v1.{exp}.{name}".encode("utf-8"), hashlib.sha256).hexdigest()[:32]
+    return f"{exp}.{mac}"
+
+
+def app_ticket_ok(ticket, name, key, now=None):
+    """티켓이 그 프로젝트에 대해 아직 유효한가. 참/거짓만 돌려주고 예외를 던지지 않습니다."""
+    if not isinstance(ticket, str) or not isinstance(name, str) or not isinstance(key, bytes):
+        return False
+    if not ticket or len(ticket) > 80:
+        return False
+    parts = ticket.split(".")
+    if len(parts) != 2:
+        return False
+    exp_s, mac = parts
+    if not re.fullmatch(r"\d{1,12}", exp_s) or not re.fullmatch(r"[0-9a-f]{32}", mac):
+        return False
+    exp = int(exp_s)
+    if exp < int(time.time() if now is None else now):
+        return False
+    want = hmac.new(key, f"app.v1.{exp}.{name}".encode("utf-8"), hashlib.sha256).hexdigest()[:32]
+    return hmac.compare_digest(want.encode("ascii"), mac.encode("ascii"))
+
+
+def _app_ticket_key(request):
+    """티켓 서명 키. 접근 토큰을 갈아 끼우면 티켓도 전부 무효가 됩니다 - 그것이 회수 수단입니다."""
+    if request.access_token:
+        return request.access_token.encode("ascii")
+    return _APP_TICKET_FALLBACK_KEY
 
 
 def verify_session(token, cookie_value, now=None):
@@ -1463,8 +1512,11 @@ def fleet_state(root=ROOT, managers=None):
         return {"mode": "running", "label": "실행", "default": True, "can": {a: False for a in FLEET_ACTIONS}}
     try:
         sessions = (managers or {}).get("sessions") or []
+        # 관리자 목록을 아직 못 읽었으면(`pending`·오류) "있다" 로 본다 - 모르는 채로 '라운드 끝' 이라 하면
+        # 서버를 다시 띄운 직후 도는 라운드 위에 '라운드 실행' 이 켜진다 (REV 153)
+        unknown = bool((managers or {}).get("pending")) or (managers or {}).get("ok") is False
         return _fleet_ctl(root).public_state([s.get("label") for s in sessions],
-                                             any(s.get("status") == "running" for s in sessions))
+                                             unknown or any(s.get("status") == "running" for s in sessions))
     except Exception as e:  # noqa: BLE001 - 제어 상태를 못 읽어도 화면은 떠야 한다
         return {"mode": None, "error": f"{type(e).__name__}: {str(e)[:120]}", "can": {a: False for a in FLEET_ACTIONS}}
 
@@ -1765,7 +1817,8 @@ def list_projects(root=ROOT, requests=None):
                     "requests": counts, "rounds": rounds, "round_count": len(rounds),
                     "first_round": rounds[0] if rounds else None, "last_round": last,
                     "last_round_at": mine.get(last) if last is not None else None,
-                    "updated": updated, "summary": summary})
+                    "updated": updated, "summary": summary,
+                    "app": project_app(n, root) if n in have else None})
     return out
 
 
@@ -1853,7 +1906,150 @@ def project_file(name, rel, root=ROOT):
     return 200, mask_deep(out, _detail_masker(root))
 
 
+def _app_parts(value, label="경로"):
+    """(조각들, 오류). 앱 안의 상대 경로를 프로젝트 폴더 밖으로 나가지 않게 검사합니다."""
+    if not isinstance(value, str) or not value or len(value) > 400 or "\x00" in value or "\\" in value:
+        return None, f"{label}가 올바르지 않습니다"
+    if value.startswith("/"):
+        return None, f"{label}는 상대 경로여야 합니다"
+    parts = value.split("/")
+    if len(parts) > 8:
+        return None, f"{label}의 폴더 깊이가 너무 깁니다"
+    if any(x in ("", ".", "..") or x.startswith(".") for x in parts):
+        return None, f"{label}에 쓸 수 없는 조각이 있습니다"
+    return parts, None
+
+
+def _app_inside(base, parts):
+    """`base` 아래의 실제 경로가 `base` 를 벗어나지 않는지. 중간 심볼릭 링크도 잡습니다."""
+    try:
+        return base.joinpath(*parts).resolve() == base.resolve().joinpath(*parts)
+    except OSError:
+        return False
+
+
+def project_app(name, root=ROOT):
+    """`projects/<이름>/app.json` 선언을 읽습니다.
+
+    없으면 None (평범한 프로젝트), 있으면 runnable/url/title/root/entry. 잘못된 선언은
+    runnable False + 사람이 읽을 수 있는 reason 입니다. 어떤 입력에도 예외를 던지지 않습니다.
+    """
+    d, err = _project_dir(name, root)
+    if err:
+        return None
+    manifest = d / PROJECT_APP_MANIFEST
+    try:
+        if manifest.is_symlink():
+            return {"runnable": False, "reason": "app.json 은 심볼릭 링크일 수 없습니다"}
+        if not manifest.is_file():
+            return None
+        raw = manifest.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return {"runnable": False, "reason": f"app.json 을 읽지 못했습니다: {type(e).__name__}"}
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return {"runnable": False, "reason": "app.json 이 올바른 JSON 이 아닙니다"}
+    if not isinstance(data, dict):
+        return {"runnable": False, "reason": "app.json 은 JSON 객체여야 합니다"}
+
+    root_value = data.get("root", "web")
+    entry_value = data.get("entry", "index.html")
+    title_value = data.get("title", name)
+
+    root_parts, why = _app_parts(root_value, "root")
+    if why:
+        return {"runnable": False, "reason": why}
+    app_root = d.joinpath(*root_parts)
+    if not _app_inside(d, root_parts) or app_root.is_symlink() or not app_root.is_dir():
+        return {"runnable": False, "reason": "root 가 프로젝트 안의 실제 폴더가 아닙니다"}
+
+    entry_parts, why = _app_parts(entry_value, "entry")
+    if why:
+        return {"runnable": False, "reason": why}
+    entry = app_root.joinpath(*entry_parts)
+    if not _app_inside(app_root, entry_parts) or entry.is_symlink() or not entry.is_file():
+        return {"runnable": False, "reason": "entry 가 앱 폴더 안의 실제 파일이 아닙니다"}
+
+    if not isinstance(title_value, str):
+        title_value = name
+    title_value = title_value[:80]
+    return {"runnable": True, "url": f"{PROJECT_APP_URL_PREFIX}{name}/", "title": title_value,
+            "root": root_value, "entry": entry_value}
+
+
+def project_app_file(name, rel, root=ROOT):
+    """`/app/<이름>/...` 한 파일의 (code, bytes 또는 오류 dict, content-type)."""
+    app = project_app(name, root)
+    if app is None:
+        return 404, {"ok": False, "error": f"실행 선언이 없는 프로젝트입니다: {name}"}, None
+    if not app.get("runnable"):
+        return 404, {"ok": False, "error": app.get("reason") or "실행할 수 없는 프로젝트입니다"}, None
+
+    d, err = _project_dir(name, root)
+    if err:
+        return 404, {"ok": False, "error": "프로젝트 폴더가 없습니다"}, None
+
+    root_parts, why = _app_parts(app.get("root"), "root")
+    if why:
+        return 404, {"ok": False, "error": why}, None
+    app_root = d.joinpath(*root_parts)
+    if not _app_inside(d, root_parts) or app_root.is_symlink() or not app_root.is_dir():
+        return 404, {"ok": False, "error": "앱 폴더가 없습니다"}, None
+
+    if rel is None:
+        rel = ""
+    if not isinstance(rel, str):
+        return 404, {"ok": False, "error": "파일 경로가 올바르지 않습니다"}, None
+    if not rel:
+        rel = app.get("entry") or "index.html"
+
+    parts, why = _app_parts(rel, "파일 경로")
+    if why:
+        return 404, {"ok": False, "error": why}, None
+    target = app_root.joinpath(*parts)
+    if not _app_inside(app_root, parts) or target.is_symlink() or not target.is_file():
+        return 404, {"ok": False, "error": f"그런 파일이 없습니다: {rel[:120]}"}, None
+
+    try:
+        st = target.stat()
+    except OSError as e:
+        return 500, {"ok": False, "error": f"파일을 읽지 못했습니다: {type(e).__name__}"}, None
+    if st.st_size > PROJECT_APP_FILE_MAX_BYTES:
+        return 413, {"ok": False, "error": f"파일이 {PROJECT_APP_FILE_MAX_BYTES}바이트를 넘습니다"}, None
+    try:
+        with open(target, "rb") as fh:
+            raw = fh.read(PROJECT_APP_FILE_MAX_BYTES + 1)
+    except OSError as e:
+        return 500, {"ok": False, "error": f"파일을 읽지 못했습니다: {type(e).__name__}"}, None
+    if len(raw) > PROJECT_APP_FILE_MAX_BYTES:
+        return 413, {"ok": False, "error": f"파일이 {PROJECT_APP_FILE_MAX_BYTES}바이트를 넘습니다"}, None
+
+    return 200, raw, CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
+
+
+def app_csp(origin=""):
+    """`/app/` 응답에 붙는 CSP. `origin` 은 `https://host:port` 또는 빈 문자열."""
+    o = f" {origin}" if origin else ""
+
+    def with_self(tail=""):
+        return f"'self'{o}{tail}"
+
+    return "sandbox allow-scripts allow-popups allow-modals; " + "; ".join((
+        f"default-src {with_self()}",
+        f"img-src {with_self(' data: blob:')}",
+        f"style-src {with_self(' ')}'unsafe-inline'",
+        f"script-src {with_self()}",
+        f"connect-src {with_self()}",
+        f"font-src {with_self(' data:')}",
+        "frame-ancestors 'self'",
+        "base-uri 'none'",
+        "form-action 'none'",
+    ))
+
+
 _REQ_PROJECT_RE = re.compile(r"\A/api/projects/([^/]{1,400})/(files|file)\Z")
+_APP_RE = re.compile(r"\A/app/(?:~(?P<ticket>[^/]{1,80})/)?(?P<name>[^/]{1,400})(?P<slash>/(?P<rel>.*))?\Z", re.S)
 
 
 def create_request(payload, root=ROOT):
@@ -2063,7 +2259,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             super().send_error(code, message, explain)
 
     # -- 응답 도우미 ---------------------------------------------------------
-    def _send(self, code, body, ctype="application/json; charset=utf-8", extra=()):
+    def _send(self, code, body, ctype="application/json; charset=utf-8", extra=(), csp=None):
         if isinstance(body, str):
             body = body.encode("utf-8")
         self.send_response(code)
@@ -2071,6 +2267,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         for k, v in SECURITY_HEADERS.items():
+            if k == "Content-Security-Policy" and csp is not None:
+                v = csp
             self.send_header(k, v)
         if self._want_hsts():
             self.send_header(*HSTS_HEADER)
@@ -2186,13 +2384,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
             p = "/" + p
         return p
 
+    def _app_origin(self):
+        """요청 Host 로 만든 출처. 헤더 주입을 막기 위해 Host 꼴을 먼저 검사합니다."""
+        host = (self.headers.get("Host") or "").strip() if self.headers else ""
+        if not re.match(r"\A[A-Za-z0-9._:\[\]-]{1,100}\Z", host):
+            return ""
+        return ("https" if self.tls else "http") + "://" + host
+
     def _auth_gate(self, path):
         """인증이 필요한데 없으면 응답을 보내고 True. 통과면 False."""
         if not self.require_auth or path in AUTH_EXEMPT_PATHS:
             return False
+        # 티켓 경로는 라우팅에서 티켓으로 인가합니다. 불투명 출처는 SameSite=Strict
+        # 쿠키를 싣지 못하므로 세션 검사보다 먼저 통과시켜야 합니다.
+        if path.startswith(PROJECT_APP_URL_PREFIX + PROJECT_APP_TICKET_PREFIX):
+            return False
         if self._subject():
             return False
-        if path in AUTH_UNAUTH_REDIRECT_PATHS and self.command in ("GET", "HEAD"):
+        wants_login = (path in AUTH_UNAUTH_REDIRECT_PATHS
+                       or any(path.startswith(p) for p in AUTH_UNAUTH_REDIRECT_PREFIXES))
+        if wants_login and self.command in ("GET", "HEAD"):
             self._redirect("/login")
             return True
         # **연결을 닫습니다.** POST 본문을 읽지 않고 거절하므로, 같은 연결을 이어 쓰면
@@ -2255,6 +2466,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(400, {"ok": False, "error": "경로에 널바이트가 있습니다"})
         if self._auth_gate(path):
             return None
+        raw_path = urllib.parse.urlparse(self.path).path
         if path == "/login":
             return self._static("login.html")
         if path == "/api/authinfo":
@@ -2303,6 +2515,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
                 code, body = project_file(pname, (q.get("path") or [""])[0], self.root)
             return self._json(code, body)
+        am = _APP_RE.match(raw_path)
+        if am:
+            app_name = urllib.parse.unquote(am.group("name"))
+            ticket = am.group("ticket")
+            if ticket is None:
+                if not _PROJECT_RE.match(app_name):
+                    return self._json(404, {"ok": False, "error": "프로젝트 이름이 올바르지 않습니다"})
+                exp = int(time.time()) + PROJECT_APP_TICKET_TTL_SEC
+                ticket = app_ticket(app_name, exp, _app_ticket_key(self))
+                location = (PROJECT_APP_URL_PREFIX + PROJECT_APP_TICKET_PREFIX + ticket + "/"
+                            + urllib.parse.quote(app_name, safe="") + "/")
+                rel = am.group("rel") or ""
+                if rel:
+                    location += rel
+                return self._redirect(location)
+            if not app_ticket_ok(ticket, app_name, _app_ticket_key(self)):
+                return self._json(403, {"ok": False,
+                                        "error": "실행 티켓이 만료됐습니다. 모니터에서 '실행' 을 다시 누르십시오."})
+            rel = urllib.parse.unquote(am.group("rel") or "").split("?", 1)[0]
+            code, data, ctype = project_app_file(app_name, rel, self.root)
+            if code == 200:
+                return self._send(200, data, ctype,
+                                  extra=[("Access-Control-Allow-Origin", "null"), ("Vary", "Origin")],
+                                  csp=app_csp(self._app_origin()))
+            return self._json(code, data)
         if path in ("/", "/index.html"):
             return self._static("index.html")
         if path.startswith("/static/"):

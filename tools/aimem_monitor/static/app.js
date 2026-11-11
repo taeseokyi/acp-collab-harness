@@ -389,6 +389,7 @@ function openPanel(title, build) {
   if (label) label.textContent = title;
   const body = $('detail-body');
   body.textContent = '';
+  body.classList.remove('detail-app');
   build(body);
   overlay.hidden = false;
   const close = $('detail-close');
@@ -1093,7 +1094,7 @@ function renderMeta(data) {
 const MODE_BADGE = { running: 'running', paused: 'partial', stopped: 'blocked', ready: 'done' };
 const FLEET_BUTTONS = [
   { act: 'prepare', label: '준비', title: '관리자·작업자를 띄울 수 있는지 점검합니다. 통과하면 준비 상태 (작업자는 띄우지 않음)' },
-  { act: 'run', label: '실행', title: '진행 중이던 라운드만 이어 돌립니다. 새 관리자 라운드는 띄우지 않습니다' },
+  { act: 'run', label: '실행', title: "멈춘 라운드를 이어 돌립니다 (일시 중지·완전 중지 뒤). 새 요청은 '라운드 실행' 으로 띄웁니다" },
   { act: 'pause', label: '일시 중지', title: '새 작업자 투입을 멈춥니다. 돌고 있는 작업자는 끝까지 둡니다' },
   { act: 'stop', label: '완전 중지', title: '돌고 있는 작업자와 그래프 실행기를 즉시 종료합니다', danger: true,
     confirm: '돌고 있는 작업자와 그래프 실행기를 지금 종료합니다.\n중간 산출물이 반쯤 남을 수 있습니다. 계속할까요?' },
@@ -1182,6 +1183,7 @@ function renderFleetControl(data) {
   const bits = [];
   if (f.at) bits.push(fmtDateTime(f.at) + ' · ' + show(f.by));
   if (f.default) bits.push('상태 파일 없음(기본값)');
+  if (f.idle) bits.push('도는 라운드 없음');
   if (f.running_runs) bits.push(`작업자 ${f.running_runs}개 실행 중`);
   if (Array.isArray(f.graphs) && f.graphs.length) bits.push('미완 그래프 ' + f.graphs.map((g) => g.id + (g.runner ? '(실행기)' : '')).join(', '));
   meta.textContent = bits.join(' · ');
@@ -1212,7 +1214,8 @@ function renderFleetControl(data) {
   rb.disabled = !!state.fleetBusy || !can.round;
   const briefName = brief.standard ? '표준 브리프 (할 일 = 웹 NEW 요청)' : brief.file;
   rb.title = brief.file
-    ? `새 관리자 라운드를 띄웁니다 (유료 Opus). 브리프: ${briefName}` + (md !== 'ready' ? ' - 먼저 준비를 누르십시오' : '')
+    ? `새 관리자 라운드를 띄웁니다 (유료 Opus). 브리프: ${briefName}`
+      + (can.round ? (f.idle ? ' - 준비 점검을 먼저 돌린 뒤 띄웁니다' : '') : (md === 'running' ? ' - 지금 라운드가 끝난 뒤에' : ' - 먼저 준비를 누르십시오'))
     : '확정된 다음 라운드 브리프가 없습니다' + (brief.drafts && brief.drafts.length ? ` (초안: ${brief.drafts.join(', ')})` : '');
   rb.addEventListener('click', () => {
     const reqs = (data && Array.isArray(data.requests)) ? data.requests : [];
@@ -1245,11 +1248,18 @@ function renderFleetControl(data) {
     const fresh = reqs.filter((q) => String(q.status || '').toUpperCase() === 'NEW');
     const txt = document.createElement('span');
     // 라운드가 도는 중에는 '지금 도는 라운드' 를 먼저 보인다 - 다음 번호만 보여 R7 이 도는데 R8 로 읽혔다 (2026-11-10 R7 실측)
-    const curRound = (md === 'running' && f.relay && f.relay.round) ? f.relay : null;
+    const curRound = (md === 'running' && !f.idle && f.relay && f.relay.round) ? f.relay : null;
     if (curRound) {
       const now = document.createElement('div');
       now.className = 'fc-hint-now';
       now.textContent = `지금 R${curRound.round} 실행 중` + (curRound.workspace ? ` · 라운드 보고 ${curRound.workspace}/` : '');
+      hint.appendChild(now);
+    } else if (f.idle) {
+      // 라운드가 끝났다 - 다음 요청은 '라운드 실행' 한 번이면 된다 (준비 점검은 그 안에서 돈다)
+      const now = document.createElement('div');
+      now.className = 'fc-hint-now';
+      now.textContent = (f.relay && f.relay.round ? `R${f.relay.round} 은 끝났습니다` : '도는 라운드가 없습니다')
+        + " - 새 요청은 '라운드 실행' 을 누르면 됩니다";
       hint.appendChild(now);
     }
     txt.textContent = `${curRound ? '다음 ' : ''}R${brief.round} 가 할 일 = 새 작업 요청 ${fresh.length}건`
@@ -2673,6 +2683,34 @@ function openProjectFiles(pr, filePath) {
   });
 }
 
+function openProjectApp(pr) {
+  const name = show(pr.name, '');
+  const app = pr.app || {};
+  openPanel('프로젝트 ' + name + ' 실행', (body) => {
+    body.classList.add('detail-app');
+    const note = (text, cls) => { const p = document.createElement('p'); p.className = cls || 'empty'; p.textContent = text; return p; };
+    body.appendChild(note(`projects/${name}/${show(app.root, '')}/${show(app.entry, '')} · 격리된 칸에서 돌아갑니다 - 기록(통계·설정)은 저장되지 않습니다`, 'proj-meta'));
+
+    const tab = document.createElement('a');
+    tab.href = '/app/' + encodeURIComponent(name) + '/';
+    tab.target = '_blank';
+    tab.rel = 'noopener noreferrer';
+    tab.textContent = '새 탭에서 열기';
+    tab.title = '더 큰 화면으로 봅니다. 여기서도 격리되어 기록은 저장되지 않습니다';
+    body.appendChild(tab);
+
+    if (DEMO) { body.appendChild(note('데모 화면에서는 실행할 수 없습니다')); return; }
+
+    const fr = document.createElement('iframe');
+    fr.className = 'proj-app-frame';
+    fr.src = '/app/' + encodeURIComponent(name) + '/';
+    fr.setAttribute('sandbox', 'allow-scripts allow-popups allow-modals');
+    fr.setAttribute('referrerpolicy', 'no-referrer');
+    fr.title = (app.title || name) + ' 미리보기';
+    body.appendChild(fr);
+  });
+}
+
 function renderProjects(data) {
   const box = document.getElementById('projects-list');
   if (!box) return;
@@ -2708,6 +2746,17 @@ function renderProjects(data) {
       : '아직 라운드 없음');
     meta.textContent = bits.join(' · ');
     head.appendChild(meta);
+    if (pr.app && pr.app.runnable) {
+      const run = linkButton('실행', () => openProjectApp(pr));
+      run.classList.add('proj-run');
+      run.title = `${pr.app.title} 을(를) 모니터 안에서 바로 돌려 봅니다 (projects/${pr.name}/${pr.app.root}/)`;
+      head.appendChild(run);
+    } else if (pr.app) {
+      const bad = document.createElement('span');
+      bad.className = 'proj-meta';
+      bad.textContent = '실행 선언(app.json)에 문제가 있습니다: ' + show(pr.app.reason, '이유 없음');
+      head.appendChild(bad);
+    }
     if (pr.exists) {
       const view = linkButton('결과물 보기', () => openProjectFiles(pr));
       view.classList.add('proj-view');

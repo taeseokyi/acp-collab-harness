@@ -1,0 +1,6 @@
+{
+  "root": "web",
+  "entry": "index.html",
+  "title": "웹워들",
+  "note": "정적 파일만 - 백엔드가 없습니다"
+}

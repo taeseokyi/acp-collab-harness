@@ -264,6 +264,58 @@ class CanStopTest(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
+    def test_next_round_can_be_launched_right_after_a_round_ends(self):
+        """2026-11-11 태석님: 라운드가 끝나면 '실행' 으로 남아 '준비' 도 '라운드 실행' 도 꺼져 있었고,
+        일시 중지 → 준비 → '실행' 을 누르면 다시 그 상태로 돌아가 새 요청이 처리되지 않았다."""
+        repo = self.tmp / "repo"
+        (repo / ".aimem" / "briefs").mkdir(parents=True)
+        (repo / ".aimem" / "briefs" / fleet_ctl.STANDARD_BRIEF).write_text("x", encoding="utf-8")
+        with mock.patch.object(fleet, "ROOT", repo), mock.patch.object(fleet_ctl, "_manager_sessions", return_value=[]):
+            fleet_ctl.set_mode("running", "test")                       # 라운드가 끝난 뒤의 상태
+            st = fleet_ctl.public_state()
+            self.assertTrue(st["idle"])
+            self.assertEqual((st["can"]["round"], st["can"]["prepare"], st["can"]["run"]), (True, True, False))
+            self.assertTrue(fleet_ctl.round_over())
+            # 관리자가 아직 살아 있으면 끝난 것이 아니다
+            st = fleet_ctl.public_state(manager_running_now=True)
+            self.assertEqual((st["idle"], st["can"]["round"], st["can"]["prepare"]), (False, False, False))
+            # 전달 중(세션이 아직 안 보이는 구간)에도 끝난 것이 아니다 - 두 번 띄우지 않게
+            (self.tmp / "relay").mkdir()
+            (self.tmp / "relay" / "r9.json").write_text(json.dumps({"round": 9, "state": "relaying"}), encoding="utf-8")
+            st = fleet_ctl.public_state()
+            self.assertEqual((st["idle"], st["can"]["round"]), (False, False))
+            self.assertFalse(fleet_ctl.round_over())
+            (self.tmp / "relay" / "r9.json").write_text(json.dumps({"round": 9, "state": "spawned"}), encoding="utf-8")
+            self.assertTrue(fleet_ctl.public_state()["idle"])
+            # 준비 상태에서 이을 것이 없으면 '실행' 은 모드를 바꾸지 않는다 (바꾸면 '라운드 실행' 이 꺼진다)
+            fleet_ctl.set_mode("ready", "test")
+            st = fleet_ctl.public_state()
+            self.assertEqual((st["idle"], st["can"]["run"], st["can"]["round"]), (False, False, True))
+            out = fleet_ctl.resume("test")
+            self.assertFalse(out["ok"])
+            self.assertIn("라운드 실행", out["error"])
+            self.assertEqual(fleet_ctl.mode(), "ready")
+            # 멈춘 뒤에는 '실행' 이 전처럼 풀어 준다
+            fleet_ctl.set_mode("paused", "test")
+            self.assertTrue(fleet_ctl.public_state()["can"]["run"])
+            self.assertTrue(fleet_ctl.resume("test")["ok"])
+            self.assertEqual(fleet_ctl.mode(), "running")
+
+    def test_launch_from_a_finished_round_runs_the_readiness_check_first(self):
+        fleet_ctl.set_mode("running", "test")
+        failing = {"ok": False, "mode": "running", "checks": [{"name": "실행 중인 관리자 없음", "ok": False, "detail": "관리자 R9", "required": True}]}
+        with mock.patch.object(fleet_ctl, "prepare", return_value=failing) as prep:
+            out = fleet_ctl.launch_round("test")
+        prep.assert_called_once()
+        self.assertFalse(out["ok"])
+        self.assertIn("실행 중인 관리자 없음", out["error"])
+        self.assertEqual(fleet_ctl.mode(), "running")
+        fleet_ctl.set_mode("paused", "test")                           # 멈춘 상태에서는 전처럼 거절 (점검도 안 돌린다)
+        with mock.patch.object(fleet_ctl, "prepare") as prep:
+            out = fleet_ctl.launch_round("test")
+        prep.assert_not_called()
+        self.assertFalse(out["ok"])
+
     def test_stop_only_when_something_is_running(self):
         fleet_ctl.set_mode("ready", "test")
         self.assertFalse(fleet_ctl.public_state()["can"]["stop"])

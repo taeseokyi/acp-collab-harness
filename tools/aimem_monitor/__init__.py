@@ -66,13 +66,14 @@ SERVER_KEYS = {
                 "last_activity, steps, last_step}]}",
     # 함대 제어 상태 (`tools/fleet_ctl.public_state`, 2026-11-10). can = 지금 누를 수 있는 동작
     "fleet": "{mode, label, at, by, note, default, running_runs, graphs, brief, prepare, relay, "
-             "can:{prepare, run, pause, stop, round}}",
+             "can:{prepare, run, pause, stop, round}, idle}",   # idle = '실행' 인데 도는 것이 없다(라운드 끝)
     # 프로젝트 목록 (2026-11-10) - `projects/` 아래 폴더 + 요청이 가리키는 이름. exists = 폴더가 이미 있나
     # percent = 목표 대비(`PROGRESS.md` 의 `## 목표` 체크리스트, basis "goals") - 목표가 없으면 요청들의 평균(basis "requests").
     # goals = {total, done} 또는 null. request_percent = 요청 평균(늘 실음). rounds = `rounds/R<N>/round.json`(띄운 기록) + `PROGRESS.md` 의 `## R<N>`.
     # summary = `projects/<이름>/PROGRESS.md` 의 가장 최근 라운드 항목
+    # app = 실행 선언(`projects/<이름>/app.json`). {runnable, url, title, root, entry, reason} 또는 null
     "projects": "[{name, path, exists, percent, basis, goals:{total, done}, request_percent, requests:{total, done, new, active}, rounds, round_count, first_round, "
-                "last_round, last_round_at, updated, summary}]",
+                "last_round, last_round_at, updated, summary, app}]",
 }
 
 #: 공개면에서 **절대 나가면 안 되는** 것 (REV 114, S4 유출 검수 5번).
@@ -188,6 +189,24 @@ CERT_PROFILE_FILE = ".aimem/tls/cert-profile.json"
 #: 요청마다 프로젝트를 고른다(빈 값 = 함대 자체의 일). 이름은 한 폴더 이름이라 구분자·점·공백을 받지 않는다.
 PROJECTS_DIR = "projects"
 PROJECT_NAME_RE = r"\A[0-9A-Za-z가-힣][0-9A-Za-z가-힣_-]{0,39}\Z"
+
+# 결과물은 모니터와 같은 출처(origin)에서 내려가지만 화면은 그것을 `sandbox` iframe(불투명 출처)에 넣습니다.
+# 그래서 결과물 코드는 `/api/*` 를 인증된 세션 쿠키로 부를 수 없습니다. 불투명 출처에서는 CSP 의
+# `'self'` 가 아무것도 가리키지 못하므로, `/app/` 응답의 CSP 는 요청의 Host 로 만든 출처를 직접 적습니다.
+# 프로젝트는 `app.json` 한 장으로 "내 웹앱은 여기 있다" 고 선언합니다. 선언이 없으면 실행 경로도 없습니다.
+
+#: 프로젝트가 "내 웹앱은 여기 있다" 고 적는 선언 파일. 없으면 그 프로젝트는 실행할 수 없습니다.
+PROJECT_APP_MANIFEST = "app.json"
+#: 실행 경로 접두. `/app/<프로젝트>/<앱 안의 상대 경로>`
+PROJECT_APP_URL_PREFIX = "/app/"
+#: 실행 경로가 내려 주는 한 파일의 크기 상한.
+PROJECT_APP_FILE_MAX_BYTES = 8 * 1024 * 1024
+#: `/app/` 경로 티켓. 불투명 출처(sandbox) 안에서는 SameSite=Strict 쿠키가 실리지 않아
+#: 세션으로는 하위 요청을 인가할 수 없습니다. 그래서 **경로 앞에 박는 짧은 HMAC 티켓**을 씁니다.
+#: 티켓 하나는 프로젝트 하나의 정적 파일만, TTL 동안만 열어 줍니다.
+PROJECT_APP_TICKET_PREFIX = "~"
+PROJECT_APP_TICKET_TTL_SEC = 12 * 3600
+
 GITHUB_ALLOW_FILE = ".aimem/tls/allowed-github-logins"   # 한 줄 한 계정, `#` 주석 허용
 
 #: 세션 쿠키. `Secure` 는 TLS 일 때만 붙습니다(http 로컬 검증에서 쿠키가 죽지 않도록).
@@ -267,3 +286,6 @@ AUTH_API = {
 #:  - `GET /` `GET /index.html` 만 예외로 **302 -> /login** (브라우저가 바로 로그인 화면을 보도록)
 #:  - `Authorization: Bearer <접근 토큰>` 은 쿠키 없이도 통과 (curl 검증용)
 AUTH_UNAUTH_REDIRECT_PATHS = ("/", "/index.html")
+#: 인증이 없을 때 로그인 화면으로 **보내 주는** 경로 접두 (`AUTH_UNAUTH_REDIRECT_PATHS` 의 접두판).
+#: 결과물을 새 탭에서 열었는데 JSON 401 이 뜨면 사람이 막힙니다.
+AUTH_UNAUTH_REDIRECT_PREFIXES = ("/app/",)

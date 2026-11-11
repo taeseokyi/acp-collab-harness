@@ -881,6 +881,11 @@ form label {
   overflow-y: auto;
 }
 
+.detail-body.detail-app {
+  display: flex;
+  flex-direction: column;
+}
+
 .detail-meta {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -1318,6 +1323,16 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 
 /* REV 146: 프로젝트 결과물 보기, 요청 수정 폼의 프로젝트 칸 */
 .proj-head .proj-view { margin-left: auto; font-size: 13px; padding: 2px 10px; }
+.proj-run { font-size: 13px; padding: 2px 10px; background: var(--st-accent-fill); border-color: var(--st-accent-fill);
+  color: var(--st-accent-ink); font-weight: var(--st-fw-bold); }
+.proj-run:hover { background: var(--st-accent-fill); filter: brightness(1.08); }
+.proj-app-frame { display: block; width: 100%; height: min(78vh, 900px); min-height: 320px;
+  flex: 1 1 auto;
+  border: 1px solid var(--st-line); border-radius: 8px; background: #fff; }
+
+@media (max-width: 720px) {
+  .proj-app-frame { height: min(70vh, 640px); }
+}
 .proj-file-text { margin: var(--st-s-2) 0 0; padding: var(--st-s-3); border: 1px solid var(--st-line); border-radius: var(--st-r-sm);
   background: var(--st-surface-2); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .req-edit .hint { font-weight: 400; }

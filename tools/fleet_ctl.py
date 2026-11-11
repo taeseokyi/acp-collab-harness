@@ -344,18 +344,36 @@ def public_state(manager_labels=(), manager_running_now=False):
     graphs = [g for g in graphs_overview() if g["unfinished"] or g["runner"]]
     b = latest_brief(used)
     md = m["mode"]
+    relay = relay_status()
+    # '실행' 인데 도는 것이 없다 = 라운드가 끝났다 (REV 153). 전에는 이 상태에서 '준비' 도 '라운드 실행' 도 꺼져 있어
+    # 일시 중지 → 준비 로 돌아가야 했고, 거기서 '실행' 을 누르면 다시 이 상태로 돌아와 새 요청이 처리되지 않았다.
+    idle = (md == "running" and not rr and not manager_running_now and not any(g["runner"] for g in graphs)
+            and not _relay_busy(relay))
+    resumable = any(g["unfinished"] and not g["runner"] for g in graphs)
     can = {
-        "prepare": md in ("stopped", "paused", "ready") and not manager_running_now and not rr,
-        "run": md in ("ready", "paused", "stopped"),
+        "prepare": (md in ("stopped", "paused", "ready") or idle) and not manager_running_now and not rr,
+        # '실행' 은 멈춘 라운드를 잇는 단추다 - 준비 상태에서 이을 것이 없으면 누를 일이 없다 (새 라운드는 '라운드 실행')
+        "run": md in ("paused", "stopped") or (md == "ready" and resumable),
         "pause": md == "running",
         # 완전 중지는 "돌고 있는 것을 죽이는" 동작 - 죽일 게 없는 ready 에선 끕니다 (2026-11-10 점검 5번)
         "stop": md in ("running", "paused") or bool(rr),
-        "round": md == "ready" and bool(b["file"]) and not manager_running_now,
+        "round": (md == "ready" or idle) and bool(b["file"]) and not manager_running_now,
     }
     return {"mode": md, "label": MODE_LABEL.get(md), "at": m.get("at"), "by": m.get("by"), "note": m.get("note"),
             "default": bool(m.get("default")), "running_runs": len(rr),
             "graphs": [{"id": g["id"], "runner": bool(g["runner"]), "counts": g["counts"]} for g in graphs],
-            "brief": b, "prepare": last_prepare(), "relay": relay_status(), "can": can}
+            "brief": b, "prepare": last_prepare(), "relay": relay, "can": can, "idle": idle}
+
+
+def _relay_busy(relay):
+    """관리자에게 전달하는 중(아직 세션이 안 보이는 구간) - 이때는 도는 것이 없어 보여도 라운드가 끝난 것이 아니다."""
+    return isinstance(relay, dict) and relay.get("state") in ("launching", "relaying")
+
+
+def round_over():
+    """함대가 '실행' 인데 작업자도 그래프 실행기도 전달도 없다 - 라운드가 끝났다. 관리자 세션은 부르는 쪽이 본다."""
+    return (mode() == "running" and not running_runs() and not any(g["runner"] for g in graphs_overview())
+            and not _relay_busy(relay_status()))
 
 
 def _used_rounds():
@@ -433,6 +451,10 @@ def stop(by="사람"):
 
 def resume(by="사람"):
     """실행. 진행 중이던 라운드만 이어 돌립니다 - 새 관리자는 띄우지 않습니다."""
+    if mode() == "ready" and not any(gi["unfinished"] and not gi["runner"] for gi in graphs_overview()):
+        # 이을 것이 없는데 '실행' 으로 바꾸면 '라운드 실행' 이 꺼져 새 요청이 처리되지 않는다 (2026-11-11 태석님)
+        return {"ok": False, "mode": "ready",
+                "error": "이어 갈 라운드가 없습니다 - 새 요청은 '라운드 실행' 으로 띄웁니다 ('실행' 은 멈춘 라운드를 이을 때만 씁니다)"}
     set_mode("running", by, "진행 중 라운드 재개")
     started = []
     for gi in graphs_overview():
@@ -571,7 +593,14 @@ def _write_relay(rec):
 
 
 def launch_round(by="사람"):
-    """새 라운드. **준비(ready) 상태에서만**, 확정 브리프가 있고 관리자가 없을 때만."""
+    """새 라운드. 확정 브리프가 있고 관리자가 없을 때만. **준비(ready)** 에서, 또는 앞 라운드가 끝난 채
+    '실행' 으로 남아 있을 때(`round_over`) - 그때는 준비 점검을 여기서 먼저 돌립니다 (REV 153)."""
+    if round_over():
+        res = prepare(by)        # 관리자가 아직 살아 있으면 여기서 막힌다 ("실행 중인 관리자 없음")
+        if not res["ok"]:
+            bad = [c["name"] + (f" ({c['detail']})" if c.get("detail") else "") for c in res["checks"] if c["required"] and not c["ok"]]
+            return {"ok": False, "mode": mode(), "checks": res["checks"],
+                    "error": "준비 점검에서 막혀 라운드를 띄우지 않았습니다: " + "; ".join(bad)[:300]}
     if mode() != "ready":
         return {"ok": False, "error": f"'준비' 상태에서만 새 라운드를 띄웁니다 (지금: {MODE_LABEL.get(mode())}). 먼저 '준비' 를 누르십시오"}
     b = latest_brief()

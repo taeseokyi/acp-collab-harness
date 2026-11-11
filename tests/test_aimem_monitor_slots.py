@@ -127,6 +127,29 @@ class FleetModelNormalizeTest(unittest.TestCase):
         argv, _ = fleet._worker_argv("claude", "anthropic/claude-opus-5-5", "/tmp/b.md")
         self.assertEqual(argv[argv.index("--model") + 1], "claude-opus-5-5")
 
+    def test_codex_worker_keeps_the_write_sandbox_but_may_use_the_network(self):
+        """2026-11-11 태석님: 코덱스 작업자에게 브라우저·소켓 허용. 닫혀 있으면 TCP 서버도 Chromium 도 못 띄운다 (R8~R10)."""
+        import fleet
+        argv, stdin = fleet._worker_argv("codex", "kisti/kistillm", "/tmp/b.md")
+        self.assertEqual(argv[argv.index("--sandbox") + 1], "workspace-write")       # 쓰기 제한은 그대로
+        self.assertIn("sandbox_workspace_write.network_access=true", argv)
+        self.assertEqual(argv[argv.index("sandbox_workspace_write.network_access=true") - 1], "-c")
+        self.assertNotIn("danger-full-access", " ".join(argv))
+        self.assertEqual(stdin, "/tmp/b.md")
+
+    def test_opencode_instruction_carries_slot_token_and_rev(self):
+        """R10 T-129·T-131 1차: 파일 경로만 넘기자 작업자가 "지시 메시지에 슬롯·토큰·REV 가 없다" 며 읽지도 않고 끝냈다."""
+        import fleet
+        argv, stdin = fleet._worker_argv("opencode", "exaone/k-exaone_v2.5", "/tmp/b.md",
+                                         ident="[AIMEM 작업자 지시] 슬롯 S3 · 확인토큰 abc123 · AIMEM REV 153.")
+        self.assertIsNone(stdin)
+        msg = argv[-1]
+        for want in ("슬롯 S3", "확인토큰 abc123", "REV 153", "/tmp/b.md"):
+            self.assertIn(want, msg)
+        self.assertLess(msg.index("슬롯 S3"), msg.index("/tmp/b.md"))                  # 신원이 경로보다 앞
+        argv, _ = fleet._worker_argv("opencode", None, "/tmp/b.md")                    # 머리말이 없어도 전처럼 돈다
+        self.assertIn("/tmp/b.md", argv[-1])
+
 
 if __name__ == "__main__":
     unittest.main()

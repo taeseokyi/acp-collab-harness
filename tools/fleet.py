@@ -397,7 +397,7 @@ def normalize_model(harness, model):
     return m
 
 
-def _worker_argv(harness, model, brief_path):
+def _worker_argv(harness, model, brief_path, ident=""):
     """하네스별 비대화식 실행 명령. **브리프 본문은 argv 에 넣지 않습니다** - stdin 이나 파일 경로로 넘깁니다.
     (11-09 R-002/N3: 브리프에 든 `aimem_monitor` 글자가 작업자 argv 에 있어 `pkill -f aimem_monitor` 로
     작업자가 자기 자신을 죽였다. 경로만 넘기면 그런 자기 참조가 없다.)
@@ -405,7 +405,12 @@ def _worker_argv(harness, model, brief_path):
     brief_path = str(brief_path)
     model = normalize_model(harness, model)
     if harness == "codex":
-        argv = ["codex", "exec", "--skip-git-repo-check", "--ephemeral", "-C", str(ROOT), "--sandbox", "workspace-write"]
+        # 샌드박스는 workspace-write 그대로 두고 **네트워크만 엽니다** (2026-11-11 태석님 지시). 닫혀 있으면 codex 의
+        # seccomp 가 소켓 호출을 막아 TCP 서버를 못 띄우고(`PermissionError`) Chromium 도 뜨지 않습니다
+        # (`sandbox_host_linux.cc` FATAL) - S2 가 브라우저 검증 스크립트를 돌려 보지 못해 눈 감고 고쳤습니다 (R8~R10).
+        # 쓰기는 여전히 작업 폴더·/tmp 로 묶여 있습니다.
+        argv = ["codex", "exec", "--skip-git-repo-check", "--ephemeral", "-C", str(ROOT), "--sandbox", "workspace-write",
+                "-c", "sandbox_workspace_write.network_access=true"]
         if model:
             # openclaw 키 `kisti/kistillm` → codex 는 모델과 공급자를 따로 받는다 (config.toml 의 model_provider 이름과 같다)
             prov, _, mid = model.rpartition("/")
@@ -418,7 +423,11 @@ def _worker_argv(harness, model, brief_path):
         if model:
             argv += ["-m", model]
         rel = str(pathlib.Path(brief_path).resolve().relative_to(ROOT)) if str(brief_path).startswith(str(ROOT)) else brief_path
-        return argv + [f"다음 파일을 읽고 그 안의 지시를 그대로 수행하라(파일 자체는 수정하지 말라): {rel}"], None
+        # 슬롯·토큰·REV 를 **지시 메시지 자체에** 싣습니다 (2026-11-11). 전에는 파일 경로만 넘겨, 작업자가 파일을 읽기도 전에
+        # "지시 메시지에 슬롯 ID·토큰·REV 가 없다 - 규약상 시작하지 않는다" 며 빈손으로 끝났습니다 (R10 T-129·T-131 1차).
+        # codex·claude 는 브리프 전문이 stdin 으로 가므로 머리말이 이미 메시지 안에 있습니다.
+        head = (ident.strip() + " ") if ident and ident.strip() else ""
+        return argv + [f"{head}다음 파일이 이 지시의 전문이다. 읽고 그 안의 지시를 그대로 수행하라(파일 자체는 수정하지 말라): {rel}"], None
     if harness == "claude":
         # 관리자가 Claude 세션이므로 작업자 Claude 는 중첩 표식을 지우고 띄웁니다. 프롬프트는 stdin.
         return ["env"] + [f"-u{k}" for k in _CLAUDE_NESTED_ENV] + [
@@ -610,7 +619,8 @@ def cmd_spawn(args):
     brief_path = RUNS / f"{run_id}.brief.md"
     brief_path.write_text(brief, encoding="utf-8")
     model = args.model or _load_slot_models().get(args.slot)   # 슬롯 모델(DB 거울 fleet_slots.json) - 하네스 불문, 없으면 하네스 기본
-    argv, stdin_path = _worker_argv(harness, model, brief_path)
+    argv, stdin_path = _worker_argv(harness, model, brief_path,
+                                    ident=f"[AIMEM 작업자 지시] 슬롯 {args.slot} · 확인토큰 {token} · AIMEM REV {rev}.")
     out, err, rc = RUNS / f"{run_id}.out", RUNS / f"{run_id}.err", RUNS / f"{run_id}.rc"
     shell = (" ".join(shlex.quote(a) for a in argv)
              + (f" < {shlex.quote(stdin_path)}" if stdin_path else "")
