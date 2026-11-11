@@ -245,6 +245,160 @@ class FleetCtlTest(unittest.TestCase):
         self.assertIn("준비", out["error"])
 
 
+
+class ChainTest(unittest.TestCase):
+    """이어 달리기 (REV 155) - 목표가 남으면 다음 라운드를 스스로 띄우고, 끝났거나 진전이 없으면 멈춘다."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = pathlib.Path(tmp.name)
+        (self.repo / ".aimem").mkdir()
+        (self.repo / "projects" / "알파").mkdir(parents=True)
+        for module, attr, value in ((fleet, "ROOT", self.repo), (fleet, "RUNS", self.repo / ".aimem" / "runs"),
+                                    (fleet_graph, "GRAPHS", self.repo / ".aimem" / "graph"),
+                                    (fleet_ctl, "_aimem_dir", lambda: self.repo / ".aimem")):
+            p = mock.patch.object(module, attr, value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def progress(self, done, total, extra=""):
+        items = "".join(f"- [{'x' if i < done else ' '}] 목표 {i + 1}\n" for i in range(total))
+        (self.repo / "projects" / "알파" / "PROGRESS.md").write_text(
+            f"# 알파\n\n## 목표\n{items}\n## R7 (2026-11-10)\n- [x] 이건 목표가 아니다\n{extra}", encoding="utf-8")
+
+    def report(self, n, status):
+        d = self.repo / "rounds" / f"R{n}"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "REPORT.md").write_text(f"# R{n} 종료 보고\n\n**상태: {status}** - 무엇\n", encoding="utf-8")
+
+    def test_goal_parser_agrees_with_the_monitor(self):
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
+        from aimem_monitor import server
+        self.progress(2, 5)
+        goals = fleet_ctl.project_goals("알파")
+        text = (self.repo / "projects" / "알파" / "PROGRESS.md").read_text(encoding="utf-8")
+        self.assertEqual({"total": len(goals), "done": sum(1 for d, _ in goals if d)}, server._progress_goals(text))
+        self.assertEqual(goals[2], (False, "목표 3"))
+        self.assertEqual(fleet_ctl.project_goals("없는것"), [])
+
+    def test_switching_on_needs_a_project_and_a_sane_cap(self):
+        self.assertFalse(fleet_ctl.chain_set(True, "", 3)["ok"])
+        self.assertFalse(fleet_ctl.chain_set(True, "../x", 3)["ok"])
+        self.assertFalse(fleet_ctl.chain_set(True, "알파", 0)["ok"])
+        self.assertFalse(fleet_ctl.chain_set(True, "알파", fleet_ctl.CHAIN_MAX_ROUNDS + 1)["ok"])
+        self.assertFalse(fleet_ctl.chain_state()["on"])
+        self.progress(2, 5)
+        st = fleet_ctl.chain_set(True, "알파", 3, "test")["chain"]
+        self.assertEqual((st["on"], st["project"], st["max_rounds"], st["rounds_done"], st["goals_done"]), (True, "알파", 3, 0, 2))
+        self.assertFalse(fleet_ctl.chain_set(False, by="test")["chain"]["on"])
+
+    def test_decides_to_go_on_only_while_goals_move(self):
+        self.assertEqual(fleet_ctl.chain_decide(7)["action"], "stop")              # 꺼져 있다
+        self.progress(2, 5)
+        fleet_ctl.chain_set(True, "알파", 3, "test")                               # 기준 2/5
+        self.assertIn("보고가 없음", fleet_ctl.chain_decide(7)["why"])              # 보고가 없으면 사람이 본다
+        self.report(7, "BLOCKED")
+        self.assertIn("BLOCKED", fleet_ctl.chain_decide(7)["why"])
+        self.report(7, "DONE")
+        self.assertIn("늘지 않았습니다", fleet_ctl.chain_decide(7)["why"])          # 2 → 2
+        self.progress(4, 5)
+        d = fleet_ctl.chain_decide(7)
+        self.assertEqual((d["action"], d["done"], d["total"], d["open"]), ("launch", 4, 5, ["목표 5"]))
+        self.progress(5, 5)
+        self.assertIn("끝났습니다", fleet_ctl.chain_decide(7)["why"])
+        (self.repo / "projects" / "알파" / "PROGRESS.md").write_text("# 알파\n\n## R7\n- 한 일\n", encoding="utf-8")
+        self.assertIn("체크리스트가 없습니다", fleet_ctl.chain_decide(7)["why"])
+
+    def test_step_files_a_request_launches_and_stops_at_the_cap(self):
+        self.progress(1, 5)
+        fleet_ctl.chain_set(True, "알파", 2, "test")
+        self.progress(3, 5)
+        self.report(7, "DONE")
+        with mock.patch.object(fleet_ctl, "launch_round", return_value={"ok": True, "round": 8}) as launch:
+            out = fleet_ctl.chain_step(7)
+        launch.assert_called_once()
+        self.assertEqual((out["launched"], out["round"]), (True, 8))
+        reqs = list((self.repo / ".aimem" / "requests").glob("*.json"))
+        self.assertEqual(len(reqs), 1)
+        rec = json.loads(reqs[0].read_text(encoding="utf-8"))
+        self.assertEqual((rec["project"], rec["status"], rec["requester"]), ("알파", "NEW", "함대 이어 달리기"))
+        self.assertIn("- 목표 4", rec["detail"])
+        self.assertNotIn("- 목표 1", rec["detail"])
+        st = fleet_ctl.chain_state()
+        self.assertEqual((st["on"], st["rounds_done"], st["goals_done"]), (True, 1, 3))
+        # 두 번째 라운드가 끝났다 - 목표는 늘었지만 연속 상한 2 에 닿았다
+        self.progress(4, 5)
+        self.report(8, "DONE")
+        with mock.patch.object(fleet_ctl, "launch_round") as launch:
+            out = fleet_ctl.chain_step(8)
+        launch.assert_not_called()
+        self.assertFalse(out["launched"])
+        self.assertIn("연속 상한", out["why"])
+        st = fleet_ctl.chain_state()
+        self.assertFalse(st["on"])
+        self.assertIn("연속 상한", st["stopped_why"])
+        self.assertEqual(len(list((self.repo / ".aimem" / "requests").glob("*.json"))), 1)   # 멈출 땐 요청을 안 넣는다
+
+    def test_the_web_endpoint_switches_it_and_validates_the_body(self):
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
+        from aimem_monitor import server
+        self.progress(1, 5)
+        with mock.patch.object(server, "ROOT", self.repo.resolve()):
+            for bad in (None, {}, {"on": "yes"}, {"on": 1}):
+                code, out = server.fleet_action("chain", "웹(test)", self.repo, bad)
+                self.assertEqual((code, out["ok"]), (400, False), bad)
+            code, out = server.fleet_action("chain", "웹(test)", self.repo, {"on": True, "project": "../x", "max_rounds": 3})
+            self.assertEqual(code, 400)
+            code, out = server.fleet_action("chain", "웹(test)", self.repo, {"on": True, "project": "알파", "max_rounds": 4})
+            self.assertEqual((code, out["chain"]["on"], out["chain"]["max_rounds"], out["chain"]["by"]), (200, True, 4, "웹(test)"))
+            self.assertTrue(fleet_ctl.public_state()["chain"]["on"])
+            code, out = server.fleet_action("chain", "웹(test)", self.repo, {"on": False})
+            self.assertEqual((code, out["chain"]["on"]), (200, False))
+        code, out = server.fleet_action("chain", "웹(test)", self.repo, {"on": True, "project": "알파"})   # 운영 저장소가 아니면 거절
+        self.assertEqual(code, 409)
+
+    def test_last_round_summary_comes_from_the_relay_record_and_report(self):
+        """끝난 관리자 세션은 게이트웨이 목록에서 사라져 화면이 R6 을 최근 관리자로 보였다 (R7~R11)."""
+        with mock.patch.object(fleet_ctl, "_manager_sessions", return_value=[]):
+            self.assertIsNone(fleet_ctl.public_state()["last_round"])
+            (self.repo / ".aimem" / "relay").mkdir()
+            (self.repo / ".aimem" / "relay" / "r11.json").write_text(json.dumps(
+                {"round": 11, "label": "관리자 R11 (Opus) 2026-11-11", "at": "2026-11-11T15:38:08", "state": "spawned"}), encoding="utf-8")
+            lr = fleet_ctl.public_state()["last_round"]
+            self.assertEqual((lr["round"], lr["label"], lr["report_status"], lr["report"]), (11, "관리자 R11 (Opus) 2026-11-11", None, None))
+            self.report(11, "DONE")
+            lr = fleet_ctl.public_state()["last_round"]
+            self.assertEqual((lr["report_status"], lr["report"]), ("DONE", "rounds/R11/REPORT.md"))
+
+    def test_an_hours_old_manager_list_is_not_served_as_current(self):
+        """아무도 화면을 안 보면 갱신이 안 돈다 - 묵은 목록을 그대로 내주면 끝난 관리자가 '실행 중' 으로 보였다 (R9 실측)."""
+        import datetime
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
+        from aimem_monitor import server
+        old_list = {"ok": True, "sessions": [{"label": "관리자 R8", "status": "running"}], "error": None}
+        with mock.patch.object(server, "_refresh_managers"), \
+             mock.patch.dict(server._mgr_cache, {"at": datetime.datetime.now() - datetime.timedelta(hours=2), "value": old_list, "refreshing": False}):
+            out = server.manager_status(server.ROOT)
+            self.assertEqual((out["sessions"], out["pending"]), ([], True))
+            self.assertGreater(out["age_sec"], 7000)
+        with mock.patch.object(server, "_refresh_managers"), \
+             mock.patch.dict(server._mgr_cache, {"at": datetime.datetime.now() - datetime.timedelta(seconds=50), "value": old_list, "refreshing": False}):
+            out = server.manager_status(server.ROOT)                       # 조금 낡은 것은 그대로 보이고 배경에서 갱신한다
+            self.assertEqual((len(out["sessions"]), out["pending"]), (1, False))
+
+    def test_a_launch_that_fails_switches_the_chain_off(self):
+        self.progress(1, 5)
+        fleet_ctl.chain_set(True, "알파", 5, "test")
+        self.progress(2, 5)
+        self.report(7, "DONE")
+        with mock.patch.object(fleet_ctl, "launch_round", return_value={"ok": False, "error": "이미 실행 중인 관리자가 있습니다"}):
+            out = fleet_ctl.chain_step(7)
+        self.assertFalse(out["launched"])
+        self.assertFalse(fleet_ctl.chain_state()["on"])
+        self.assertIn("관리자", fleet_ctl.chain_state()["stopped_why"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

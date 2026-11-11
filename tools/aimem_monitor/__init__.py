@@ -66,7 +66,7 @@ SERVER_KEYS = {
                 "last_activity, steps, last_step}]}",
     # 함대 제어 상태 (`tools/fleet_ctl.public_state`, 2026-11-10). can = 지금 누를 수 있는 동작
     "fleet": "{mode, label, at, by, note, default, running_runs, graphs, brief, prepare, relay, "
-             "can:{prepare, run, pause, stop, round}, idle}",   # idle = '실행' 인데 도는 것이 없다(라운드 끝)
+             "can:{prepare, run, pause, stop, round}, idle, last_round:{round, label, at, state, report_status, report}, chain:{on, project, max_rounds, rounds_done, goals_done, stopped_why, last}}",   # idle = '실행' 인데 도는 것이 없다(라운드 끝)
     # 프로젝트 목록 (2026-11-10) - `projects/` 아래 폴더 + 요청이 가리키는 이름. exists = 폴더가 이미 있나
     # percent = 목표 대비(`PROGRESS.md` 의 `## 목표` 체크리스트, basis "goals") - 목표가 없으면 요청들의 평균(basis "requests").
     # goals = {total, done} 또는 null. request_percent = 요청 평균(늘 실음). rounds = `rounds/R<N>/round.json`(띄운 기록) + `PROGRESS.md` 의 `## R<N>`.

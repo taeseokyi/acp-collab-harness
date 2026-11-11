@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/o
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 154** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-11 15:32 KST
+- **REV: 155** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-11 17:14 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **a Claude ACP session** (harness claude, model Opus 5.5 = `opus[1m]`),
@@ -114,17 +114,19 @@ session, not per agent name, because one name can run as several sessions at onc
 
 **The Manager updates this section every round**; a stale goal makes every brief's "why" stale.
 
-- **Goal (rounds 3~4, from 2026-11-09):** **A person sees on one screen what the fleet is doing right now**
-  (request `582a`). Requests arrive through the web, the Manager splits them, and the split runs as a task DAG
-  (`8.0-5`)
-- **Deliverables:** `tools/aimem_monitor/` (port 18799) / `tests/test_aimem_monitor*.py` / `tools/fleet_graph.py`
-  adopted / `.aimem/requests/`, `.aimem/graph/`
-- **Definition of done:** `/api/state` returns roster, board, queue, log, runs, requests, ETA, KISTI status and
-  graphs; light mode default; contrast 4.5:1; linter rc 0; full suite green
-- **Out of scope:** dependencies (standard library only), front-end frameworks, fonts, CDNs. The only external
-  network call is one read of KISTI `/status` (10-second cache, key never exported)
-- **Status:** **definition of done met** (2026-11-10). From here on it is operations: each round the Manager reports
-  operating metrics and one improvement proposal (`8.0-8` close step 3). The next goal is set by Taeseok
+- **Goal:** **the fleet turns web requests into finished projects.** A request names a project; rounds
+  accumulate its deliverables in `projects/<project>/`; the project is done when every item of the goal checklist
+  in its `PROGRESS.md` is checked with evidence. Requests without a project are work on the fleet itself
+- **Deliverables:** `projects/<project>/` (one place, edited in place) / `rounds/R<N>/` (records only) /
+  the fleet's own code (`tools/`, `tests/`) when a request targets it
+- **Definition of done (per project):** all goals checked; each check backed by a test or a measured result the
+  Manager reproduced; `PROGRESS.md` says what is left ("none" when nothing is)
+- **Out of scope:** dependencies (standard library only), front-end frameworks, fonts, CDNs for the fleet's own
+  code. Paid models do not replace a failed free worker - the task is reported instead
+- **Status:** operations. The earlier goal (one screen showing what the fleet is doing - the monitor) is met and
+  stays as the fleet's own tool. Each round the Manager reports operating metrics and one improvement proposal
+  (`8.0-8` close step 3). Taeseok sets the direction by filing requests; this section was brought up to date by
+  Claude Code on his instruction and is his to reword
 
 ---
 
@@ -439,9 +441,28 @@ used and **the round's tasks are the `NEW` requests**; with nothing to do the Ma
    output with `| head` / `| tail`
 2. **Roster:** slots with role `(미배정 - 관리자가 다음 라운드에 정함)` or `events(kind=slot)` → set role and remark
    with `aimem_db.py slot set --slot S<n> --role "…" --note "…"`. Harness and model are not the Manager's to change
-3. **NEW requests:** within scope and caps (3 graphs, 10 tasks) → split into subtasks → `PLANNED` → graph. Otherwise
+3. **NEW requests:** within scope and caps → split into subtasks → `PLANNED` → graph. **Caps are enforced by
+   `fleet_graph.py new`:** new work stops at 3 graphs and 10 tasks per round; a graph that fixes review findings or
+   re-reviews those fixes passes with `--followup "<what it follows>"` up to 6 graphs and 18 tasks. Never skip the
+   re-review to stay under the cap. Otherwise
    `PLANNED` + "next round", mentioned in report item (5). A notification request from `슬롯 관리(웹)` is confirm →
    assign role → `DONE`. Mid-round arrivals are judged the same way at every checkpoint
+
+**Graph and verify rules** (standing; the round brief repeats them in Korean)
+- **Free slots build and fix; paid slots (S1, S4) judge, design and review adversarially.** A build or fix given
+  to a paid slot is listed with its reason in report item (6). Never move a failed free task to a paid slot
+- **Small nodes:** one new file, about 200 lines, about 10 checks. Split larger work; split a file two slots
+  would both write. Do not tell a worker to "plan first"; S2 has no plan tool and edits through the shell,
+  S3's single response is capped (16,384 tokens)
+- **`verify` asks whether the worker did the work,** by exit code, never by grepping piped output
+  (`… > /tmp/x.txt 2>&1 && …`). A node that writes checks is verified by "it ran and the number of checks grew",
+  not "the product passed"; a product defect is reported `NEEDS-FIX: …` and fixed by a later node whose `verify`
+  is "all pass". Run the `verify` command on the current tree once before using it
+- **The engine fails an attempt that did nothing:** a report ending in a textual tool call (`aborted`) or a first
+  attempt that touched none of its `write` paths (`no-op`)
+- **Screen checks ask what is rendered** (`is_visible`, computed style, bounding boxes), not attributes; a screen
+  behind login gets a check with auth on. Projects with a screen check overlap and overflow after input
+- **Review copies of the repo exclude `.aimem/tls/`** and are removed by the reviewer when done
 
 **Graph checkpoints** (after each graph, so a cut session can resume from the DB)
 - (a) `aimem_db.py task set --id T-xxx --status REVIEW|DONE` to match results
@@ -474,6 +495,7 @@ used and **the round's tasks are the `NEW` requests**; with nothing to do the Ma
 | Request splitting and status | Manager | `aimem_db.py request set`, graphs | - |
 | Archive run | Manager (close 2) / Taeseok (web) | `aimem_db.py archive` / `POST /api/archive` | `events(kind=archive)` |
 | Fleet mode (prepare, run, stop) | Taeseok | web fleet bar | `fleet_graph run` output, rc 3 when spawning is forbidden |
+| Chained rounds (`이어 달리기`) | Taeseok switches it on per project with a round cap | web fleet bar / `fleet_ctl.py chain` | the next round's request is filed by `함대 이어 달리기`; it stops itself when goals are all checked, the report is not DONE, no goal moved, or the cap is reached |
 | Commit and push | Claude Code, with Taeseok's permission | git | - |
 
 ### 8.1 Opening Slots

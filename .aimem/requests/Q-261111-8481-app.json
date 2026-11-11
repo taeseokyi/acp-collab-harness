@@ -1,0 +1,10 @@
+{
+ "id": "Q-261111-8481",
+ "created": "2026-11-11T15:37:59",
+ "requester": "클로드 코드 (태석님 위임, R10 남은 일)",
+ "project": "",
+ "title": "모니터 결과물 실행(/app, 경로 티켓)의 적대적 검수와 수정·재검수",
+ "detail": "R10 에서 만든 **모니터 안 결과물 실행**(`/app/<프로젝트>/`, 경로 티켓, sandbox)을 적대적으로 검수하고, 찾은 결함을 이 라운드 안에서 고칩니다. R10 은 태스크 상한에 걸려 **수정 뒤 재검수를 못 돌렸습니다**(`rounds/R10/REPORT.md` (5), `rounds/R10/REVIEW.md` 의 '아직 못 본 것'). 모니터는 외부에 공개돼 있고 티켓은 새 인가 수단입니다.\n\n검수가 볼 것 (S1 적대적 검수, 실제로 때려 보고 판정):\n1. **티켓**: 만료·위조·다른 프로젝트 이름으로 재사용, 접근 토큰을 바꾼 뒤 옛 티켓, 티켓 경로로 `/app/` 밖(`/api/*`, `/static/*`, 다른 프로젝트)에 닿는 길, 티켓이 URL 에 남아 새는 곳(접속 기록 `.aimem/access.log`·`monitor.log`, Referer, 오류 응답 본문)\n2. **TLS 모드**(`--tls`)에서 티켓 302·CSP 의 출처가 `https` 로 맞는가, 프록시(18800) 경유 Host 로도 맞는가\n3. **격리**: `allow-popups` 로 연 창이 격리를 벗어나는가, 새 탭·iframe 양쪽에서 결과물 스크립트가 세션으로 `/api/*` 를 부를 수 있는가(인증 켠 서버로)\n4. **화면**: 폭 720px 이하에서 미리보기 패널(검수 결함 4 의 수정이 실제로 먹는가), '새 탭에서 열기'\n5. **검사의 진위**: `tests/test_aimem_monitor_app.py`·`tests/browser_monitor_{app,auth,ui}.py` 가 티켓 검사를 지우는 변이에 빨개지는가. `browser_monitor_auth.py` 가 서버 루트를 저장소로 두어 **운영 `.aimem/access.log` 에 login-ok 줄을 남기는 것**(R10 뒤 클로드 코드가 발견)을 고칩니다 - 임시 루트를 쓰게\n\n찾은 결함은 고치고, **고친 뒤 재검수까지** 이 라운드에서 닫습니다. 결함이 없으면 그 근거(시도한 것과 결과 표)를 `rounds/R11/REVIEW.md` 에 남기고 끝냅니다. 운영 모니터(18799)는 건드리지 않습니다 - 임시 포트 서버로만 봅니다.\n\n**이번 라운드에서 같이 재는 것**: REV 154 에서 작업자 쪽을 고쳤습니다(kistillm 지시문에서 없는 도구 `update_plan`·`apply_patch` 를 뺌, EXAONE 출력 상한 16384, opencode 지시 메시지에 슬롯·토큰·REV, codex 네트워크 허용 - S2 도 브라우저를 직접 돌립니다). 보고 (6)에 **슬롯별 실행 수 · 1차 성공 수 · `aborted`/`no-op`/재시도 수와 헛돈 시간**을 R9·R10 과 견줄 수 있게 적어 주십시오.\n\n(클로드 코드 덧붙임, 태석님 위임으로 R11 을 띄움) 라운드가 도는 동안 클로드 코드가 **엔진 쪽 파일**(`tools/fleet.py`, `tools/fleet_graph.py`, `tools/fleet_ctl.py`, 그 테스트 `tests/test_fleet*.py`)을 고칩니다. 그 파일의 미커밋 변경은 되돌리지 말고, 이 라운드의 일은 `tools/aimem_monitor/**` 와 `tests/*monitor*` 안에서 하십시오.",
+ "status": "DONE",
+ "subtasks": []
+}

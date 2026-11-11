@@ -362,7 +362,23 @@ def public_state(manager_labels=(), manager_running_now=False):
     return {"mode": md, "label": MODE_LABEL.get(md), "at": m.get("at"), "by": m.get("by"), "note": m.get("note"),
             "default": bool(m.get("default")), "running_runs": len(rr),
             "graphs": [{"id": g["id"], "runner": bool(g["runner"]), "counts": g["counts"]} for g in graphs],
-            "brief": b, "prepare": last_prepare(), "relay": relay, "can": can, "idle": idle}
+            "brief": b, "prepare": last_prepare(), "relay": relay, "can": can, "idle": idle,
+            "last_round": _last_round(relay),
+            "chain": {k: v for k, v in chain_state().items() if k != "log"} | {"last": (chain_state().get("log") or [None])[-1]}}
+
+
+def _last_round(relay):
+    """가장 최근에 띄운 라운드의 요약 - 끝난 관리자 세션은 게이트웨이 목록에서 사라지므로(R7~R11 실측) 화면이
+    옛 세션(R6)을 '최근 관리자' 로 보였다. 전달 기록과 보고 파일에서 직접 읽는다."""
+    if not isinstance(relay, dict) or not relay.get("round"):
+        return None
+    try:
+        n = int(relay["round"])
+    except (TypeError, ValueError):
+        return None
+    rep = fleet.ROOT / round_workspace(n) / "REPORT.md"
+    return {"round": n, "label": relay.get("label"), "at": relay.get("at"), "state": relay.get("state"),
+            "report_status": round_report_status(n), "report": f"{round_workspace(n)}/REPORT.md" if rep.is_file() else None}
 
 
 def _relay_busy(relay):
@@ -674,7 +690,210 @@ def _relay_worker(n):
     if rec["state"] == "failed":
         _mark_round_record_failed(n)
     note("관리자 세션 확인" if rec["state"] == "spawned" else "관리자 세션이 생기지 않았습니다 - 사람이 확인해야 합니다")
-    return 0 if rec["state"] == "spawned" else 1
+    if rec["state"] != "spawned":
+        if chain_state().get("on"):
+            chain_set(False, by=f"R{n} 관리자가 뜨지 않음")
+        return 1
+    if chain_state().get("on"):
+        note("이어 달리기 켜짐 - 라운드가 끝나면 목표를 보고 다음 라운드를 띄웁니다")
+        return _chain_wait_and_step(n)
+    return 0
+
+
+# ----------------------------------------------------------------- 이어 달리기 (REV 155)
+# 프로젝트 목표가 남아 있으면 라운드가 끝난 뒤 다음 라운드를 **함대가 스스로** 띄웁니다. 2026-11-10 밤에는 사람이
+# (클로드 코드가) 손으로 이었습니다: 보고와 `PROGRESS.md` 의 `## 목표` 를 읽고 → 남은 목표를 요청으로 넣고 → 준비 → 라운드.
+# 켜는 것은 사람입니다(엔진은 태석님). 유료 관리자가 라운드마다 뜨므로 **연속 상한**과 **멈춤 조건**이 꼭 있습니다.
+CHAIN_MAX_ROUNDS = 10            # 사람이 고를 수 있는 연속 상한의 최대
+CHAIN_DEFAULT_ROUNDS = 3
+CHAIN_WAIT_SEC = 6 * 3600        # 한 라운드를 기다리는 최대 시간 (넘으면 이어 달리기를 끈다)
+CHAIN_POLL_SEC = 45
+_GOALS_HEAD = re.compile(r"^##[ \t]*(?:목표|goals)\b[^\n]*$", re.MULTILINE | re.IGNORECASE)   # aimem_monitor.server 와 같은 식
+_GOALS_NEXT = re.compile(r"^##?[ \t]+\S", re.MULTILINE)
+_GOAL_ITEM = re.compile(r"^[ \t]{0,8}[-*][ \t]+\[([ xX])\][ \t]+(\S.*)$")
+_REPORT_STATUS = re.compile(r"상태\s*[:：]\s*\**\s*(DONE|PARTIAL|BLOCKED|NEEDS-[A-Z-]+)", re.IGNORECASE)
+
+
+def _chain_path():
+    return _aimem_dir() / "fleet-chain.json"
+
+
+def chain_state():
+    """`{on, project, max_rounds, rounds_done, goals_done, by, at, log}`. 파일이 없으면 `{on: False}`."""
+    try:
+        st = json.loads(_chain_path().read_text(encoding="utf-8"))
+        return st if isinstance(st, dict) else {"on": False}
+    except (OSError, ValueError):
+        return {"on": False}
+
+
+def _chain_write(st):
+    st["log"] = (st.get("log") or [])[-30:]
+    tmp = _chain_path().with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(st, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, _chain_path())
+
+
+def project_goals(project):
+    """`projects/<이름>/PROGRESS.md` 의 `## 목표` 체크리스트 -> [(끝났나, 글)] . 절이 없거나 비면 []."""
+    try:
+        text = (fleet.ROOT / "projects" / project / "PROGRESS.md").read_text(encoding="utf-8", errors="replace")[:200_000]
+    except OSError:
+        return []
+    m = _GOALS_HEAD.search(text)
+    if not m:
+        return []
+    nxt = _GOALS_NEXT.search(text, m.end())
+    out = []
+    for line in text[m.end():(nxt.start() if nxt else len(text))].splitlines()[:2000]:
+        g = _GOAL_ITEM.match(line)
+        if g:
+            out.append((g.group(1) != " ", g.group(2).strip()))
+    return out[:200]
+
+
+def round_report_status(n):
+    """`rounds/R<N>/REPORT.md` 의 `상태: DONE|PARTIAL|BLOCKED|…`. 보고가 없거나 못 읽으면 None."""
+    try:
+        text = (fleet.ROOT / round_workspace(n) / "REPORT.md").read_text(encoding="utf-8", errors="replace")[:4000]
+    except OSError:
+        return None
+    m = _REPORT_STATUS.search(text)
+    return m.group(1).upper() if m else None
+
+
+def chain_set(on, project=None, max_rounds=None, by="사람"):
+    """이어 달리기를 켜거나 끕니다. 켤 때 지금의 목표 체크 수를 기준으로 적어 둡니다."""
+    if not on:
+        st = chain_state()
+        st.update({"on": False, "at": _now(), "by": by})
+        st.setdefault("log", []).append(f"{_now()} 끔 ({by})")
+        _chain_write(st)
+        return {"ok": True, "chain": st}
+    project = (project or "").strip()
+    if not re.match(fleet.PROJECT_NAME_RE, project):
+        return {"ok": False, "error": "이어 달리기는 프로젝트를 정해야 합니다 (목표 체크리스트가 멈춤 조건입니다). 이름은 한글·영문·숫자·`-`·`_`"}
+    try:
+        mx = int(max_rounds if max_rounds is not None else CHAIN_DEFAULT_ROUNDS)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "연속 상한은 숫자여야 합니다"}
+    if not 1 <= mx <= CHAIN_MAX_ROUNDS:
+        return {"ok": False, "error": f"연속 상한은 1~{CHAIN_MAX_ROUNDS} 라운드입니다"}
+    goals = project_goals(project)
+    st = {"on": True, "project": project, "max_rounds": mx, "rounds_done": 0,
+          "goals_done": sum(1 for d, _ in goals if d) if goals else -1,      # -1 = 아직 목표가 안 적힘(새 프로젝트)
+          "by": by, "at": _now(), "log": [f"{_now()} 켬 ({by}) - 프로젝트 {project}, 최대 {mx} 라운드"]}
+    _chain_write(st)
+    # 라운드가 이미 도는 중에 켰으면 그 라운드를 지켜볼 감시자를 따로 띄운다 (라운드를 띄울 때 켜져 있었다면 전달 작업자가 이어서 지켜본다)
+    relay = relay_status() or {}
+    in_flight = False
+    if mode() == "running" and relay.get("state") == "spawned" and relay.get("round"):
+        _SESS_CACHE["at"] = 0
+        in_flight = bool(manager_running()) or not round_over()     # 끝난 라운드에는 감시자를 붙이지 않는다
+    if in_flight:
+        try:
+            log = open(_relay_dir() / f"r{int(relay['round'])}.log", "a", encoding="utf-8")
+            subprocess.Popen([sys.executable, str(HERE / "fleet_ctl.py"), "_chainwatch", "--round", str(int(relay["round"]))],
+                             cwd=str(fleet.ROOT), stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                             start_new_session=True)
+        except (OSError, ValueError):
+            pass
+    return {"ok": True, "chain": st}
+
+
+def chain_decide(round_n):
+    """라운드 `round_n` 이 끝난 지금 다음 라운드를 띄울까. `{action: launch|stop, why, open, done, total}` - 쓰지 않고 판정만."""
+    st = chain_state()
+    if not st.get("on"):
+        return {"action": "stop", "why": "이어 달리기가 꺼져 있습니다"}
+    project = st.get("project") or ""
+    goals = project_goals(project)
+    done = sum(1 for d, _ in goals if d)
+    open_ = [t for d, t in goals if not d]
+    base = {"done": done, "total": len(goals), "open": open_}
+    status = round_report_status(round_n)
+    if status != "DONE":
+        return {**base, "action": "stop", "why": f"R{round_n} 보고가 {status or '없음'} 입니다 - 사람이 봐야 합니다"}
+    if not goals:
+        return {**base, "action": "stop", "why": f"projects/{project}/PROGRESS.md 에 `## 목표` 체크리스트가 없습니다"}
+    if not open_:
+        return {**base, "action": "stop", "why": f"목표 {done}/{len(goals)} - 프로젝트가 끝났습니다"}
+    if done <= int(st.get("goals_done", -1)):
+        return {**base, "action": "stop", "why": f"R{round_n} 동안 목표 체크가 늘지 않았습니다 ({done}/{len(goals)}) - 같은 자리를 돌지 않게 멈춥니다"}
+    if int(st.get("rounds_done", 0)) + 1 >= int(st.get("max_rounds", CHAIN_DEFAULT_ROUNDS)):
+        return {**base, "action": "stop", "why": f"연속 상한 {st.get('max_rounds')} 라운드에 닿았습니다 (목표 {done}/{len(goals)})"}
+    return {**base, "action": "launch", "why": f"목표 {done}/{len(goals)} - 남은 {len(open_)}개를 이어 갑니다"}
+
+
+def _chain_request(project, round_n, open_, done, total):
+    """남은 목표를 다음 라운드의 요청으로 넣습니다 (웹 요청 폼과 같은 길)."""
+    here = str(HERE)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    from aimem_monitor import server  # noqa: PLC0415 - 모니터가 이 모듈을 지연 import 하므로 여기서도 지연
+    lines = "\n".join(f"- {t}" for t in open_[:40])
+    detail = (f"R{round_n} 이 끝났고 `projects/{project}/PROGRESS.md` 의 목표는 {done}/{total} 입니다. 체크 안 된 목표가 이번 라운드의 할 일입니다:\n\n"
+              f"{lines}\n\n"
+              f"`PROGRESS.md` 의 R{round_n} '남은 일' 과 `rounds/R{round_n}/REPORT.md` (5)를 먼저 읽고 거기 적힌 순서대로 이어 가십시오. "
+              "목표에 없는 일은 벌이지 않습니다. 검증까지 끝난 것만 체크하고, 닫지 못한 목표는 무엇이 막았는지 항목별로 적습니다. "
+              "전부 닫히면 '남은 일' 에 \"없음 (목표 기준)\" 이라고 적습니다.\n\n"
+              "(함대의 '이어 달리기' 가 자동으로 넣은 요청입니다 - 사람이 켰고, 목표가 다 체크되거나 진전이 없으면 스스로 멈춥니다.)")
+    return server.create_request({"title": f"{project}: 남은 목표 {len(open_)}개 이어 가기 (R{round_n} 뒤 자동)",
+                                  "detail": detail, "requester": "함대 이어 달리기", "project": project}, fleet.ROOT)
+
+
+def chain_step(round_n, by="이어 달리기"):
+    """라운드가 끝난 뒤 한 번 부릅니다 - 멈추거나(끔), 남은 목표를 요청으로 넣고 다음 라운드를 띄웁니다."""
+    d = chain_decide(round_n)
+    st = chain_state()
+    if d["action"] != "launch":
+        if st.get("on"):
+            st.update({"on": False, "at": _now(), "stopped_why": d["why"]})
+            st.setdefault("log", []).append(f"{_now()} 멈춤 - {d['why']}")
+            _chain_write(st)
+        return {"ok": True, "launched": False, **d}
+    ok, res = _chain_request(st["project"], round_n, d["open"], d["done"], d["total"])
+    if not ok:
+        st.update({"on": False, "at": _now(), "stopped_why": f"요청을 못 넣었습니다: {res.get('error')}"})
+        st.setdefault("log", []).append(f"{_now()} 멈춤 - {st['stopped_why']}")
+        _chain_write(st)
+        return {"ok": False, "launched": False, "why": st["stopped_why"]}
+    st.update({"rounds_done": int(st.get("rounds_done", 0)) + 1, "goals_done": d["done"], "at": _now()})
+    st.setdefault("log", []).append(f"{_now()} R{round_n} 끝 - {d['why']} → 요청 {res.get('id')}")
+    _chain_write(st)
+    out = launch_round(by)
+    if not out.get("ok"):
+        st = chain_state()
+        st.update({"on": False, "at": _now(), "stopped_why": f"다음 라운드를 못 띄웠습니다: {out.get('error')}"})
+        st.setdefault("log", []).append(f"{_now()} 멈춤 - {st['stopped_why']}")
+        _chain_write(st)
+    return {"ok": bool(out.get("ok")), "launched": bool(out.get("ok")), "request": res.get("id"), "round": out.get("round"), **d}
+
+
+def _chain_wait_and_step(n):
+    """전달 작업자가 관리자를 띄운 뒤 이어서 돕니다: 라운드가 끝나기를 기다렸다가 `chain_step`."""
+    lock = open(_aimem_dir() / "fleet-chain.lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)      # 감시자는 하나만 - 둘이면 다음 라운드를 두 번 띄운다
+    except OSError:
+        return 0
+    deadline = time.time() + CHAIN_WAIT_SEC
+    while time.time() < deadline:
+        time.sleep(CHAIN_POLL_SEC)
+        if not chain_state().get("on"):
+            return 0                      # 사람이 껐다
+        if mode() != "running":           # 사람이 멈췄다 - 이어 달리기도 내려놓는다
+            chain_set(False, by="함대 모드가 실행이 아님")
+            return 0
+        _SESS_CACHE["at"] = 0
+        if manager_running() or not round_over():
+            continue
+        time.sleep(20)                    # 관리자가 막 끝난 직후 - 보고 파일이 다 쓰이게 잠깐
+        res = chain_step(n)
+        print(f"{_now()} chain R{n}: {json.dumps({k: v for k, v in res.items() if k != 'open'}, ensure_ascii=False)}", flush=True)
+        return 0
+    chain_set(False, by=f"R{n} 을 {CHAIN_WAIT_SEC // 3600}시간 기다려도 끝나지 않음")
+    return 1
 
 
 # ----------------------------------------------------------------- CLI
@@ -686,9 +905,23 @@ def main(argv=None):
         s.add_argument("--by", default="CLI")
     r = sub.add_parser("_relay")
     r.add_argument("--round", type=int, required=True)
+    c = sub.add_parser("chain", help="이어 달리기: 프로젝트 목표가 남으면 라운드가 끝난 뒤 다음 라운드를 스스로 띄운다")
+    c.add_argument("action", choices=["on", "off", "status"])
+    c.add_argument("--project")
+    c.add_argument("--max", type=int, default=None, help=f"연속 라운드 상한 (기본 {CHAIN_DEFAULT_ROUNDS}, 최대 {CHAIN_MAX_ROUNDS})")
+    c.add_argument("--by", default="CLI")
+    w = sub.add_parser("_chainwatch")
+    w.add_argument("--round", type=int, required=True)
     a = p.parse_args(argv)
     if a.cmd == "_relay":
         return _relay_worker(a.round)
+    if a.cmd == "_chainwatch":
+        return _chain_wait_and_step(a.round)
+    if a.cmd == "chain":
+        out = ({"ok": True, "chain": chain_state()} if a.action == "status"
+               else chain_set(a.action == "on", a.project, a.max, a.by))
+        print(json.dumps(out, ensure_ascii=False, indent=1))
+        return 0 if out.get("ok", True) else 1
     fn = {"status": lambda: status(), "prepare": lambda: prepare(a.by), "run": lambda: resume(a.by),
           "pause": lambda: pause(a.by), "stop": lambda: stop(a.by), "round": lambda: launch_round(a.by)}[a.cmd]
     out = fn()

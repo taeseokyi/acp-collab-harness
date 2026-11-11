@@ -1155,7 +1155,145 @@ function focusRequestForm() {
   title.focus({ preventScroll: true });
 }
 
+// 이어 달리기 (REV 155) - 프로젝트 목표가 남으면 라운드가 끝난 뒤 다음 라운드를 함대가 스스로 띄운다.
+// `#fleet-control` 은 5초마다 통째로 다시 그려지므로, 이 줄은 그 **바깥**에 한 번 만들고 내용이 바뀔 때만 다시 그린다 -
+// 프로젝트를 고르는 중에 목록이 닫히거나 입력이 지워지지 않게.
+async function chainAction(on, project, maxRounds) {
+  state.chainBusy = true;
+  state.chainMsg = null;
+  if (state.data) renderFleetChain(state.data);
+  try {
+    let body;
+    if (DEMO) {
+      body = { ok: true };
+    } else {
+      const res = await fetch('/api/fleet/chain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(on ? { on: true, project, max_rounds: maxRounds } : { on: false }),
+      });
+      body = await res.json().catch(() => ({ ok: false, error: 'HTTP ' + res.status }));
+    }
+    state.chainMsg = body.ok === false ? (body.error || '바꾸지 못했습니다') : null;
+  } catch (err) {
+    state.chainMsg = err && err.message ? err.message : String(err);
+  } finally {
+    state.chainBusy = false;
+    for (let i = 0; i < 50 && state.busy; i += 1) await new Promise((r) => setTimeout(r, 100));
+    await refresh();
+  }
+}
+
+function renderFleetChain(data) {
+  const box = $('fleet-control');
+  if (!box) return;
+  let el = $('fleet-chain');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'fleet-chain';
+    el.className = 'fleet-chain';
+    box.after(el);
+  }
+  const f = (data && data.fleet) || {};
+  const ch = f.chain || {};
+  const names = Array.from(new Set([]
+    .concat((data && Array.isArray(data.projects) ? data.projects : []).map((p) => p && p.name))
+    .concat((data && Array.isArray(data.requests) ? data.requests : []).map((q) => q && q.project))
+    .filter(Boolean))).sort();
+  const sig = JSON.stringify([f.mode, !!ch.on, ch.project, ch.max_rounds, ch.rounds_done, ch.stopped_why, names,
+    !!state.chainBusy, state.chainMsg]);
+  if (el.dataset.sig === sig) return;
+  el.dataset.sig = sig;
+  const keep = state.chainForm || {};
+  el.textContent = '';
+  if (!f.mode) return;
+  const title = document.createElement('span');
+  title.className = 'fleet-chain-title';
+  title.textContent = '이어 달리기';
+  el.appendChild(title);
+  if (ch.on) {
+    el.appendChild(badge('켜짐', 'running'));
+    const t = document.createElement('span');
+    t.className = 'fc-hint';
+    t.textContent = `프로젝트 ${show(ch.project)} · 최대 ${show(ch.max_rounds)} 라운드 (지금까지 ${ch.rounds_done || 0} 라운드 끝남) - `
+      + '라운드가 끝나면 목표를 보고 남은 것을 다음 라운드로 띄웁니다';
+    el.appendChild(t);
+    const off = document.createElement('button');
+    off.type = 'button';
+    off.className = 'fc-btn';
+    off.textContent = state.chainBusy ? '끄는 중…' : '끄기';
+    off.disabled = !!state.chainBusy;
+    off.addEventListener('click', () => chainAction(false));
+    el.appendChild(off);
+  } else {
+    const sel = document.createElement('select');
+    sel.className = 'fleet-chain-project';
+    sel.setAttribute('aria-label', '이어 달릴 프로젝트');
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = names.length ? '프로젝트 고르기' : '프로젝트 없음';
+    sel.appendChild(none);
+    for (const n of names) {
+      const o = document.createElement('option');
+      o.value = n;
+      o.textContent = n;
+      sel.appendChild(o);
+    }
+    if (keep.project && names.includes(keep.project)) sel.value = keep.project;
+    const num = document.createElement('input');
+    num.type = 'number';
+    num.min = '1';
+    num.max = '10';
+    num.value = String(keep.max || 3);
+    num.className = 'fleet-chain-max';
+    num.setAttribute('aria-label', '연속 라운드 상한');
+    num.title = '연속으로 띄울 라운드 수의 상한 (1~10)';
+    const on = document.createElement('button');
+    on.type = 'button';
+    on.className = 'fc-btn';
+    on.textContent = state.chainBusy ? '켜는 중…' : '켜기';
+    const sync = () => {
+      state.chainForm = { project: sel.value, max: Number(num.value) || 3 };
+      on.disabled = !!state.chainBusy || !sel.value;
+    };
+    sel.addEventListener('change', sync);
+    num.addEventListener('input', sync);
+    on.addEventListener('click', () => {
+      sync();
+      if (!window.confirm(`프로젝트 ${sel.value} 의 목표가 남아 있는 동안 라운드를 최대 ${state.chainForm.max}번까지 이어 띄웁니다.\n`
+        + '라운드마다 유료 관리자(Opus)가 한 번씩 뜹니다. 목표가 다 체크되거나, 보고가 DONE 이 아니거나, 체크가 늘지 않으면 스스로 멈춥니다.\n'
+        + "켠 뒤 '라운드 실행' 을 누르면 그 라운드부터 이어 갑니다. 켤까요?")) return;
+      chainAction(true, sel.value, state.chainForm.max);
+    });
+    sync();
+    el.appendChild(sel);
+    const lab = document.createElement('span');
+    lab.className = 'fc-hint';
+    lab.textContent = '최대';
+    el.appendChild(lab);
+    el.appendChild(num);
+    const lab2 = document.createElement('span');
+    lab2.className = 'fc-hint';
+    lab2.textContent = '라운드';
+    el.appendChild(lab2);
+    el.appendChild(on);
+    const hint = document.createElement('div');
+    hint.className = 'fc-hint fleet-chain-note';
+    hint.textContent = ch.stopped_why
+      ? `지난번에 멈춘 이유: ${ch.stopped_why}`
+      : '프로젝트 목표(PROGRESS.md 의 체크리스트)가 남아 있으면 라운드가 끝난 뒤 다음 라운드를 스스로 띄웁니다. 꺼져 있습니다';
+    el.appendChild(hint);
+  }
+  if (state.chainMsg) {
+    const m = document.createElement('div');
+    m.className = 'fc-hint fleet-chain-note fleet-chain-err';
+    m.textContent = state.chainMsg;
+    el.appendChild(m);
+  }
+}
+
 function renderFleetControl(data) {
+  renderFleetChain(data);
   const box = $('fleet-control');
   const pill = $('fleet-mode-pill');
   const f = data.fleet || {};
@@ -1472,6 +1610,25 @@ function renderManager(data) {
   head.appendChild(title);
 
   const cur = sessions.find((s) => s.status === 'running') || sessions[0];
+  // 끝난 관리자 세션은 게이트웨이 목록에서 사라진다 - 그러면 `sessions[0]` 은 한참 전 라운드(R6)다.
+  // 라운드가 끝났고(idle) 가장 최근에 띄운 라운드가 목록의 맨 앞과 다르면, 전달 기록과 보고 파일로 그 라운드를 보인다 (REV 155).
+  const fl = data.fleet || {};
+  const lr = fl.last_round;
+  if (fl.idle && lr && lr.state === 'spawned' && !(cur && cur.status === 'running') && !(cur && cur.label === lr.label)) {
+    const st = lr.report_status;
+    head.appendChild(badge(st ? '끝남 · ' + st : '끝남', st === 'DONE' ? 'done' : (st ? 'blocked' : 'neutral')));
+    const label = document.createElement('span');
+    label.className = 'manager-label';
+    label.textContent = show(lr.label || ('관리자 R' + lr.round));
+    head.appendChild(label);
+    box.appendChild(head);
+    const what = document.createElement('div');
+    what.className = 'manager-what';
+    what.textContent = (lr.report ? `종료 보고 ${lr.report}` : `R${lr.round} 종료 보고가 아직 없습니다`)
+      + ` · 띄운 때 ${fmtDateTime(lr.at)} · 실행 중인 관리자 없음`;
+    box.appendChild(what);
+    return;
+  }
   if (m.pending && !sessions.length) {
     head.appendChild(badge('조회 중', 'pending'));
     box.appendChild(head);

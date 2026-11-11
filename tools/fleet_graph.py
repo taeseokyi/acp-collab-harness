@@ -324,6 +324,12 @@ def _spawn_node(g, n, attempt_no):
         prior = (f"\n\n[재시도 {attempt_no}/{n.get('max_attempts', 2)}] 직전 시도(run {last['run_id']}) 는 "
                  f"rc={last.get('rc')} / 검증 rc={last.get('verify_rc')} 로 실패했다. 산출물이 남아 있을 수 있으니 "
                  f"먼저 확인하고 이어서 하라. 직전 검증 출력 꼬리:\n{(last.get('verify_tail') or '')[-600:]}")
+        # 직전 작업자가 **무엇을 알아냈는지**도 넘긴다 - 검증 출력만 주면 두 번째 작업자가 같은 조사를 처음부터 다시 한다.
+        # 다만 그 판단이 틀렸을 수 있으니(R7 T-099: "기대값이 틀렸다" 는 보고가 사실은 옮겨 적기 실수) 참고로만 준다.
+        rep = (last.get("report") or "").strip()
+        if rep and not report_ended_in_tool_call(rep):
+            prior += ("\n\n직전 작업자의 보고(참고만 하라 - 틀렸을 수 있으니 그대로 믿지 말고 직접 확인하라):\n"
+                      + rep[-900:])
     task_file = GRAPHS / f"{g['id']}-{n['id']}-a{attempt_no}.task.md"
     GRAPHS.mkdir(parents=True, exist_ok=True)
     task_file.write_text(n["task"].rstrip() + prior + "\n", encoding="utf-8")
@@ -842,6 +848,49 @@ def step(g, concurrency=None, allow_spawn=None):
 
 
 # ---------------------------------------------------------------- CLI
+#: 한 라운드의 상한 (2026-11-11 REV 155). 브리프 문구로만 있을 때 R9 는 그래프 5·태스크 11 로 넘겼고, R10 은 반대로
+#: 태스크 10 에 걸려 **수정 뒤 재검수**를 포기했습니다. 그래서 둘로 나눕니다:
+#:  - 새 일을 벌이는 상한: 그래프 3 · 태스크 10 (관리자 컨텍스트를 지키려는 원래 뜻)
+#:  - 검수가 찾은 것을 고치고 다시 검수하는 그래프(`--followup`)는 그 위로 절대 상한까지: 그래프 6 · 태스크 18
+ROUND_GRAPHS, ROUND_TASKS = 3, 10
+ROUND_GRAPHS_HARD, ROUND_TASKS_HARD = 6, 18
+
+
+def round_usage(rnd, exclude=None):
+    """그 라운드가 지금까지 만든 (그래프 수, 서로 다른 태스크 id 집합). 같은 태스크를 새 그래프로 다시 굴려도 한 번만 셉니다."""
+    graphs, tasks = 0, set()
+    if rnd is None or not GRAPHS.exists():
+        return graphs, tasks
+    for f in GRAPHS.glob("G-*.json"):
+        try:
+            g = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(g, dict) or g.get("round") != rnd or g.get("id") == exclude:
+            continue
+        graphs += 1
+        tasks |= {str(n.get("id")) for n in g.get("nodes") or [] if isinstance(n, dict)}
+    return graphs, tasks
+
+
+def round_budget_problem(rnd, new_ids, followup, exclude=None):
+    """이 그래프를 만들면 라운드 상한을 넘는가. 넘으면 사람이 읽을 한 문단, 아니면 None. 도는 라운드가 없으면 보지 않습니다."""
+    if rnd is None:
+        return None
+    used_g, used_t = round_usage(rnd, exclude)
+    g_after, t_after = used_g + 1, len(used_t | {str(i) for i in new_ids})
+    now = f"R{rnd} 은 지금 그래프 {used_g}개 · 태스크 {len(used_t)}개이고, 이 그래프를 더하면 그래프 {g_after}개 · 태스크 {t_after}개입니다."
+    if g_after > ROUND_GRAPHS_HARD or t_after > ROUND_TASKS_HARD:
+        return (f"라운드 절대 상한(그래프 {ROUND_GRAPHS_HARD} · 태스크 {ROUND_TASKS_HARD})을 넘습니다. {now} "
+                "남은 일은 요청을 PLANNED 로 두고 PROGRESS.md·보고 (5)에 적어 다음 라운드로 넘기십시오.")
+    if (g_after > ROUND_GRAPHS or t_after > ROUND_TASKS) and not followup:
+        return (f"라운드 상한(그래프 {ROUND_GRAPHS} · 태스크 {ROUND_TASKS})을 넘습니다. {now} "
+                "**검수가 찾은 결함을 고치거나 그 수정을 다시 검수하는 그래프**라면 "
+                "`--followup \"<어느 검수·어느 결함의 후속인지>\"` 를 붙여 다시 만드십시오"
+                f"(절대 상한 그래프 {ROUND_GRAPHS_HARD} · 태스크 {ROUND_TASKS_HARD}). 새로 벌이는 일이면 다음 라운드로 넘기십시오.")
+    return None
+
+
 def cmd_new(a):
     nodes = json.loads(pathlib.Path(a.nodes).read_text(encoding="utf-8"))
     for n in nodes:
@@ -857,6 +906,13 @@ def cmd_new(a):
     g = {"id": a.id, "request": a.request, "created": _now(), "rev": fleet.read_rev(),
          "round": fleet.current_round(),      # 식별자에 붙이지 않고 따로 적는다 (화면 구분용)
          "concurrency": a.concurrency, "nodes": nodes}
+    followup = (getattr(a, "followup", None) or "").strip()
+    if followup:
+        g["followup"] = followup[:300]
+    over = round_budget_problem(g["round"], [n.get("id") for n in nodes], followup, exclude=a.id)
+    if over:
+        print("그래프를 만들지 않았습니다: " + over, file=sys.stderr)
+        return 2
     probs = validate_graph(g)
     if probs:
         print("그래프를 만들지 않았습니다:", file=sys.stderr)
@@ -1026,6 +1082,7 @@ def main():
     n.add_argument("--request", required=True)
     n.add_argument("--nodes", required=True, help="노드 배열 JSON 파일")
     n.add_argument("--concurrency", type=int, default=3)
+    n.add_argument("--followup", help="라운드 상한(그래프 3·태스크 10)을 넘는 그래프가 검수 결함의 수정·재검수일 때, 무엇의 후속인지")
     for name in ("validate", "status"):
         sub.add_parser(name).add_argument("id")
     s = sub.add_parser("step")

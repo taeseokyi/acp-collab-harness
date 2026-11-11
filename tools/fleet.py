@@ -561,6 +561,19 @@ def task_project(task_id):
     return ""
 
 
+def spawn_task_id(task_id, label):
+    """실행에 붙일 태스크 id. `--task-id` 가 없어도 라벨이 `T-113 …` 으로 시작하면 그 태스크로 읽는다.
+
+    그래프 밖 단독 실행에 `--task-id` 를 빼먹으면 실행이 `ADHOC` 으로 남아 화면에서 태스크·프로젝트와 이어지지
+    않았다 (R8 T-113·T-114 실측). 라벨에도 없으면 `ADHOC`.
+    """
+    tid = (task_id or "").strip().upper()
+    if not tid:
+        m = re.match(r"\s*(T-\d+[A-Za-z]?)\b", label or "", re.IGNORECASE)
+        tid = m.group(1).upper() if m else "ADHOC"
+    return tid
+
+
 def cmd_spawn(args):
     """작업자 1명을 백그라운드로 띄웁니다. 즉시 돌아오고 run id 를 찍습니다."""
     import datetime, shlex, subprocess as sp
@@ -590,7 +603,7 @@ def cmd_spawn(args):
     RUNS.mkdir(parents=True, exist_ok=True)
     # 식별자 체계 (태석님 2026-11-09 18:15): 요청 Q- / 태스크 T-0xx / 그래프 G-00x / 실행 <태스크>-<슬롯>-a<시도>-<HHMMSS> / 라운드 R<n>(기록 전용).
     # 실행 id 만 보고도 무슨 태스크·어느 슬롯·몇 번째 시도인지 읽히게 한다. 태스크가 없는 임시 실행은 ADHOC.
-    task_id = (getattr(args, "task_id", None) or "").strip().upper() or "ADHOC"   # fleet_graph 가 Namespace 로 부를 때 없을 수 있다
+    task_id = spawn_task_id(getattr(args, "task_id", None), args.label)   # fleet_graph 가 Namespace 로 부를 때 task_id 가 없을 수 있다
     if not re.fullmatch(r"(T-\d+[A-Z]?|ADHOC)", task_id):
         sys.exit(f"--task-id 는 T-0xx 형식이어야 합니다: {task_id!r}")
     attempt = int(getattr(args, "attempt", None) or 1)

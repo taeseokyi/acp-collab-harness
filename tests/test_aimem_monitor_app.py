@@ -1,4 +1,5 @@
 """`/app/<프로젝트>/` 실행 경로의 뒷단 시험. 소켓은 열지 않고 함수를 직접 부릅니다."""
+import contextlib
 import email.message
 import io
 import json
@@ -34,16 +35,16 @@ class ProjectAppTests(unittest.TestCase):
         (d / "web" / "index.html").write_text("<!doctype html>", encoding="utf-8")
         return d
 
-    def route(self, path, auth=False):
+    def route(self, path, auth=False, host="localhost:18799", tls=False):
         h = server.Handler.__new__(server.Handler)
         h.path = path
         h.command = "GET"
-        h.tls = False
+        h.tls = tls
         h.require_auth = auth
         h.root = self.root
         h.access_token = None
         h.headers = email.message.Message()
-        h.headers["Host"] = "localhost:18799"
+        h.headers["Host"] = host
         h.client_address = ("127.0.0.1", 0)
         status, headers = [], []
         h.send_response = lambda code: status.append(code)
@@ -262,6 +263,115 @@ class ProjectAppTests(unittest.TestCase):
         for ticket in ("", "x", "1.2.3", "1.", "a.b", "é.0", "1." + "a" * 100, None):
             with self.subTest(ticket=ticket):
                 self.assertFalse(server.app_ticket_ok(ticket, "알파", key))
+
+    def test_csp_origin_is_https_under_tls(self):
+        # 없으면 TLS 인데 출처가 http:// 로 변해도 아무 검사가 빨개지지 않는다.
+        self.app()
+        host = "192.168.0.5:18800"
+        status, headers, _ = self.route("/app/알파/", tls=True, host=host)
+        self.assertEqual(status[-1], 302)
+        location = dict(headers).get("Location")
+        status, headers, _ = self.route(location, tls=True, host=host)
+        self.assertEqual(status[-1], 200)
+        csp = dict(headers).get("Content-Security-Policy", "")
+        self.assertIn("https://" + host, csp)
+        self.assertNotIn("http://", csp)
+
+    def test_csp_origin_rejects_unknown_host_name(self):
+        # 없으면 Host: evil.com 하나로 evil.com 이 script-src 에 들어간 CSP 가 발급된다.
+        self.app()
+        for host in ("evil.com", "[::1].evil.com", "[::1]evil.com", "127.0.0.1:abc"):
+            with self.subTest(host=host):
+                status, headers, _ = self.route("/app/알파/", host=host)
+                self.assertEqual(status[-1], 302)
+                location = dict(headers).get("Location")
+                status, headers, _ = self.route(location, host=host)
+                self.assertEqual(status[-1], 200)
+                csp = dict(headers).get("Content-Security-Policy", "")
+                self.assertNotIn("evil.com", csp)
+                self.assertNotIn("127.0.0.1", csp)
+                self.assertIn("default-src 'self';", csp)
+
+    def test_csp_origin_keeps_ip_and_localhost(self):
+        # 없으면 운영이 IP 로 들어올 때 정상 출처가 막혀 CSP 가 'self' 만 남는다.
+        self.app()
+        for host, origin in (("127.0.0.1:18799", "http://127.0.0.1:18799"),
+                             ("[::1]:18799", "http://[::1]:18799")):
+            with self.subTest(host=host):
+                status, headers, _ = self.route("/app/알파/", host=host)
+                self.assertEqual(status[-1], 302)
+                location = dict(headers).get("Location")
+                status, headers, _ = self.route(location, host=host)
+                self.assertEqual(status[-1], 200)
+                csp = dict(headers).get("Content-Security-Policy", "")
+                self.assertIn(origin, csp)
+
+    def test_issued_ticket_expires_within_ttl(self):
+        # 없으면 티켓 수명을 10년으로 바꿔도 아무 검사가 빨개지지 않는다.
+        self.app()
+        status, headers, _ = self.route("/app/알파/")
+        self.assertEqual(status[-1], 302)
+        location = dict(headers).get("Location")
+        ticket = location.split("/app/~", 1)[1].split("/", 1)[0]
+        exp = int(ticket.split(".")[0])
+        now = time.time()
+        self.assertGreater(exp, now)
+        self.assertLess(exp, now + server.PROJECT_APP_TICKET_TTL_SEC + 2)
+
+    def test_service_worker_skips_app_paths(self):
+        # 없으면 서비스 워커가 /app/ 결과물을 캐시하기 시작해도 아무 검사가 빨개지지 않는다.
+        sw = (pathlib.Path(__file__).resolve().parents[1]
+              / "tools/aimem_monitor/static/sw.js").read_text(encoding="utf-8")
+        lines = sw.splitlines()
+        self.assertTrue(any("startswith('/app/')" in line.lower() and "return" in line
+                            for line in lines))
+        self.assertIn("VERSION", sw)
+
+    def test_ticket_is_masked_in_server_log(self):
+        h = server.Handler.__new__(server.Handler)
+        h.log_date_time_string = lambda: "11/Nov/2026 00:00:00"
+        mac = "97fa92835ac417492797dc21825a7fbb"
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            h.log_message('"%s" %s -', f"GET /app/~1794422924.{mac}/알파/index.html HTTP/1.1", "200")
+        self.assertNotIn(mac, buf.getvalue())
+        self.assertIn("/app/~***/", buf.getvalue())
+
+    def test_mint_branch_needs_a_session_even_without_the_gate(self):
+        self.app()
+        h = server.Handler.__new__(server.Handler)
+        h.path = "/app/%EC%95%8C%ED%8C%8C/"
+        h.command = "GET"
+        h.tls = False
+        h.require_auth = True
+        h.root = self.root
+        h.access_token = "a" * 64
+        h.headers = email.message.Message()
+        h.headers["Host"] = "localhost:18799"
+        h.client_address = ("127.0.0.1", 0)
+        h._auth_gate = lambda path: False          # 인증 문이 뚫렸다고 치고
+        status, headers = [], []
+        h.send_response = lambda code: status.append(code)
+        h.send_header = lambda key, value: headers.append((key, value))
+        h.end_headers = lambda: None
+        h.wfile = io.BytesIO()
+        h.do_GET()
+        self.assertEqual((status[-1], dict(headers).get("Location")), (302, "/login"))
+        self.assertNotIn("/app/~", str(dict(headers).get("Location")))
+
+    def test_csp_origin_rejects_lookalike_host_names(self):
+        # 없으면 이름을 소문자·끝점으로 정규화한 뒤 허용하는 구현이 evil.com 계열을 통과시킨다.
+        self.app()
+        for host in ("evil.com:18799", "EVIL.COM", "evil.com."):
+            with self.subTest(host=host):
+                status, headers, _ = self.route("/app/알파/", host=host)
+                self.assertEqual(status[-1], 302)
+                location = dict(headers).get("Location")
+                status, headers, _ = self.route(location, host=host)
+                self.assertEqual(status[-1], 200)
+                csp = dict(headers).get("Content-Security-Policy", "")
+                self.assertNotIn("evil.com", csp)
+                self.assertIn("default-src 'self';", csp)
 
 
 if __name__ == "__main__":

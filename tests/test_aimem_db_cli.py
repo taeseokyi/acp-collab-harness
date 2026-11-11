@@ -27,6 +27,24 @@ def ns(**kw):
     base.update(kw)
     return argparse.Namespace(**base)
 
+# `python3 -m unittest … 2>&1 | tail -3` 의 마지막 줄이 `OK` 이게 합니다 (2026-11-11 R11 T-139).
+# 이 파일의 시험이 부르는 명령들이 표준출력에 찍는 줄(`ok: …aimem.db`, 린터 결과)은 파이프에서 버퍼에 있다가
+# unittest 요약 **뒤에** 나와, `tail -3 | grep '^OK'` 로 건 검증이 멀쩡한 작업을 실패로 판정했습니다.
+_QUIET = []
+
+
+def setUpModule():
+    import contextlib
+    import io
+    cm = contextlib.redirect_stdout(io.StringIO())
+    cm.__enter__()
+    _QUIET.append(cm)
+
+
+def tearDownModule():
+    while _QUIET:
+        _QUIET.pop().__exit__(None, None, None)
+
 
 class AimemDbCliTest(unittest.TestCase):
     def setUp(self):

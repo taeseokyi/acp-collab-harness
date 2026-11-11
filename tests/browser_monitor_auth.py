@@ -6,7 +6,9 @@ T-134 의 경로 티켓(/app/~<티켓>/<이름>/…) 고침이 진짜인지 인�
 """
 import http.server
 import pathlib
+import shutil
 import sys
+import tempfile
 import threading
 from contextlib import contextmanager
 from urllib.parse import urljoin
@@ -45,8 +47,18 @@ class Checks:
 
 @contextmanager
 def monitor_server():
-    """인증 켠 http 모니터를 임시 포트에 띄웁니다."""
-    handler = type("H", (server.Handler,), {"root": ROOT, "require_auth": True, "tls": False,
+    """인증 켠 http 모니터를 임시 포트 + 임시 루트에 띄웁니다.
+
+    루트를 저장소로 두면 로그인 기록이 운영 `.aimem/access.log` 에 남습니다 (R11 T-138).
+    """
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="browser-monitor-auth-"))
+    (tmp / ".aimem").mkdir()
+    shutil.copy(ROOT / ".aimem" / "aimem.db", tmp / ".aimem" / "aimem.db")
+    shutil.copy(ROOT / "AIMEM.md", tmp / "AIMEM.md")
+    (tmp / "projects" / "웹워들").mkdir(parents=True)
+    shutil.copy(ROOT / "projects" / "웹워들" / "app.json", tmp / "projects" / "웹워들" / "app.json")
+    shutil.copytree(ROOT / "projects" / "웹워들" / "web", tmp / "projects" / "웹워들" / "web")
+    handler = type("H", (server.Handler,), {"root": tmp, "require_auth": True, "tls": False,
                                              "access_token": TOKEN, "guard": server.LoginGuard(),
                                              "timeout": 5, "log_message": lambda *a, **k: None})
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -59,6 +71,7 @@ def monitor_server():
         httpd.shutdown()
         httpd.server_close()
         thread.join(timeout=3)
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _step(checks, goal, fn):
@@ -143,6 +156,38 @@ def check_sandbox_isolation(page, base, checks):
     checks.ok("격리는 살아 있다(불투명 출처)", origin == "null", f"window.origin={origin!r}")
 
 
+def check_top_level_is_opaque(ctx, base, checks):
+    """티켓 URL 을 **최상위 창**으로 열어도 격리되는가 (CSP sandbox 지시어).
+
+    iframe 의 sandbox 속성이 아니라 **서버가 보낸 CSP** 가 지키는 몫입니다.
+    """
+    page = ctx.new_page()
+    try:
+        page.goto(base + "/app/웹워들/", wait_until="load")     # 서버가 티켓 경로로 302
+        url_ok = "/app/~" in page.url
+        origin = page.evaluate("() => window.origin")
+        cookie = None
+        try:
+            cookie = page.evaluate("() => document.cookie")
+            cookie_detail = f"document.cookie={cookie!r}"
+            cookie_blocked = False
+        except Exception as exc:      # 불투명(샌드박스) 문서는 getter 자체가 차단된다
+            cookie_detail = f"document.cookie 접근 차단({type(exc).__name__}: {str(exc).splitlines()[0]})"
+            cookie_blocked = True
+        reached = page.evaluate(
+            "async () => { try { const r = await fetch('/api/state'); return 'status ' + r.status; }"
+            " catch (e) { return 'blocked ' + e.name; } }")
+        checks.ok("새 탭(최상위)도 불투명 출처다", url_ok and origin == "null",
+                  f"url={page.url}, window.origin={origin!r}")
+        checks.ok("새 탭에서 사람의 세션 쿠키가 보이지 않는다", cookie == "" or cookie_blocked,
+                  cookie_detail)
+        checks.ok("새 탭의 결과물 코드가 /api/* 를 부르지 못한다",
+                  reached.startswith("blocked ") or not reached.startswith("status 200"),
+                  f"fetch('/api/state') -> {reached!r}")
+    finally:
+        page.close()
+
+
 def run_checks(browser, base, checks):
     ctx = browser.new_context(viewport={"width": 1280, "height": 900})
     try:
@@ -155,6 +200,8 @@ def run_checks(browser, base, checks):
         _step(checks, "CSS 가 실제로 입혀졌다", lambda: check_css_applied(tiles, checks))
         _step(checks, "격리는 살아 있다(불투명 출처)",
               lambda: check_sandbox_isolation(page, base, checks))
+        _step(checks, "새 탭(최상위)도 불투명 출처다",
+              lambda: check_top_level_is_opaque(ctx, base, checks))
     finally:
         ctx.close()
 

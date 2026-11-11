@@ -130,6 +130,10 @@ CONTENT_TYPES = {
 #: 로그에 그대로 찍히면 안 되는 제어문자 치환표 (S4 검수 7번).
 _LOG_SAFE = {c: f"\\x{c:02x}" for c in list(range(0x20)) + [0x7f]}
 
+#: 로그에 남는 `/app/~<티켓>/` 의 티켓을 가립니다. 티켓은 12시간짜리 인가 수단이라
+#: 로그를 읽을 수 있는 쪽이 그대로 다시 쓸 수 있습니다 (R11 검수 A 결함 2).
+_TICKET_LOG_RE = re.compile(r"/app/~[^/\s]+")
+
 _TOKEN_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 #: subject 에 `.` 이 들어가면 쿠키 파싱이 어긋납니다. 들어올 수 있는 값은
 #: `token` 과 `gh:<login>` 뿐이고 GitHub 로그인에는 점이 없습니다 - 그래도 못박습니다.
@@ -494,7 +498,32 @@ class LoginGuard:
 MONITOR_ENV_FILE = ".aimem/tls/monitor.env"      # 0600. KISTI_API_KEY / GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET(없으면 기기 흐름)
 OPENCLAW_ENV_FILE = pathlib.Path.home() / ".openclaw" / ".env"
 AUDIT_LOG = ".aimem/access.log"                   # git 제외. 로그인·쓰기 동작만 (폴링은 적지 않음)
-_ENV_KEYS = (KISTI_API_KEY_ENV, GITHUB_CLIENT_ID_ENV, GITHUB_CLIENT_SECRET_ENV)
+#: CSP 출처에 넣어도 되는 **추가** 호스트 이름 (쉼표로 나눔). 바깥 주소가 이름(도메인)이면
+#: `.aimem/monitor.env` 에 `AIMEM_MONITOR_PUBLIC_HOSTS=aimem.example.org` 처럼 적습니다.
+MONITOR_PUBLIC_HOSTS_ENV = "AIMEM_MONITOR_PUBLIC_HOSTS"
+
+
+def _app_host_allowed(name):
+    """그 호스트 이름을 `/app/` CSP 의 허용 출처로 써도 되는가 (R11 검수 B 결함 1).
+
+    IP 리터럴·`localhost`·환경변수에 적은 이름만 참입니다. 아무 이름이나 받으면
+    `Host: evil.com` 요청 하나로 서버가 evil.com 을 `script-src` 에 넣은 CSP 를 발급합니다.
+    """
+    n = (name or "").strip().lower().rstrip(".")
+    if not n:
+        return False
+    if n == "localhost" or n.endswith(".localhost"):
+        return True
+    try:
+        ipaddress.ip_address(n)
+        return True
+    except ValueError:
+        pass
+    extra = (os.environ.get(MONITOR_PUBLIC_HOSTS_ENV) or "").split(",")
+    return n in {h.strip().lower().rstrip(".") for h in extra if h.strip()}
+
+
+_ENV_KEYS = (KISTI_API_KEY_ENV, GITHUB_CLIENT_ID_ENV, GITHUB_CLIENT_SECRET_ENV, MONITOR_PUBLIC_HOSTS_ENV)
 _audit_lock = threading.Lock()
 
 
@@ -1236,9 +1265,14 @@ def manager_status(root=ROOT):
         threading.Thread(target=_refresh_managers, daemon=True, name="manager-refresh").start()
     if val is None:
         return {"ok": True, "sessions": [], "pending": True, "age_sec": None, "error": None}
+    age = int((now - at).total_seconds()) if at else None
+    if age is not None and age > MANAGER_CACHE_SEC * 4:
+        # 아무도 화면을 안 보는 동안은 갱신이 돌지 않는다 - 몇 시간 묵은 목록을 "지금" 처럼 내주면 끝난 관리자가
+        # '실행 중' 으로 보인다(R8 이 끝난 뒤 R9 도중에 그렇게 보였다). 너무 낡았으면 비우고 '조회 중' 으로 답한다.
+        return {"ok": True, "sessions": [], "pending": True, "age_sec": age, "error": None}
     out = dict(val)
     # `at` 은 함대 제어 직후 강제 갱신을 위해 None 으로 비워질 수 있습니다 (값은 남김) - 그때는 갱신 중
-    out.update({"pending": at is None, "age_sec": int((now - at).total_seconds()) if at else None})
+    out.update({"pending": at is None, "age_sec": age})
     return out
 
 
@@ -1248,7 +1282,7 @@ def manager_status(root=ROOT):
 # 전부 `fleet_ctl` 이 합니다 - 서버는 부르기만 합니다 (CLI 와 화면이 같은 규칙을 쓰게).
 
 FLEET_ACTIONS = ("prepare", "run", "pause", "stop", "round")
-_REQ_FLEET_RE = re.compile(r"\A/api/fleet/(prepare|run|pause|stop|round)\Z")
+_REQ_FLEET_RE = re.compile(r"\A/api/fleet/(prepare|run|pause|stop|round|chain)\Z")
 
 # -- 슬롯 관리 (2026-11-10, 태석님 지시 "슬롯 하네스 추가·삭제, 모델 지정") ----------------------------
 # 정본은 `.aimem/aimem.db` slots - `tools/aimem_db.py slot *` 과 같은 함수를 부른다. 모델은 **OpenClaw 가 설정한
@@ -1521,8 +1555,21 @@ def fleet_state(root=ROOT, managers=None):
         return {"mode": None, "error": f"{type(e).__name__}: {str(e)[:120]}", "can": {a: False for a in FLEET_ACTIONS}}
 
 
-def fleet_action(action, by, root=ROOT):
+def fleet_action(action, by, root=ROOT, payload=None):
     """(HTTP 코드, 응답). 판정은 fleet_ctl 이 하고, 막힌 동작은 409 로 돌려줍니다."""
+    if action == "chain":
+        # 이어 달리기 켜기/끄기 (REV 155). 켜는 것은 사람이고, 라운드를 띄우는 것은 여전히 '라운드 실행' 입니다.
+        if pathlib.Path(root).resolve() != ROOT:
+            return 409, {"ok": False, "error": "운영 저장소가 아닙니다"}
+        p = payload if isinstance(payload, dict) else {}
+        if not isinstance(p.get("on"), bool):
+            return 400, {"ok": False, "error": "`on` 은 true/false 여야 합니다"}
+        try:
+            out = _fleet_ctl(root).chain_set(p["on"], p.get("project") if isinstance(p.get("project"), str) else None,
+                                             p.get("max_rounds"), by)
+        except Exception as e:  # noqa: BLE001
+            return 500, {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+        return (200 if out.get("ok") else 400), out
     if action not in FLEET_ACTIONS:
         return 404, {"ok": False, "error": f"없는 동작입니다: {action}"}
     ctl = _fleet_ctl(root)
@@ -2238,6 +2285,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # 제어문자를 `\xNN` 으로 바꿉니다 - 요청 경로의 ESC 가 그대로 찍히면 로그를 보는
         # 터미널이 조종당합니다 (S4 검수 7번. 표준 구현의 치환을 덮어쓰면서 잃었던 것입니다).
         line = "%s %s" % (self.log_date_time_string(), fmt % args)
+        line = _TICKET_LOG_RE.sub("/app/~***", line)      # 티켓은 가립니다 (R11 검수 A 결함 2)
         sys.stderr.write(line.translate(_LOG_SAFE) + "\n")
 
     def version_string(self):
@@ -2385,9 +2433,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return p
 
     def _app_origin(self):
-        """요청 Host 로 만든 출처. 헤더 주입을 막기 위해 Host 꼴을 먼저 검사합니다."""
+        """요청 Host 로 만든 출처. 꼴 검사에 더해 **이름까지** 봅니다 (R11 검수 B 결함 1).
+
+        허용하지 않는 이름이면 빈 문자열입니다 - CSP 는 `'self'` 만 남습니다. `]` 뒤에 아무거나
+        붙는 `[::1].evil.com` 이 IP 리터럴로 통과하던 것을 막습니다 (R11 재검수 남은 결함 2).
+        """
         host = (self.headers.get("Host") or "").strip() if self.headers else ""
         if not re.match(r"\A[A-Za-z0-9._:\[\]-]{1,100}\Z", host):
+            return ""
+        m = re.fullmatch(r"(?:\[(?P<v6>[0-9A-Fa-f:.]{2,45})\]|(?P<name>[A-Za-z0-9._-]{1,100}))"
+                         r"(?::(?P<port>\d{1,5}))?", host)
+        if not m:
+            return ""
+        if not _app_host_allowed(m.group("v6") or m.group("name")):
             return ""
         return ("https" if self.tls else "http") + "://" + host
 
@@ -2397,8 +2455,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return False
         # 티켓 경로는 라우팅에서 티켓으로 인가합니다. 불투명 출처는 SameSite=Strict
         # 쿠키를 싣지 못하므로 세션 검사보다 먼저 통과시켜야 합니다.
+        # **라우팅과 같은 입력(원본 경로)·같은 정규식으로 판단합니다** (R11 검수 A 결함 1, 인증 우회). 전에는 정규화된
+        # 경로의 접두만 봐서, 무인증 `GET /app/<이름>/../~x/` 가 정규화하면 `/app/~x` 라 여기를 지났고, 라우팅은 원본을
+        # "티켓 없음 → 발급" 으로 읽어 **유효한 티켓을 서명해 내줬습니다.** 원본에 `.`·`..`·빈 조각이 있으면 티켓 경로가 아닙니다.
         if path.startswith(PROJECT_APP_URL_PREFIX + PROJECT_APP_TICKET_PREFIX):
-            return False
+            raw = urllib.parse.urlparse(self.path).path
+            am = _APP_RE.match(raw)
+            clean = posixpath.normpath(raw) == (raw.rstrip("/") or "/")
+            if am and am.group("ticket") is not None and clean:
+                return False
+            self.close_connection = True
+            self._json(404, {"ok": False, "error": "없는 경로입니다"})
+            return True
         if self._subject():
             return False
         wants_login = (path in AUTH_UNAUTH_REDIRECT_PATHS
@@ -2520,6 +2588,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             app_name = urllib.parse.unquote(am.group("name"))
             ticket = am.group("ticket")
             if ticket is None:
+                # 서명은 **이 요청이 인증됐음을 이 자리에서 확인한 뒤에만** 합니다 (심층 방어, R11 검수 A 결함 1).
+                # 게이트가 이미 봤다고 가정하지 않습니다.
+                if self.require_auth and not self._subject():
+                    return self._redirect("/login")
                 if not _PROJECT_RE.match(app_name):
                     return self._json(404, {"ok": False, "error": "프로젝트 이름이 올바르지 않습니다"})
                 exp = int(time.time()) + PROJECT_APP_TICKET_TTL_SEC
@@ -2645,8 +2717,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if sent:
                 return None
             who = self._subject()
-            code, result = fleet_action(fleet_act.group(1), f"웹({subject_label(who)})" if who else "웹", self.root)
-            self._audit("fleet-" + fleet_act.group(1), f"{code} mode={result.get('mode')}")
+            code, result = fleet_action(fleet_act.group(1), f"웹({subject_label(who)})" if who else "웹", self.root, payload)
+            self._audit("fleet-" + fleet_act.group(1), f"{code} mode={result.get('mode')}"
+                        + (f" chain={(result.get('chain') or {}).get('on')}" if fleet_act.group(1) == "chain" else ""))
             return self._json(code, result)
         # 속도 제한 (S4 유출 검수 3번). **본문을 읽기 전에** 겁니다 - 막을 요청의
         # 64KB 를 굳이 받아들일 이유가 없습니다. 대신 연결은 끊습니다(본문 미소진).

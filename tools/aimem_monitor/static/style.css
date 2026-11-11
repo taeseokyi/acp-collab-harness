@@ -1326,7 +1326,10 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .proj-run { font-size: 13px; padding: 2px 10px; background: var(--st-accent-fill); border-color: var(--st-accent-fill);
   color: var(--st-accent-ink); font-weight: var(--st-fw-bold); }
 .proj-run:hover { background: var(--st-accent-fill); filter: brightness(1.08); }
-.proj-app-frame { display: block; width: 100%; height: min(78vh, 900px); min-height: 320px;
+/* min-height 는 428px 이상이어야 합니다 - 안쪽 높이가 그보다 낮으면 결과물(웹워들)의 키 높이
+   계산이 하한 20px 로 떨어집니다. 380px→키 20px, 428px→키 32px (R11 재검수, 844×390 실측).
+   짧은 화면에서 패널이 스크롤되는 것은 380px 에서도 이미 그랬습니다 - 이 값이 만든 것이 아닙니다. */
+.proj-app-frame { display: block; width: 100%; height: min(78vh, 900px); min-height: 428px;
   flex: 1 1 auto;
   border: 1px solid var(--st-line); border-radius: 8px; background: #fff; }
 
@@ -1336,3 +1339,13 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .proj-file-text { margin: var(--st-s-2) 0 0; padding: var(--st-s-3); border: 1px solid var(--st-line); border-radius: var(--st-r-sm);
   background: var(--st-surface-2); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .req-edit .hint { font-weight: 400; }
+
+/* 이어 달리기 (REV 155) - 함대 제어 칸 바로 아래 한 줄 */
+.fleet-chain { display: flex; flex-wrap: wrap; align-items: center; gap: var(--st-s-2); margin: var(--st-s-2) 0;
+  padding: var(--st-s-2) var(--st-s-3); border: 1px dashed var(--st-border, #d5d9e0); border-radius: 10px; }
+.fleet-chain:empty { display: none; }
+.fleet-chain-title { font-weight: 600; }
+.fleet-chain-project { min-width: 9em; max-width: 100%; padding: 5px 8px; font-size: var(--st-fs-md); }
+.fleet-chain-max { width: 4.5em; padding: 5px 8px; font-size: var(--st-fs-md); }
+.fleet-chain-note { flex-basis: 100%; }
+.fleet-chain-err { color: var(--st-danger, #c62828); }

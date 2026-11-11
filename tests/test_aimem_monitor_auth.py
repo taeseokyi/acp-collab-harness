@@ -430,6 +430,25 @@ class AuthHttpTests(unittest.TestCase):
                 self.assertEqual(_h(h, "Set-Cookie"), [])
         self.srv.guard.reset("127.0.0.1")        # 다른 테스트가 지연을 맞지 않도록
 
+    def test_login_cookie_is_secure_under_tls(self):
+        # 없으면 TLS 로그인 쿠키에 Secure 가 빠져도 아무 검사가 빨개지지 않는다.
+        body = json.dumps({"token": TOKEN}).encode()
+        srv = _Srv(self.root, tls=True)
+        self.addCleanup(srv.close)
+        s, h, b = srv.req("POST", "/api/login", {"Content-Type": "application/json"}, body)
+        self.assertEqual(s, 200, b)
+        c = _h(h, "Set-Cookie")[0]
+        for want in ("Secure", "HttpOnly", "SameSite=Strict"):
+            self.assertIn(want, c)
+
+        plain = _Srv(self.root, tls=False)
+        self.addCleanup(plain.close)
+        s, h, b = plain.req("POST", "/api/login", {"Content-Type": "application/json"}, body)
+        self.assertEqual(s, 200, b)
+        c = _h(h, "Set-Cookie")[0]
+        self.assertNotIn("Secure", c)
+        self.assertIn("HttpOnly", c)
+
     def test_login_bad_json_is_400(self):
         s, _, _ = self.srv.req("POST", "/api/login", {"Content-Type": "application/json"}, b"{not json")
         self.assertEqual(s, 400)

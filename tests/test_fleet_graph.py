@@ -637,5 +637,77 @@ class WroteNothing(unittest.TestCase):
                 self.assertFalse(fleet_graph.wrote_nothing(node, {"started": "어제"}))
 
 
+
+class RetryBriefCarriesThePriorReport(unittest.TestCase):
+    """재시도 브리프에 검증 출력 꼬리만 가면 두 번째 작업자가 첫 작업자의 결론을 모른 채 다시 조사한다 (R7 T-099)."""
+
+    def _spawn(self, last):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            graphs = pathlib.Path(t)
+            g = {"id": "G-900", "nodes": []}
+            n = {"id": "T-900", "slot": "S2", "title": "t", "task": "원래 지시", "max_attempts": 2, "attempts": [last]}
+
+            def fake_spawn(ns):
+                print("T-900-S2-a2-000000")
+
+            with mock.patch.object(fleet_graph, "GRAPHS", graphs), mock.patch.object(fleet, "cmd_spawn", fake_spawn), \
+                 mock.patch.object(fleet_graph, "_log"):
+                fleet_graph._spawn_node(g, n, 2)
+            return (graphs / "G-900-T-900-a2.task.md").read_text(encoding="utf-8")
+
+    def test_prior_report_is_included_as_a_hint_not_as_truth(self):
+        text = self._spawn({"run_id": "T-900-S2-a1-1", "rc": 0, "verify_rc": 1, "verify_tail": "FAIL 3행",
+                            "report": "PARTIAL\n- 표 3행의 기대값이 구현과 다르다"})
+        self.assertTrue(text.startswith("원래 지시"))
+        self.assertIn("FAIL 3행", text)
+        self.assertIn("표 3행의 기대값이 구현과 다르다", text)
+        self.assertIn("틀렸을 수 있으니", text)
+
+    def test_a_textual_tool_call_is_not_passed_on(self):
+        text = self._spawn({"run_id": "T-900-S2-a1-1", "rc": 0, "verify_rc": -2, "verify_tail": "한 일이 없다",
+                            "report": "읽겠습니다\n<tool_call>\n<function=update_plan>\n</function>\n</tool_call>"})
+        self.assertNotIn("<tool_call>", text)
+        self.assertNotIn("직전 작업자의 보고", text)
+        self.assertNotIn("직전 작업자의 보고", self._spawn({"run_id": "x", "rc": 1, "verify_rc": -1}))
+
+
+
+class RoundBudget(unittest.TestCase):
+    """R9 는 상한(그래프 3·태스크 10)을 5·11 로 넘겼고 R10 은 상한 때문에 수정 뒤 재검수를 포기했다."""
+
+    def setUp(self):
+        import tempfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.g = pathlib.Path(tmp.name)
+        p = mock.patch.object(fleet_graph, "GRAPHS", self.g)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def put(self, gid, rnd, ids):
+        (self.g / f"{gid}.json").write_text(json.dumps({"id": gid, "round": rnd, "nodes": [{"id": i} for i in ids]}), encoding="utf-8")
+
+    def test_new_work_stops_at_the_cap_and_review_followups_may_go_on(self):
+        chk = fleet_graph.round_budget_problem
+        self.assertIsNone(chk(None, ["T-1"], ""))                               # 도는 라운드가 없으면 보지 않는다
+        self.put("G-001", 9, ["T-1", "T-2", "T-3", "T-4"])
+        self.put("G-002", 9, ["T-5", "T-6", "T-2"])                              # T-2 를 다시 굴려도 한 번만 센다
+        self.put("G-003", 8, ["T-90", "T-91"])                                   # 다른 라운드는 세지 않는다
+        (self.g / "G-004.json").write_text("{깨진", encoding="utf-8")
+        self.assertEqual(fleet_graph.round_usage(9)[0], 2)
+        self.assertEqual(len(fleet_graph.round_usage(9)[1]), 6)
+        self.assertIsNone(chk(9, ["T-7", "T-8", "T-9", "T-10"], ""))             # 그래프 3 · 태스크 10 - 딱 상한
+        self.assertIn("상한", chk(9, ["T-7", "T-8", "T-9", "T-10", "T-11"], ""))  # 태스크 11
+        self.put("G-005", 9, ["T-7"])
+        msg = chk(9, ["T-8"], "")                                                # 네 번째 그래프
+        self.assertIn("--followup", msg)
+        self.assertIsNone(chk(9, ["T-8"], "T-100 검수 결함 1~3 수정"))            # 후속이면 된다
+        self.assertIsNone(chk(9, ["T-2", "T-5"], "재검수"))                       # 같은 태스크 재실행은 수를 안 늘린다
+        self.put("G-006", 9, ["T-8"]); self.put("G-007", 9, ["T-9"]); self.put("G-008", 9, ["T-10"])
+        self.assertIn("절대 상한", chk(9, ["T-11"], "재검수"))                     # 일곱 번째 그래프는 후속이어도 안 된다
+        self.assertIsNone(chk(9, ["T-11"], "재검수", exclude="G-008"))            # 같은 id 로 다시 만드는 것은 자기 자신을 빼고 센다
+
+
 if __name__ == "__main__":
     unittest.main()

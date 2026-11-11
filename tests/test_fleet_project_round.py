@@ -50,6 +50,17 @@ class CurrentRoundAndProject(unittest.TestCase):
                 self.assertEqual(fleet.task_project(tid), "", tid)
 
 
+class SpawnTaskIdFromLabel(unittest.TestCase):
+    """R8: 관리자가 그래프 밖에서 `--label "T-113 …"` 만 주고 띄운 실행이 ADHOC 으로 남았다."""
+
+    def test_label_names_the_task_when_task_id_is_missing(self):
+        self.assertEqual(fleet.spawn_task_id(None, "T-113 dvh 대비 복구"), "T-113")
+        self.assertEqual(fleet.spawn_task_id("", "  t-002b 무엇"), "T-002B")
+        self.assertEqual(fleet.spawn_task_id("t-050", "T-113 라벨보다 명시가 먼저"), "T-050")
+        for label in (None, "", "점검만", "브리프 T-113 을 다시", "T-", "T-12x34"):
+            self.assertEqual(fleet.spawn_task_id(None, label), "ADHOC", label)
+
+
 class RunRowsCarryProjectAndRound(unittest.TestCase):
     def test_reader_exposes_them_without_touching_the_id(self):
         with tempfile.TemporaryDirectory() as t:

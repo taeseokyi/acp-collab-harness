@@ -141,6 +141,68 @@ def scenario(browser, base, checks):
         ctx.close()
 
 
+def narrow_scenario(browser, base, checks):
+    """폰 폭(390x844)에서 미리보기가 좁은 화면 규칙대로 그려지는가."""
+    ctx = browser.new_context(viewport={"width": 390, "height": 844})
+    page = ctx.new_page()
+    try:
+        page.goto(base + "/", wait_until="load")
+        page.wait_for_selector("#projects-list .proj-item", timeout=15000)
+        project = page.locator("#projects-list .proj-item").filter(has_text="웹워들").first
+        project.locator(".proj-run").first.click()
+        page.wait_for_selector("iframe.proj-app-frame", state="visible", timeout=15000)
+        iframe = page.locator("iframe.proj-app-frame").first
+        box = iframe.bounding_box()
+
+        height = box["height"] if box else None
+        target = min(0.70 * 844, 640)
+        checks.ok(
+            "폰 폭에서 미리보기 높이가 좁은 화면 규칙을 따른다",
+            height is not None and abs(height - target) <= 2,
+            f"height={height}px, target={target}px (기본 규칙이 이기면 658px)",
+        )
+
+        body_box = page.locator("#detail-body").bounding_box()
+        contained = box is not None and body_box is not None and contains(box, body_box)
+        checks.ok(
+            "폰 폭에서 패널 밖으로 잘리지 않는다",
+            contained,
+            f"iframe={box}, detail-body={body_box}",
+        )
+
+        scroll = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
+        checks.ok(
+            "폰 폭에서 가로 스크롤이 생기지 않는다",
+            scroll <= 1,
+            f"document.scrollWidth - innerWidth = {scroll}px",
+        )
+    finally:
+        ctx.close()
+
+
+def short_scenario(browser, base, checks):
+    """짧은 화면(844x390)에서 미리보기 최소 높이가 결과물 키 크기를 지켜 주는가."""
+    ctx = browser.new_context(viewport={"width": 844, "height": 390})
+    page = ctx.new_page()
+    try:
+        page.goto(base + "/", wait_until="load")
+        page.wait_for_selector("#projects-list .proj-item", timeout=15000)
+        project = page.locator("#projects-list .proj-item").filter(has_text="웹워들").first
+        project.locator(".proj-run").first.click()
+        page.wait_for_selector("iframe.proj-app-frame", state="visible", timeout=15000)
+        box = page.locator("iframe.proj-app-frame").first.bounding_box()
+        key = page.frame_locator("iframe.proj-app-frame").locator(".key").first
+        key.wait_for(state="visible", timeout=20000)
+        key_box = key.bounding_box()
+        checks.ok(
+            "짧은 화면에서도 결과물 키가 32px 이상이다",
+            box is not None and key_box is not None and box["height"] >= 426 and key_box["height"] >= 32,
+            f"iframe 높이={box and round(box['height'], 1)}, 키 높이={key_box and round(key_box['height'], 1)}",
+        )
+    finally:
+        ctx.close()
+
+
 def main():
     checks = Checks()
     try:
@@ -149,6 +211,8 @@ def main():
                 browser = pw.chromium.launch()
                 try:
                     scenario(browser, base, checks)
+                    narrow_scenario(browser, base, checks)
+                    short_scenario(browser, base, checks)
                 finally:
                     browser.close()
     except Exception as exc:
