@@ -1358,3 +1358,28 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
   .fleet-chain-modes { flex-direction: column; }
   .fleet-chain-foot .fleet-chain-on, .fleet-chain-head .fleet-chain-on { width: 100%; margin-left: 0; }
 }
+
+.req-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--st-s-3);
+  margin: var(--st-s-2) 0;
+  font-size: var(--st-fs-sm);
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.closed-fold {
+  width: 100%;
+  height: auto;
+  padding: var(--st-s-2) var(--st-s-3);
+  margin-top: var(--st-s-2);
+  font-size: var(--st-fs-sm);
+  text-align: center;
+}
+.req-done-line,
+.req-wait-line {
+  margin-top: var(--st-s-2);
+  color: var(--muted);
+  font-size: var(--st-fs-sm);
+}

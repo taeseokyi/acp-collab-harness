@@ -1197,13 +1197,24 @@ def archive_action(payload, by, root=ROOT):
                "requests": [{"id": r["id"], "title": r["title"], "status": r["status"], "when": r["when"]} for r in plan["requests"]],
                "graphs": [{"id": g["id"], "request": g["request"], "when": g["when"], "counts": g["counts"],
                            "files": 1 + len(g["side_files"]) + len(g["inputs"])} for g in plan["graphs"]]}
+    summary["records"] = {
+        "runs":      len(plan.get("runs") or []),
+        "events":    len(plan.get("events") or []),
+        "handoff":   len(plan.get("handoff") or []),
+        "relay":     len(plan.get("relay") or []),
+        "log_lines": sum(int(l.get("lines") or 0) for l in (plan.get("logs") or [])),
+    }
+    summary["total_records"] = plan.get("total_records") or 0
     if dry:
         return 200, {"ok": True, "dry_run": True, "plan": summary}
     try:
         out = db.archive_apply(plan, by)
     except RuntimeError as e:
         return 500, {"ok": False, "error": str(e)}
-    return 200, {"ok": True, "dry_run": False, "plan": summary, "moved": out}
+    moved_counts = {k: (len(v) if isinstance(v, (list, tuple)) else v)
+                    for k, v in out.items() if k != "files"}
+    return 200, {"ok": True, "dry_run": False, "plan": summary, "moved": out,
+                 "moved_counts": moved_counts}
 SLOT_HARNESSES = ("claude", "codex", "opencode")
 MODELS_CACHE_SEC = 60
 _models_cache = {"at": None, "value": None}
@@ -2596,7 +2607,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             who = self._subject()
             code, result = archive_action(payload if isinstance(payload, dict) else {}, f"웹({subject_label(who)})" if who else "웹", self.root)
             if not result.get("dry_run", True):
-                self._audit("archive", f"{code} days={result.get('plan', {}).get('days')} moved={json.dumps(result.get('moved', {}), ensure_ascii=False)[:200]}")
+                self._audit("archive", f"{code} days={result.get('plan', {}).get('days')} "
+                                       f"moved={json.dumps(result.get('moved_counts', {}), ensure_ascii=False)[:300]}")
             return self._json(code, result)
         if slot_m or slot_add_path:
             # 슬롯 관리 - 함대 제어와 같이 속도 제한 없이, CSRF·인증은 거친다. 감사 로그에 남긴다.

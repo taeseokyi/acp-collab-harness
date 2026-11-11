@@ -112,6 +112,7 @@ def _sync_handoff_files(con):
     done = {r[0] for r in con.execute("SELECT seq FROM handoff_archived")}
     exported = 0
     arch = ROOT / ".aimem" / "archive"
+    handoff = ROOT / ".aimem" / "handoff.md"
     for r in reversed(rows[HANDOFF_MAX:]):   # 오래된 것부터
         if r["seq"] in done:
             continue
@@ -119,16 +120,16 @@ def _sync_handoff_files(con):
         f = arch / f"handoff-{line[3:10]}.md"
         arch.mkdir(parents=True, exist_ok=True)
         old = f.read_text(encoding="utf-8") if f.exists() else f"# Handoff log archive - {line[3:10]}\n\n"
-        if line not in old:      # 내보낸 뒤 커밋 전에 죽었다가 다시 도는 경우에도 두 번 붙지 않는다
+        if line not in old.splitlines():      # 내보낸 뒤 커밋 전에 죽었다가 다시 도는 경우에도 두 번 붙지 않는다
             f.write_text(old.rstrip("\n") + "\n" + line + "\n", encoding="utf-8")
         con.execute("INSERT OR IGNORE INTO handoff_archived(seq) VALUES(?)", (r["seq"],))
         exported += 1
     text = render_handoff_text(con)
-    if not HANDOFF.exists() or HANDOFF.read_text(encoding="utf-8") != text:
-        HANDOFF.parent.mkdir(parents=True, exist_ok=True)
-        tmp = HANDOFF.with_name(f"{HANDOFF.name}.{os.getpid()}.tmp")
+    if not handoff.exists() or handoff.read_text(encoding="utf-8") != text:
+        handoff.parent.mkdir(parents=True, exist_ok=True)
+        tmp = handoff.with_name(f"{handoff.name}.{os.getpid()}.tmp")
         tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, HANDOFF)   # 반쯤 쓰인 파일이 남지 않는다
+        os.replace(tmp, handoff)   # 반쯤 쓰인 파일이 남지 않는다
     return exported
 
 
@@ -571,29 +572,31 @@ def render_text():
 
 def sync_rev_in_aimem():
     """2단계: REV 의 정본은 DB 다. AIMEM.md 서문 6행의 REV 를 DB 값으로 맞춘다."""
-    if not AIMEM.exists():
+    aimem = ROOT / "AIMEM.md"
+    if not aimem.exists():
         return None
     with connect() as con:
         cur = rev(con)
     if cur is None:
         return None
-    text = AIMEM.read_text(encoding="utf-8")
+    text = aimem.read_text(encoding="utf-8")
     new = re.sub(r"- \*\*REV: \d+\*\*", f"- **REV: {cur}**", text, count=1)
     if new != text:
         # REV 가 바뀐 그 render 가 '최종 갱신' 줄도 맞춘다 - 손으로 고치다 잊히던 줄이다 (REV 129)
         stamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M") + " KST"
         new = re.sub(r"^- (최종 갱신|Last updated): .*$", lambda m: f"- {m.group(1)}: {stamp}", new, count=1, flags=re.M)
-        AIMEM.write_text(new, encoding="utf-8")
+        aimem.write_text(new, encoding="utf-8")
         return cur
     return None
 
 
-def render():
+def render(sync_aimem=True):
     body = render_text()
-    STATE_MD.write_text(body, encoding="utf-8")
-    bumped = sync_rev_in_aimem()
+    state_md = ROOT / "AIMEM-state.md"
+    state_md.write_text(body, encoding="utf-8")
+    bumped = sync_rev_in_aimem() if sync_aimem else None
     handoff_sync()   # .aimem/handoff.md 도 DB 에서 만드는 생성물이다 (REV 132)
-    print(f"render: {STATE_MD} ({body.count(chr(10))} lines)"
+    print(f"render: {state_md} ({body.count(chr(10))} lines)"
           + (f" / AIMEM.md 서문 REV -> {bumped}" if bumped else ""))
     return 0
 
@@ -782,6 +785,39 @@ def _iso(v):
     return str(v or "").replace(" ", "T")
 
 
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _monitor_log_held():
+    """모니터 서버가 monitor.log 를 쥐고 있는지 본다. pid 경로를 못 찾으면 안전하게 쥔 것으로 본다."""
+    paths = (ROOT / ".aimem" / "monitor.pid",
+             ROOT / "tools" / "aimem_monitor" / "monitor.pid",
+             ROOT / "tools" / "aimem_monitor" / "server.pid")
+    found = False
+    for path in paths:
+        if not path.is_file():
+            continue
+        found = True
+        try:
+            pid = int(path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            continue
+        if _pid_alive(pid):
+            return True, "서버가 쥐고 있어 건너뜀"
+    if not found:
+        return True, "pid 파일 경로를 찾지 못해 건너뜀"
+    return False, None
+
+
 def archive_plan(days=14, now=None):
     """무엇을 내릴지 계산만 한다 (파일·DB 를 건드리지 않는다). 태스크·요청·그래프와 그 기록.
 
@@ -798,6 +834,10 @@ def archive_plan(days=14, now=None):
         task_status = {r["id"]: r["status"] for r in con.execute("SELECT id,status FROM tasks")}
         request_ids = {r["id"] for r in con.execute("SELECT id FROM requests")}
         graph_ids = {r["id"] for r in con.execute("SELECT id FROM graphs")}
+        protected_ids = {r["id"] for r in con.execute(
+            "SELECT id FROM requests WHERE upper(COALESCE(status,'')) NOT IN ('DONE','REJECTED')")}
+        for r in con.execute("SELECT task FROM queue"):
+            protected_ids.update(re.findall(r"\b(?:T-\d+|Q-\d{6}-[0-9a-f]{4}|G-\d+)\b", str(r["task"] or "")))
         for row in _handoff_rows(con)[HANDOFF_MAX:]:
             if _iso(row["at"]) <= cutoff:
                 plan["handoff"].append({"seq": row["seq"], "at": row["at"], "line": _handoff_line(row)})
@@ -829,38 +869,49 @@ def archive_plan(days=14, now=None):
             nodes = g.get("nodes") or []
             gid = g.get("id") or f.stem
             graph_ids.add(gid)
+            archived = False
             if nodes and not all(str(n.get("status")) in ARCHIVE_TERMINAL_NODE for n in nodes):
                 open_graph_ids.add(gid)
-                continue
-            if not nodes or not all(str(n.get("status")) in ARCHIVE_TERMINAL_NODE for n in nodes):
-                continue
-            when = _iso(g.get("updated") or g.get("created"))
-            if when > cutoff:
-                continue
-            side = sorted(x.name for x in gdir.glob(f"{gid}.*") if x.name != f.name) + sorted(x.name for x in gdir.glob(f"{gid}-*.task.md"))
-            inputs = sorted(x.name for x in (gdir / "inputs").glob(f"{gid}-*")) if (gdir / "inputs").is_dir() else []
-            for n in nodes:
-                for key in (n.get("id"), n.get("task")):
-                    # `task` 는 입력 파일 이름일 수도, **지시 본문 전체**일 수도 있다. 본문을 파일 이름으로 쓰면
-                    # `File name too long` 으로 죽었다 (2026-11-11 태석님: "지금 끝난 것 전부" 미리보기가 안 됨 -
-                    # 14일 기준에서는 최근 그래프가 걸러져 안 드러났다). 파일 이름 꼴일 때만 찾는다.
-                    if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", key):
-                        continue
-                    try:
-                        if (gdir / "inputs" / f"{key}.md").exists() and f"{key}.md" not in inputs:
-                            inputs.append(f"{key}.md")
-                    except OSError:
-                        continue
-            plan["graphs"].append({"id": gid, "file": f.name, "request": g.get("request"), "when": when,
-                                   "counts": {k: sum(1 for n in nodes if n.get("status") == k) for k in ARCHIVE_TERMINAL_NODE},
-                                   "side_files": side, "inputs": inputs})
-            for n in nodes:
-                for attempt in n.get("attempts") or []:
-                    if isinstance(attempt, dict) and attempt.get("run_id"):
-                        graph_run_ids.add(str(attempt["run_id"]))
-                if n.get("run_id"):
-                    graph_run_ids.add(str(n["run_id"]))
+            elif nodes and all(str(n.get("status")) in ARCHIVE_TERMINAL_NODE for n in nodes):
+                when = _iso(g.get("updated") or g.get("created"))
+                if when <= cutoff:
+                    side = sorted(x.name for x in gdir.glob(f"{gid}.*") if x.name != f.name) + sorted(x.name for x in gdir.glob(f"{gid}-*.task.md"))
+                    inputs = sorted(x.name for x in (gdir / "inputs").glob(f"{gid}-*")) if (gdir / "inputs").is_dir() else []
+                    for n in nodes:
+                        for key in (n.get("id"), n.get("task")):
+                            # `task` 는 입력 파일 이름일 수도, **지시 본문 전체**일 수도 있다. 본문을 파일 이름으로 쓰면
+                            # `File name too long` 으로 죽었다 (2026-11-11 태석님: "지금 끝난 것 전부" 미리보기가 안 됨 -
+                            # 14일 기준에서는 최근 그래프가 걸러져 안 드러났다). 파일 이름 꼴일 때만 찾는다.
+                            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", key):
+                                continue
+                            try:
+                                if (gdir / "inputs" / f"{key}.md").exists() and f"{key}.md" not in inputs:
+                                    inputs.append(f"{key}.md")
+                            except OSError:
+                                continue
+                    plan["graphs"].append({"id": gid, "file": f.name, "request": g.get("request"), "when": when,
+                                           "counts": {k: sum(1 for n in nodes if n.get("status") == k) for k in ARCHIVE_TERMINAL_NODE},
+                                           "side_files": side, "inputs": inputs})
+                    archived = True
+                    for n in nodes:
+                        for attempt in n.get("attempts") or []:
+                            if isinstance(attempt, dict) and attempt.get("run_id"):
+                                graph_run_ids.add(str(attempt["run_id"]))
+                        if n.get("run_id"):
+                            graph_run_ids.add(str(n["run_id"]))
+            if not archived:
+                protected_ids.add(gid)
+                for n in nodes:
+                    for key in (n.get("id"), n.get("task")):
+                        if isinstance(key, str) and key:
+                            protected_ids.add(key)
+                    for attempt in n.get("attempts") or []:
+                        if isinstance(attempt, dict) and attempt.get("run_id"):
+                            protected_ids.add(str(attempt["run_id"]))
+                    if n.get("run_id"):
+                        protected_ids.add(str(n["run_id"]))
 
+    plan["tasks"] = [r for r in plan["tasks"] if r["id"] not in protected_ids]
     archived_task_ids = {r["id"] for r in plan["tasks"]}
     run_dir = ROOT / ".aimem" / "runs"
     seen_runs = set()
@@ -876,6 +927,8 @@ def archive_plan(days=14, now=None):
             if not (run_dir / f"{rid}.rc").exists():
                 continue
             task = meta.get("task")
+            if rid in protected_ids or (isinstance(task, str) and task in protected_ids):
+                continue
             if isinstance(task, str) and task in task_status and task_status[task] != "DONE":
                 continue
             started = _iso(meta.get("started"))
@@ -892,6 +945,31 @@ def archive_plan(days=14, now=None):
             seen_runs.add(rid)
             plan["runs"].append({"id": rid, "task": task, "when": started, "files": files})
 
+        orphans = {}
+        for f in run_dir.iterdir():
+            if not f.is_file():
+                continue
+            rid = f.name.split(".", 1)[0]
+            if not rid or not (f.name == f"{rid}.rc" or f.name == f"{rid}.out"):
+                continue
+            if (run_dir / f"{rid}.json").exists() or rid in seen_runs:
+                continue
+            orphans.setdefault(rid, []).append(f)
+        for rid, fs in sorted(orphans.items()):
+            if rid in protected_ids:
+                continue
+            try:
+                when = max(dt.datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")
+                           for f in fs)
+            except OSError:
+                continue
+            if _iso(when) > cutoff:
+                continue
+            files = sorted(x.name for x in run_dir.iterdir()
+                           if x.name.startswith(f"{rid}.") and x.is_file())
+            seen_runs.add(rid)
+            plan["runs"].append({"id": rid, "task": None, "when": when, "files": files})
+
     archived_ids = set(archived_task_ids)
     archived_ids.update(r["id"] for r in plan["requests"])
     archived_ids.update(g["id"] for g in plan["graphs"])
@@ -900,10 +978,12 @@ def archive_plan(days=14, now=None):
     open_ids.update(open_graph_ids)
     all_ids = set(task_status) | request_ids | graph_ids | archived_ids
     with connect() as con:
-        for e in con.execute("SELECT seq,at,actor,kind,body FROM events ORDER BY seq"):
+        for e in con.execute("SELECT seq,at,actor,rev,kind,body FROM events ORDER BY seq"):
             if e["kind"] == "handoff":
                 continue
             body = e["body"] or ""
+            if any(_mentions(body, ident) for ident in protected_ids):
+                continue
             if any(_mentions(body, ident) for ident in open_ids):
                 continue
             if any(_mentions(body, ident) for ident in archived_ids):
@@ -914,6 +994,8 @@ def archive_plan(days=14, now=None):
                     plan["events"].append(dict(e))
 
     remaining_graph_rounds = set()
+    archived_graph_rounds = set()
+    unknown_graph_round = False
     if gdir.is_dir():
         archived_graph_ids = {g["id"] for g in plan["graphs"]}
         for f in sorted(gdir.glob("*.json")):
@@ -921,10 +1003,20 @@ def archive_plan(days=14, now=None):
                 g = json.loads(f.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            if (g.get("id") or f.stem) in archived_graph_ids:
+            if "round" not in g:
+                if (g.get("id") or f.stem) not in archived_graph_ids:
+                    unknown_graph_round = True
                 continue
-            if g.get("round") is not None:
-                remaining_graph_rounds.add(g.get("round"))
+            try:
+                int(g.get("round"))
+            except (TypeError, ValueError):
+                if (g.get("id") or f.stem) not in archived_graph_ids:
+                    unknown_graph_round = True
+                continue
+            if (g.get("id") or f.stem) in archived_graph_ids:
+                archived_graph_rounds.add(str(g.get("round")))
+            else:
+                remaining_graph_rounds.add(str(g.get("round")))
     relay_dir = ROOT / ".aimem" / "relay"
     if relay_dir.is_dir():
         rounds = set()
@@ -932,14 +1024,23 @@ def archive_plan(days=14, now=None):
             m = re.fullmatch(r"r(\d+)\.json", f.name)
             if m:
                 rounds.add(int(m.group(1)))
+        if unknown_graph_round:
+            rounds = set()
+        max_round = max(rounds) if rounds else None
         for n in sorted(rounds):
-            if n in remaining_graph_rounds:
+            if n == max_round:
+                continue
+            if str(n) in remaining_graph_rounds:
+                continue
+            if str(n) not in archived_graph_rounds:
+                # 그래프가 아직 생기지 않은 라운드의 전달 기록은 열린 것으로 본다.
                 continue
             try:
                 d = json.loads((relay_dir / f"r{n}.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            if _iso(d.get("at")) <= cutoff:
+            at = _iso(d.get("at"))
+            if at and at <= cutoff:
                 files = sorted(x.name for x in relay_dir.iterdir()
                                if x.name.startswith(f"r{n}.") or x.name.startswith(f"r{n}-"))
                 plan["relay"].append({"round": n, "files": files})
@@ -947,6 +1048,11 @@ def archive_plan(days=14, now=None):
     for log_path in (ROOT / ".aimem" / "monitor.log", ROOT / ".aimem" / "fleet-mode.log"):
         if not log_path.is_file():
             continue
+        if log_path.name == "monitor.log":
+            held, reason = _monitor_log_held()
+            if held:
+                plan["logs"].append({"file": "monitor.log", "lines": 0, "skip": reason})
+                continue
         try:
             text = log_path.read_text(encoding="utf-8")
         except OSError:
@@ -970,6 +1076,7 @@ def archive_apply(plan, actor="관리자"):
     arch.mkdir(parents=True, exist_ok=True)
     out = {"tasks": [], "requests": [], "graphs": [], "runs": [], "events": [],
            "handoff": [], "relay": [], "log_lines": 0, "files": 0}
+    moved_any = False
     cell = lambda v: str(v or "-").replace("|", "\\|").replace("\n", " ")
     rows = plan["tasks"]
     if rows:
@@ -984,18 +1091,32 @@ def archive_apply(plan, actor="관리자"):
                              "`DONE` 이 된 지 14일이 지나 내린 행입니다 (`aimem_db.py archive`, `8.0` 보관·폐기).\n\n"
                              "| ID    | 태스크 | 담당 슬롯 | 상태 | 이어받음 | 산출물 |\n"
                              "| ----- | ------ | --------- | ---- | -------- | ------ |\n", encoding="utf-8")
+            old_lines = f.read_text(encoding="utf-8").splitlines()
             with f.open("a", encoding="utf-8") as fh:
                 for r in rs:
-                    fh.write(f"| {r['id']} | {cell(r['title'])} | {cell(r['slot'])} | DONE | {cell(r['inherited'])} | {cell(r['artifacts'])} |\n")
+                    marker = f"| {r['id']} |"
+                    if any(line.startswith(marker) for line in old_lines):
+                        continue
+                    row = f"| {r['id']} | {cell(r['title'])} | {cell(r['slot'])} | DONE | {cell(r['inherited'])} | {cell(r['artifacts'])} |"
+                    fh.write(row + "\n")
+                    old_lines.append(row)
+                    moved_any = True
             text = f.read_text(encoding="utf-8")
-            missing = [r["id"] for r in rs if f"| {r['id']} |" not in text]
+            lines = text.splitlines()
+            missing = [r["id"] for r in rs if not any(line.startswith(f"| {r['id']} |") for line in lines)]
             if missing:
                 raise RuntimeError(f"archive: {f.name} 에 {missing} 가 안 들어갔습니다 - DB 에서 내리지 않습니다")
         ids = [r["id"] for r in rows]
         with connect() as con:
-            con.execute(f"DELETE FROM tasks WHERE id IN ({','.join('?' * len(ids))})", ids)
+            deleted = [r["id"] for r in con.execute(
+                f"SELECT id FROM tasks WHERE id IN ({','.join('?' * len(ids))}) AND status='DONE'", ids)]
+            con.execute(f"DELETE FROM tasks WHERE id IN ({','.join('?' * len(ids))}) AND status='DONE'", ids)
             con.commit()
-        out["tasks"] = ids
+        out["tasks"] = deleted
+        if deleted:
+            moved_any = True
+        if len(deleted) != len(ids):
+            print(f"archive: 태스크 계획 {len(ids)}건, 실제 삭제 {len(deleted)}건")
     rdir, gdir = ROOT / ".aimem" / "requests", ROOT / ".aimem" / "graph"
     for r in plan["requests"]:
         src = rdir / r["file"]
@@ -1005,17 +1126,18 @@ def archive_apply(plan, actor="관리자"):
         dest.mkdir(exist_ok=True)
         src.replace(dest / src.name)
         out["requests"].append(r["id"]); out["files"] += 1
+        moved_any = True
     for g in plan["graphs"]:
         dest = arch / f"graph-{g['when'][:7] or 'undated'}"
         (dest / "inputs").mkdir(parents=True, exist_ok=True)
         for name in [g["file"]] + g["side_files"]:
             src = gdir / name
             if src.exists():
-                src.replace(dest / name); out["files"] += 1
+                src.replace(dest / name); out["files"] += 1; moved_any = True
         for name in g["inputs"]:
             src = gdir / "inputs" / name
             if src.exists():
-                src.replace(dest / "inputs" / name); out["files"] += 1
+                src.replace(dest / "inputs" / name); out["files"] += 1; moved_any = True
         out["graphs"].append(g["id"])
 
     run_dir = ROOT / ".aimem" / "runs"
@@ -1023,16 +1145,18 @@ def archive_apply(plan, actor="관리자"):
         month = (r["when"][:7] if r.get("when") else plan["cutoff"][:7]) or "undated"
         dest = arch / f"runs-{month}"
         dest.mkdir(parents=True, exist_ok=True)
-        for name in r.get("files", []):
+        names = r.get("files", [])
+        ordered = [name for name in names if not name.endswith(".json")]
+        ordered += [name for name in names if name.endswith(".json")]
+        for name in ordered:
             src = run_dir / name
             if src.is_file():
                 src.replace(dest / name)
                 out["files"] += 1
+                moved_any = True
         out["runs"].append(r["id"])
-    if out["runs"]:
-        ids = out["runs"]
         with connect() as con:
-            con.execute(f"DELETE FROM runs WHERE id IN ({','.join('?' * len(ids))})", ids)
+            con.execute("DELETE FROM runs WHERE id=?", (r["id"],))
             con.commit()
 
     if plan.get("handoff"):
@@ -1045,52 +1169,180 @@ def archive_apply(plan, actor="관리자"):
                 if not f.exists():
                     f.write_text(f"# Handoff log archive - {month}\n\n", encoding="utf-8")
                 old = f.read_text(encoding="utf-8")
-                if line not in old:
+                if line not in old.splitlines():
                     with f.open("a", encoding="utf-8") as fh:
                         fh.write(line.rstrip("\n") + "\n")
+                    moved_any = True
                 text = f.read_text(encoding="utf-8")
             except OSError as e:
                 print(f"archive: 핸드오프 #{h['seq']} 아카이브 실패 - 건너뜀 ({e})")
                 continue
-            if line in text:
+            if line in text.splitlines():
                 confirmed.append(h["seq"])
         if confirmed:
             with _write_txn() as con:
                 con.execute(f"DELETE FROM events WHERE seq IN ({','.join('?' * len(confirmed))})", confirmed)
                 _sync_handoff_files(con)
             out["handoff"] = confirmed
+            moved_any = True
 
     event_months = {}
     for e in plan.get("events", []):
         month = str(e.get("at") or plan["cutoff"])[:7] or "undated"
         event_months.setdefault(month, []).append(e)
     for month, events in sorted(event_months.items()):
-        f = arch / f"events-{month}.md"
-        if not f.exists():
-            f.write_text(f"# 이벤트 아카이브 - {month}\n\n", encoding="utf-8")
+        f = arch / f"events-{month}.jsonl"
+        existing = []
+        if f.exists():
+            try:
+                for ln in f.read_text(encoding="utf-8").splitlines():
+                    if not ln.strip():
+                        continue
+                    d = json.loads(ln)
+                    existing.append((d.get("seq"), d.get("at")))
+            except (OSError, ValueError) as e:
+                raise RuntimeError(f"archive: {f.name} 를 읽지 못했습니다 - DB 에서 내리지 않습니다 ({e})")
         with f.open("a", encoding="utf-8") as fh:
             for e in events:
-                body = str(e.get("body") or "").replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
-                fh.write(f"- `{e.get('at')}` [#{e.get('seq')}] {e.get('actor') or ''} · {e.get('kind')} · {body}\n")
-        text = f.read_text(encoding="utf-8")
-        missing = [e["seq"] for e in events if f"[#{e['seq']}]" not in text]
+                marker = (e.get("seq"), e.get("at"))
+                if marker in existing:
+                    continue
+                row = {"seq": e.get("seq"), "at": e.get("at"), "actor": e.get("actor"),
+                       "rev": e.get("rev"), "kind": e.get("kind"), "body": e.get("body")}
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+                existing.append(marker)
+                moved_any = True
+        seen = set()
+        try:
+            for ln in f.read_text(encoding="utf-8").splitlines():
+                if not ln.strip():
+                    continue
+                d = json.loads(ln)
+                seen.add((d.get("seq"), d.get("at")))
+        except (OSError, ValueError) as e:
+            raise RuntimeError(f"archive: {f.name} 를 확인하지 못했습니다 - DB 에서 내리지 않습니다 ({e})")
+        missing = [e["seq"] for e in events if (e.get("seq"), e.get("at")) not in seen]
         if missing:
             raise RuntimeError(f"archive: {f.name} 에 {missing} 가 안 들어갔습니다 - DB 에서 내리지 않습니다")
     if plan.get("events"):
         seqs = [e["seq"] for e in plan["events"]]
+        deleted = []
         with connect() as con:
-            con.execute(f"DELETE FROM events WHERE seq IN ({','.join('?' * len(seqs))})", seqs)
+            for e in plan["events"]:
+                cur = con.execute("DELETE FROM events WHERE seq=? AND kind=?", (e["seq"], e.get("kind")))
+                if cur.rowcount:
+                    deleted.append(e["seq"])
             con.commit()
-        out["events"] = seqs
+            if deleted:
+                moved_any = True
+        out["events"] = deleted
+        if len(deleted) != len(seqs):
+            print(f"archive: 이벤트 계획 {len(seqs)}건, 실제 삭제 {len(deleted)}건")
 
-    if out["tasks"] or out["requests"] or out["graphs"] or out["runs"] or out["events"]:
+    relay_dir = ROOT / ".aimem" / "relay"
+    for r in plan.get("relay", []):
+        n = r["round"]
+        month = plan["cutoff"][:7]
+        try:
+            d = json.loads((relay_dir / f"r{n}.json").read_text(encoding="utf-8"))
+            at = _iso(d.get("at"))
+            if at:
+                month = at[:7]
+        except (OSError, ValueError):
+            pass
+        dest = arch / f"relay-{month or 'undated'}"
+        dest.mkdir(parents=True, exist_ok=True)
+        for name in r.get("files", []):
+            src = relay_dir / name
+            if src.is_file():
+                src.replace(dest / name)
+                out["files"] += 1
+                moved_any = True
+        out["relay"].append(n)
+
+    log_total = 0
+    for log_path in (ROOT / ".aimem" / "monitor.log", ROOT / ".aimem" / "fleet-mode.log"):
+        if not log_path.is_file():
+            continue
+        if log_path.name == "monitor.log":
+            held, reason = _monitor_log_held()
+            if held:
+                continue
+        try:
+            f = log_path.open("r+", encoding="utf-8")
+        except OSError:
+            continue
+        with f:
+            try:
+                text = f.read()
+            except OSError:
+                continue
+            kept, by_month = [], {}
+            for line in text.splitlines(keepends=True):
+                m = re.match(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}", line)
+                if m and _iso(line[:19]) <= plan["cutoff"]:
+                    by_month.setdefault(line[:7], []).append(line)
+                else:
+                    kept.append(line)
+            if not by_month:
+                continue
+            for month, lines in sorted(by_month.items()):
+                dest = arch / f"logs-{month}" / log_path.name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    chunk = "".join(line if line.endswith("\n") else line + "\n" for line in lines)
+                    old_text = dest.read_text(encoding="utf-8") if dest.exists() else ""
+                    before = len(old_text.splitlines())
+                    if not old_text.endswith(chunk):
+                        with dest.open("a", encoding="utf-8") as fh:
+                            fh.write(chunk)
+                        after = len(dest.read_text(encoding="utf-8").splitlines())
+                    else:
+                        after = before
+                except OSError as e:
+                    raise RuntimeError(f"archive: {dest} 에 로그를 쓰지 못했습니다 - 원본을 남깁니다 ({e})")
+                if after <= before and not old_text.endswith(chunk):
+                    raise RuntimeError(f"archive: {dest} 줄 수가 늘지 않았습니다 - 원본을 남깁니다")
+                log_total += len(lines)
+            try:
+                f.seek(0)
+                f.write("".join(kept))
+                f.truncate()
+                f.flush()
+                os.fsync(f.fileno())
+                moved_any = True
+            except OSError as e:
+                raise RuntimeError(f"archive: {log_path} 를 같은 inode 에서 다시 쓰지 못했습니다 ({e})")
+            out["files"] += 1
+    out["log_lines"] = log_total
+
+    if (out["tasks"] or out["requests"] or out["graphs"] or out["runs"] or out["events"]
+            or out["handoff"] or out["relay"] or out["log_lines"]):
         with connect() as con:
             body = (f"{plan['days']}일 경과 - 태스크 {len(out['tasks'])}건, 요청 {len(out['requests'])}건, 그래프 {len(out['graphs'])}개 아카이브"
                     + (f" (태스크 {', '.join(out['tasks'])})" if out["tasks"] else "")
-                    + f", 실행 {len(out['runs'])}건, 이벤트 {len(out['events'])}건")
+                    + f", 실행 {len(out['runs'])}건, 이벤트 {len(out['events'])}건"
+                    + f", 핸드오프 {len(out['handoff'])}건, 전달 {len(out['relay'])}개, 로그 {out['log_lines']}줄")
             con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
                         (_now(), actor, rev(con), "archive", body))
             con.commit()
+        try:
+            vcon = sqlite3.connect(DB, timeout=10)
+            vcon.isolation_level = None
+            try:
+                vcon.execute("VACUUM")
+            except sqlite3.Error as e:
+                print(f"archive: VACUUM 실패 - 정리는 성공 ({e})")
+            finally:
+                vcon.close()
+        except sqlite3.Error as e:
+            print(f"archive: VACUUM 실패 - 정리는 성공 ({e})")
+    if moved_any or (out["tasks"] or out["requests"] or out["graphs"] or out["runs"]
+                     or out["events"] or out["handoff"] or out["relay"] or out["log_lines"]):
+        try:
+            render(sync_aimem=False)
+        except Exception as e:
+            out["render_error"] = f"{type(e).__name__}: {e}"
     return out
 
 
@@ -1115,13 +1367,22 @@ def cmd_archive(a):
         print(f"archive: 실행 <- {len(plan['runs'])}건")
     if plan["events"]:
         print(f"archive: 이벤트 <- {len(plan['events'])}건")
+    if plan["handoff"]:
+        print(f"archive: 핸드오프 <- {len(plan['handoff'])}건")
+    if plan["relay"]:
+        print("archive: 전달 <- " + ", ".join(f"R{r['round']}" for r in plan["relay"]))
+    for log in plan["logs"]:
+        print(f"archive: 로그 <- {log['file']} {log['lines']}줄")
+    print(f"archive: 건수 - 핸드오프 {len(plan['handoff'])}건, 전달 {len(plan['relay'])}개, 로그 {sum(x['lines'] for x in plan['logs'])}줄")
     if a.dry_run:
         return 0
     try:
         out = archive_apply(plan, a.actor)
     except RuntimeError as e:
         sys.exit(str(e))
-    print(f"archive: 태스크 {len(out['tasks'])}건, 요청 {len(out['requests'])}건, 그래프 {len(out['graphs'])}개, 실행 {len(out['runs'])}건, 이벤트 {len(out['events'])}건 옮김 (파일 {out['files']})")
+    print(f"archive: 태스크 {len(out['tasks'])}건, 요청 {len(out['requests'])}건, 그래프 {len(out['graphs'])}개, 실행 {len(out['runs'])}건, 이벤트 {len(out['events'])}건, 핸드오프 {len(out['handoff'])}건, 전달 {len(out['relay'])}개, 로그 {out['log_lines']}줄 옮김 (파일 {out['files']})")
+    if out.get("render_error"):
+        print(f"archive: render 실패 - 생성물 갱신 안 됨 ({out['render_error']})")
     return 0
 
 

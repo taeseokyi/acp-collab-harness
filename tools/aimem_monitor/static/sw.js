@@ -1,7 +1,7 @@
 // AIMEM 함대 모니터 - 서비스 워커 (2026-11-10, 폰 설치용 PWA).
 // 원칙: **API 응답은 절대 캐시하지 않는다**(함대 상태·요청 본문은 인증 뒤 데이터). 캐시는 앱 껍데기(정적 파일)뿐이고,
 // 그마저 네트워크가 되면 새 것을 받아 갈아 끼운다(stale-while-revalidate). 오프라인이면 껍데기만 뜨고 화면이 "연결 끊김" 을 보인다.
-const VERSION = 'aimem-shell-v25';
+const VERSION = 'aimem-shell-v26';
 const SHELL = ['/', '/index.html', '/app.js', '/style.css', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (e) => {

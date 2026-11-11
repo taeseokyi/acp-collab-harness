@@ -9,6 +9,7 @@ import argparse
 import contextlib
 import io
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -449,3 +450,407 @@ class HandoffConcurrencyTest(HandoffLogTest):
         self.assertEqual(self.handoff_count(), 0)                           # 파일을 못 만들면 행도 REV 도 되돌아간다
         with aimem_db.connect() as con:
             self.assertIsNone(aimem_db.rev(con))
+
+
+class ArchiveAttachedRecordsTest(AimemDbCliTest):
+    """REV 157: 끝난 작업을 정리할 때 그 작업에 딸린 실행·이벤트·핸드오프·전달·로그도 함께 옮긴다."""
+
+    OLD = "2026-01-01T00:00:00"
+
+    def _task(self, tid, status, updated=None):
+        updated = updated or self.OLD
+        with aimem_db.connect() as con:
+            con.execute("INSERT INTO tasks(id,title,slot,status,created,updated) VALUES(?,?,?,?,?,?)",
+                        (tid, "제목", "S1", status, updated, updated))
+            con.commit()
+
+    def _run(self, rid, task, started=None, rc=True):
+        started = started or self.OLD
+        d = self.root / ".aimem" / "runs"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{rid}.json").write_text(json.dumps({"id": rid, "task": task, "started": started}), encoding="utf-8")
+        (d / f"{rid}.out").write_text("x", encoding="utf-8")
+        (d / f"{rid}.brief.md").write_text("x", encoding="utf-8")
+        if rc:
+            (d / f"{rid}.rc").write_text("0", encoding="utf-8")
+        with aimem_db.connect() as con:
+            con.execute("INSERT INTO runs(id,task_id,slot,started,rc,state) VALUES(?,?,?,?,?,?)",
+                        (rid, task, "S1", started, 0 if rc else None, "done" if rc else "running"))
+            con.commit()
+
+    def _event(self, body, at=None, kind="note", rev=None):
+        with aimem_db.connect() as con:
+            cur = con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
+                              (at or self.OLD, "t", rev, kind, body))
+            con.commit()
+            return cur.lastrowid
+
+    def _handoff(self, i, at, rev=None):
+        return self._event(f"entry {i:02d}", at=at, kind="handoff", rev=rev)
+
+    def test_finished_task_runs_move_with_it(self):
+        self._task("T-900", "DONE")
+        self._run("run-900", "T-900")
+        plan = aimem_db.archive_plan(0)
+        self.assertEqual([r["id"] for r in plan["runs"]], ["run-900"])
+        out = aimem_db.archive_apply(plan, actor="t")
+        self.assertEqual(out["runs"], ["run-900"])
+        self.assertFalse((self.root / ".aimem" / "runs" / "run-900.json").exists())
+        dest = self.root / ".aimem" / "archive" / "runs-2026-01"
+        for ext in ("json", "rc", "out", "brief.md"):
+            self.assertTrue((dest / f"run-900.{ext}").exists(), ext)
+        self.assertIsNone(self.row("SELECT 1 FROM runs WHERE id=?", "run-900"))
+
+    def test_open_task_runs_stay(self):
+        self._task("T-901", "TODO")
+        self._run("run-901", "T-901")
+        plan = aimem_db.archive_plan(0)
+        self.assertEqual(plan["runs"], [])
+        aimem_db.archive_apply(plan, actor="t")
+        self.assertTrue((self.root / ".aimem" / "runs" / "run-901.json").exists())
+        self.assertIsNotNone(self.row("SELECT 1 FROM runs WHERE id=?", "run-901"))
+
+    def test_running_run_stays_even_for_finished_task(self):
+        self._task("T-902", "DONE")
+        self._run("run-902", "T-902", rc=False)
+        plan = aimem_db.archive_plan(0)
+        self.assertEqual(plan["runs"], [])
+        aimem_db.archive_apply(plan, actor="t")
+        self.assertTrue((self.root / ".aimem" / "runs" / "run-902.json").exists())
+        self.assertFalse((self.root / ".aimem" / "runs" / "run-902.rc").exists())
+
+    def test_events_move_only_when_no_open_id_is_mentioned(self):
+        self._task("T-900", "DONE")
+        self._task("T-901", "TODO")
+        only_finished = self._event("T-900 끝남\n둘째 줄", rev=150)
+        only_open = self._event("T-901 열림")
+        both = self._event("T-900 그리고 T-901 둘 다")
+        plan = aimem_db.archive_plan(0)
+        self.assertEqual([e["seq"] for e in plan["events"]], [only_finished])
+        out = aimem_db.archive_apply(plan, actor="t")
+        self.assertEqual(out["events"], [only_finished])
+        self.assertIsNone(self.row("SELECT 1 FROM events WHERE seq=?", only_finished))
+        self.assertIsNotNone(self.row("SELECT 1 FROM events WHERE seq=?", only_open))
+        self.assertIsNotNone(self.row("SELECT 1 FROM events WHERE seq=?", both))
+        f = self.root / ".aimem" / "archive" / "events-2026-01.jsonl"
+        recs = [json.loads(ln) for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        self.assertEqual([r["seq"] for r in recs], [only_finished])
+        self.assertEqual(recs[0]["rev"], 150)
+        self.assertEqual(recs[0]["body"], "T-900 끝남\n둘째 줄")
+        self.assertNotIn(only_open, [r["seq"] for r in recs])
+        self.assertNotIn(both, [r["seq"] for r in recs])
+
+    def test_no_partial_id_match(self):
+        self._task("T-900", "DONE")
+        seq = self._event("T-9000", at="2999-01-01T00:00:00")
+        plan = aimem_db.archive_plan(0)
+        self.assertNotIn(seq, [e["seq"] for e in plan["events"]])
+        aimem_db.archive_apply(plan, actor="t")
+        self.assertIsNotNone(self.row("SELECT 1 FROM events WHERE seq=?", seq))
+
+    def test_newest_12_handoffs_stay_in_db_and_file(self):
+        seqs = [self._handoff(i, f"2026-01-{i:02d} 00:00") for i in range(1, 16)]
+        plan = aimem_db.archive_plan(0)
+        moved = {h["seq"] for h in plan["handoff"]}
+        self.assertEqual(moved, {seqs[0], seqs[1], seqs[2]})
+        out = aimem_db.archive_apply(plan, actor="t")
+        self.assertEqual(len(out["handoff"]), 3)
+        self.assertEqual(self.row("SELECT count(*) FROM events WHERE kind='handoff'")[0], aimem_db.HANDOFF_MAX)
+        live = aimem_db.HANDOFF.read_text(encoding="utf-8")
+        self.assertEqual(live.count("\n- `"), aimem_db.HANDOFF_MAX)
+        arch = (self.root / ".aimem" / "archive" / "handoff-2026-01.md").read_text(encoding="utf-8")
+        for i in (1, 2, 3):
+            self.assertIn(f"entry {i:02d}", arch)
+        self.assertNotIn("entry 04", arch)
+
+    def test_logs_move_only_old_timestamped_lines(self):
+        aimem = self.root / ".aimem"
+        fleet = aimem / "fleet-mode.log"
+        fleet.write_text("2026-01-01T00:00:00 old\n시각 없음\n2999-01-01T00:00:00 new\n", encoding="utf-8")
+        access = aimem / "access.log"
+        access.write_text("2026-01-01T00:00:00 access old\n", encoding="utf-8")
+        plan = aimem_db.archive_plan(0)
+        self.assertEqual([x["lines"] for x in plan["logs"] if x["file"] == "fleet-mode.log"], [1])
+        self.assertFalse(any(x["file"] == "access.log" for x in plan["logs"]))
+        aimem_db.archive_apply(plan, actor="t")
+        self.assertEqual(fleet.read_text(encoding="utf-8"), "시각 없음\n2999-01-01T00:00:00 new\n")
+        self.assertEqual(access.read_text(encoding="utf-8"), "2026-01-01T00:00:00 access old\n")
+        arch = (aimem / "archive" / "logs-2026-01" / "fleet-mode.log").read_text(encoding="utf-8")
+        self.assertIn("old", arch)
+        self.assertNotIn("시각 없음", arch)
+
+    def test_rev_unchanged_and_archive_event_written(self):
+        self._task("T-900", "DONE")
+        self._run("run-900", "T-900")
+        self._event("T-900 note")
+        with aimem_db.connect() as con:
+            con.execute("INSERT INTO meta(key,value) VALUES('rev','42') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+            con.commit()
+        plan = aimem_db.archive_plan(0)
+        out = aimem_db.archive_apply(plan, actor="t")
+        self.assertEqual(self.row("SELECT value FROM meta WHERE key='rev'")[0], "42")
+        rows = [r["body"] for r in self.row_all("SELECT body FROM events WHERE kind='archive'")]
+        self.assertEqual(len(rows), 1)
+        self.assertIn(f"실행 {len(out['runs'])}건", rows[0])
+        self.assertIn(f"이벤트 {len(out['events'])}건", rows[0])
+
+    def row_all(self, sql, *args):
+        with aimem_db.connect() as con:
+            return con.execute(sql, args).fetchall()
+
+    def test_dry_run_leaves_runs_events_and_logs(self):
+        self._task("T-900", "DONE")
+        self._run("run-900", "T-900")
+        self._event("T-900 note")
+        fleet = self.root / ".aimem" / "fleet-mode.log"
+        fleet.write_text("2026-01-01T00:00:00 old\n", encoding="utf-8")
+        out = self.run_cmd(aimem_db.cmd_archive, days=0, dry_run=True, actor="t")
+        self.assertIn("실행 <- 1건", out)
+        self.assertIn("이벤트 <- 1건", out)
+        self.assertTrue((self.root / ".aimem" / "runs" / "run-900.json").exists())
+        self.assertIsNotNone(self.row("SELECT 1 FROM runs WHERE id=?", "run-900"))
+        self.assertIsNotNone(self.row("SELECT 1 FROM tasks WHERE id=?", "T-900"))
+        self.assertEqual(fleet.read_text(encoding="utf-8"), "2026-01-01T00:00:00 old\n")
+        self.assertFalse((self.root / ".aimem" / "archive").exists())
+
+    def _graph(self, gid, nodes, round_=None, updated=None):
+        updated = updated or self.OLD
+        d = self.root / ".aimem" / "graph"
+        d.mkdir(parents=True, exist_ok=True)
+        rec = {"id": gid, "updated": updated, "nodes": nodes}
+        if round_ is not None:
+            rec["round"] = round_
+        (d / f"{gid}.json").write_text(json.dumps(rec), encoding="utf-8")
+
+    def _queue(self, task):
+        with aimem_db.connect() as con:
+            con.execute("INSERT INTO queue(pos,task) VALUES(1,?)", (task,))
+            con.commit()
+
+    def _handoff_entry(self, rev, body, at=None, actor="관리자"):
+        with aimem_db.connect() as con:
+            cur = con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
+                              (at or self.OLD, actor, rev, "handoff", body))
+            con.commit()
+            return cur.lastrowid
+
+    def test_running_graph_protects_finished_node_run(self):
+        self._task("T-1", "DONE")
+        self._run("run-1", "T-1")
+        self._graph("G-1", [
+            {"id": "T-1", "task": "T-1", "status": "done", "attempts": [{"run_id": "run-1"}]},
+            {"id": "T-2", "task": "T-2", "status": "running", "attempts": []},
+        ])
+        plan = aimem_db.archive_plan(0)
+        self.assertEqual([r["id"] for r in plan["runs"]], [])
+        aimem_db.archive_apply(plan, actor="t")
+        self.assertTrue((self.root / ".aimem" / "runs" / "run-1.json").exists())
+        self.assertIsNotNone(self.row("SELECT 1 FROM runs WHERE id=?", "run-1"))
+
+    def test_running_graph_protects_finished_node_task_row(self):
+        self._task("T-1", "DONE")
+        self._graph("G-1", [
+            {"id": "T-1", "task": "T-1", "status": "done", "attempts": []},
+            {"id": "T-2", "task": "T-2", "status": "running", "attempts": []},
+        ])
+        plan = aimem_db.archive_plan(0)
+        self.assertEqual([t["id"] for t in plan["tasks"]], [])
+        aimem_db.archive_apply(plan, actor="t")
+        self.assertIsNotNone(self.row("SELECT 1 FROM tasks WHERE id=?", "T-1"))
+
+    def test_running_graph_protects_off_board_node_run(self):
+        self._run("run-3", "T-3")
+        self._graph("G-1", [
+            {"id": "T-3", "task": "T-3", "status": "done", "attempts": [{"run_id": "run-3"}]},
+            {"id": "T-2", "task": "T-2", "status": "running", "attempts": []},
+        ])
+        plan = aimem_db.archive_plan(0)
+        self.assertEqual([r["id"] for r in plan["runs"]], [])
+        aimem_db.archive_apply(plan, actor="t")
+        self.assertTrue((self.root / ".aimem" / "runs" / "run-3.json").exists())
+        self.assertIsNotNone(self.row("SELECT 1 FROM runs WHERE id=?", "run-3"))
+
+    def test_queue_referenced_event_stays(self):
+        self._queue("T-300 다음 할 일")
+        seq = self._event("T-300 queue +1 다음 할 일")
+        plan = aimem_db.archive_plan(0)
+        self.assertNotIn(seq, [e["seq"] for e in plan["events"]])
+        aimem_db.archive_apply(plan, actor="t")
+        self.assertIsNotNone(self.row("SELECT 1 FROM events WHERE seq=?", seq))
+
+    def test_db_only_open_request_event_stays(self):
+        self._task("T-1", "DONE")
+        with aimem_db.connect() as con:
+            con.execute("INSERT INTO requests(id,title,status) VALUES(?,?,?)",
+                        ("Q-OPEN", "열린 요청", "IN-PROGRESS"))
+            con.commit()
+        seq = self._event("T-1 끝남 그리고 Q-OPEN 진행 중")
+        plan = aimem_db.archive_plan(0)
+        self.assertEqual([t["id"] for t in plan["tasks"]], ["T-1"])
+        self.assertNotIn(seq, [e["seq"] for e in plan["events"]])
+        aimem_db.archive_apply(plan, actor="t")
+        self.assertIsNotNone(self.row("SELECT 1 FROM events WHERE seq=?", seq))
+
+    def test_open_round_and_graphless_relay_stay(self):
+        relay = self.root / ".aimem" / "relay"
+        relay.mkdir(parents=True)
+        for n in (20, 21, 22):
+            (relay / f"r{n}.json").write_text(json.dumps({"at": self.OLD}), encoding="utf-8")
+        (relay / "r21.plan.md").write_text("x", encoding="utf-8")
+        self._graph("G-9", [{"id": "T-9", "task": "T-9", "status": "running", "attempts": []}],
+                    round_="21")
+        plan = aimem_db.archive_plan(0)
+        self.assertEqual(plan["relay"], [])
+        aimem_db.archive_apply(plan, actor="t")
+        for name in ("r20.json", "r21.json", "r21.plan.md", "r22.json"):
+            self.assertTrue((relay / name).exists(), name)
+
+    def test_apply_is_idempotent(self):
+        self._task("T-900", "DONE")
+        seq = self._event("T-900 끝남")
+        for i in range(1, 14):
+            self._handoff(i, f"2026-01-{i:02d} 00:00", rev=i)
+        plan = aimem_db.archive_plan(0)
+        aimem_db.archive_apply(plan, actor="t")
+        aimem_db.archive_apply(plan, actor="t")
+        board = (self.root / ".aimem" / "archive" / "board-2026-01.md").read_text(encoding="utf-8")
+        self.assertEqual(board.count("| T-900 |"), 1)
+        ev = (self.root / ".aimem" / "archive" / "events-2026-01.jsonl").read_text(encoding="utf-8")
+        recs = [json.loads(ln) for ln in ev.splitlines() if ln.strip()]
+        self.assertEqual(sum(1 for r in recs if r["seq"] == seq), 1)
+        moved_line = plan["handoff"][0]["line"]
+        arch = (self.root / ".aimem" / "archive" / "handoff-2026-01.md").read_text(encoding="utf-8")
+        self.assertEqual(arch.splitlines().count(moved_line), 1)
+
+    def test_handoff_archive_line_exact_match(self):
+        self._handoff_entry(1, "… 작업 1")
+        for rev in range(2, 14):
+            self._handoff_entry(rev, f"… 작업 {rev}")
+        archdir = self.root / ".aimem" / "archive"
+        archdir.mkdir(parents=True)
+        existing = "- `2026-01-01 00:00` 관리자: … 작업 12"
+        (archdir / "handoff-2026-01.md").write_text(
+            "# Handoff log archive - 2026-01\n\n" + existing + "\n", encoding="utf-8")
+        plan = aimem_db.archive_plan(0)
+        moved = [h for h in plan["handoff"] if h["seq"] == 1]
+        self.assertEqual(len(moved), 1)
+        line = moved[0]["line"]
+        self.assertEqual(line, "- `2026-01-01 00:00` 관리자: … 작업 1")
+        self.assertTrue(existing.startswith(line))   # 부분 문자열 확인이면 '있다' 로 오판한다
+        aimem_db.archive_apply(plan, actor="t")
+        text = (archdir / "handoff-2026-01.md").read_text(encoding="utf-8")
+        self.assertIn(line, text.splitlines())
+        self.assertIsNone(self.row("SELECT 1 FROM events WHERE seq=?", 1))
+
+    def test_log_cut_keeps_same_inode_and_held_handle_writes(self):
+        """결함 2/X8: 정리 뒤에도 열어 둔 핸들의 새 줄이 파일에 남고 inode 가 같아야 한다."""
+        fleet = self.root / ".aimem" / "fleet-mode.log"
+        fleet.write_text("2026-01-01T00:00:00 old\n", encoding="utf-8")
+        before = fleet.stat().st_ino
+        with fleet.open("a", encoding="utf-8") as fh:
+            plan = aimem_db.archive_plan(0)
+            self.assertEqual([x["lines"] for x in plan["logs"] if x["file"] == "fleet-mode.log"], [1])
+            aimem_db.archive_apply(plan, actor="t")
+            fh.write("2999-01-01T00:00:00 after\n")
+            fh.flush()
+        self.assertEqual(fleet.stat().st_ino, before)   # os.replace 로 되돌리면 빨개진다
+        self.assertEqual(fleet.read_text(encoding="utf-8"), "2999-01-01T00:00:00 after\n")
+        arch = self.root / ".aimem" / "archive" / "logs-2026-01" / "fleet-mode.log"
+        self.assertIn("old", arch.read_text(encoding="utf-8"))
+
+    def test_monitor_log_held_is_left_alone(self):
+        """결함 2/X9: 모니터 서버가 monitor.log 를 쥐고 있으면 apply 도 손대지 않는다."""
+        aimem = self.root / ".aimem"
+        log = aimem / "monitor.log"
+        log.write_text("2026-01-01T00:00:00 old\n", encoding="utf-8")
+        (aimem / "monitor.pid").write_text(str(os.getpid()), encoding="utf-8")
+        plan = aimem_db.archive_plan(0)
+        entry = [x for x in plan["logs"] if x["file"] == "monitor.log"][0]
+        self.assertEqual(entry["lines"], 0)
+        aimem_db.archive_apply(plan, actor="t")
+        self.assertEqual(log.read_text(encoding="utf-8"), "2026-01-01T00:00:00 old\n")
+
+    def test_run_json_moved_last_so_plan_rediscovers_after_failure(self):
+        """결함 4/X1: `.json` 을 맨 마지막에 옮기므로 셋째 replace 가 죽어도 다음 계획이 그 실행을 찾는다."""
+        self._task("T-900", "DONE")
+        self._run("run-900", "T-900")
+        d = self.root / ".aimem" / "runs"
+        plan = aimem_db.archive_plan(0)
+        self.assertEqual([r["id"] for r in plan["runs"]], ["run-900"])
+        real_replace = pathlib.Path.replace
+        calls = []
+
+        def flaky_replace(self_path, target):
+            calls.append(self_path.name)
+            if len(calls) == 3:
+                raise OSError("replace 실패")
+            return real_replace(self_path, target)
+
+        with mock.patch("pathlib.Path.replace", flaky_replace):
+            with self.assertRaises(OSError):
+                aimem_db.archive_apply(plan, actor="t")
+        self.assertEqual(calls[:3], ["run-900.brief.md", "run-900.out", "run-900.rc"])
+        self.assertFalse((d / "run-900.brief.md").exists())
+        self.assertFalse((d / "run-900.out").exists())
+        self.assertTrue((d / "run-900.rc").exists())
+        self.assertTrue((d / "run-900.json").exists())
+        dest = self.root / ".aimem" / "archive" / "runs-2026-01"
+        self.assertTrue((dest / "run-900.brief.md").exists())
+        self.assertTrue((dest / "run-900.out").exists())
+        self.assertEqual([r["id"] for r in aimem_db.archive_plan(0)["runs"]], ["run-900"])
+
+    def test_orphan_rc_and_out_are_reclaimed(self):
+        """결함 4/X2: `.json` 없는 고아 `.rc/.out` 도 계획이 주워 간다."""
+        d = self.root / ".aimem" / "runs"
+        d.mkdir(parents=True)
+        for name, text in (("run-777.out", "x"), ("run-777.rc", "0")):
+            f = d / name
+            f.write_text(text, encoding="utf-8")
+            os.utime(f, (946684800, 946684800))
+        plan = aimem_db.archive_plan(0)
+        self.assertEqual([r["id"] for r in plan["runs"]], ["run-777"])
+        out = aimem_db.archive_apply(plan, actor="t")
+        self.assertEqual(out["runs"], ["run-777"])
+        self.assertFalse((d / "run-777.out").exists())
+        self.assertFalse((d / "run-777.rc").exists())
+        dest = self.root / ".aimem" / "archive" / "runs-2000-01"
+        self.assertTrue((dest / "run-777.out").exists())
+        self.assertTrue((dest / "run-777.rc").exists())
+
+    def test_task_reopened_after_plan_is_not_deleted(self):
+        """결함 9/X7: 계획 뒤 다시 열린 태스크 행은 apply 가 내리지 않는다."""
+        self._task("T-900", "DONE")
+        plan = aimem_db.archive_plan(0)
+        self.assertEqual([t["id"] for t in plan["tasks"]], ["T-900"])
+        with aimem_db.connect() as con:
+            con.execute("UPDATE tasks SET status='ASSIGNED' WHERE id='T-900'")
+            con.commit()
+        out = aimem_db.archive_apply(plan, actor="t")
+        self.assertIsNotNone(self.row("SELECT 1 FROM tasks WHERE id=?", "T-900"))
+        self.assertNotIn("T-900", out["tasks"])
+
+    def test_apply_rerenders_state_without_changing_aimem(self):
+        """결함 12/X10·N3: 정리 뒤 AIMEM-state.md 는 다시 쓰이고 AIMEM.md 는 그대로다."""
+        aimem = self.root / "AIMEM.md"
+        aimem.write_text("# AIMEM.md\n\n- **REV: 1**\n", encoding="utf-8")
+        self._task("T-900", "DONE")
+        with aimem_db.connect() as con:
+            con.execute("INSERT INTO meta(key,value) VALUES('rev','42') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+            con.commit()
+        plan = aimem_db.archive_plan(0)
+        aimem_db.archive_apply(plan, actor="t")
+        state = (self.root / "AIMEM-state.md").read_text(encoding="utf-8")
+        self.assertIn("# AIMEM-state.md", state)
+        self.assertNotIn("| T-900 |", state)
+        self.assertEqual(aimem.read_text(encoding="utf-8"), "# AIMEM.md\n\n- **REV: 1**\n")
+
+    def test_event_archive_keeps_rev_and_newlines(self):
+        seq = self._event("첫줄\n둘째 줄", rev=150)
+        plan = aimem_db.archive_plan(0)
+        aimem_db.archive_apply(plan, actor="t")
+        f = self.root / ".aimem" / "archive" / "events-2026-01.jsonl"
+        recs = [json.loads(ln) for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        row = [r for r in recs if r["seq"] == seq]
+        self.assertEqual(len(row), 1)
+        self.assertEqual(row[0]["rev"], 150)
+        self.assertEqual(row[0]["body"], "첫줄\n둘째 줄")

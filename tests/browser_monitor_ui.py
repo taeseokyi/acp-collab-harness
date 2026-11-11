@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """모니터의 프로젝트 '실행' 단추가 격리된 iframe 미리보기를 여는지 브라우저에서 잽니다."""
-import datetime
 import http.server
+import json
 import pathlib
 import re
 import sys
+import tempfile
 import threading
 from contextlib import contextmanager
 
@@ -38,9 +39,10 @@ class Checks:
 
 
 @contextmanager
-def monitor_server():
-    """인증 끈 평문 http 모니터를 임시 포트에 띄웁니다."""
-    handler = type("H", (server.Handler,), {"root": ROOT, "require_auth": False, "tls": False,
+def monitor_server(root=None):
+    """인증 끈 평문 http 모니터를 임시 포트에 띄웁니다. root 를 주면 그 폴더를 읽습니다."""
+    root = pathlib.Path(root) if root is not None else ROOT
+    handler = type("H", (server.Handler,), {"root": root, "require_auth": False, "tls": False,
                                             "access_token": None, "guard": server.LoginGuard(),
                                             "timeout": 5, "log_message": lambda *a, **k: None})
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -244,52 +246,6 @@ def changed_ui_scenario(browser, base, checks):
             f"label={label_text!r}, value={value_text!r}",
         )
 
-        page.click("#tab-requests")
-        page.wait_for_selector("#requests-list .req-block", state="visible", timeout=15000)
-        zero = []
-        eta_texts = []
-        for block in page.query_selector_all("#requests-list .req-block"):
-            badge = block.query_selector(".badge")
-            status = badge.inner_text().strip() if badge else ""
-            etas = [e.inner_text().strip() for e in block.query_selector_all(".eta")]
-            eta_texts.extend(etas)
-            empty = block.query_selector(".req-body .empty")
-            if empty is not None:
-                zero.append((status, empty.inner_text().strip(), etas))
-            elif status == "DONE":
-                metas = block.query_selector_all(".req-title-wrap .req-meta")
-                zero.append((status, metas[-1].inner_text().strip() if metas else "", etas))
-
-        today = datetime.date.today().isoformat()
-        has_datetime = any(
-            re.search(r"ETA\s+\d", e)
-            or re.search(r"ETA\s+" + re.escape(today), e)
-            or re.search(r"ETA\s+\d{1,2}:\d{2}", e)
-            for e in eta_texts
-        )
-        expected = {
-            "NEW": "관리자 분담 대기",
-            "PLANNED": "분담 계획됨",
-            "DONE": "서브태스크 없이 끝난 요청입니다",
-        }
-        bad_zero = [
-            (status, msg, etas)
-            for status, msg, etas in zero
-            if status not in expected
-            or expected[status] not in msg
-            or any(e not in ("ETA 미정", "종료") for e in etas)
-        ]
-        zero_with_eta = sum(1 for _, _, etas in zero if etas)
-        checks.ok(
-            "분담 전 요청의 ETA가 '미정'이다",
-            bool(zero)
-            and zero_with_eta > 0
-            and not has_datetime
-            and not bad_zero,
-            f"서브태스크 0건 {len(zero)}개(ETA 표시 {zero_with_eta}개), .eta 전체={eta_texts}, "
-            f"날짜·시각 붙은 ETA={has_datetime}, 상태/문구 어긋남={bad_zero}",
-        )
-
         page.click("#tab-fleet")
         page.wait_for_selector("#runs-table-wrap", state="visible", timeout=15000)
         project_names = page.query_selector_all("#runs-table-wrap .proj-tag:not(.none) .proj-name")
@@ -365,19 +321,279 @@ def changed_ui_scenario(browser, base, checks):
         ctx.close()
 
 
+def write_fixed_requests(root):
+    """서브태스크 0건인 요청 네 건을 임시 저장소에 씁니다."""
+    req_dir = root / ".aimem" / "requests"
+    req_dir.mkdir(parents=True, exist_ok=True)
+    for status in ("NEW", "PLANNED", "IN-PROGRESS", "DONE"):
+        data = {
+            "id": f"Q-FIXED-{status}",
+            "title": f"임시 요청 {status}",
+            "status": status,
+            "created": "2026-11-01T00:00:00",
+            "updated": "2026-11-01T00:00:00",
+            "requester": "tester",
+            "subtasks": [],
+        }
+        (req_dir / f"Q-FIXED-{status}.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def zero_subtask_scenario(browser, base, checks):
+    """임시 저장소의 고정 요청 네 건으로 서브태스크 0건 화면을 잽니다."""
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    try:
+        page.goto(base + "/", wait_until="load")
+        page.wait_for_selector("#tab-requests", state="visible", timeout=15000)
+        page.click("#tab-requests")
+        page.wait_for_selector("#requests-list .req-block", state="visible", timeout=15000)
+
+        bad = []
+        open_seen = []
+        for block in page.query_selector_all("#requests-list .req-block"):
+            badge = block.query_selector(".badge")
+            status = badge.inner_text().strip() if badge else ""
+            if status not in ("NEW", "PLANNED", "IN-PROGRESS"):
+                continue
+            open_seen.append(status)
+            progress = block.query_selector_all(".req-progress")
+            etas = block.query_selector_all(".eta")
+            wait_line = block.query_selector(".req-wait-line")
+            empty = block.query_selector(".req-body .empty")
+            explained = (wait_line is not None and wait_line.is_visible()) or (
+                empty is not None and empty.is_visible()
+            )
+            if progress or etas or not block.is_visible() or not explained:
+                bad.append((status, len(progress), len(etas), block.is_visible(), explained))
+
+        closed_fold = page.locator("#requests-list .closed-fold").first
+        closed_fold_visible = closed_fold.is_visible()
+        if closed_fold_visible:
+            closed_fold.click()
+
+        done_blocks = []
+        for block in page.query_selector_all("#requests-list .req-block"):
+            badge = block.query_selector(".badge")
+            status = badge.inner_text().strip() if badge else ""
+            if status != "DONE":
+                continue
+            done_blocks.append(block)
+            if block.query_selector_all(".req-progress") or block.query_selector_all(".eta"):
+                bad.append(("DONE", "진행률·ETA 있음"))
+
+        done_detail = ""
+        if done_blocks:
+            done_blocks[0].query_selector(".req-toggle").click()
+            for block in page.query_selector_all("#requests-list .req-block"):
+                badge = block.query_selector(".badge")
+                status = badge.inner_text().strip() if badge else ""
+                if status != "DONE":
+                    continue
+                done_line = block.query_selector(".req-done-line")
+                text = block.inner_text()
+                if done_line is not None and done_line.is_visible():
+                    done_detail = text[:200]
+                    if (
+                        block.query_selector_all(".req-progress")
+                        or block.query_selector_all(".eta")
+                        or "100%" in text
+                        or "서브태스크 없이 끝난 요청입니다" in text
+                    ):
+                        bad.append(("DONE", "펼친 뒤 진행률·ETA·옛 문구"))
+                    break
+
+        checks.ok(
+            "서브태스크 없는 요청에는 진행률·ETA가 없다 (임시 저장소)",
+            closed_fold_visible
+            and sorted(open_seen) == ["IN-PROGRESS", "NEW", "PLANNED"]
+            and bool(done_blocks)
+            and done_detail
+            and not bad,
+            f"열린 요청={open_seen}, 닫힌 접기 visible={closed_fold_visible}, "
+            f"DONE 블록={len(done_blocks)}개, 펼친 DONE={done_detail!r}, 어긋남={bad}",
+        )
+    finally:
+        ctx.close()
+
+
+def request_tree_scenario(browser, base, checks):
+    """요청 트리 탭의 정리 패널·접기·DONE 표시·겹침을 브라우저에서 잽니다."""
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    try:
+        page.goto(base + "/", wait_until="load")
+        page.wait_for_selector("#projects-list .proj-item", timeout=15000)
+        page.click("#tab-requests")
+        page.wait_for_selector("#requests-list .req-block", state="visible", timeout=15000)
+
+        tools = page.locator("#requests-tools")
+        tool_button = tools.locator("button").filter(has_text="끝난 것 정리").first
+        tools_text = tools.inner_text()
+        count_match = re.search(r"끝난 요청\s*(\d+)\s*건", tools_text)
+        checks.ok(
+            "요청 트리에서도 정리할 수 있다",
+            tools.is_visible()
+            and tool_button.is_visible()
+            and count_match is not None
+            and int(count_match.group(1)) > 0,
+            f"tools visible={tools.is_visible()}, 단추 visible={tool_button.is_visible()}, "
+            f"글={tools_text!r}, 끝난 요청 수={count_match.group(1) if count_match else None}",
+        )
+
+        tool_button.click()
+        panel = page.locator("#detail-overlay")
+        panel.locator("h2").first.wait_for(state="visible", timeout=10000)
+        title = panel.locator("h2").first.inner_text()
+        panel_checks = []
+        for keyword in ("실행 기록", "이벤트", "핸드오프"):
+            found = any(
+                li.is_visible() and keyword in li.inner_text()
+                for li in panel.locator(".archive-intro li").all()
+            )
+            panel_checks.append((keyword, found))
+        page.wait_for_selector(".archive-out p.hint", state="visible", timeout=15000)
+        preview_line = page.locator(".archive-out p.hint").first
+        preview_text = preview_line.inner_text()
+        runs_match = re.search(r"실행 기록\s+(\d+)건", preview_text)
+        events_match = re.search(r"이벤트\s+(\d+)건", preview_text)
+        checks.ok(
+            "패널이 새 종류를 설명한다",
+            all(found for _, found in panel_checks)
+            and preview_line.is_visible()
+            and runs_match is not None
+            and events_match is not None,
+            f"설명 {panel_checks}, 미리보기 줄={preview_text!r}",
+        )
+
+        page.locator("#detail-close").click()
+        panel.locator("h2").first.wait_for(state="hidden", timeout=5000)
+
+        closed_fold = page.locator("#requests-list .closed-fold").first
+        fold_visible = closed_fold.is_visible()
+        closed_visible = []
+        for block in page.query_selector_all("#requests-list .req-block"):
+            badge = block.query_selector(".badge")
+            status = badge.inner_text().strip() if badge else ""
+            if status in ("DONE", "REJECTED") and block.is_visible():
+                closed_visible.append(status)
+        checks.ok(
+            "끝난 것이 접혀 있다",
+            fold_visible and not closed_visible,
+            f"closed-fold visible={fold_visible}, 처음 보이는 닫힌 블록={closed_visible}",
+        )
+
+        closed_fold.click()
+        page.wait_for_timeout(500)
+
+        def visible_closed():
+            result = []
+            for block in page.query_selector_all("#requests-list .req-block"):
+                badge = block.query_selector(".badge")
+                status = badge.inner_text().strip() if badge else ""
+                if status in ("DONE", "REJECTED") and block.is_visible():
+                    result.append(status)
+            return result
+
+        first_open = visible_closed()
+        page.wait_for_timeout(6000)
+        later_open = visible_closed()
+        checks.ok(
+            "펼치면 보이고, 5초 뒤에도 그대로다",
+            bool(first_open) and bool(later_open),
+            f"펼친 뒤={len(first_open)}개, 6초 뒤={len(later_open)}개",
+        )
+
+        done_ok = False
+        done_bad = []
+        done_text = ""
+        for block in page.query_selector_all("#requests-list .req-block"):
+            badge = block.query_selector(".badge")
+            status = badge.inner_text().strip() if badge else ""
+            if status != "DONE":
+                continue
+            if block.query_selector_all(".req-progress") or block.query_selector_all(".eta"):
+                done_bad.append("접힌 DONE: 진행률·ETA 있음")
+            text = block.inner_text()
+            if "100%" in text or "서브태스크 없이 끝난 요청입니다" in text:
+                done_bad.append("접힌 DONE: 100%/옛 문구 있음")
+
+        for block in page.query_selector_all("#requests-list .req-block"):
+            badge = block.query_selector(".badge")
+            status = badge.inner_text().strip() if badge else ""
+            if status != "DONE":
+                continue
+            toggle = block.query_selector(".req-toggle")
+            toggle.click()
+            break
+
+        for block in page.query_selector_all("#requests-list .req-block"):
+            badge = block.query_selector(".badge")
+            status = badge.inner_text().strip() if badge else ""
+            if status != "DONE":
+                continue
+            done_line = block.query_selector(".req-done-line")
+            text = block.inner_text()
+            if done_line is None or not done_line.is_visible():
+                done_bad.append("펼친 DONE: .req-done-line 없음")
+                continue
+            if block.query_selector_all(".req-progress") or block.query_selector_all(".eta"):
+                done_bad.append("펼친 DONE: 진행률·ETA 있음")
+            if "100%" in text or "서브태스크 없이 끝난 요청입니다" in text:
+                done_bad.append("펼친 DONE: 100%/옛 문구 있음")
+            done_ok = True
+            done_text = text[:200]
+            break
+
+        checks.ok(
+            "DONE 요청에 100%·ETA가 없다",
+            done_ok and not done_bad,
+            f"펼친 DONE={done_text!r}, 어긋남={done_bad}",
+        )
+
+        page.evaluate("window.scrollTo(0, 0)")
+        tools_box = tools.bounding_box()
+        first_box = page.locator("#requests-list .req-block").first.bounding_box()
+        no_overlap = (
+            tools_box is not None
+            and first_box is not None
+            and (
+                tools_box["y"] + tools_box["height"] <= first_box["y"]
+                or first_box["y"] + first_box["height"] <= tools_box["y"]
+            )
+        )
+        page.set_viewport_size({"width": 390, "height": 780})
+        page.wait_for_timeout(300)
+        scroll = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
+        checks.ok(
+            "겹치지 않고 밖으로 안 나간다",
+            no_overlap and scroll == 0,
+            f"tools={tools_box}, 첫 블록={first_box}, 겹침없음={no_overlap}, "
+            f"390px 가로스크롤={scroll}px",
+        )
+    finally:
+        ctx.close()
+
+
 def main():
     checks = Checks()
     try:
-        with monitor_server() as base:
-            with sync_playwright() as pw:
-                browser = pw.chromium.launch()
-                try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch()
+            try:
+                with monitor_server() as base:
                     scenario(browser, base, checks)
                     narrow_scenario(browser, base, checks)
                     short_scenario(browser, base, checks)
                     changed_ui_scenario(browser, base, checks)
-                finally:
-                    browser.close()
+                    request_tree_scenario(browser, base, checks)
+
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    temp_root = pathlib.Path(temp_dir)
+                    write_fixed_requests(temp_root)
+                    with monitor_server(root=temp_root) as temp_base:
+                        zero_subtask_scenario(browser, temp_base, checks)
+            finally:
+                browser.close()
     except Exception as exc:
         checks.ok("검사 실행", False, f"{type(exc).__name__}: {exc}")
     return checks.finish()

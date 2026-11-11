@@ -146,6 +146,8 @@ const state = {
   boardFilter: 'open',
   graphOpen: new Set(),
   graphKnown: new Set(),
+  showClosedRequests: false,
+  showClosedGraphs: false,
   editing: null,
   fleetBusy: null,
   fleetMsg: null,
@@ -2272,6 +2274,11 @@ function openArchivePanel() {
       ['끝난 태스크 (DONE)', '보드에서 사라지고 archive/board-<월>.md 에 남습니다'],
       ['닫힌 작업 요청 (DONE·REJECTED)', '요청 트리에서 사라지고 archive/requests-<월>/ 로 옮겨집니다'],
       ['노드가 모두 끝난 그래프 (분담 트리)', '요청 트리의 태스크 그래프에서 사라지고, 브리프·로그·입력 파일과 함께 archive/graph-<월>/ 로 옮겨집니다'],
+      ['작업자 실행 기록', '함대 탭 작업자 실행 상태에서 사라지고 archive/runs-<월>/ 로 옮겨집니다'],
+      ['이벤트', '보드·큐 탭의 이벤트 목록에서 사라지고 archive/events-<월>.jsonl 로 옮겨집니다'],
+      ['핸드오프 (최신 12건 제외)', 'archive/handoff-<월>.md 로 옮겨집니다 - 최신 12건은 무엇이든 남습니다'],
+      ['전달 기록', '그 라운드의 그래프가 모두 정리되면 archive/relay-<월>/ 로 함께 옮겨집니다'],
+      ['오래된 로그 줄', 'monitor.log·fleet-mode.log 의 기준 시각보다 오래된 줄만. 접속 기록(access.log)은 건드리지 않습니다'],
     ]) {
       const li = document.createElement('li');
       const b = document.createElement('strong');
@@ -2301,6 +2308,13 @@ function openArchivePanel() {
       const h = document.createElement('p');
       h.textContent = (dry ? '옮길 것: ' : '옮김: ') + `태스크 ${(plan.tasks || []).length}건 · 요청 ${(plan.requests || []).length}건 · 그래프 ${(plan.graphs || []).length}개 (기준 ${fmtDateTime(plan.cutoff)})`;
       out.appendChild(h);
+      const counts = dry ? plan.records : r.body.moved_counts;
+      if (counts) {
+        const line = document.createElement('p');
+        line.className = 'hint';
+        line.textContent = `실행 기록 ${counts.runs || 0}건 · 이벤트 ${counts.events || 0}건 · 핸드오프 ${counts.handoff || 0}건 · 전달 ${counts.relay || 0}개 · 로그 ${counts.log_lines || 0}줄`;
+        out.appendChild(line);
+      }
       const list = (title, items, fmt) => {
         if (!items.length) return;
         const sec = document.createElement('section'); sec.className = 'detail-section';
@@ -2435,6 +2449,12 @@ function graphFinished(g) {
   return nodes.every((n) => ['done', 'failed', 'blocked', 'skipped'].includes(String(n.status || '').toLowerCase()));
 }
 
+function graphArchivable(g) {
+  const nodes = Array.isArray(g.nodes) ? g.nodes : [];
+  if (!nodes.length) return false;
+  return nodes.every((n) => ['done', 'failed', 'blocked'].includes(String(n.status || '').toLowerCase()));
+}
+
 function foldButton(open, label, onToggle) {
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -2442,6 +2462,16 @@ function foldButton(open, label, onToggle) {
   btn.setAttribute('aria-expanded', String(open));
   btn.setAttribute('aria-label', (open ? '접기: ' : '펼치기: ') + label);
   btn.textContent = open ? '▾' : '▸';
+  btn.addEventListener('click', onToggle);
+  return btn;
+}
+
+function closedFoldButton(expanded, count, onToggle) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'closed-fold fold-btn';
+  btn.setAttribute('aria-expanded', String(expanded));
+  btn.textContent = expanded ? `끝난 것 ${count}건 숨기기` : `끝난 것 ${count}건 보기`;
   btn.addEventListener('click', onToggle);
   return btn;
 }
@@ -2558,15 +2588,24 @@ function renderGraphs(data) {
     list.appendChild(emptyP('태스크 그래프가 없습니다'));
     return;
   }
-  for (const g of graphs) list.appendChild(graphBlock(g));
+  const open = graphs.filter((g) => !graphArchivable(g));
+  const closed = graphs.filter(graphArchivable);
+  for (const g of open) list.appendChild(graphBlock(g));
+  if (closed.length) {
+    list.appendChild(closedFoldButton(state.showClosedGraphs, closed.length, () => {
+      state.showClosedGraphs = !state.showClosedGraphs;
+      if (state.data) renderGraphs(state.data);
+    }));
+    if (state.showClosedGraphs) for (const g of closed) list.appendChild(graphBlock(g));
+  }
 }
 
 function progressOf(req) {
+  const subs = Array.isArray(req.subtasks) ? req.subtasks : [];
+  if (!subs.length) return null;
   if (req.progress_pct !== null && req.progress_pct !== undefined && Number.isFinite(Number(req.progress_pct))) {
     return Number(req.progress_pct);
   }
-  const subs = Array.isArray(req.subtasks) ? req.subtasks : [];
-  if (!subs.length) return null;
   let sum = 0;
   for (const s of subs) {
     const raw = show(s.status, '');
@@ -2678,8 +2717,8 @@ function subtaskEmptyText(req) {
     case 'NEW': return '관리자 분담 대기';
     case 'PLANNED': return '분담 계획됨 - 아직 서브태스크가 없습니다';
     case 'IN-PROGRESS': return '진행 중 - 서브태스크 없이 관리자가 직접 하는 일입니다';
-    case 'DONE': return '서브태스크 없이 끝난 요청입니다';
-    case 'REJECTED': return '서브태스크 없이 거절된 요청입니다';
+    case 'DONE': return '';
+    case 'REJECTED': return '';
     default: return '서브태스크 없음';
   }
 }
@@ -2690,6 +2729,21 @@ function renderRequests(data) {
   if (state.editing && list.querySelector('.req-edit')) return;
   list.textContent = '';
   const requests = Array.isArray(data.requests) ? data.requests : [];
+  const tools = $('requests-tools');
+  if (tools) {
+    tools.textContent = '';
+    const closedRequests = requests.filter((r) => REQ_CLOSED.has(String(r.status || '').toUpperCase()));
+    const closedGraphs = (Array.isArray(data.graphs) ? data.graphs : []).filter(graphArchivable);
+    const label = document.createElement('span');
+    if (!closedRequests.length && !closedGraphs.length) {
+      label.textContent = '끝난 요청 없음';
+    } else {
+      label.textContent = (closedRequests.length ? `끝난 요청 ${closedRequests.length}건` : '끝난 요청 없음')
+        + ` · 끝난 그래프 ${closedGraphs.length}개`;
+    }
+    tools.appendChild(label);
+    tools.appendChild(linkButton('끝난 것 정리…', openArchivePanel));
+  }
   if (!requests.length) {
     list.appendChild(emptyP('작업 요청 없음'));
     return;
@@ -2705,7 +2759,7 @@ function renderRequests(data) {
     if (ca !== cb) return ca - cb;
     return String(b.created || '').localeCompare(String(a.created || ''));
   });
-  ordered.forEach((req, index) => {
+  const drawRequest = (req, index) => {
     const key = show(req.id, '') || ('request-' + index);
     if (!state.known.has(key)) {
       state.known.add(key);
@@ -2804,49 +2858,64 @@ function renderRequests(data) {
     article.appendChild(top);
 
     const pct = progressOf(req);
+    const subtasks = Array.isArray(req.subtasks) ? req.subtasks : [];
+    const closed = REQ_CLOSED.has(String(req.status || '').toUpperCase());
     if (!open) {
       article.classList.add('is-folded');
       const line = document.createElement('div');
       line.className = 'req-meta';
-      const subs = Array.isArray(req.subtasks) ? req.subtasks.length : 0;
       line.textContent = (pct === null ? '' : fmtPct(pct) + ' · ')
-        + (subs ? '서브태스크 ' + subs + '건' : subtaskEmptyText(req));
+        + (subtasks.length ? '서브태스크 ' + subtasks.length + '건' : subtaskEmptyText(req));
       titleWrap.appendChild(line);
       list.appendChild(article);
       return;
     }
-    const progressRow = document.createElement('div');
-    progressRow.className = 'req-progress';
-    const bar = document.createElement('div');
-    bar.className = 'bar';
-    const fill = document.createElement('div');
-    fill.className = 'bar-fill';
-    fill.style.width = (pct === null ? 0 : Math.max(0, Math.min(100, pct))) + '%';
-    bar.appendChild(fill);
-    const pctLabel = document.createElement('span');
-    pctLabel.className = 'pct';
-    pctLabel.textContent = pct === null ? '-' : fmtPct(pct);
-    const etaLabel = document.createElement('span');
-    etaLabel.className = 'eta';
-    const closed = REQ_CLOSED.has(String(req.status || '').toUpperCase());
-    const eta = etaText(req);
-    etaLabel.textContent = closed ? '종료' : (eta === '-' ? 'ETA 미정' : 'ETA ' + eta);   // 끝난 요청에 남은 시간을 내지 않는다
-    progressRow.appendChild(bar);
-    progressRow.appendChild(pctLabel);
-    progressRow.appendChild(etaLabel);
-    article.appendChild(progressRow);
+    if (closed) {
+      const doneLine = document.createElement('div');
+      doneLine.className = 'req-done-line';
+      doneLine.textContent = (String(req.status || '').toUpperCase() === 'REJECTED' ? '거절됨' : '끝남')
+        + ' · ' + fmtDateTime(req.updated || req.created);
+      article.appendChild(doneLine);
+    } else if (!subtasks.length) {
+      const waitLine = document.createElement('div');
+      waitLine.className = 'req-wait-line';
+      waitLine.textContent = String(req.status || '').toUpperCase() === 'IN-PROGRESS'
+        ? '관리자가 서브태스크 없이 직접 하는 일입니다'
+        : '아직 분담 전 - 관리자가 서브태스크로 나누면 진행률과 ETA 가 나옵니다';
+      article.appendChild(waitLine);
+    } else {
+      const progressRow = document.createElement('div');
+      progressRow.className = 'req-progress';
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      const fill = document.createElement('div');
+      fill.className = 'bar-fill';
+      fill.style.width = (pct === null ? 0 : Math.max(0, Math.min(100, pct))) + '%';
+      bar.appendChild(fill);
+      const pctLabel = document.createElement('span');
+      pctLabel.className = 'pct';
+      pctLabel.textContent = pct === null ? '-' : fmtPct(pct);
+      const etaLabel = document.createElement('span');
+      etaLabel.className = 'eta';
+      const eta = etaText(req);
+      etaLabel.textContent = eta === '-' ? 'ETA 미정' : 'ETA ' + eta;
+      progressRow.appendChild(bar);
+      progressRow.appendChild(pctLabel);
+      progressRow.appendChild(etaLabel);
+      article.appendChild(progressRow);
 
-    const basis = document.createElement('div');
-    basis.className = 'req-basis';
-    basis.textContent = 'ETA 근거: ' + show(req.eta_basis, '근거 없음');
-    article.appendChild(basis);
+      const basis = document.createElement('div');
+      basis.className = 'req-basis';
+      basis.textContent = 'ETA 근거: ' + show(req.eta_basis, '근거 없음');
+      article.appendChild(basis);
+    }
 
     const body = document.createElement('div');
     body.className = 'req-body';
     body.hidden = !open;
-    const subtasks = Array.isArray(req.subtasks) ? req.subtasks : [];
     if (!subtasks.length) {
-      body.appendChild(emptyP(subtaskEmptyText(req)));
+      const emptyText = subtaskEmptyText(req);
+      if (emptyText) body.appendChild(emptyP(emptyText));
     } else {
       const subRows = subtasks.map((st) => {
         const run = st.run_id ? runs.get(st.run_id) : null;
@@ -2900,7 +2969,17 @@ function renderRequests(data) {
     }
     article.appendChild(body);
     list.appendChild(article);
-  });
+  };
+  const openRequests = ordered.filter((r) => !REQ_CLOSED.has(String(r.status || '').toUpperCase()));
+  const closedRequests = ordered.filter((r) => REQ_CLOSED.has(String(r.status || '').toUpperCase()));
+  openRequests.forEach(drawRequest);
+  if (closedRequests.length) {
+    list.appendChild(closedFoldButton(state.showClosedRequests, closedRequests.length, () => {
+      state.showClosedRequests = !state.showClosedRequests;
+      if (state.data) renderRequests(state.data);
+    }));
+    if (state.showClosedRequests) closedRequests.forEach(drawRequest);
+  }
 }
 
 const LOG_PAGE = 10;
