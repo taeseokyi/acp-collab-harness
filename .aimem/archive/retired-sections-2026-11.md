@@ -20,7 +20,7 @@
 - **슬롯은 네이티브 서브에이전트 상주 세션입니다.** 관리자가 다음으로 엽니다:
 
   ```
-  sessions_spawn(context: "isolated", cwd: "/home/tsyi/work/opencode",
+  sessions_spawn(context: "isolated", cwd: "/home/tsyi/work/ai-fleet",
                  visible: true, label: "S1 린터/보드 CLI", taskName: "s1",
                  group: "AIMEM 함대", task: "<개시 브리프 전문>")
   ```
@@ -112,7 +112,7 @@
 
 **ACP 런타임은 다시 세션을 만듭니다.** 2026-11-06 에 `agents.entries.claude|codex|opencode` 를
 `runtime.type="acp"` 로 등록해 `Unknown agent id` 가 사라졌고(스모크 PONG 3/3), 세 항목의
-`workspace` 가 `/home/tsyi/work/opencode` 라 `cwd` 인자 없이 이 폴더에서 뜹니다
+`workspace` 가 `/home/tsyi/work/ai-fleet` 라 `cwd` 인자 없이 이 폴더에서 뜹니다
 (`runtime.acp.cwd` 는 스폰에 적용되지 않습니다 - 실측). 업스트림 #138580 은 그대로이고
 이 등록이 우회책입니다.
 

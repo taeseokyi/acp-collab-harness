@@ -7,7 +7,7 @@ Claude Code 는 상태줄 명령의 stdin 으로 세션 JSON 을 주고, 구독 
 대화형 Claude Code 가 돌 때만 갱신되므로 화면은 '몇 분 전 기준' 을 함께 보인다.
 
 등록(사람이 한 번): `~/.claude/settings.json` 에
-    "statusLine": {"type": "command", "command": "python3 /home/tsyi/work/opencode/tools/claude_usage_statusline.py"}
+    "statusLine": {"type": "command", "command": "python3 /home/tsyi/work/ai-fleet/tools/claude_usage_statusline.py"}
 """
 import datetime as dt
 import json

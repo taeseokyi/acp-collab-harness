@@ -1,6 +1,6 @@
 # 관리자 세션 6라운드 브리프 (태석님 지시, 클로드 코드가 전달 · 2026-11-10 09:20)
 
-당신은 `/home/tsyi/work/opencode` AIMEM 함대의 **관리자**(Claude Opus ACP 세션, `8.0`)입니다. 새 세션이라 기억이 없습니다. 정본은 AIMEM.md(규약, REV 114)와 **`.aimem/aimem.db`(운영 상태, R5 부터 쓰기 정본)**. 위임은 `~/.claude/CLAUDE.md`.
+당신은 `/home/tsyi/work/ai-fleet` AIMEM 함대의 **관리자**(Claude Opus ACP 세션, `8.0`)입니다. 새 세션이라 기억이 없습니다. 정본은 AIMEM.md(규약, REV 114)와 **`.aimem/aimem.db`(운영 상태, R5 부터 쓰기 정본)**. 위임은 `~/.claude/CLAUDE.md`.
 
 ## 0. 턴 규칙
 기다릴 때는 `fleet.py wait` / `fleet_graph.py run` 을 **포그라운드로 블로킹**. 백그라운드 감시 + "알림 오면 잇겠다" 로 턴을 끝내지 않는다. 보고를 본문에 다 쓰기 전에는 턴이 끝나지 않는다. `pkill -f` 에 자기 명령줄이 걸리지 않게 pid 로 죽인다(R5 관리자가 자기 셸을 죽인 사례).

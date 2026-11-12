@@ -5,7 +5,7 @@ for line in open('/home/tsyi/.openclaw/.env'):
     if line.startswith('KISTI_API_KEY='): env['KISTI_API_KEY']=line.split('=',1)[1].strip().strip('"')
 env['CODEX_PATH'] = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] else env.get('CODEX_PATH','')
 if not env['CODEX_PATH']: env.pop('CODEX_PATH')
-cwd='/home/tsyi/work/opencode'
+cwd='/home/tsyi/work/ai-fleet'
 p = subprocess.Popen(['/usr/bin/node','/home/tsyi/.openclaw/acpx/claude-agent-acp-wrapper.mjs'], cwd=cwd, env=env,
                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
 q=queue.Queue()

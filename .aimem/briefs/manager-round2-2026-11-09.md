@@ -19,7 +19,7 @@ S4 가 `tools/fleet_graph.py` 에서 결함을 찾았다(이중 스폰 잠금 �
 
 (아래는 R2 원문 브리프. 이미 반영된 항목은 "이미 해결된 것" 과 위 상태를 우선한다.)
 
-당신은 `/home/tsyi/work/opencode` AIMEM 함대의 **관리자**(Claude Opus ACP 세션, AIMEM `8.0`)입니다. 이 세션은 새로 열렸고 1라운드 기억이 없습니다. **연속성의 정본은 AIMEM.md 입니다.** 위임은 `~/.claude/CLAUDE.md`.
+당신은 `/home/tsyi/work/ai-fleet` AIMEM 함대의 **관리자**(Claude Opus ACP 세션, AIMEM `8.0`)입니다. 이 세션은 새로 열렸고 1라운드 기억이 없습니다. **연속성의 정본은 AIMEM.md 입니다.** 위임은 `~/.claude/CLAUDE.md`.
 
 ## 먼저 읽을 것
 `python3 tools/fleet.py status`, AIMEM.md 서문·`1절`·`3절` 보드(T-036~T-040)·`4.5` 큐·`4절` 최신 로그(REV 110)·`6절`·`7절`·`8.0`·`9절`. 1라운드 관리자의 최종 보고 요지: 웹 UI 1차 완성(서버는 관리자 직접, reader S1, 테스트 18건 S2, 프런트 S3), 린터 OK, 116 테스트 OK, 서버가 18799 에 아직 떠 있음(`pkill -f aimem_monitor` 로 내려도 됨), 결함 4건을 `4.5` 큐에 적음, 커밋 안 함.

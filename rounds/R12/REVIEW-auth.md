@@ -70,5 +70,5 @@
 ### 실행한 검증
 - `python3 tools/aimem_db.py check --slot S1 --token a41f0c --rev 155` → 일치
 - `python3 -m unittest tests.test_aimem_monitor_app_gate -v` (원본) → `Ran 10 tests ... OK`
-- `python3 /tmp/t157-run/mut.py /home/tsyi/work/opencode` → 위 변이 표
+- `python3 /tmp/t157-run/mut.py /home/tsyi/work/ai-fleet` → 위 변이 표
 - `python3 /tmp/t157-run/probe.py /tmp/t157-run/repo`, `python3 /tmp/t157-run/m1probe.py` → P1~P9 실측값

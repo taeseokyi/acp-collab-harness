@@ -8,9 +8,9 @@
 
 ## 검수 대상
 
-1. `/home/tsyi/work/opencode/tools/aimem_monitor/server.py` - 이번 라운드에 추가된
+1. `/home/tsyi/work/ai-fleet/tools/aimem_monitor/server.py` - 이번 라운드에 추가된
    `_fetch_kisti()` / `kisti_status()` / `collect_graphs()` 와 `collect_state()` 의 변경
-2. `/home/tsyi/work/opencode/tools/aimem_monitor/__init__.py` - `SERVER_KEYS`, `KISTI_*`,
+2. `/home/tsyi/work/ai-fleet/tools/aimem_monitor/__init__.py` - `SERVER_KEYS`, `KISTI_*`,
    `GRAPH_DIR` 상수
 3. 참고(고치지 말고 읽기만): `tools/fleet_graph.py` 의 `progress()` - `collect_graphs()` 가 부른다
 
@@ -55,8 +55,8 @@
 ## 검증 명령 (맨 앞이 `cd` 또는 `python3` 여야 허용된다)
 
 ```
-cd /home/tsyi/work/opencode && curl -s http://127.0.0.1:18799/api/state | python3 -c "import json,sys;s=json.load(sys.stdin);print(sorted(s.keys()));print(s['errors'])"
-cd /home/tsyi/work/opencode/tools && python3 -c "import aimem_monitor.server as sv; print(sv.KISTI_CACHE_SEC, sv.KISTI_TIMEOUT_SEC)"
+cd /home/tsyi/work/ai-fleet && curl -s http://127.0.0.1:18799/api/state | python3 -c "import json,sys;s=json.load(sys.stdin);print(sorted(s.keys()));print(s['errors'])"
+cd /home/tsyi/work/ai-fleet/tools && python3 -c "import aimem_monitor.server as sv; print(sv.KISTI_CACHE_SEC, sv.KISTI_TIMEOUT_SEC)"
 ```
 
 **키 유출 검사는 값을 출력하지 말고** `있음/없음` 만 보고해라.

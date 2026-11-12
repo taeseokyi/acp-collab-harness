@@ -8,7 +8,7 @@ revisions are in git history (commit 4b18fcd = REV 127) and in retired-sections-
 # AIMEM.md - Shared Working Memory
 
 This file is the **single source of truth for every AI session that works in this folder**
-(`/home/tsyi/work/opencode`). The Manager and the workers meet here, and they coordinate only here.
+(`/home/tsyi/work/ai-fleet`). The Manager and the workers meet here, and they coordinate only here.
 
 - **REV: 129** (revision number. If the REV in an instruction differs from this value, stop work and ask - see `0.1`)
 - Last updated: 2026-11-10 16:47 KST
@@ -24,7 +24,7 @@ This file is the **single source of truth for every AI session that works in thi
   Taeseok opens it in `#sss-fleet` with `/acp spawn claude --thread auto`.
   **The former Manager, Clo (OpenClaw `coding`, `agent:coding:discord:channel:1541705515908988989`), has not
   been the Manager since 2026-11-09 16:00 and does not write this file** (Taeseok's instruction, 2026-11-09)
-- Shared working folder: `/home/tsyi/work/opencode`
+- Shared working folder: `/home/tsyi/work/ai-fleet`
 
 ---
 

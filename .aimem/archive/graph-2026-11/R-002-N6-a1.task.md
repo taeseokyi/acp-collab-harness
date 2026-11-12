@@ -1,8 +1,8 @@
 ## 대상 파일 (이 셋만 고친다)
 
-- `/home/tsyi/work/opencode/tools/aimem_monitor/static/style.css`
-- `/home/tsyi/work/opencode/tools/aimem_monitor/static/index.html`
-- `/home/tsyi/work/opencode/tools/aimem_monitor/static/app.js`
+- `/home/tsyi/work/ai-fleet/tools/aimem_monitor/static/style.css`
+- `/home/tsyi/work/ai-fleet/tools/aimem_monitor/static/index.html`
+- `/home/tsyi/work/ai-fleet/tools/aimem_monitor/static/app.js`
 
 **직전 작업(R-002/N3)이 같은 파일을 이미 고쳤다.** 밝은 모드 기본, 표 정렬·말줄임, KISTI 상태 카드(`#kisti-card`), 그래프 트리(`#graphs-list`), 테마 토글(`#theme-toggle`) 이 들어가 있다. **그것을 전부 그대로 유지하면서 색·치수만 Strata 토큰으로 갈아끼우는 작업이다.** 기능이나 DOM id 를 하나도 없애지 마라.
 
@@ -12,7 +12,7 @@
 
 ## 참조 파일 (읽어라)
 
-`/home/tsyi/work/opencode/.aimem/briefs/strata-tokens.css` - 원본 토큰 정의다. **이 파일을 고치지 말고 읽기만 해라.** `:root` 와 `[data-theme="dark"]` 의 `--st-*` 값이 정본이다.
+`/home/tsyi/work/ai-fleet/.aimem/briefs/strata-tokens.css` - 원본 토큰 정의다. **이 파일을 고치지 말고 읽기만 해라.** `:root` 와 `[data-theme="dark"]` 의 `--st-*` 값이 정본이다.
 
 ## 할 일
 
@@ -48,10 +48,10 @@
 ## 검증 (직접 돌리고 출력을 보고에 붙여라)
 
 ```
-cd /home/tsyi/work/opencode && curl -s -o /dev/null -w "index=%{http_code}\n" http://127.0.0.1:18799/
-cd /home/tsyi/work/opencode && curl -s -o /dev/null -w "css=%{http_code}\n" http://127.0.0.1:18799/static/style.css
-cd /home/tsyi/work/opencode && python3 -c "import re,pathlib; c=pathlib.Path('tools/aimem_monitor/static/style.css').read_text(); body=re.sub(r':root\{.*?\}|\[data-theme=\"dark\"\]\{.*?\}','',c,flags=re.S); print('규칙 본문에 남은 하드코딩 hex:', sorted(set(re.findall(r'#[0-9a-fA-F]{3,8}', body))))"
-cd /home/tsyi/work/opencode && python3 -c "import re,pathlib; h=pathlib.Path('tools/aimem_monitor/static/index.html').read_text(); ids=['kisti-card','graphs-list','theme-toggle','requests-list','runs-table-wrap']; print([(i, ('id=\"%s\"'%i) in h) for i in ids])"
+cd /home/tsyi/work/ai-fleet && curl -s -o /dev/null -w "index=%{http_code}\n" http://127.0.0.1:18799/
+cd /home/tsyi/work/ai-fleet && curl -s -o /dev/null -w "css=%{http_code}\n" http://127.0.0.1:18799/static/style.css
+cd /home/tsyi/work/ai-fleet && python3 -c "import re,pathlib; c=pathlib.Path('tools/aimem_monitor/static/style.css').read_text(); body=re.sub(r':root\{.*?\}|\[data-theme=\"dark\"\]\{.*?\}','',c,flags=re.S); print('규칙 본문에 남은 하드코딩 hex:', sorted(set(re.findall(r'#[0-9a-fA-F]{3,8}', body))))"
+cd /home/tsyi/work/ai-fleet && python3 -c "import re,pathlib; h=pathlib.Path('tools/aimem_monitor/static/index.html').read_text(); ids=['kisti-card','graphs-list','theme-toggle','requests-list','runs-table-wrap']; print([(i, ('id=\"%s\"'%i) in h) for i in ids])"
 ```
 
 **대비비를 숫자로 보고해라.** `--st-ink` on `--st-surface`, `--st-ink-muted` on `--st-surface`, 그리고 배지 4종(틴트 배경 + 텍스트색)에 대해 WCAG 대비비를 `python3 -c` 로 계산해 붙여라. **4.5 미만이면 그 쌍의 텍스트색을 어둡게 조정하고 조정한 값을 보고에 적어라.** (참조 토큰이 이미 4.5:1 을 겨냥했지만 실제로 재서 확인해라.)

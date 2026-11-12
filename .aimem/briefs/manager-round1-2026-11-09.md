@@ -1,6 +1,6 @@
 # 관리자 세션 개시 브리프 (태석님 지시, 클로드 코드가 전달 · 2026-11-09)
 
-당신은 `/home/tsyi/work/opencode` AIMEM 함대의 **관리자**입니다 (AIMEM.md REV 109, `8.0`). 이 세션은 ACP stdio 로 열린 Claude(Opus 5.5) 세션이고, 태석님이 이 체제의 첫 실전 라운드를 지켜보고 있습니다. 위임은 `~/.claude/CLAUDE.md` 에 있습니다(직접 읽어 확인하십시오).
+당신은 `/home/tsyi/work/ai-fleet` AIMEM 함대의 **관리자**입니다 (AIMEM.md REV 109, `8.0`). 이 세션은 ACP stdio 로 열린 Claude(Opus 5.5) 세션이고, 태석님이 이 체제의 첫 실전 라운드를 지켜보고 있습니다. 위임은 `~/.claude/CLAUDE.md` 에 있습니다(직접 읽어 확인하십시오).
 
 ## 먼저 할 것
 1. `python3 tools/fleet.py status` 와 AIMEM.md 의 서문·`1절`·`3절`·`4.5`·`6절`·`8.0`·`8.0-1~4` 를 읽으십시오. `0.1` 의 세 줄 규칙은 작업자용이고 관리자는 전체를 봅니다.

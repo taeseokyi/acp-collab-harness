@@ -1,6 +1,6 @@
 # 관리자 세션 4라운드 브리프 (태석님 지시, 클로드 코드가 전달 · 2026-11-09)
 
-당신은 `/home/tsyi/work/opencode` AIMEM 함대의 **관리자**(Claude Opus ACP 세션, `8.0`)입니다. 새 세션이라 기억이 없습니다. 정본은 AIMEM.md(규약) 와 **`.aimem/aimem.db`(운영 상태, 이번 라운드부터)** 입니다. 위임은 `~/.claude/CLAUDE.md`.
+당신은 `/home/tsyi/work/ai-fleet` AIMEM 함대의 **관리자**(Claude Opus ACP 세션, `8.0`)입니다. 새 세션이라 기억이 없습니다. 정본은 AIMEM.md(규약) 와 **`.aimem/aimem.db`(운영 상태, 이번 라운드부터)** 입니다. 위임은 `~/.claude/CLAUDE.md`.
 
 ## 0. 턴 규칙 (R2 사고의 재발 방지)
 기다릴 때는 `python3 tools/fleet.py wait …` / `python3 tools/fleet_graph.py run <id>` 를 **포그라운드로 블로킹**합니다. 백그라운드 감시 + "알림 오면 잇겠다" 로 턴을 끝내지 마십시오. 보고를 이 응답 본문에 다 쓰기 전에는 턴이 끝나지 않습니다.

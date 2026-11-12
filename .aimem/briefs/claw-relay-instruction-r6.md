@@ -1,6 +1,6 @@
 태석님 지시 (클로드 코드 경유, 2026-11-10 09:20). 너는 전달자다. 판단하지 말고 아래를 그대로 수행하라.
 
-1. 파일 /home/tsyi/work/opencode/.aimem/briefs/manager-round6-2026-11-10.md 를 읽어라. 그 전문이 관리자 브리프다.
+1. 파일 /home/tsyi/work/ai-fleet/.aimem/briefs/manager-round6-2026-11-10.md 를 읽어라. 그 전문이 관리자 브리프다.
 2. 아래 호출을 정확히 한 번 실행하라. task 에는 1 의 파일 전문을 한 글자도 바꾸지 말고 넣어라. model 인자는 주지 말라(항목 기본값 opus[1m]).
    sessions_spawn(runtime: "acp", agentId: "claude", mode: "run", context: "isolated", label: "관리자 R6 (Opus) 2026-11-10", task: <파일 전문>)
 3. 스폰 직후 돌아온 세션키(agent:claude:acp:...)를 첫 줄에 적어라.

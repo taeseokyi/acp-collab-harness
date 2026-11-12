@@ -3,7 +3,7 @@
       AIMEM.md (8.0-5 용어·식별자 절, 4절 한 줄, REV 112) + 4절 롤오버.
 각 단계는 앵커가 없으면 건너뛰고 보고한다(덮어쓰기 금지)."""
 import pathlib, re, subprocess, sys, datetime
-ROOT = pathlib.Path('/home/tsyi/work/opencode')
+ROOT = pathlib.Path('/home/tsyi/work/ai-fleet')
 def rep(path, old, new, label):
     p = ROOT / path; s = p.read_text(encoding='utf-8')
     if old not in s:
