@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/a
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 167** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-13 02:38 KST
+- **REV: 168** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-13 07:02 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **the `role=manager` session the engine starts for a round** (harness claude,
@@ -477,6 +477,13 @@ used and **the round's tasks are the `NEW` requests**; with nothing to do the Ma
   to a paid slot is listed with its reason in report item (6). Never move a failed free task to a paid slot
 - **Small nodes:** one new file, about 200 lines, about 10 checks. Split larger work; split a file two slots
   would both write. Do not tell a worker to "plan first" - have it edit files right away
+- **The engine runs `verify` confined** (bubblewrap): writable only in the repo and `/tmp`, `.git` read-only,
+  `.env` and `.aimem/tls/` unreadable, no API keys, tokens or session markers in the environment, its own pid
+  namespace; the network stays. A `verify` that writes elsewhere, reads keys or signals processes fails. Without
+  bubblewrap the graph log says `검증 명령이 울타리 없이 돕니다`
+- **When the Manager ends** (or a calls-mode call fails) the engine halts that round's workers that have no runner
+  - node back to `todo`, attempt in `stopped_attempts`, not counted - before writing the minimal close. Workers of
+  other rounds and hand-started ones are untouched; nothing is halted while paused
 - **`verify` asks whether the worker did the work,** by exit code, never by grepping piped output
   (`… > /tmp/x.txt 2>&1 && …`). A node that writes checks is verified by "it ran and the number of checks grew",
   not "the product passed"; a product defect is reported `NEEDS-FIX: …` and fixed by a later node whose `verify`

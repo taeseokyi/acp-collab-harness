@@ -72,8 +72,8 @@ class CommandTest(unittest.TestCase):
             self.assertNotIn(gone, tools)
         self.assertFalse([t for t in tools if "monitorctl" in t or "kill" in t])
         for kept in ("Bash(python3 tools/fleet.py:*)", "Bash(python3 tools/fleet_graph.py:*)", "Bash(python3 -m unittest:*)",
-                     "Bash(PYTHONPATH=tools python3 -m unittest:*)", "Bash(python3 tests/:*)",
-                     "Bash(PYTHONPATH=tools python3 tests/:*)", "Bash(python3 tools/fleet_ctl.py status:*)",
+                     "Bash(PYTHONPATH=tools python3 -m unittest:*)", "Bash(python3 tests/*)",
+                     "Bash(PYTHONPATH=tools python3 tests/*)", "Bash(python3 tools/fleet_ctl.py status:*)",
                      "Bash(python3 tools/fleet_ctl.py chain status:*)", "Read", "Bash(git status:*)"):
             self.assertIn(kept, tools)
         denied = rt_manager.MANAGER_DENIED.split(",")

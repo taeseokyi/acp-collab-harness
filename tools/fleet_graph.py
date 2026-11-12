@@ -446,15 +446,58 @@ def _spawn_node(g, n, attempt_no):
     return run_id
 
 
+VERIFY_TIMEOUT_SEC = 600
+
+
 def _verify(n):
+    """노드의 `verify` 를 `bash -lc` 로 돌린다. (rc, 출력 꼬리 2000자). 시간 초과는 (124, …).
+
+    검증 명령은 작업자가 쓸 수 있는 그래프 파일에서 온다 - 실행기의 권한·환경을 그대로 주면 작업자가 제 울타리 밖으로
+    나가는 길이 된다. 그래서 울타리(`fleet_rt.sandbox.wrap`: 저장소·/tmp 만 쓰기, `.env`·`.aimem/tls` 가림, 새 pid
+    이름공간) 안에서, 키·세션 표식을 뺀 환경(`clean_env`)으로 돌린다. 울타리를 못 쓰는 기계에서는 환경만 씻고 돌린다
+    (실행기가 그래프마다 한 번 로그에 남긴다 - `_note_unconfined`).
+    시간 초과면 프로세스 그룹째 죽인다 - 예전에는 bash 만 죽어 손자가 남았다.
+    """
     cmd = n.get("verify")
     if not cmd:
         return 0, "(검증 명령 없음 - rc 만 봄)"
+    from fleet_rt import sandbox  # noqa: PLC0415
+    root = pathlib.Path(ROOT)
+    argv, _note = sandbox.wrap(["bash", "-lc", cmd], root)
     try:
-        r = subprocess.run(["bash", "-lc", cmd], cwd=ROOT, capture_output=True, text=True, timeout=600)
-        return r.returncode, (r.stdout + r.stderr)[-2000:]
+        p = subprocess.Popen(argv, cwd=str(root), env=sandbox.clean_env(os.environ, root), stdin=subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace",
+                             start_new_session=True)
+    except OSError as e:
+        return 127, f"검증을 띄우지 못함: {type(e).__name__}: {e}"[-2000:]
+    try:
+        out, err = p.communicate(timeout=VERIFY_TIMEOUT_SEC)
+        return p.returncode, (out + err)[-2000:]
     except subprocess.TimeoutExpired:
-        return 124, "검증 타임아웃(600s)"
+        # 내가 띄운 그룹(새 세션의 리더 = p.pid)만 죽인다. 울타리 안의 것은 bwrap 이 죽으면 `--die-with-parent` 로 같이 끝난다
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        try:
+            p.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            # 그룹을 떠난(setsid 한) 손자가 파이프를 쥐고 있다 - 기다리지 않고 닫는다
+            for f in (p.stdout, p.stderr):
+                try:
+                    f.close()
+                except OSError:
+                    pass
+            p.wait()
+        return 124, f"검증 타임아웃({VERIFY_TIMEOUT_SEC}s)"
+
+
+def _note_unconfined(g):
+    """울타리를 못 쓰는 기계면 그래프마다 한 번 로그에 남긴다 (검증 명령이 실행기 권한으로 돈다는 것을 사람이 알게)."""
+    from fleet_rt import sandbox  # noqa: PLC0415
+    ok, why = sandbox.available()
+    if not ok:
+        _log_once(g, ("verify-unconfined",), f"warn 검증 명령이 울타리 없이 돕니다 ({why}) - 환경의 키·세션 표식만 뺍니다")
 
 
 # 첫 줄 앞의 마크다운 장식(인용 `>`, 목록 `-`/`*`/`1.`, 코드 `` ` ``, 괄호 `[ ]`, 제목 `#`)을
@@ -1214,6 +1257,8 @@ def _step(g, concurrency=None, allow_spawn=None):
             _log(g, f"no-op {n['id']} ({att['run_id']}) - write 경로가 하나도 안 바뀜")
         else:
             if rc == 0:
+                if n.get("verify"):
+                    _note_unconfined(g)
                 vrc, vtail = _verify(n)
             else:
                 vrc, vtail = -1, "실행 rc != 0"

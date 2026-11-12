@@ -28,7 +28,9 @@ MANAGER_TOOLS = ",".join([
     "Bash(python3 tools/aimem_lint.py:*)",
     # 표준 브리프가 시키는 일: 노드의 verify 를 붙이기 전에 검사를 한 번 돌려 본다
     "Bash(python3 -m unittest:*)", "Bash(PYTHONPATH=tools python3 -m unittest:*)",
-    "Bash(python3 tests/:*)", "Bash(PYTHONPATH=tools python3 tests/:*)",
+    # 검사 스크립트는 `Bash(python3 tests/*)` 꼴이어야 한다. `Bash(python3 tests/:*)` 는 낱말 경계에서만 맞아
+    # `python3 tests/browser_x.py` 를 허용하지 않는다 (R22 에서 관리자가 브라우저 검사를 못 돌린 까닭, haiku 로 실측).
+    "Bash(python3 tests/*)", "Bash(PYTHONPATH=tools python3 tests/*)",
     # 읽기 명령 - 작업자 목록(`harness.claude.WORKER_TOOLS`)의 읽기 쪽과 같다
     "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(grep:*)",
     "Bash(sed -n:*)", "Bash(diff:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",

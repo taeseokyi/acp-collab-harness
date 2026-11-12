@@ -665,5 +665,105 @@ class ReviewFixes(Base):
         self.assertEqual(meta["extra"]["disallowed_tools"], rt_manager.MANAGER_DENIED)
 
 
+def _spawn_worker(slot, round_n, task, task_id="T-900"):
+    """작업자 하나를 가짜 하네스로 띄운다 (`fleet.cmd_spawn`). 라운드는 `round_n` 그대로 - None 이면 손으로 띄운 것."""
+    import argparse
+    import contextlib
+    import io
+    ns = argparse.Namespace(slot=slot, harness=None, model=None, task_id=task_id, attempt=1, label="검사 작업자",
+                            write=[], task=task, task_file=None, project=None, round=round_n, timeout=600)
+    buf = io.StringIO()
+    with mock.patch.object(fleet, "current_round", return_value=None), contextlib.redirect_stdout(buf):
+        fleet.cmd_spawn(ns)
+    return buf.getvalue().strip().splitlines()[-1]
+
+
+def _child_pids(d):
+    p = d / "events.jsonl"
+    if not p.exists():
+        return []
+    return [json.loads(ln.partition("\t")[2])["pid"] for ln in p.read_text(encoding="utf-8").splitlines()
+            if '"child"' in ln]
+
+
+class LeftoversWhenTheManagerEnds(Base):
+    """관리자만 죽거나 끊기면, 그 관리자 라운드의 작업자가 실행기 없이 남는다 - 감시자가 거둔다 (`halt_round_leftovers`).
+    다른 라운드·손으로 띄운 작업자, 실행기가 잡은 그래프는 건드리지 않는다."""
+
+    def graph_with_worker(self, gid, n, slot, task_id):
+        rid = _spawn_worker(slot, n, "FAKE: child 300\nFAKE: hang", task_id=task_id)
+        g = {"id": gid, "round": n, "created": fleet_ctl._now(), "nodes": [
+            {"id": task_id, "title": f"{gid} 노드", "slot": slot, "task": "x", "deps": [], "write": [], "max_attempts": 2,
+             "status": "running", "attempts": [{"run_id": rid, "started": fleet_ctl._now()}]}]}
+        fleet_graph._save(g)
+        return rid
+
+    def wait_running(self, *rids):
+        for rid in rids:
+            d = self.sroot / rid
+            self.assertTrue(_wait(lambda: len(_child_pids(d)) >= 1, 10), rid)
+            self.assertEqual(sessions.state(d)["state"], "running")
+
+    def test_a_cancelled_manager_leaves_no_idle_worker_of_its_round(self):
+        out = self.launch("hang")
+        n, sid = out["round"], out["session"]
+        self.assertTrue(_wait(lambda: sessions.state(self.sroot / sid)["state"] == "running", 10))
+        self.graphs.mkdir(parents=True, exist_ok=True)
+        mine = self.graph_with_worker("G-1", n, "S2", "T-901")                 # 이 라운드, 실행기 없음 -> 거둔다
+        held = self.graph_with_worker("G-2", n, "S2", "T-902")                 # 이 라운드, 실행기가 잡고 있음 -> 둔다
+        loose = _spawn_worker("S2", n, "FAKE: hang", task_id="T-903")         # 이 라운드, 그래프 밖 -> 끊는다
+        other = _spawn_worker("S2", n + 1, "FAKE: hang", task_id="T-904")     # 다른 라운드 -> 둔다
+        by_hand = _spawn_worker("S1", None, "FAKE: hang", task_id="T-905")    # 손으로 띄움(라운드 없음) -> 둔다
+        self.wait_running(mine, held)
+        kids = _child_pids(self.sroot / mine)
+        self.assertEqual(sessions.cancel(self.sroot / sid, "검사: 관리자만 끊김"), "killed")
+        with fleet_graph.graph_lock("G-2", "다른 실행자"):
+            self.assertEqual(fleet_ctl._watch(n, poll=0.05, wait=5, close_only=True), 0)
+        self.assertTrue(_wait(lambda: all(_gone(p) for p in kids), 5), kids)
+        self.assertEqual(sessions.state(self.sroot / mine)["state"], "killed")
+        self.assertEqual(sessions.state(self.sroot / loose)["state"], "killed")
+        for rid in (held, other, by_hand):
+            self.assertEqual(sessions.state(self.sroot / rid)["state"], "running", rid)
+        g1 = fleet_graph._load("G-1")["nodes"][0]
+        self.assertEqual((g1["status"], g1["attempts"]), ("todo", []))
+        self.assertEqual(g1["stopped_attempts"][0]["run_id"], mine)       # 시도로 세지 않는다
+        self.assertEqual(fleet_graph._load("G-2")["nodes"][0]["status"], "running")
+        text = self.report_path(n).read_text(encoding="utf-8")
+        self.assertIn("관리자 없이 끝남 (killed)", text)
+        self.assertIn(f"G-1 / T-901 (todo) G-1 노드 - 작업자를 거둠 ({mine}", text)
+        self.assertIn("G-2 / T-902 (running)", text)
+        self.assertEqual(fleet_ctl.mode(), "running")                       # 모드는 그대로
+
+    def test_a_manager_that_ended_done_with_everything_finished_halts_nothing(self):
+        out = self.launch("report DONE\\n끝")
+        n, sid = out["round"], out["session"]
+        self.assertTrue(_wait(lambda: sessions.state(self.sroot / sid)["state"] == "done", 10))
+        self.graphs.mkdir(parents=True, exist_ok=True)
+        fleet_graph._save({"id": "G-3", "round": n, "nodes": [
+            {"id": "T-906", "title": "끝", "slot": "S2", "status": "done", "attempts": [{"run_id": "x", "rc": 0}]}]})
+        by_hand = _spawn_worker("S1", None, "FAKE: hang", task_id="T-907")
+        self.assertEqual(fleet_ctl.halt_round_leftovers(n, "검사"), [])
+        self.assertEqual(fleet_ctl._watch(n, poll=0.05, wait=2, close_only=True), 0)
+        self.assertFalse(self.report_path(n).exists())
+        self.assertEqual(sessions.state(self.sroot / by_hand)["state"], "running")
+        self.assertEqual(fleet_graph._load("G-3")["nodes"][0]["status"], "done")
+
+    def test_nothing_is_halted_while_the_manager_runs_or_the_fleet_is_paused(self):
+        out = self.launch("hang")
+        n, sid = out["round"], out["session"]
+        self.assertTrue(_wait(lambda: sessions.state(self.sroot / sid)["state"] == "running", 10))
+        self.graphs.mkdir(parents=True, exist_ok=True)
+        rid = self.graph_with_worker("G-4", n, "S2", "T-908")
+        self.wait_running(rid)
+        self.assertEqual(fleet_ctl.halt_round_leftovers(n, "검사"), [])         # 관리자가 살아 있다
+        sessions.cancel(self.sroot / sid, "검사")
+        fleet_ctl.pause("test")
+        self.assertEqual(fleet_ctl.halt_round_leftovers(n, "검사"), [])         # 일시 중지: 돌던 작업자는 끝까지
+        self.assertEqual(sessions.state(self.sroot / rid)["state"], "running")
+        fleet_ctl.set_mode("running", "test")
+        got = fleet_ctl.halt_round_leftovers(n, "검사")
+        self.assertEqual([(h["kind"], h["graph"], h["node"], h["status"]) for h in got], [("node", "G-4", "T-908", "todo")])
+
+
 if __name__ == "__main__":
     unittest.main()

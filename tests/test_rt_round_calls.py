@@ -642,5 +642,59 @@ class EndToEnd(Base):
         self.assertEqual(_ours(self.root), [])
 
 
+class Leftovers(Base):
+    """호출 방식: 호출이 실패하거나 구동기가 멈추면 이 라운드의 작업자가 실행기 없이 남는다 - 마감 전에 거둔다."""
+
+    def worker_graph(self, gid):
+        import argparse
+        import contextlib
+        import io
+        ns = argparse.Namespace(slot="S2", harness=None, model=None, task_id="T-950", attempt=1, label="검사", write=[],
+                                task="FAKE: child 300\nFAKE: hang", task_file=None, project=None, round=self.N, timeout=600)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            fleet.cmd_spawn(ns)
+        rid = buf.getvalue().strip().splitlines()[-1]
+        fleet_graph._save({"id": gid, "round": self.N, "created": fleet_ctl._now(), "nodes": [
+            {"id": "T-950", "title": "남은 노드", "slot": "S2", "task": "x", "deps": [], "write": [], "max_attempts": 2,
+             "status": "running", "attempts": [{"run_id": rid, "started": fleet_ctl._now()}]}]})
+        ev = self.sroot / rid / "events.jsonl"
+        self.assertTrue(_wait(lambda: ev.exists() and '"child"' in ev.read_text(encoding="utf-8"), 10))
+        kids = [json.loads(ln.partition("\t")[2])["pid"] for ln in ev.read_text(encoding="utf-8").splitlines() if '"child"' in ln]
+        return rid, kids
+
+    def test_a_failed_judge_call_halts_the_running_worker_before_the_close(self):
+        self.calls_round()
+        rid, kids = self.worker_graph("G-001")
+        held = []
+
+        def run_graphs(n, gids):          # 붙잡는 시간이 지나 판정으로 넘긴 것처럼 - 노드는 running 그대로
+            held.append(sessions.state(self.sroot / rid)["state"])
+            return "timeout"
+        fleet_ctl._drive(self.N, True, spawn_call=self.script(("done", "NEXT: RUN G-001"), ("failed", "")),
+                         run_graphs=run_graphs, poll=0.01, chain_wait=2)
+        self.assertEqual(held, ["running"])                                  # 그래프를 돌리는 동안은 살아 있었다
+        self.assertEqual(sessions.state(self.sroot / rid)["state"], "killed")
+        self.assertTrue(_wait(lambda: all(sessions._proc_state(p) in (None, "Z") for p in kids), 5), kids)
+        node = fleet_graph._load("G-001")["nodes"][0]
+        self.assertEqual((node["status"], node["attempts"], node["stopped_attempts"][0]["run_id"]), ("todo", [], rid))
+        text = self.report()
+        self.assertIn("상태: PARTIAL", text)
+        self.assertIn(f"G-001 / T-950 (todo) 남은 노드 - 작업자를 거둠 ({rid}", text)
+        self.assertEqual(fleet_ctl.mode(), "running")
+
+    def test_a_pause_between_calls_leaves_the_worker_running(self):
+        self.calls_round()
+        rid, _ = self.worker_graph("G-001")
+
+        def plan():
+            fleet_ctl.set_mode("paused", "사람")
+            return "done", "NEXT: RUN G-001"
+        fleet_ctl._drive(self.N, True, spawn_call=self.script(plan), run_graphs=self.runner(), poll=0.01, chain_wait=2)
+        self.assertEqual(sessions.state(self.sroot / rid)["state"], "running")
+        self.assertEqual(fleet_graph._load("G-001")["nodes"][0]["status"], "running")
+        self.assertIsNone(self.report())
+
+
 if __name__ == "__main__":
     unittest.main()

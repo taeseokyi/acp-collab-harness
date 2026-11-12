@@ -668,17 +668,9 @@ def stop(by="사람"):
     st = chain_state()
     if st.get("on"):
         _chain_stop(st, "off", f"함대를 완전 중지해 이어 달리기도 내려놓았습니다 ({by})")
-    halted, killed = [], []
-    for gi in graphs_overview():
-        if not gi["unfinished"] or gi["runner"]:
-            continue   # 관리자 밖의 실행기(`run` 이 띄운 것)는 다음 틱(기본 15초)에 스스로 정리하고 끝난다
-        try:
-            with fleet_graph.graph_lock(gi["id"], "stop"):
-                g = fleet_graph._load(gi["id"])
-                if fleet_graph.halt_running(g, f"완전 중지 ({by})"):
-                    halted.append(gi["id"])
-        except SystemExit:
-            continue
+    # 관리자 밖의 실행기(`run` 이 띄운 것)가 잡은 그래프는 건드리지 않는다 - 다음 틱에 스스로 정리하고 끝난다
+    halted = sorted({h["graph"] for h in _halt_idle_graphs(f"완전 중지 ({by})")})
+    killed = []
     for r in running_runs():
         pid, outcome = fleet_graph._kill_run(r["id"], with_outcome=True)
         if outcome in ("killed", "gone"):
@@ -1092,7 +1084,12 @@ def write_minimal_close(n, why, session=None):
             st = node.get("status", "todo")
             counts[st] = counts.get(st, 0) + 1
             if st != "done":
-                unfinished.append(f"- {gid} / {node.get('id', '?')} ({st}) {str(node.get('title') or '')[:120]}".rstrip())
+                stopped = node.get("stopped_attempts") or []
+                last = stopped[-1] if st == "todo" and stopped and isinstance(stopped[-1], dict) else {}
+                halted = (f" - 작업자를 거둠 ({last.get('run_id')}: {str(last.get('stopped_by') or '')[:120]})"
+                          if last.get("stopped_by") else "")
+                unfinished.append(f"- {gid} / {node.get('id', '?')} ({st}) {str(node.get('title') or '')[:120]}".rstrip()
+                                  + halted)
         runner = " · 실행기 잡고 있음" if _lock_holder(gid) else ""
         lines.append(f"- {gid}: " + (", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "노드 없음") + runner)
     lines += ["", "## 끝나지 않은 노드", ""] + (unfinished[:100] or ["- 없음"])
@@ -1118,6 +1115,79 @@ def write_minimal_close(n, why, session=None):
             tmp.unlink()
         except OSError:
             pass
+
+
+def _halt_idle_graphs(why, round_n=None):
+    """실행기가 없는 미완 그래프의 running 노드를 거둔다 (`fleet_graph.halt_running`: 작업자를 끊고 노드를 `todo` 로,
+    끊긴 시도는 `stopped_attempts` - 재시도로 세지 않는다). `round_n` 을 주면 그 라운드(`g["round"]`)의 그래프만.
+
+    잠금을 잡고 한다 - 잡지 못하면(그 사이 실행기가 떴다) 그 그래프는 실행기 몫이다.
+    거둔 것 목록: `{graph, node, run_id, status}` (status 는 거둔 뒤 노드 상태 - 끊기를 거부당하면 blocked).
+    """
+    import fleet_graph  # noqa: PLC0415 - 순환 import 회피
+    out = []
+    for gi in graphs_overview():
+        if not gi["unfinished"] or gi["runner"]:
+            continue
+        try:
+            with fleet_graph.graph_lock(gi["id"], "halt"):
+                g = fleet_graph._load(gi["id"])
+                rn = g.get("round")
+                if round_n is not None and (isinstance(rn, bool) or rn != int(round_n)):
+                    continue
+                before = {nd.get("id"): nd["attempts"][-1].get("run_id") for nd in g.get("nodes") or []
+                          if nd.get("status") == "running" and nd.get("attempts")}
+                if not before or not fleet_graph.halt_running(g, why):
+                    continue
+                for nd in g["nodes"]:
+                    if nd.get("id") in before:
+                        out.append({"graph": gi["id"], "node": nd.get("id"), "run_id": before[nd.get("id")],
+                                    "status": nd.get("status")})
+        except SystemExit:
+            continue
+    return out
+
+
+def halt_round_leftovers(n, why):
+    """라운드 R<n> 을 이끌 것(관리자 세션·호출 방식 구동기)이 없어졌을 때, 그 라운드가 남긴 작업자를 거둔다. 거둔 것 목록.
+
+    까닭: 관리자만 죽거나 끊기면 그 관리자가 띄운 작업자는 제 한도까지 돌고, 노드는 실행기 없이 `running` 으로 남아
+    사람이 '실행'·'완전 중지' 를 누를 때까지 아무도 거두지 않았다. 그래서 이 라운드의 그래프 가운데 **실행기가 없는**
+    것의 running 노드를 거두고(`_halt_idle_graphs`), 어느 그래프 노드에도 붙지 않은 이 라운드의 작업자 세션도 끊는다.
+    - 다른 라운드의 작업자, 라운드 없이 손으로 띄운 작업자(round None)는 건드리지 않는다 - 띄운 사람의 몫이다
+    - 실행기가 잡고 있는 그래프와 그 노드의 작업자는 실행기의 몫이다
+    - 함대 모드는 바꾸지 않는다. 최소 마감을 쓰기 **전에** 부른다 - 마감 보고에 거둔 노드가 `todo` 로 보이게
+    관리자가 아직 돌거나 다른 구동기가 이 라운드를 이끄는 중이면 아무것도 하지 않는다. '일시 중지' 에서도 하지 않는다 -
+    사람이 '돌고 있는 작업자는 끝까지' 를 고른 것이고, '실행' 을 누르면 `resume` 의 실행기가 그 작업자를 거둔다.
+    """
+    import fleet_graph  # noqa: PLC0415
+    n = int(n)
+    if mode() == "paused" or _round_manager_running(n) or round_in_progress() == n:
+        return []
+    out = [dict(h, kind="node") for h in _halt_idle_graphs(why, round_n=n)]
+    attached = set()
+    for f in sorted(_graphs_dir().glob("*.json")):
+        try:
+            g = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for nd in (g.get("nodes") or []) if isinstance(g, dict) else []:
+            for att in (nd.get("attempts") or []) if isinstance(nd, dict) else []:
+                if isinstance(att, dict) and att.get("run_id"):
+                    attached.add(str(att["run_id"]))
+    for r in running_runs():
+        rn = (fleet._run_meta(r["id"]) or {}).get("round")
+        if r["id"] in attached or isinstance(rn, bool) or rn != n:
+            continue
+        pid, outcome = fleet_graph._kill_run(r["id"], with_outcome=True)
+        if outcome in ("killed", "gone"):
+            fleet_graph._mark_lost(r["id"])
+        out.append({"kind": "run", "run_id": r["id"], "outcome": outcome})
+    if out:
+        print(f"{_now()} R{n}: 이끌 것 없이 남은 것을 거뒀습니다 ({why}): "
+              + ", ".join(f"{h.get('graph', '')}/{h['node']}" if h["kind"] == "node" else h["run_id"] for h in out),
+              flush=True)
+    return out
 
 
 def close_if_unreported(n):
@@ -1609,6 +1679,9 @@ def _watch(n, poll, wait, close_only=False):
         if _round_manager_running(n):
             continue
         if closed is None:
+            # 관리자가 어떤 상태로 끝났든(done 도) 실행기 없이 남은 이 라운드 작업자를 거둔다 - 마감보다 먼저
+            last = next((s for s in reversed(manager_sessions()) if s.get("round") == int(n)), None)
+            halt_round_leftovers(n, f"R{n} 관리자 세션이 {last['status']} 로 끝남" if last else f"R{n} 관리자 세션 없음")
             closed = close_if_unreported(n) or ""
             if closed:
                 print(f"{_now()} R{n}: 관리자가 {closed} 로 끝나 최소 마감을 썼습니다", flush=True)
@@ -2000,10 +2073,18 @@ def _drive(n, close_only=False, *, spawn_call=None, run_graphs=None, poll=None, 
     except Exception as e:  # noqa: BLE001 - 구동기가 터져도 라운드는 마감이 남아야 한다 (설계 5.10)
         import traceback  # noqa: PLC0415
         traceback.print_exc()
-        write_minimal_close(n, f"라운드 구동기가 멈춤: {type(e).__name__}: {str(e)[:200]}")
+        why = f"라운드 구동기가 멈춤: {type(e).__name__}: {str(e)[:200]}"
+        try:
+            halt_round_leftovers(n, why)
+        except Exception:  # noqa: BLE001 - 거두기가 터져도 마감은 남긴다
+            traceback.print_exc()
+        write_minimal_close(n, why)
         ended = "fail"
     finally:
         _DRIVING_ROUND = None
+    if ended == "end":
+        # 마감 호출까지 갔어도 실행기 없이 남은 노드(그래프를 붙잡는 시간이 지나 판정으로 넘긴 것 등)는 아무도 거두지 않는다
+        halt_round_leftovers(n, "호출 방식 라운드가 마감된 뒤 남음")
     if ended in ("end", "fail"):
         _drive_chain_end(n, close_only, poll, CHAIN_WAIT_SEC if chain_wait is None else chain_wait)
     return 0
@@ -2134,12 +2215,14 @@ def _drive_loop(n, close_only, spawn_call, run_graphs, poll):
             action = ("call", "judge")
         elif kind == "stop":
             log(f"호출이 사람을 부릅니다: {action[1]}")
+            halt_round_leftovers(n, f"관리자 호출이 멈춤을 요청함 (NEXT: STOP {action[1]})")
             write_minimal_close(n, f"관리자 호출이 멈춤을 요청함 (NEXT: STOP {action[1]})", session=action[2])
             if not (close_only and not _CHAIN_ARMED[0]) and chain_state().get("on"):
                 _chain_stop(chain_state(), "report", f"R{n}: 관리자가 사람을 불렀습니다 - {action[1]}", n)
             return "stop"
         elif kind == "fail":
             log(action[1])
+            halt_round_leftovers(n, action[1])
             write_minimal_close(n, action[1], session=action[2])
             return "fail"
         else:
