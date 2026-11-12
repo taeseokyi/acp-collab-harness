@@ -21,6 +21,13 @@
   --st-danger-tint: #fdecee;
   --st-sh-card: 0 18px 7px rgba(0,0,0,.01), 0 10px 6px rgba(0,0,0,.02), 0 4px 4px rgba(0,0,0,.03), 0 1px 2px rgba(0,0,0,.04);
 }
+/* 모니터에서 어두운 모드를 골랐으면 로그인 화면도 따른다 (2026-11-12 화면 점검: 어두운 모드에서 로그아웃하면 흰 화면이 떴다) */
+:root[data-theme="dark"] {
+  --st-bg: #0e1113; --st-surface: #161a1d; --st-line: #3d464f; --st-ink: #eef1f3; --st-ink-muted: #8e979f;
+  --st-accent-text: #34d399; --st-accent-ink: #052e20; --st-focus: #7b93ff;
+  --st-danger-text: #ff8a98; --st-danger-tint: rgba(255,90,110,.12); --st-sh-card: 0 1px 2px rgba(0,0,0,.4);
+  color-scheme: dark;
+}
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {
@@ -89,6 +96,7 @@ button:disabled { opacity: .7; cursor: progress; }
 <script>
 (function () {
   'use strict';
+  try { if (localStorage.getItem('aimem-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (e) {}
   var form = document.getElementById('form');
   var input = document.getElementById('token');
   var btn = document.getElementById('submit');

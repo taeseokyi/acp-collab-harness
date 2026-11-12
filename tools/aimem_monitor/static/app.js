@@ -203,11 +203,27 @@ function badge(text, cls) {
   return span;
 }
 
+// 같은 상태는 어느 탭에서나 같은 말로 (2026-11-12 화면 점검: done·DONE·완료·IN-PROGRESS·진행 중이 탭마다 달랐다).
+// 원래 값은 data-status 와 title 에 남긴다 (검사·검색은 data-status 로)
+const STATUS_LABEL = {
+  done: '완료', running: '진행 중', 'in-progress': '진행 중', todo: '할 일', assigned: '배정됨', review: '검토 중',
+  blocked: '막힘', failed: '실패', lost: '사라짐', new: '새 요청', planned: '계획됨', rejected: '거절', skipped: '건너뜀',
+  partial: '일부 완료', unknown: '모름',
+};
+function statusLabel(raw) {
+  const key = String(raw || '').toLowerCase();
+  if (STATUS_LABEL[key]) return STATUS_LABEL[key];
+  if (key.startsWith('needs')) return '고칠 것 있음';
+  if (key.startsWith('reject')) return '거절';
+  return String(raw);
+}
 function statusBadge(value) {
   const raw = show(value);
   const key = raw.toLowerCase();
-  const cls = key === 'lost' ? 'neutral' : (STATUS_CLASS[raw] || STATUS_CLASS[raw.toUpperCase()] || 'neutral');
-  const span = badge(raw, cls);
+  const cls = key === 'lost' ? 'lost' : (STATUS_CLASS[raw] || STATUS_CLASS[raw.toUpperCase()] || (key === 'failed' ? 'failed' : key === 'todo' ? 'todo' : key === 'blocked' ? 'blocked' : 'neutral'));
+  const span = badge(statusLabel(raw), cls);
+  span.dataset.status = raw;
+  if (statusLabel(raw) !== raw) span.title = raw;
   if (key === 'lost') span.title = '작업자가 보고/종료코드 없이 사라짐';
   return span;
 }
@@ -261,12 +277,17 @@ function newTable(headers, rows, rowClasses, opts = {}) {
       else td.classList.add('col-text');
       if (ellipsis.has(index)) {
         td.classList.add('elide');
+        if (index === Math.min(...ellipsis)) td.classList.add('cell-main');   // 카드로 쌓일 때 제목 노릇을 하는 칸
         const full = raw instanceof Node ? raw.textContent : show(raw, '');
         td.title = full;
         makeElidable(td, full);
       }
       if (raw instanceof Node) td.appendChild(raw);
       else td.textContent = show(raw);
+      // 좁은 화면에서는 행을 카드로 쌓는다(style.css '표 → 카드') - 칸 이름을 앞에 붙이고 빈 칸은 숨긴다
+      td.dataset.label = headers[index] || '';
+      const cellText = td.textContent.trim();
+      if (!cellText || cellText === '-') td.classList.add('is-empty');
       trb.appendChild(td);
     });
     tbody.appendChild(trb);
@@ -350,7 +371,34 @@ function runPanelCleanups() {
 }
 window.addEventListener('pagehide', runPanelCleanups);
 
+// 상세에서 다른 상세로 넘어가면(큐 → 태스크 → 실행) 돌아올 길이 없었다 - 지나온 패널을 쌓고 '← 이전' 으로 되돌아간다.
+function notePanel(key, label, reopen) {
+  if (!state.panelStack) state.panelStack = [];
+  if (state.panelBack) state.panelBack = false;                       // 되돌아가는 중 - 쌓지 않는다
+  else if (!state.detailOpen) state.panelStack = [];
+  else if (state.panelCur && state.panelCur.key !== key) state.panelStack.push(state.panelCur);
+  state.panelCur = { key, label, reopen };
+  let back = $('detail-back');
+  if (!back) {
+    const head = document.querySelector('#detail-overlay .detail-head');
+    if (!head) return;
+    back = document.createElement('button');
+    back.type = 'button'; back.id = 'detail-back'; back.className = 'detail-back btn-link';
+    back.addEventListener('click', () => {
+      const prev = state.panelStack && state.panelStack.pop();
+      if (!prev) return;
+      state.panelBack = true;
+      prev.reopen();
+    });
+    head.insertBefore(back, head.firstChild);
+  }
+  const prev = state.panelStack[state.panelStack.length - 1];
+  back.hidden = !prev;
+  if (prev) { back.textContent = '← 이전'; back.title = prev.label + ' 로 돌아가기'; back.setAttribute('aria-label', prev.label + ' 로 돌아가기'); }
+}
+
 function closeDetail() {
+  state.panelStack = []; state.panelCur = null; state.panelBack = false;
   runPanelCleanups();
   const returnFocus = state.detailReturnFocus;
   state.detailReturnFocus = null;
@@ -383,6 +431,7 @@ async function fetchRequestFull(req) {
 // ---- 상세 패널 공통 (2026-11-10: 탭마다 상세보기가 빠진 곳을 메움)
 // 하나의 오버레이(`detail-overlay`)를 모든 상세가 같이 쓴다 - 포커스 저장·가둠·Esc 는 bindDetailControls 가 맡는다.
 function openPanel(title, build) {
+  notePanel('panel:' + title, title, () => openPanel(title, build));
   runPanelCleanups();
   state.detailReturnFocus = document.activeElement;
   const overlay = bindDetailControls();
@@ -684,7 +733,7 @@ function runsTable(runs) {
       fmtElapsed(r.elapsed_sec), fmtDateTime(r.started)];
   });
   return newTable(['run id', '슬롯', '상태', '보고', 'rc', '경과', '시작'], rows, null, {
-    widths: ['196px', '52px', '80px', '108px', '40px', '80px', null],
+    widths: ['196px', '52px', '80px', '108px', '40px', '100px', null],
     num: [4, 5], center: [2, 3],
     rowRunIds: runs.map((r) => r.id),
   });
@@ -711,7 +760,7 @@ function openTaskDetail(taskId, data) {
     meta.appendChild(detailMetaItem('작업', plainText(title) || '-'));
     meta.appendChild(detailMetaItem('슬롯', show(b ? b.slot : (sub ? sub.st.slot : (gn ? gn.n.slot : null)))));
     if (b) {
-      meta.appendChild(detailMetaItem('보드 상태', statusBadge(b.status)));
+      meta.appendChild(detailMetaItem('상태', boardStatusBadge(b, data)));
       meta.appendChild(detailMetaItem('출처 태스크', show(b.handoff)));
       meta.appendChild(detailMetaItem('산출물', plainText(b.artifact) || '-'));
     } else {
@@ -803,6 +852,7 @@ function openManagerList(sessions) {
 function openRequestDetail(req) {
   runPanelCleanups();
   if (!req) return;
+  notePanel('req:' + req.id, '요청 ' + show(req.id, ''), () => openRequestDetail(req));
   state.detailReturnFocus = document.activeElement;  // T-083 포커스 저장 그대로
   const overlay = bindDetailControls();
   state.detailOpen = true;
@@ -888,7 +938,20 @@ function detailMetaItem(label, value) {
   return item;
 }
 
-function addDetailSection(parent, title, text, plain = false) {
+function addDetailSection(parent, title, text, plain = false, folded = false) {
+  if (folded && show(text, '')) {
+    // 길고 덜 보는 글(지시 본문·stderr)은 접어 둔다 - 펼쳐 두면 실행 상세가 수만 px 가 되어 보고를 읽은 뒤에도 수십 화면이 남았다
+    const det = document.createElement('details');
+    det.className = 'fold-group detail-section detail-fold';
+    const sum = document.createElement('summary');
+    const len = String(text).length;
+    sum.textContent = `${title} · ${len >= 1000 ? (len / 1000).toFixed(1) + '천 자' : len + '자'}`;
+    det.appendChild(sum);
+    if (plain) { const pre = document.createElement('pre'); pre.className = 'detail-pre'; pre.textContent = String(text); det.appendChild(pre); }
+    else det.appendChild(mdBlock(text, '없음'));
+    parent.appendChild(det);
+    return;
+  }
   const section = document.createElement('section');
   section.className = 'detail-section';
   const h3 = document.createElement('h3');
@@ -944,8 +1007,8 @@ function renderDetail(detail) {
   }
 
   addDetailSection(body, '보고 본문', detail.report);
-  addDetailSection(body, '지시 본문', detail.brief);
-  addDetailSection(body, 'stderr', detail.stderr_tail, true);
+  addDetailSection(body, '지시 본문', detail.brief, false, true);
+  addDetailSection(body, 'stderr', detail.stderr_tail, true, true);
 }
 
 async function serverErrorReason(res) {
@@ -960,6 +1023,7 @@ async function serverErrorReason(res) {
 }
 
 async function openDetail(runId) {
+  notePanel('run:' + runId, '실행 ' + show(runId, ''), () => openDetail(runId));
   runPanelCleanups();
   state.detailReturnFocus = document.activeElement;
   const overlay = bindDetailControls();
@@ -1062,7 +1126,10 @@ function reportBadge(head) {
     return span;
   }
   const cls = st === 'DONE' ? 'done' : st === 'PARTIAL' ? 'partial' : st.startsWith('NEEDS') ? 'needs' : 'blocked';
-  return badge(st, cls);
+  const span = badge(statusLabel(st), cls);
+  span.dataset.status = st;
+  span.title = '작업자 보고: ' + st;
+  return span;
 }
 
 function renderMeta(data) {
@@ -1101,7 +1168,7 @@ function renderMeta(data) {
 const MODE_BADGE = { running: 'running', paused: 'partial', stopped: 'blocked', ready: 'done' };
 const FLEET_BUTTONS = [
   { act: 'prepare', label: '준비', title: '관리자·작업자를 띄울 수 있는지 점검합니다. 통과하면 준비 상태 (작업자는 띄우지 않음)' },
-  { act: 'run', label: '실행', title: "멈춘 라운드를 이어 돌립니다 (일시 중지·완전 중지 뒤). 새 요청은 '라운드 실행' 으로 띄웁니다" },
+  { act: 'run', label: '재개', title: "멈춘 라운드를 이어 돌립니다 (일시 중지·완전 중지 뒤). 새 요청은 '라운드 실행' 으로 띄웁니다" },
   { act: 'pause', label: '일시 중지', title: '새 작업자 투입을 멈춥니다. 돌고 있는 작업자는 끝까지 둡니다' },
   { act: 'stop', label: '완전 중지', title: '돌고 있는 작업자와 그래프 실행기를 즉시 종료합니다', danger: true,
     confirm: '돌고 있는 작업자와 그래프 실행기를 지금 종료합니다.\n중간 산출물이 반쯤 남을 수 있습니다. 계속할까요?' },
@@ -1652,7 +1719,13 @@ function renderFleetControl(data) {
   if (f.default) bits.push('상태 파일 없음(기본값)');
   if (f.idle) bits.push('도는 라운드 없음');
   if (f.running_runs) bits.push(`작업자 ${f.running_runs}개 실행 중`);
-  if (Array.isArray(f.graphs) && f.graphs.length) bits.push('미완 그래프 ' + f.graphs.map((g) => g.id + (g.runner ? '(실행기)' : '')).join(', '));
+  if (Array.isArray(f.graphs) && f.graphs.length) bits.push('미완 그래프 ' + f.graphs.map((g) => {
+    // 진척을 첫 화면에서 본다 - 전에는 요청 트리 탭까지 가야 했다
+    const full = ((state.data && state.data.graphs) || []).find((x) => x && x.id === g.id);
+    const pct = full && full.percent !== null && full.percent !== undefined ? ' ' + fmtGraphPct(full.percent) : '';
+    const eta = full && full.eta_seconds ? ' · 남은 ' + fmtGraphEta(full.eta_seconds) : '';
+    return g.id + pct + eta + (g.runner ? '' : ' (실행기 없음)');
+  }).join(', '));
   meta.textContent = bits.join(' · ');
   head.appendChild(meta);
   box.appendChild(head);
@@ -1852,6 +1925,7 @@ function detailRows(parent, title, rows) {
 async function openManagerDetail(cur, all = false) {
   runPanelCleanups();
   if (!cur || !cur.id) return;
+  notePanel('mgr:' + cur.id, '관리자 ' + show(cur.label, ''), () => openManagerDetail(cur, all));
   state.detailReturnFocus = document.activeElement;
   const overlay = bindDetailControls();
   state.detailOpen = true;
@@ -2072,9 +2146,15 @@ function modelOptions(models, harness, current) {
   return sel;
 }
 
-function openSlotForm(existing) {
+function openSlotForm(existing, runId, isRunning) {
   const isNew = !existing;
-  openPanel(isNew ? '슬롯 추가' : `슬롯 ${existing.slot} 변경`, (body) => {
+  openPanel(isNew ? '슬롯 추가' : `슬롯 ${existing.slot}`, (body) => {
+    if (runId) {
+      const act = document.createElement('div');
+      act.className = 'detail-actions';
+      act.appendChild(linkButton(isRunning ? '지금 도는 실행 보기 →' : '마지막 실행 보기 →', () => openDetail(runId)));
+      body.appendChild(act);
+    }
     const form = document.createElement('form');
     form.className = 'slot-form';
     const field = (label, el) => {
@@ -2204,7 +2284,7 @@ function renderSlots(data) {
     runIds.push(r ? r.id : (last ? last.id : null));   // 대기 중이면 마지막 실행 상세로
     const now = document.createElement('div');
     now.className = 'slot-state';
-    now.appendChild(r ? badge('실행 중', 'running') : badge('대기', 'idle'));
+    now.appendChild(r ? badge('실행 중', 'running') : badge('쉬는 중', 'idle'));
     if (r) {
       const sub = document.createElement('span');
       sub.className = 'sub';
@@ -2212,22 +2292,16 @@ function renderSlots(data) {
       sub.title = show(r.label, '');
       now.appendChild(sub);
     }
-    const manage = document.createElement('div');
-    manage.className = 'slot-manage';
-    const edit = linkButton('변경', () => openSlotForm(s));
-    edit.title = r ? '작업자가 도는 중 - 모델·역할·비고는 바꿀 수 있고 하네스는 끝난 뒤' : '하네스·모델·역할·비고 변경, 삭제';
-    manage.appendChild(edit);
-    return [mono(s.slot), now, show(s.harness), modelCell, show(s.role), plainText(s.note) || '-', manage];
+    return [mono(s.slot), now, show(s.harness), modelCell, show(s.role), plainText(s.note) || '-'];
   });
-  const rowClasses = runIds.map((id) => (id ? 'row-running' : ''));
-  wrap.appendChild(newTable(['슬롯', '지금', '하네스', '모델', '역할', '비고', '관리'], rows, rowClasses, {
+  const rowClasses = slots.map((s) => (running.has(s.slot) ? 'row-running' : ''));   // 색은 지금 도는 슬롯에만 (전에는 마지막 실행이 있으면 전부 칠했다)
+  // 행을 누르면 그 슬롯의 패널(실행으로 가는 길 + 하네스·모델·역할 변경·삭제). 전에는 행은 마지막 실행을, 맨 끝 '변경' 단추는 슬롯을 열었다
+  wrap.appendChild(newTable(['슬롯', '지금', '하네스', '모델', '역할', '비고'], rows, rowClasses, {
     className: 'slots-table',
-    widths: ['52px', '160px', '92px', '230px', '170px', null, '80px'],
+    widths: ['52px', '160px', '92px', '230px', '200px', null],
     ellipsis: [3, 4, 5],
-    rowRunIds: runIds,
+    rowOpen: slots.map((s, i) => ({ fn: () => openSlotForm(s, runIds[i], running.has(s.slot)), title: `슬롯 ${s.slot} - 실행 보기 · 변경` })),
   }));
-  // 관리 열의 버튼은 행 클릭(실행 상세)과 겹치지 않게
-  wrap.querySelectorAll('.slot-manage button').forEach((b) => b.addEventListener('click', (e) => e.stopPropagation()));
   const bar = document.createElement('div');
   bar.className = 'slot-bar';
   bar.appendChild(linkButton('+ 슬롯 추가', () => openSlotForm(null)));
@@ -2238,7 +2312,7 @@ function renderSlots(data) {
   wrap.appendChild(bar);
 }
 
-const RUNS_PAGE = 20;
+const RUNS_PAGE = window.matchMedia('(max-width: 720px)').matches ? 8 : 20;   // 폰에서는 행이 카드라 20건이면 화면 열 장이다
 
 function renderRuns(data) {
   const wrap = $('runs-table-wrap');
@@ -2349,9 +2423,26 @@ function resolveBoardRunId(taskId, data) {
   return best ? best.id : null;
 }
 
+// 보드의 실제 상태 (2026-11-12 태석님: 숫자가 안 맞는다). 그래프가 도는 동안 보드 칸은 TODO 로 남는다 -
+// 관리자가 라운드를 닫을 때에야 고친다. 그래서 '미완료 10' 인데 여섯은 이미 끝나 있었다.
+// 보드가 아직 안 닫힌 태스크는 그래프 노드의 상태를 쓴다(요청 트리 탭과 같은 값).
+function boardLive(b, data) {
+  const raw = String(b.status || '').toUpperCase();
+  if (['DONE', 'REJECTED'].includes(raw) || !data) return { status: b.status, fromGraph: false, done: raw === 'DONE', closed: true };
+  const gn = findGraphNode(b.id, data);
+  if (!gn || !gn.n || !gn.n.status) return { status: b.status, fromGraph: false, done: false, closed: false };
+  const ns = String(gn.n.status).toLowerCase();
+  return { status: gn.n.status, fromGraph: true, graph: gn.g.id, done: ns === 'done', closed: ns === 'done' };
+}
+function boardStatusBadge(b, data) {
+  const live = boardLive(b, data);
+  const span = statusBadge(live.status);
+  if (live.fromGraph) span.title = `그래프 ${live.graph} 의 상태입니다. 보드 칸은 아직 ${show(b.status)} - 관리자가 라운드를 닫을 때 고칩니다`;
+  return span;
+}
 const BOARD_FILTERS = [
-  { key: 'open', label: '미완료', test: (b) => !['DONE', 'REJECTED'].includes(String(b.status || '').toUpperCase()) },
-  { key: 'done', label: '완료', test: (b) => String(b.status || '').toUpperCase() === 'DONE' },
+  { key: 'open', label: '미완료', test: (b, data) => !boardLive(b, data).closed },
+  { key: 'done', label: '완료', test: (b, data) => boardLive(b, data).done },
   { key: 'all', label: '전체', test: () => true },
 ];
 
@@ -2395,9 +2486,9 @@ function openArchivePanel() {
       + '(관리자는 라운드를 닫을 때 14일 지난 것만 자동으로 정리합니다 - 최근에 끝난 것은 여기서 직접 정리합니다.)';
     intro.appendChild(tail);
     body.appendChild(intro);
-    const row = document.createElement('div'); row.className = 'slot-actions';
+    const row = document.createElement('div'); row.className = 'slot-actions archive-actions';
     const sel = document.createElement('select');
-    for (const [v, t] of [[14, '14일 지난 것 (규칙 기본)'], [7, '7일 지난 것'], [0, '지금 끝난 것 전부']]) { const o = document.createElement('option'); o.value = String(v); o.textContent = t; sel.appendChild(o); }
+    for (const [v, t] of [[0, '지금 끝난 것 전부'], [7, '7일 지난 것'], [14, '14일 지난 것 (관리자 자동 정리와 같음)']]) { const o = document.createElement('option'); o.value = String(v); o.textContent = t; sel.appendChild(o); }
     const preview = linkButton('미리보기', () => run(true));
     const apply = document.createElement('button'); apply.type = 'button'; apply.className = 'btn-primary'; apply.textContent = '실행'; apply.disabled = true;
     row.appendChild(sel); row.appendChild(preview); row.appendChild(apply); body.appendChild(row);
@@ -2456,7 +2547,7 @@ function renderBoard(data) {
       chip.type = 'button';
       chip.className = 'chip';
       chip.setAttribute('aria-pressed', String(state.boardFilter === f.key));
-      chip.textContent = `${f.label} ${all.filter(f.test).length}`;
+      chip.textContent = `${f.label} ${all.filter((b) => f.test(b, data)).length}`;
       chip.addEventListener('click', () => {
         state.boardFilter = f.key;
         if (state.data) renderBoard(state.data);
@@ -2465,7 +2556,7 @@ function renderBoard(data) {
     }
   }
   const filter = BOARD_FILTERS.find((f) => f.key === state.boardFilter) || BOARD_FILTERS[0];
-  const board = all.filter(filter.test).slice().reverse();   // 최신 태스크가 위
+  const board = all.filter((b) => filter.test(b, data)).slice().reverse();   // 최신 태스크가 위
   if (!board.length) {
     wrap.appendChild(emptyP(all.length ? '이 필터에 해당하는 작업 없음' : '보드 없음'));
     return;
@@ -2481,10 +2572,12 @@ function renderBoard(data) {
     } else {
       const line = document.createElement('span');
       line.className = 'run-line';
-      line.appendChild(statusBadge(run.state));
-      line.appendChild(document.createTextNode(' '));
-      line.appendChild(reportBadge(run.report_head));
-      last.appendChild(line);
+      const verdictOnly = String(run.state || '').toLowerCase() === 'done' && reportStatus(run.report_head);   // 끝난 실행은 보고 판정만 (done · DONE 이 겹쳐 보였다)
+      // 상태 칸이 이미 같은 말('진행 중')을 하고 있으면 여기서는 되풀이하지 않는다 - 칩 둘이 나란히 찍혔다 (2026-11-12 태석님)
+      const sameAsStatus = statusLabel(run.state) === statusLabel(boardLive(b, data).status);
+      if (!verdictOnly && !sameAsStatus) { line.appendChild(statusBadge(run.state)); line.appendChild(document.createTextNode(' ')); }
+      if (reportStatus(run.report_head)) line.appendChild(reportBadge(run.report_head));
+      if (line.childNodes.length) last.appendChild(line);
       const sub = document.createElement('span');
       sub.className = 'sub';
       sub.textContent = fmtDateTime(run.started).slice(5) + ' · ' + fmtElapsed(run.elapsed_sec);
@@ -2494,13 +2587,13 @@ function renderBoard(data) {
       mono(b.id),
       plainText(b.task) || '-',
       show(b.slot),
-      statusBadge(b.status),
+      boardStatusBadge(b, data),
       last,
       plainText(b.artifact) || '-',
     ];
   });
-  const table = newTable(['ID', '작업', '슬롯', '보드 상태', '최근 실행', '산출물'], rows, null, {
-    widths: ['76px', '380px', '64px', '124px', '170px', null],
+  const table = newTable(['ID', '작업', '슬롯', '상태', '최근 실행', '산출물'], rows, null, {
+    widths: ['76px', null, '64px', '124px', '190px', '200px'],   // 제목 칸이 남는 폭을 다 쓴다 (전에는 빈 '산출물' 칸이 넓고 제목이 잘렸다)
     center: [3],
     ellipsis: [1, 5],
     rowOpen: board.map((b) => ({ fn: () => openTaskDetail(b.id, state.data), title: '태스크 상세 보기: ' + show(b.id, '') })),
@@ -2525,7 +2618,7 @@ function renderQueue(data) {
   ]);
   // 칸 이름 (2026-11-12 태석님: 설명·명칭을 명확하게) - '핸드오프' 칸은 실제로는 이 일이 나온 태스크였다
   wrap.appendChild(newTable(['순서', '할 일', '추천 슬롯', '출처 태스크', '비고'], rows, null, {
-    widths: ['56px', '420px', '96px', '96px', null],
+    widths: ['56px', null, '110px', '110px', '240px'],
     num: [0],
     ellipsis: [1, 4],
     rowOpen: queue.map((q) => ({ fn: () => openQueueDetail(q, state.data), title: '대기 큐 항목 전문 보기' })),
@@ -2539,7 +2632,8 @@ function fmtGraphPct(value) {
 
 function fmtGraphEta(value) {
   if (value === null || value === undefined || value === '') return '-';
-  return show(value) + 's';
+  const n = Number(value);
+  return Number.isFinite(n) ? fmtElapsed(n) : show(value);
 }
 
 function graphFinished(g) {
@@ -2565,6 +2659,8 @@ function makeElidable(el, full) {
   el.setAttribute('aria-expanded', 'false');
   el.setAttribute('aria-label', '전문 보기: ' + full);
   const toggleFull = (event) => {
+    // 잘리지 않은 글은 펼칠 것이 없다 - 누름을 행(상세 보기)에 넘긴다 (좁은 화면 카드에서는 제목이 다 보인다)
+    if (!el.classList.contains('elide-open') && el.scrollWidth <= el.clientWidth + 1 && el.scrollHeight <= el.clientHeight + 1) return;
     event.preventDefault();
     event.stopPropagation();          // 행 전체의 '상세 보기' 가 같이 열리지 않게
     const open = el.classList.toggle('elide-open');
@@ -2607,7 +2703,8 @@ function graphStale(g) {
 function graphStateBadge(g, finished) {
   const counts = g.counts || {};
   if (finished) {
-    return (counts.failed || counts.blocked) ? badge('부분 완료', 'partial') : badge('완료', 'done');
+    if (!(counts.failed || counts.blocked)) return badge('완료', 'done');
+    return counts.done ? badge('일부 실패', 'partial') : badge('실패', 'failed');   // 끝난 것이 0 인데 '부분 완료' 라고 적혀 실패를 놓쳤다
   }
   const t = Date.parse(String(g.updated || g.created || ''));
   if (Number.isFinite(t) && (Date.now() - t) / 1000 > GRAPH_STALE_SEC) {
@@ -2662,7 +2759,7 @@ function graphBlock(g) {
   const meta = document.createElement('div');
   meta.className = 'graph-counts';
   const parts = [];
-  for (const [k, label] of [['done', '완료'], ['running', '진행'], ['todo', '대기'], ['failed', '실패'], ['blocked', '막힘']]) {
+  for (const [k, label] of [['done', '완료'], ['running', '진행 중'], ['todo', '할 일'], ['failed', '실패'], ['blocked', '막힘']]) {
     if (counts[k]) parts.push(`${label} ${counts[k]}`);
   }
   if (g.updated) parts.push('갱신 ' + fmtDateTime(g.updated));
@@ -2690,7 +2787,7 @@ function graphBlock(g) {
       const tw = document.createElement('div');
       tw.className = 'tablewrap';
       const table = newTable(['노드', '제목', '슬롯', '상태', '의존', '시도', '마지막 실행'], rows, null, {
-        widths: ['76px', '360px', '64px', '90px', '130px', '60px', null],
+        widths: ['76px', null, '64px', '90px', '170px', '60px', '200px'],
         num: [5],
         center: [3],
         ellipsis: [1, 4, 6],
@@ -2722,7 +2819,15 @@ function renderGraphs(data) {
       state.showClosedGraphs = !state.showClosedGraphs;
       if (state.data) renderGraphs(state.data);
     }));
-    if (state.showClosedGraphs) for (const g of closed) list.appendChild(graphBlock(g));
+    if (state.showClosedGraphs) {
+      for (const g of closed) list.appendChild(graphBlock(g));
+      // 펼친 목록은 수천 px 다 - 끝에서도 접을 수 있게 한다
+      if (closed.length > 3) list.appendChild(closedFoldButton(true, closed.length, () => {
+        state.showClosedGraphs = false;
+        if (state.data) renderGraphs(state.data);
+        const sec = $('graphs-section'); if (sec) sec.scrollIntoView({ block: 'start' });
+      }));
+    }
   }
 }
 
@@ -3093,8 +3198,10 @@ function renderRequests(data) {
           runId.className = 'run-id';
           runId.textContent = show(run.id);
           link.appendChild(runId);
-          link.appendChild(document.createTextNode(' '));
-          link.appendChild(statusBadge(run.state));
+          if (statusLabel(run.state) !== statusLabel(st.status)) {   // 상태 칸과 같은 말이면 되풀이하지 않는다
+            link.appendChild(document.createTextNode(' '));
+            link.appendChild(statusBadge(run.state));
+          }
           const info = document.createElement('span');
           info.className = 'run-info';
           info.textContent = ' · ' + fmtElapsed(run.elapsed_sec) +
@@ -3118,7 +3225,7 @@ function renderRequests(data) {
         null,
         {
           className: 'subtasks',
-          widths: ['76px', '320px', '64px', '90px', '100px', '90px', null],
+          widths: ['76px', null, '64px', '90px', '100px', '90px', '200px'],
           num: [5],
           center: [4],
           ellipsis: [1, 6],
@@ -3141,7 +3248,14 @@ function renderRequests(data) {
       state.showClosedRequests = !state.showClosedRequests;
       if (state.data) renderRequests(state.data);
     }));
-    if (state.showClosedRequests) closedRequests.forEach(drawRequest);
+    if (state.showClosedRequests) {
+      closedRequests.forEach(drawRequest);
+      if (closedRequests.length > 3) list.appendChild(closedFoldButton(true, closedRequests.length, () => {
+        state.showClosedRequests = false;
+        if (state.data) renderRequests(state.data);
+        const sec = $('requests-section'); if (sec) sec.scrollIntoView({ block: 'start' });
+      }));
+    }
   }
 }
 
@@ -3206,21 +3320,24 @@ function renderTabCounts(data) {
   setTabCount('tab-count-fleet', running, true);
   const projects = Array.isArray(data.projects) ? data.projects : [];
   const unfinished = projects.filter((p) => !projectDone(p)).length;
-  // 다른 탭처럼 늘 숫자를 보인다 (2026-11-12 태석님: 일관성) - 프로젝트 수, 끝나지 않은 것이 있으면 색
-  setTabCount('tab-count-projects', projects.length, false);
-  const pjc = $('tab-count-projects');
-  if (pjc) pjc.classList.toggle('is-hot', unfinished > 0);
+  // 네 탭 모두 같은 규칙: 숫자 = 그 탭에서 지금 살아 있는 것(도는 작업자 / 진행 중 프로젝트 / 미완료 태스크+큐 / 열린 요청), 0 이면 숨김.
+  // 전에는 프로젝트만 전체 수라 다 끝나도 늘 1 이 떠 있었다 (2026-11-12 저녁 태석님: 직접 처리)
+  setTabCount('tab-count-projects', unfinished, true);
+  // 보드·큐 탭의 숫자 = 그 탭에 남은 일 = 미완료 태스크 + 대기 큐 (전에는 큐만 세어 탭 5 · 미완료 10 으로 어긋나 보였다)
   const queue = Array.isArray(data.queue) ? data.queue.length : 0;
-  setTabCount('tab-count-board', queue, false);
+  const openTasks = (Array.isArray(data.board) ? data.board : []).filter((t) => !boardLive(t, data).closed).length;
+  setTabCount('tab-count-board', openTasks + queue, true);
+  const qc = $('queue-count');
+  if (qc) qc.textContent = queue ? String(queue) : '';
   const reqs = Array.isArray(data.requests) ? data.requests : [];
   const active = reqs.filter((r) => !REQ_CLOSED.has(String(r.status || '').toUpperCase())).length;
   setTabCount('tab-count-requests', active, true);
   const f = $('tab-count-fleet');
   if (f) f.title = '실행 중인 작업자';
   const pj = $('tab-count-projects');
-  if (pj) pj.title = `프로젝트 ${projects.length}개` + (unfinished ? ` · 진행 중 ${unfinished}개` : ' · 모두 끝남');
+  if (pj) pj.title = `진행 중인 프로젝트 ${unfinished}개 (전체 ${projects.length}개)`;
   const b = $('tab-count-board');
-  if (b) b.title = '대기 큐 항목';
+  if (b) b.title = `미완료 태스크 ${openTasks}건 + 대기 큐 ${queue}건`;
   const q = $('tab-count-requests');
   if (q) q.title = '끝나지 않은 요청';
   const closedRequests = reqs.filter((r) => REQ_CLOSED.has(String(r.status || '').toUpperCase()));
@@ -3315,7 +3432,8 @@ function openProjectApp(pr) {
     tab.href = '/app/' + encodeURIComponent(name) + '/';
     tab.target = '_blank';
     tab.rel = 'noopener noreferrer';
-    tab.textContent = '새 탭에서 열기';
+    tab.textContent = '새 탭에서 열기 ↗';
+    tab.className = 'btn-link link-btn';
     tab.title = '더 큰 화면으로 봅니다. 여기서도 격리되어 새 탭에서는 기록이 남지 않습니다';
     body.appendChild(tab);
 
@@ -3678,7 +3796,8 @@ function updateLastRefresh() {
   if (!el) return;
   if (state.error) {
     el.classList.add('is-error');
-    el.textContent = '갱신 실패: ' + state.error;
+    el.textContent = '갱신 실패';
+    el.title = '갱신 실패: ' + state.error;
     return;
   }
   el.classList.remove('is-error');
@@ -3695,6 +3814,32 @@ function updateLastRefresh() {
   el.title = `마지막 갱신 ${seconds}초 전`;
 }
 
+// 불러오기 실패를 본문 위에 크게 알린다 - 전에는 상단 바의 작은 영문('Failed to fetch') 한 줄뿐이라 빈 카드만 보였다
+function showLoadError() {
+  let box = $('load-error');
+  if (!state.error) { if (box) box.hidden = true; return; }
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'load-error';
+    box.className = 'banner banner-errors load-error';
+    box.setAttribute('role', 'alert');
+    const layout = document.querySelector('.layout');
+    if (layout && layout.parentNode) layout.parentNode.insertBefore(box, layout); else document.body.appendChild(box);
+  }
+  const why = /failed to fetch|networkerror|load failed/i.test(state.error) ? '서버에 연결할 수 없습니다' : state.error;
+  const when = state.fetchedAt ? `아래 내용은 ${new Date(state.fetchedAt).toLocaleTimeString('ko-KR', { hour12: false })} 에 받은 것입니다.` : '아직 받은 자료가 없어 화면이 비어 있습니다.';
+  box.textContent = '';
+  const msg = document.createElement('div');
+  const b = document.createElement('strong'); b.textContent = '자료를 불러오지 못했습니다';
+  msg.appendChild(b);
+  msg.appendChild(document.createTextNode(`${why}. ${when}`));
+  const retry = document.createElement('button');
+  retry.type = 'button'; retry.textContent = '다시 시도';
+  retry.addEventListener('click', () => { refresh(); });
+  box.appendChild(msg); box.appendChild(retry);
+  box.hidden = false;
+}
+
 async function refresh() {
   if (state.busy) return;
   state.busy = true;
@@ -3709,6 +3854,7 @@ async function refresh() {
   } finally {
     state.busy = false;
     updateLastRefresh();
+    showLoadError();
   }
 }
 
@@ -3777,7 +3923,12 @@ async function onSubmit(event) {
     if (projectEl) { projectEl.value = ''; projectEl.hidden = true; }
     msg.className = 'form-msg success';
     msg.textContent = '요청 생성됨: ' + show(result.id, '-') +
-      (project ? ` · 프로젝트 ${project}` : ' · 함대 자체');
+      (project ? ` · 프로젝트 ${project}` : ' · 함대 자체') + ' ';
+    // 다음 일(라운드 실행)은 함대 탭 맨 위에 있다 - 폰에서는 폼에서 수천 px 위라 길을 놓는다
+    const go = document.createElement('button');
+    go.type = 'button'; go.className = 'btn-link'; go.textContent = '함대 제어로 ↑';
+    go.addEventListener('click', () => { selectTab('fleet', false); const fc = $('fleet-control'); if (fc) fc.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
+    msg.appendChild(go);
     await refresh();
   } catch (err) {
     msg.className = 'form-msg error';
@@ -3861,7 +4012,31 @@ async function initAuth() {
   }
 }
 
+// 상단 바의 실제 높이를 재서 탭 줄·옆 폼의 고정 위치에 쓴다 - 721~900px 에서는 상단 바가 두 줄이라 56px 고정값이면 탭 글자를 가렸다
+function trackTopbarHeight() {
+  const bar = document.querySelector('.topbar');
+  if (!bar || typeof ResizeObserver !== 'function') return;
+  const set = () => document.documentElement.style.setProperty('--topbar-h-live', Math.round(bar.getBoundingClientRect().height) + 'px');
+  new ResizeObserver(set).observe(bar);
+  set();
+}
+
+// 옆 폼이 아래로 내려간 화면(1360px 이하)에서 어느 탭·어느 자리에서든 작업 요청 폼으로 가는 단추. 폼이 보이는 동안은 숨는다
+function initRequestFab() {
+  const sec = $('request-form-section');
+  if (!sec || typeof IntersectionObserver !== 'function') return;
+  const fab = document.createElement('button');
+  fab.type = 'button'; fab.id = 'req-fab'; fab.className = 'req-fab btn-primary';
+  fab.textContent = '＋ 요청';
+  fab.title = "'작업 요청' 폼으로 갑니다";
+  fab.addEventListener('click', focusRequestForm);
+  document.body.appendChild(fab);
+  new IntersectionObserver((entries) => { fab.classList.toggle('is-hidden', entries[0].isIntersecting); }, { threshold: 0.05 }).observe(sec);
+}
+
 function init() {
+  trackTopbarHeight();
+  initRequestFab();
   initAuth();
   const demoBanner = $('demo-banner');
   demoBanner.hidden = !DEMO;

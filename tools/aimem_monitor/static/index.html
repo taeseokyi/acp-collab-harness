@@ -21,7 +21,7 @@
       <label class="toggle"><input type="checkbox" id="autoRefresh" checked><span>자동<span class="tl-more"> 새로고침</span></span></label>
       <span id="refresh-status" class="refresh-status">마지막 갱신 -</span>
       <button type="button" id="refresh-now">지금 갱신</button>
-      <button type="button" id="archive-open" title="끝난 태스크·닫힌 요청·끝난 그래프를 한꺼번에 아카이브로 옮깁니다 (지우지 않음)"><span class="tl-more">끝난 것 </span>정리… <span id="archive-count" class="tab-count"></span></button>
+      <button type="button" id="archive-open" title="끝난 태스크·닫힌 요청·끝난 그래프를 한꺼번에 아카이브로 옮깁니다 (지우지 않음)"><span class="tl-more">끝난 것 </span>정리 <span id="archive-count" class="tab-count"></span></button>
       <!-- 화면·로그인 설정을 ⚙ 하나로 묶는다 (2026-11-12 태석님: 상단 바 정리 - 폰 2행, 데스크톱도 같은 꼴) -->
       <button type="button" id="settings-toggle" class="settings-toggle" aria-haspopup="true" aria-expanded="false" aria-controls="settings-menu" aria-label="설정" title="설정 - 어두운 모드 · 로그인">⚙<span class="tl-more">설정</span></button>
       <div id="settings-menu" class="settings-menu">
@@ -83,19 +83,24 @@
           <div class="tablewrap" id="board-table-wrap"></div>
         </section>
         <section class="card" id="queue-section">
-          <h2>대기 큐 <span class="hint">후속 일 · 요청을 처리하다 생긴 다음 할 일(검수 지적 등)</span></h2>
+          <h2>대기 큐 <span class="tab-count" id="queue-count"></span> <span class="hint">후속 일 · 요청을 처리하다 생긴 다음 할 일(검수 지적 등)</span></h2>
+          <details class="fold-group help-fold"><summary>읽는 법 · 검수 번호(R17-N5) 뜻</summary>
           <p class="form-help">관리자가 라운드마다 <b>새 작업 요청을 먼저</b> 하고 그다음 여기서 위부터 가져갑니다. 요청과 이것이 모두 비면 이어 달리기가 멈춥니다. 순서 번호는 처리된 항목이 빠지면 다시 매겨집니다.</p>
           <dl class="id-legend" aria-label="검수 번호 읽는 법">
             <dt><code>R17-N5</code></dt><dd>R17 라운드 검수 보고서(<code>rounds/R17/REVIEW-….md</code>)의 5번 항목. 번호는 보고서마다 1부터 다시 세므로 라운드를 꼭 붙입니다</dd>
             <dt><code>N</code></dt><dd>결함·발견 - 검수자가 찾은 문제. 등급은 높음 · 중간 · 낮음 · 정보(고치지 않아도 되지만 알아 둘 것)</dd>
             <dt><code>M</code></dt><dd>변이 시험 - 코드를 일부러 망가뜨려 테스트가 잡는지 본 것. "살아남음" 이면 테스트 구멍입니다</dd>
             <dt><code>D</code></dt><dd>넘어온 결함 - 앞 라운드에서 다 못 닫고 이어받은 문제</dd>
+            <dt><code>P·A·S…</code></dt><dd>검수자마다 다른 글자를 쓰기도 합니다(예: <code>R19-P2</code>, <code>R18-A7</code>). 글자가 무엇이든 <b>앞의 <code>R숫자</code> 가 라운드</b>이고, 그 라운드 검수 보고서를 보면 뜻이 있습니다</dd>
           </dl>
+          </details>
           <div class="tablewrap" id="queue-table-wrap"></div>
         </section>
         <section class="card" id="log-section">
           <h2>라운드 핸드오프 로그 <span class="hint">인수인계 기록 · 최신이 위 · 행을 누르면 전문</span></h2>
+          <details class="fold-group help-fold"><summary>읽는 법</summary>
           <p class="form-help">라운드(또는 클로드 코드 작업)가 끝날 때 <b>다음 관리자에게 남기는 요약</b>입니다 - 한 일, 바뀐 것, 남은 일. 관리자는 라운드마다 기억 없이 새로 뜨므로 시작할 때 최근 두 건부터 읽고 이어받습니다. 항목마다 대개 <b>REV</b> 가 하나 오릅니다(커밋의 REV 번호). 본문의 <code>N</code>·<code>M</code>·<code>D</code> 번호는 그 라운드 검수 보고서의 결함·변이 시험·넘어온 결함입니다(읽는 법은 위 '대기 큐').</p>
+          </details>
           <div class="tablewrap" id="log-table-wrap"></div>
           <div id="log-more" class="more-row"></div>
         </section>

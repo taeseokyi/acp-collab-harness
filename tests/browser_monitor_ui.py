@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """모니터의 프로젝트 '실행' 단추가 격리된 iframe 미리보기를 여는지 브라우저에서 잽니다."""
+import contextlib
 import http.server
+import io
 import json
 import pathlib
 import re
+import shutil
 import sys
 import tempfile
 import threading
 from contextlib import contextmanager
+from unittest import mock
 
 from playwright.sync_api import sync_playwright
 
@@ -74,7 +78,10 @@ def scenario(browser, base, checks):
         page.click("#tab-projects")
         page.wait_for_selector("#projects-list .proj-item", timeout=15000)
         # 진행 중 프로젝트가 있으면 처음 필터가 '진행 중' 이라 끝난 웹워들이 숨는다 - 전체로 (2026-11-12)
-        page.locator("#projects-filter-chips .chip").filter(has_text="전체").first.click()
+        # 임시 저장소에는 칩이 없을 수 있으므로, 없으면 조용히 넘어간다
+        chip = page.locator("#projects-filter-chips .chip").filter(has_text="전체")
+        if chip.count() and chip.first.is_visible():
+            chip.first.click()
 
         project = page.locator("#projects-list .proj-item").filter(has_text="웹워들").first
         run_button = project.locator(".proj-run").first
@@ -270,10 +277,25 @@ def changed_ui_scenario(browser, base, checks):
                 break
 
         if el is None:
+            # 2026-11-12 화면 점검 뒤: 900px 이하에서는 표가 카드로 쌓여 제목이 옆으로 잘리지 않는다.
+            # 그때는 제목을 누르면 행 상세가 열리거나(다 보이는 글), 세 줄로 접힌 긴 글이 그 자리에서 펼쳐진다.
+            first = next((c for c in candidates if c.is_visible()), None)
+            opened = False
+            scroll = None
+            if first is not None:
+                first.click()
+                page.wait_for_timeout(600)
+                overlay = page.query_selector("#detail-overlay")
+                shown = bool(overlay) and overlay.evaluate("e=>getComputedStyle(e).display") != "none"
+                expanded = "elide-open" in (first.get_attribute("class") or "").split()
+                scroll = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
+                opened = (shown or expanded) and scroll == 0
+                if shown:
+                    page.locator("#detail-close").click()
             checks.ok(
                 "생략된 제목을 눌러 펼칠 수 있다 (폰 폭 390px)",
-                False,
-                "잘린 .elide[role=button]을 보드·큐에서 찾지 못함",
+                first is not None and opened,
+                f"옆으로 잘린 제목 없음(카드 배치) - 제목 누름: 보이는 제목={first is not None}, 상세·펼침={opened}, 가로스크롤={scroll}px",
             )
         else:
             box_before = el.bounding_box()
@@ -390,6 +412,43 @@ def write_fixed_runs(root):
         (runs_dir / f"{run_id}.rc").write_text("0\n", encoding="utf-8")
 
 
+def write_fixed_project(root):
+    """git 에 들어 있는 웹워들 프로젝트를 임시 저장소로 통째로 복사합니다."""
+    src = ROOT / "projects" / "웹워들"
+    dst = root / "projects" / "웹워들"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src, dst)
+
+
+@contextmanager
+def temporary_aimem_root(root):
+    """임시 저장소를 정본으로 쓰도록 aimem_db·server 의 ROOT/DB 를 잠시 바꿉니다.
+
+    운영 저장소 밖에서는 `archive_action` 이 403 을 돌려주므로, 화면 검사가 쓰는
+    임시 저장소를 잠시 정본으로 만들어 준다 (tests/test_archive_api.py 와 같은 수법).
+    """
+    import aimem_db
+
+    root = pathlib.Path(root).resolve()
+    targets = (
+        (aimem_db, "ROOT", root),
+        (aimem_db, "DB", root / ".aimem" / "aimem.db"),
+        (aimem_db, "AIMEM", root / "AIMEM.md"),
+        (aimem_db, "HANDOFF", root / ".aimem" / "handoff.md"),
+        (server, "ROOT", root),
+    )
+    patches = [mock.patch.object(target, attr, value) for target, attr, value in targets]
+    try:
+        for patch in patches:
+            patch.start()
+        with contextlib.redirect_stdout(io.StringIO()):
+            aimem_db.cmd_init()
+        yield root
+    finally:
+        for patch in patches:
+            patch.stop()
+
+
 def zero_subtask_scenario(browser, base, checks):
     """임시 저장소의 고정 요청 네 건으로 서브태스크 0건 화면을 잽니다."""
     ctx = browser.new_context(viewport={"width": 1280, "height": 900})
@@ -404,7 +463,7 @@ def zero_subtask_scenario(browser, base, checks):
         open_seen = []
         for block in page.query_selector_all("#requests-list .req-block"):
             badge = block.query_selector(".badge")
-            status = badge.inner_text().strip() if badge else ""
+            status = (badge.get_attribute("data-status") or badge.inner_text()).strip() if badge else ""
             if status not in ("NEW", "PLANNED", "IN-PROGRESS"):
                 continue
             open_seen.append(status)
@@ -426,7 +485,7 @@ def zero_subtask_scenario(browser, base, checks):
         done_blocks = []
         for block in page.query_selector_all("#requests-list .req-block"):
             badge = block.query_selector(".badge")
-            status = badge.inner_text().strip() if badge else ""
+            status = (badge.get_attribute("data-status") or badge.inner_text()).strip() if badge else ""
             if status != "DONE":
                 continue
             done_blocks.append(block)
@@ -438,7 +497,7 @@ def zero_subtask_scenario(browser, base, checks):
             done_blocks[0].query_selector(".req-toggle").click()
             for block in page.query_selector_all("#requests-list .req-block"):
                 badge = block.query_selector(".badge")
-                status = badge.inner_text().strip() if badge else ""
+                status = (badge.get_attribute("data-status") or badge.inner_text()).strip() if badge else ""
                 if status != "DONE":
                     continue
                 done_line = block.query_selector(".req-done-line")
@@ -528,7 +587,7 @@ def request_tree_scenario(browser, base, checks):
         closed_visible = []
         for block in page.query_selector_all("#requests-list .req-block"):
             badge = block.query_selector(".badge")
-            status = badge.inner_text().strip() if badge else ""
+            status = (badge.get_attribute("data-status") or badge.inner_text()).strip() if badge else ""
             if status in ("DONE", "REJECTED") and block.is_visible():
                 closed_visible.append(status)
         checks.ok(
@@ -544,7 +603,7 @@ def request_tree_scenario(browser, base, checks):
             result = []
             for block in page.query_selector_all("#requests-list .req-block"):
                 badge = block.query_selector(".badge")
-                status = badge.inner_text().strip() if badge else ""
+                status = (badge.get_attribute("data-status") or badge.inner_text()).strip() if badge else ""
                 if status in ("DONE", "REJECTED") and block.is_visible():
                     result.append(status)
             return result
@@ -563,7 +622,7 @@ def request_tree_scenario(browser, base, checks):
         done_text = ""
         for block in page.query_selector_all("#requests-list .req-block"):
             badge = block.query_selector(".badge")
-            status = badge.inner_text().strip() if badge else ""
+            status = (badge.get_attribute("data-status") or badge.inner_text()).strip() if badge else ""
             if status != "DONE":
                 continue
             if block.query_selector_all(".req-progress") or block.query_selector_all(".eta"):
@@ -574,7 +633,7 @@ def request_tree_scenario(browser, base, checks):
 
         for block in page.query_selector_all("#requests-list .req-block"):
             badge = block.query_selector(".badge")
-            status = badge.inner_text().strip() if badge else ""
+            status = (badge.get_attribute("data-status") or badge.inner_text()).strip() if badge else ""
             if status != "DONE":
                 continue
             toggle = block.query_selector(".req-toggle")
@@ -583,7 +642,7 @@ def request_tree_scenario(browser, base, checks):
 
         for block in page.query_selector_all("#requests-list .req-block"):
             badge = block.query_selector(".badge")
-            status = badge.inner_text().strip() if badge else ""
+            status = (badge.get_attribute("data-status") or badge.inner_text()).strip() if badge else ""
             if status != "DONE":
                 continue
             done_line = block.query_selector(".req-done-line")
@@ -753,21 +812,23 @@ def main():
             browser = pw.chromium.launch()
             try:
                 with monitor_server() as base:
-                    scenario(browser, base, checks)
-                    narrow_scenario(browser, base, checks)
-                    short_scenario(browser, base, checks)
                     changed_ui_scenario(browser, base, checks)
-                    request_tree_scenario(browser, base, checks)
 
                 with tempfile.TemporaryDirectory() as temp_dir:
                     temp_root = pathlib.Path(temp_dir)
+                    write_fixed_project(temp_root)
                     write_fixed_requests(temp_root)
                     write_fixed_graph(temp_root)
                     write_fixed_runs(temp_root)
-                    with monitor_server(root=temp_root) as temp_base:
-                        zero_subtask_scenario(browser, temp_base, checks)
-                        graph_title_expand_scenario(browser, temp_base, checks)
-                        run_project_tag_scenario(browser, temp_base, checks)
+                    with temporary_aimem_root(temp_root):
+                        with monitor_server(root=temp_root) as temp_base:
+                            scenario(browser, temp_base, checks)
+                            narrow_scenario(browser, temp_base, checks)
+                            short_scenario(browser, temp_base, checks)
+                            request_tree_scenario(browser, temp_base, checks)
+                            zero_subtask_scenario(browser, temp_base, checks)
+                            graph_title_expand_scenario(browser, temp_base, checks)
+                            run_project_tag_scenario(browser, temp_base, checks)
             finally:
                 browser.close()
     except Exception as exc:
