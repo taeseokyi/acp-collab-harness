@@ -32,6 +32,7 @@ HANDOFF = ROOT / ".aimem" / "handoff.md"
 HANDOFF_MAX = 12          # handoff.md 에 보이는 최신 항목 수 (AIMEM.md 5절)
 HANDOFF_ENTRY_MAX = 1200  # 항목당 문자 수 상한 (5절). `handoff add --allow-long` 으로만 넘긴다
 HANDOFF_ENTRY_RE = re.compile(r"^- `(\d{4}-\d{2}-\d{2} \d{2}:\d{2})`")
+_ARCHIVE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}")
 HANDOFF_HEADER = ("# Handoff Log (generated)\n\n"
                   "Generated from `events(kind=handoff)` in `.aimem/aimem.db` - **do not edit; edits are overwritten.** "
                   "Add an entry with `python3 tools/aimem_db.py handoff add`. Newest first, latest "
@@ -896,7 +897,7 @@ def archive_plan(days=14, now=None):
                             # `task` 는 입력 파일 이름일 수도, **지시 본문 전체**일 수도 있다. 본문을 파일 이름으로 쓰면
                             # `File name too long` 으로 죽었다 (2026-11-11 태석님: "지금 끝난 것 전부" 미리보기가 안 됨 -
                             # 14일 기준에서는 최근 그래프가 걸러져 안 드러났다). 파일 이름 꼴일 때만 찾는다.
-                            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", key):
+                            if not isinstance(key, str) or not _ARCHIVE_ID_RE.fullmatch(key):
                                 continue
                             try:
                                 if (gdir / "inputs" / f"{key}.md").exists() and f"{key}.md" not in inputs:
@@ -917,7 +918,10 @@ def archive_plan(days=14, now=None):
                 protected_ids.add(gid)
                 for n in nodes:
                     for key in (n.get("id"), n.get("task")):
-                        if isinstance(key, str) and key:
+                        # `task` 는 **지시 본문 전체**일 수도 있다. 본문을 식별자로 넣으면 아래 `_mentions`
+                        # 가 이벤트마다 수천 자를 `re.escape` 해 미리보기가 15초 걸렸고(2026-11-12 실측),
+                        # 어차피 어떤 본문과도 맞지 않아 지키지도 못한다. 식별자 꼴일 때만 넣는다.
+                        if isinstance(key, str) and _ARCHIVE_ID_RE.fullmatch(key):
                             protected_ids.add(key)
                     for attempt in n.get("attempts") or []:
                         if isinstance(attempt, dict) and attempt.get("run_id"):
@@ -925,6 +929,7 @@ def archive_plan(days=14, now=None):
                     if n.get("run_id"):
                         protected_ids.add(str(n["run_id"]))
 
+    protected_ids = {i for i in protected_ids if isinstance(i, str) and _ARCHIVE_ID_RE.fullmatch(i)}
     plan["tasks"] = [r for r in plan["tasks"] if r["id"] not in protected_ids]
     archived_task_ids = {r["id"] for r in plan["tasks"]}
     run_dir = ROOT / ".aimem" / "runs"
@@ -1418,6 +1423,26 @@ def cmd_ownership(a):
     return 0
 
 
+#: 검수 보고서의 발견 번호(N=결함, M=변이 시험, D=넘어온 결함). **보고서마다 1부터 다시 센다** - R15 의 N5 와
+#: R17 의 N5 는 다른 문제다. 큐는 라운드를 넘어 남으므로 큐에 적을 때는 `R17-N5` 처럼 라운드를 붙인다.
+#: 같은 라운드 것을 이어 적을 때는 `R17-N5·N6` 처럼 첫 번호에만 붙여도 된다 (2026-11-12 태석님 지시).
+_FINDING_QUALIFIED = re.compile(r"(?<![0-9A-Za-z])R\d+-[NMD]\d+(?:\s*[·,/]\s*[NMD]\d+)*(?![0-9A-Za-z])")
+_FINDING_BARE = re.compile(r"(?<![0-9A-Za-z_-])[NMD]\d{1,3}(?![0-9A-Za-z])")
+
+
+def bare_finding_ids(text):
+    """라운드가 안 붙은 발견 번호 목록 (`N5`, `M13` …). 비어 있으면 통과."""
+    rest = _FINDING_QUALIFIED.sub(" ", str(text or ""))
+    return _FINDING_BARE.findall(rest)
+
+
+def _check_queue_text(*texts):
+    bare = sorted({x for t in texts for x in bare_finding_ids(t)}, key=lambda x: (x[0], int(x[1:])))
+    if bare:
+        sys.exit("큐에 적는 검수 발견 번호에는 라운드를 붙이십시오: " + ", ".join(bare) +
+                 " → 예) R17-N5, R17-N5·N6, R17-M13 (번호는 검수 보고서마다 1부터 다시 셉니다)")
+
+
 def cmd_queue(a):
     """`4.5` 대기 큐. REV 114 에서 마크다운 표를 내리면서 신설했습니다.
 
@@ -1432,7 +1457,9 @@ def cmd_queue(a):
         # 읽고-쓰는 명령은 `BEGIN IMMEDIATE` 로 시작합니다. 기본 암묵 BEGIN 은
         # DML 에서야 열려서 앞선 `SELECT` 가 트랜잭션 밖이었고, 동시 `add` 둘이
         # 같은 `pos` 를 받아 둘째가 `IntegrityError` 로 죽었습니다 (S4 검수 9번).
-        if a.action in ("add", "drop"):
+        if a.action in ("add", "edit"):
+            _check_queue_text(a.task, a.note)
+        if a.action in ("add", "drop", "edit"):
             con.execute("BEGIN IMMEDIATE")
         if a.action == "list":
             for r in con.execute("SELECT pos,task,slot_hint,inherited,note FROM queue ORDER BY pos"):
@@ -1445,6 +1472,16 @@ def cmd_queue(a):
             con.execute("INSERT INTO queue(pos,task,slot_hint,inherited,note) VALUES(?,?,?,?,?)",
                         (pos, a.task, a.slot_hint, a.inherited, a.note))
             body = f"queue +{pos} {a.task}"
+        elif a.action == "edit":
+            # 제자리 고치기 - drop 뒤 add 로 고치면 맨 뒤로 가서 순서가 바뀐다
+            row = con.execute("SELECT task FROM queue WHERE pos=?", (a.pos,)).fetchone()
+            if not row:
+                print(f"큐에 {a.pos} 번이 없습니다")
+                return 1
+            fields = {k: v for k, v in (("task", a.task), ("slot_hint", a.slot_hint), ("inherited", a.inherited),
+                                        ("note", a.note)) if v is not None}
+            con.execute(f"UPDATE queue SET {', '.join(k + '=?' for k in fields)} WHERE pos=?", (*fields.values(), a.pos))
+            body = f"queue ~{a.pos} {a.task or row['task']}"
         elif a.action == "drop":
             row = con.execute("SELECT task FROM queue WHERE pos=?", (a.pos,)).fetchone()
             if not row:
@@ -1631,7 +1668,7 @@ def main():
     h.add_argument("--expect-rev", dest="expect_rev", type=int, help="add: 지금 REV 가 이 값이 아니면 쓰지 않고 거절")
     h.add_argument("--last", type=int, help=f"list: 최신 N건 (기본 {HANDOFF_MAX})"); h.add_argument("--all", action="store_true", help="list: 전부")
     u = sub.add_parser("queue", help="4.5 대기 큐 (관리자만 씁니다)")
-    u.add_argument("action", choices=["list", "add", "drop"])
+    u.add_argument("action", choices=["list", "add", "edit", "drop"])
     u.add_argument("--task"); u.add_argument("--slot-hint", dest="slot_hint"); u.add_argument("--inherited")
     u.add_argument("--note"); u.add_argument("--pos", type=int); u.add_argument("--verbose", action="store_true")
     u.add_argument("--actor", default="관리자")
@@ -1639,8 +1676,10 @@ def main():
     if a.cmd == "queue":
         if a.action == "add" and not a.task:
             p.error("queue add 에는 --task 가 필요합니다")
-        if a.action == "drop" and a.pos is None:
-            p.error("queue drop 에는 --pos 가 필요합니다")
+        if a.action in ("drop", "edit") and a.pos is None:
+            p.error(f"queue {a.action} 에는 --pos 가 필요합니다")
+        if a.action == "edit" and not any((a.task, a.slot_hint, a.inherited, a.note)):
+            p.error("queue edit 에는 고칠 칸(--task/--slot-hint/--inherited/--note)이 하나는 필요합니다")
     return {"init": cmd_init, "migrate": lambda a: migrate(), "render": lambda a: render(), "state": cmd_state,
             "check": cmd_check, "event": cmd_event, "task": cmd_task, "request": cmd_request,
             "ownership": cmd_ownership, "queue": cmd_queue, "archive": cmd_archive, "slot": cmd_slot,

@@ -72,6 +72,9 @@ SERVER_KEYS = {
     # app = 실행 선언(`projects/<이름>/app.json`). {runnable, url, title, root, entry, reason} 또는 null
     "projects": "[{name, path, exists, percent, basis, goals:{total, done}, request_percent, requests:{total, done, new, active}, rounds, round_count, first_round, "
                 "last_round, last_round_at, updated, summary, app}]",
+    # Claude Code 상태줄이 적어 둔 `.aimem/claude-usage.json` 을 읽어 만든 사용 한도 (2026-11-12, R18).
+    # 파일이 없거나 읽을 수 없으면 null.
+    "claude_usage": "{at, age_seconds, rows:[{key, label, percent, resets_at_iso}]} 또는 null",
 }
 
 #: 공개면에서 **절대 나가면 안 되는** 것 (REV 114, S4 유출 검수 5번).

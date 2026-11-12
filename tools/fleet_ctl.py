@@ -916,6 +916,36 @@ def chain_set(on, project=None, max_rounds=None, by="사람", scope=None, projec
     return {"ok": True, "chain": st}
 
 
+_LIMIT_LOG_LINE = re.compile(r"^(?:\d{4}-\d{2}-\d{2}T\S+\s+)?limit ")
+
+
+def _round_hit_limit(round_n):
+    """그 라운드의 그래프 로그에 사용 한도로 끊긴 줄(`limit ...`)이 있으면 True.
+
+    읽기 실패는 밖으로 내보내지 않습니다 - 까닭 문자열에 덧붙이지 않는 쪽이 낫습니다.
+    """
+    if round_n is None:
+        return False
+    try:
+        graphs = _graphs_dir()
+        for path in sorted(graphs.glob("G-*.json")):
+            try:
+                g = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if str(g.get("round")) != str(round_n):
+                continue
+            try:
+                text = path.with_suffix(".log").read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if any(_LIMIT_LOG_LINE.match(line.strip()) for line in text.splitlines()):
+                return True
+        return False
+    except Exception:  # noqa: BLE001 - 판정 실패는 덧붙이지 않는 것으로 끝낸다
+        return False
+
+
 def chain_decide(round_n):
     """라운드 `round_n` 이 끝난 지금 다음 라운드를 띄울까. `{action: launch|stop, why, requests, goals}` - 판정만.
 
@@ -947,8 +977,12 @@ def chain_decide(round_n):
     if status != "DONE":
         if second_chance and (open_ids or goals_left or queue_left):
             return {**base, "action": "launch", "strike": True, "why": f"R{round_n} 보고가 {status or '없음'} 입니다 - 완전 자율 종주라 한 번 더 갑니다 ({left})"}
-        return {**base, "action": "stop", "kind": "report", "why": f"R{round_n} 보고가 {status or '없음'} 입니다 - 사람이 봐야 합니다"
-                + (" (완전 자율 종주에서도 연달아 두 번째라 멈춥니다)" if auto else "")}
+        why = f"R{round_n} 보고가 {status or '없음'} 입니다 - 사람이 봐야 합니다"
+        if auto:
+            why += " (완전 자율 종주에서도 연달아 두 번째라 멈춥니다)"
+        if _round_hit_limit(round_n):
+            why += " - 사용 한도로 끊긴 시도가 있습니다"
+        return {**base, "action": "stop", "kind": "report", "why": why}
     closed = [i for i in (st.get("open_requests") or []) if i not in open_ids]
     queue_shrank = "queue_left" in st and queue_left < int(st.get("queue_left") or 0)
     queue_new = "queue_left" not in st and queue_left > 0       # 큐를 세기 전에 켠 상태 - 처음 본 큐는 새 일이다

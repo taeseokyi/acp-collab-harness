@@ -5,6 +5,6 @@
  "project": "",
  "title": "작업요청에 프로젝트 목록 나오지않음",
  "detail": "작업요청에 프로젝트 목록 나오지않음.\n\n있는건 선태가능 하게. 없는건 추가 입력.",
- "status": "NEW",
+ "status": "DONE",
  "subtasks": []
 }

@@ -107,6 +107,7 @@ def check_login_works(ctx, base, checks):
     page = ctx.new_page()
     try:
         page.goto(base + "/", wait_until="load")
+        page.click("#tab-projects")      # 프로젝트가 별도 탭이 됐다 (2026-11-12)
         page.wait_for_selector("#projects-list .proj-item", timeout=10000)
         n = page.locator("#projects-list .proj-item").count()
         checks.ok("로그인이 된다", r.status == 200 and n >= 1,
@@ -218,6 +219,7 @@ def run_revocation_checks(browser, base, root, checks):
             if "/app/~" in resp.url
             and resp.url.split("?", 1)[0].lower().endswith((".js", ".css")) else None)
         page.goto(base + "/", wait_until="load")
+        page.click("#tab-projects")      # 프로젝트가 별도 탭이 됐다 (2026-11-12)
         page.wait_for_selector("#projects-list .proj-item", timeout=10000)
         run = page.locator(".proj-run").first
         run.wait_for(state="attached", timeout=10000)

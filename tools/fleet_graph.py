@@ -231,9 +231,14 @@ def estimate_seconds(node, durations, roster):
     return base * (1.0 + 0.5 * len(node.get("write", [])))
 
 
-def progress(g):
-    """진행율(%)·ETA(초)·임계 경로. 웹 UI 가 그대로 쓰는 구조."""
-    durations = harness_durations()
+def progress(g, durations=None):
+    """진행율(%)·ETA(초)·임계 경로. 웹 UI 가 그대로 쓰는 구조.
+
+    `durations` 는 `harness_durations()` 결과. 그래프 여럿을 한 번에 셀 때(모니터 `/api/state`) 한 번만 구해
+    넘긴다 - 그래프마다 다시 구하면 실행 기록 수 × 그래프 수만큼 파일을 읽는다(2026-11-12: 41개 × 260건, 7초).
+    """
+    if durations is None:
+        durations = harness_durations()
     roster = fleet.roster()
     nodes = {n["id"]: n for n in g["nodes"]}
     est = {k: estimate_seconds(n, durations, roster) for k, n in nodes.items()}
@@ -408,6 +413,27 @@ def report_block_reason(report):
 
 
 _TOOLCALL_TAIL = re.compile(r"^</?(?:tool_call|function|parameter)\b|^<function=", re.IGNORECASE)
+
+
+_LIMIT_PATTERNS = (
+    "hit your 5-hour limit", "5-hour limit reached", "weekly limit reached",
+    "usage limit reached", "rate limit exceeded", "rate_limit_error",
+    "session limit reached", "reached your usage limit",
+    "한도에 도달", "한도에 걸", "한도를 초과", "한도로 끊", "한도로 끝", "한도에 막",
+)
+
+
+def report_limit_hit(text):
+    """보고 글자에 사용 한도 꼴이 있으면 True.
+
+    이 함수는 글자만 봅니다 - 실행 rc 는 `step()` 이 함께 판정합니다.
+    한도에 걸린 시도는 재시도해도 같은 벽에 부딪히므로 평범한 실패와 구별해야 합니다.
+    보고의 마지막 2000자만 봅니다 - 본문 중간에 인용된 한도 문구까지 잡지 않기 위해서입니다.
+    """
+    if not isinstance(text, str) or not text:
+        return False
+    tail = text[-2000:].lower()
+    return any(pattern in tail for pattern in _LIMIT_PATTERNS)
 
 
 def report_ended_in_tool_call(report):
@@ -756,6 +782,9 @@ def halt_running(g, why="완전 중지"):
 def step(g, concurrency=None, allow_spawn=None):
     """한 틱: 끝난 실행을 거두어 검증하고, 실패면 재시도(한정), 준비된 노드를 띄웁니다.
 
+    사용 한도 판정은 실행 rc != 0 이고 보고가 한도 꼴일 때만 합니다. rc == 0 이면
+    보고에 한도 낱말이 있어도 보통 경로(검증 → done/재시도)로 갑니다.
+
     `allow_spawn` 이 None 이면 함대 모드(`fleet_ctl`)로 정합니다 - `running` 일 때만 띄우고,
     `paused`/`ready` 는 거두기만, `stopped` 는 running 노드를 정리(`halt_running`)하고 끝냅니다.
 
@@ -798,6 +827,16 @@ def step(g, concurrency=None, allow_spawn=None):
             _log(g, f"BLOCKED {n['id']} - {first[:60]}")
             changed = True
             continue
+        if rc != 0 and report_limit_hit(att["report"]):
+            # rc 를 함께 봅니다: 250건 전수 재검에서 rc 0 의 정상 DONE 보고가 3건 오인되었고,
+            # 진짜 한도(rc 1) 1건만 남깁니다. rc != 0 이면 검증을 돌리지 않고 바로 blocked.
+            att["limit"] = True
+            n["limit"] = True
+            att["verify_rc"], att["verify_tail"] = -4, "사용 한도로 끊겼다 - 재시도하지 않는다"
+            n["status"] = "blocked"
+            _log(g, f"limit {n['id']} ({att['run_id']}) - 사용 한도로 끊김")
+            changed = True
+            continue
         if rc == 0 and report_ended_in_tool_call(att["report"]):
             # 도구 호출을 글자로 찍고 끝난 시도 - 한 일이 없다. verify 가 느슨해도 done 이 되지 않게 (R9 T-116)
             vrc, vtail = -2, "작업자가 도구 호출을 본문에 글자로 찍고 끝났다 - 한 일이 없다. 처음부터 다시 하라"
@@ -807,7 +846,10 @@ def step(g, concurrency=None, allow_spawn=None):
                               "고칠 것이 정말 없다면 보고 첫 줄에 그 이유를 적어라")
             _log(g, f"no-op {n['id']} ({att['run_id']}) - write 경로가 하나도 안 바뀜")
         else:
-            vrc, vtail = (_verify(n) if rc == 0 else (-1, "실행 rc != 0"))
+            if rc == 0:
+                vrc, vtail = _verify(n)
+            else:
+                vrc, vtail = -1, "실행 rc != 0"
         att["verify_rc"], att["verify_tail"] = vrc, vtail
         if rc == 0 and vrc == 0:
             n["status"] = "done"
@@ -1055,16 +1097,23 @@ def cmd_unblock(a):
     return 0 if ok else 2
 
 
+def _status_node(n):
+    node = {"id": n["id"], "title": n.get("title"), "slot": n["slot"],
+            "harness": n.get("harness") or fleet.roster().get(n["slot"], ("", "", ""))[1],
+            "status": n.get("status", "todo"), "deps": n.get("deps", []),
+            "attempts": len(n.get("attempts", [])),
+            "last_run": (n["attempts"][-1].get("run_id") if n.get("attempts") else None)}
+    if n.get("limit"):
+        node["limit"] = True
+        node["note"] = "(사용 한도)"
+    return node
+
+
 def cmd_status(a):
     g = _load(a.id)
     out = {"id": g["id"], "request": g.get("request"), "created": g.get("created"), "updated": g.get("updated"),
            **progress(g),
-           "nodes": [{"id": n["id"], "title": n.get("title"), "slot": n["slot"],
-                      "harness": n.get("harness") or fleet.roster().get(n["slot"], ("", "", ""))[1],
-                      "status": n.get("status", "todo"), "deps": n.get("deps", []),
-                      "attempts": len(n.get("attempts", [])),
-                      "last_run": (n["attempts"][-1].get("run_id") if n.get("attempts") else None)}
-                     for n in g["nodes"]]}
+           "nodes": [_status_node(n) for n in g["nodes"]]}
     print(json.dumps(out, ensure_ascii=False, indent=1))
     return 0
 

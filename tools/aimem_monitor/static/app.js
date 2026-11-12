@@ -144,6 +144,7 @@ const state = {
   models: null,          // GET /api/models 결과 (슬롯 편집 폼의 모델 선택지)
   slotMsg: null,
   boardFilter: 'open',
+  projectFilter: null,      // null = 진행 중이 있으면 진행 중, 없으면 전체
   graphOpen: new Set(),
   graphKnown: new Set(),
   showClosedRequests: false,
@@ -262,23 +263,7 @@ function newTable(headers, rows, rowClasses, opts = {}) {
         td.classList.add('elide');
         const full = raw instanceof Node ? raw.textContent : show(raw, '');
         td.title = full;
-        // 폰에는 호버가 없어 title 을 볼 길이 없다 - 눌러서 그 자리에 펼친다 (요청 Q-261111-2e0f)
-        if (full && full !== '-') {
-          td.tabIndex = 0;
-          td.setAttribute('role', 'button');
-          td.setAttribute('aria-expanded', 'false');
-          td.setAttribute('aria-label', '전문 보기: ' + full);
-          const toggleFull = (event) => {
-            event.preventDefault();
-            event.stopPropagation();          // 행 전체의 '상세 보기' 가 같이 열리지 않게
-            const open = td.classList.toggle('elide-open');
-            td.setAttribute('aria-expanded', open ? 'true' : 'false');
-          };
-          td.addEventListener('click', toggleFull);
-          td.addEventListener('keydown', (event) => {
-            if (event.key === 'Enter' || event.key === ' ') toggleFull(event);
-          });
-        }
+        makeElidable(td, full);
       }
       if (raw instanceof Node) td.appendChild(raw);
       else td.textContent = show(raw);
@@ -727,7 +712,7 @@ function openTaskDetail(taskId, data) {
     meta.appendChild(detailMetaItem('슬롯', show(b ? b.slot : (sub ? sub.st.slot : (gn ? gn.n.slot : null)))));
     if (b) {
       meta.appendChild(detailMetaItem('보드 상태', statusBadge(b.status)));
-      meta.appendChild(detailMetaItem('핸드오프', show(b.handoff)));
+      meta.appendChild(detailMetaItem('출처 태스크', show(b.handoff)));
       meta.appendChild(detailMetaItem('산출물', plainText(b.artifact) || '-'));
     } else {
       meta.appendChild(detailMetaItem('보드 상태', '보드에 없음'));
@@ -768,12 +753,12 @@ function openTaskDetail(taskId, data) {
 
 function openQueueDetail(q, data) {
   data = data || state.data;
-  openPanel('대기 큐 ' + show(q.order, ''), (body) => {
+  openPanel('대기 큐 ' + show(q.order, '') + '번 - 후속 일', (body) => {
     const meta = document.createElement('div');
     meta.className = 'detail-meta';
     meta.appendChild(detailMetaItem('순서', show(q.order)));
-    meta.appendChild(detailMetaItem('슬롯', show(q.slots)));
-    meta.appendChild(detailMetaItem('핸드오프', show(q.handoff)));
+    meta.appendChild(detailMetaItem('추천 슬롯', show(q.slots)));
+    meta.appendChild(detailMetaItem('출처 태스크', show(q.handoff)));
     body.appendChild(meta);
     const ho = String(q.handoff || '').trim();
     if (ho && data && taskKnown(ho, data)) {
@@ -782,13 +767,13 @@ function openQueueDetail(q, data) {
       row.appendChild(linkButton('태스크 상세 보기 → ' + ho, () => openTaskDetail(ho, data)));
       body.appendChild(row);
     }
-    addTextSection(body, '작업', q.task);
+    addTextSection(body, '할 일', q.task);
     addTextSection(body, '비고', q.note);
   });
 }
 
 function openLogDetail(entry) {
-  openPanel('핸드오프 로그 ' + show(entry.when, ''), (body) => {
+  openPanel('라운드 핸드오프 로그 ' + show(entry.when, ''), (body) => {
     addTextSection(body, '내용', entry.text);
   });
 }
@@ -1126,7 +1111,10 @@ async function fleetAction(act, confirmText) {
   if (confirmText && !window.confirm(confirmText)) return;
   state.fleetBusy = act;
   state.fleetMsg = null;
-  if (state.data) renderFleetControl(state.data);
+  if (state.data) {
+    renderFleetControl(state.data);
+    renderClaudeUsage(state.data);
+  }
   try {
     let body;
     if (DEMO) {
@@ -1509,6 +1497,130 @@ function renderFleetChain(data) {
   }
 }
 
+// 작업 요청 폼의 프로젝트 고르기 - 있는 프로젝트는 고르고 없으면 새로 입력한다 (요청 Q-261112-a8be).
+// renderFleetControl 안에 있던 것을 떼어 냈다 - 그 함수는 함대 상태를 못 읽으면 먼저 return 해서
+// 목록이 영영 안 채워졌다.
+function projectNameList(data) {
+  return (data && Array.isArray(data.projects) ? data.projects : []).map((x) => x && x.name).filter(Boolean);
+}
+
+function syncNewProjectInput(sel, input, focus) {
+  if (!sel || !input) return;
+  if (sel.value === '__new__') {
+    input.hidden = false;
+    if (focus) input.focus();
+  } else {
+    input.hidden = true;
+    input.value = '';
+  }
+}
+
+function renderProjectPicker(data) {
+  const sel = $('req-project-pick');
+  if (!sel) return;
+  const input = $('req-project');
+  const names = projectNameList(data);
+  const namesKey = names.join('|');
+  if (sel.dataset.names !== namesKey) {     // 바뀔 때만 다시 채운다 (고르는 중 목록이 깜박이지 않게)
+    const current = sel.value;
+    const options = [];
+    const base = document.createElement('option');
+    base.value = '';
+    base.textContent = '(함대 자체의 일 - 프로젝트 없음)';
+    options.push(base);
+    for (const name of names) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      options.push(opt);
+    }
+    const fresh = document.createElement('option');
+    fresh.value = '__new__';
+    fresh.textContent = '+ 새 프로젝트…';
+    options.push(fresh);
+    sel.replaceChildren(...options);
+    sel.dataset.names = namesKey;
+    sel.value = (current === '__new__' || names.includes(current)) ? current : '';
+  }
+  if (!sel.dataset.bound) {
+    sel.dataset.bound = '1';
+    sel.addEventListener('change', () => syncNewProjectInput(sel, input, true));
+  }
+  syncNewProjectInput(sel, input, false);
+}
+
+function fmtUsageReset(value) {
+  if (typeof value !== 'string' || value === '') return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value);
+  if (!m) return null;
+  const now = new Date();
+  const isToday = Number(m[1]) === now.getFullYear()
+    && Number(m[2]) === now.getMonth() + 1
+    && Number(m[3]) === now.getDate();
+  const time = m[4] + ':' + m[5];
+  return isToday ? '초기화 ' + time : '초기화 ' + Number(m[2]) + '/' + Number(m[3]) + ' ' + time;
+}
+
+function usageStaleText(ageSeconds) {
+  const n = Number(ageSeconds);
+  if (!Number.isFinite(n) || n <= 600) return '';
+  const minutes = Math.floor(n / 60);
+  if (minutes > 60) return Math.floor(minutes / 60) + '시간 전 기준';
+  return minutes + '분 전 기준';
+}
+
+function renderClaudeUsage(data) {
+  const box = $('claude-usage');
+  const stale = $('usage-stale');
+  if (stale) stale.textContent = '';
+  if (!box) return;
+  box.textContent = '';
+
+  const usage = data && data.claude_usage;
+  if (!usage || !Array.isArray(usage.rows) || usage.rows.length === 0) {
+    box.appendChild(emptyP('상태줄 명령을 등록하면 보입니다'));
+    return;
+  }
+  if (stale) stale.textContent = usageStaleText(usage.age_seconds);
+
+  for (const item of usage.rows) {
+    if (!item) continue;
+    const percent = Number(item.percent);
+    const pct = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0;
+    const row = document.createElement('div');
+    row.className = 'usage-row ' + (pct < 80 ? 'usage-ok' : (pct < 95 ? 'usage-warn' : 'usage-crit'));
+    row.dataset.key = show(item.key, '');
+
+    const label = document.createElement('span');
+    label.className = 'usage-label';
+    label.textContent = show(item.label, '');
+    row.appendChild(label);
+
+    const bar = document.createElement('span');
+    bar.className = 'usage-bar';
+    const fill = document.createElement('span');
+    fill.className = 'usage-fill';
+    fill.style.width = pct + '%';
+    bar.appendChild(fill);
+    row.appendChild(bar);
+
+    const pctText = document.createElement('span');
+    pctText.className = 'usage-pct';
+    pctText.textContent = Math.round(pct) + '%';
+    row.appendChild(pctText);
+
+    const resetText = fmtUsageReset(item.resets_at_iso);
+    if (resetText !== null) {
+      const reset = document.createElement('span');
+      reset.className = 'usage-reset';
+      reset.textContent = resetText;
+      row.appendChild(reset);
+    }
+
+    box.appendChild(row);
+  }
+}
+
 function renderFleetControl(data) {
   renderFleetChain(data);
   const box = $('fleet-control');
@@ -1585,17 +1697,6 @@ function renderFleetControl(data) {
 
   const hint = document.createElement('div');
   hint.className = 'fc-hint';
-  {
-    // 작업 요청 폼의 프로젝트 자동완성 - 브리프 종류와 상관없이 채운다
-    const dl = document.getElementById('project-list');
-    if (dl) {
-      const names = (data && Array.isArray(data.projects) ? data.projects : []).map((x) => x && x.name).filter(Boolean);
-      if (dl.dataset.names !== names.join('|')) {     // 바뀔 때만 다시 채운다 (입력 중 목록이 깜박이지 않게)
-        dl.dataset.names = names.join('|');
-        dl.replaceChildren(...names.map((n) => { const o = document.createElement('option'); o.value = n; return o; }));
-      }
-    }
-  }
   if (brief.file && brief.standard) {
     // 라운드가 할 일 = '작업 요청' 폼으로 넣은 NEW 요청. 폼은 넓은 화면에선 오른쪽, 좁은 화면에선 맨 아래라
     // 잘 안 보인다(2026-11-10 태석님) - 여기서 바로 가는 버튼과 지금 쌓인 건수를 보인다.
@@ -2362,9 +2463,6 @@ function renderBoard(data) {
       });
       filterBox.appendChild(chip);
     }
-    const arch = linkButton('끝난 것 정리…', openArchivePanel);
-    arch.title = '끝난 태스크·닫힌 요청·끝난 그래프를 한꺼번에 아카이브로 옮깁니다 (지우지 않음). 요청 트리에 쌓인 것도 여기서 정리됩니다';
-    filterBox.appendChild(arch);
   }
   const filter = BOARD_FILTERS.find((f) => f.key === state.boardFilter) || BOARD_FILTERS[0];
   const board = all.filter(filter.test).slice().reverse();   // 최신 태스크가 위
@@ -2415,7 +2513,7 @@ function renderQueue(data) {
   wrap.textContent = '';
   const queue = Array.isArray(data.queue) ? data.queue : [];
   if (!queue.length) {
-    wrap.appendChild(emptyP('대기 큐 없음'));
+    wrap.appendChild(emptyP('대기 큐 비어 있음 - 남은 후속 일이 없습니다'));
     return;
   }
   const rows = queue.map((q) => [
@@ -2425,11 +2523,12 @@ function renderQueue(data) {
     show(q.handoff),
     plainText(q.note) || '-',
   ]);
-  wrap.appendChild(newTable(['순서', '작업', '슬롯', '핸드오프', '비고'], rows, null, {
+  // 칸 이름 (2026-11-12 태석님: 설명·명칭을 명확하게) - '핸드오프' 칸은 실제로는 이 일이 나온 태스크였다
+  wrap.appendChild(newTable(['순서', '할 일', '추천 슬롯', '출처 태스크', '비고'], rows, null, {
     widths: ['56px', '420px', '96px', '96px', null],
     num: [0],
     ellipsis: [1, 4],
-    rowOpen: queue.map((q) => ({ fn: () => openQueueDetail(q, state.data), title: '큐 항목 전문 보기' })),
+    rowOpen: queue.map((q) => ({ fn: () => openQueueDetail(q, state.data), title: '대기 큐 항목 전문 보기' })),
   }));
 }
 
@@ -2453,6 +2552,28 @@ function graphArchivable(g) {
   const nodes = Array.isArray(g.nodes) ? g.nodes : [];
   if (!nodes.length) return false;
   return nodes.every((n) => ['done', 'failed', 'blocked'].includes(String(n.status || '').toLowerCase()));
+}
+
+// 생략(...)된 글을 눌러서 그 자리에 펼친다 - 폰에는 호버가 없어 title 을 볼 길이 없다 (요청 Q-261111-2e0f).
+// 표의 칸뿐 아니라 태스크 그래프 제목처럼 표 밖의 생략된 글에도 쓴다 (2026-11-12: 그래프 제목이 빠져 있었다).
+function makeElidable(el, full) {
+  el.classList.add('elide');
+  el.title = full || '';
+  if (!full || full === '-') return;
+  el.tabIndex = 0;
+  el.setAttribute('role', 'button');
+  el.setAttribute('aria-expanded', 'false');
+  el.setAttribute('aria-label', '전문 보기: ' + full);
+  const toggleFull = (event) => {
+    event.preventDefault();
+    event.stopPropagation();          // 행 전체의 '상세 보기' 가 같이 열리지 않게
+    const open = el.classList.toggle('elide-open');
+    el.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  el.addEventListener('click', toggleFull);
+  el.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') toggleFull(event);
+  });
 }
 
 function foldButton(open, label, onToggle) {
@@ -2521,9 +2642,14 @@ function graphBlock(g) {
   id.textContent = key || '-';
   head.appendChild(id);
   const req = document.createElement('span');
-  req.className = 'graph-title elide';
+  req.className = 'graph-title';
   req.textContent = plainText(g.request) || '-';
-  req.title = show(g.request, '');
+  makeElidable(req, plainText(g.request) || '');
+  if (state.graphTitleOpen && state.graphTitleOpen.has(key)) { req.classList.add('elide-open'); req.setAttribute('aria-expanded', 'true'); }
+  req.addEventListener('click', () => {            // 5초마다 다시 그려도 펼친 제목이 접히지 않게 기억한다
+    if (!state.graphTitleOpen) state.graphTitleOpen = new Set();
+    if (req.classList.contains('elide-open')) state.graphTitleOpen.add(key); else state.graphTitleOpen.delete(key);
+  });
   head.appendChild(req);
   const pct = document.createElement('span');
   pct.className = 'graph-meta';
@@ -2634,20 +2760,23 @@ async function saveRequestEdit(req, form) {
   const msg = form.querySelector('.form-msg');
   const title = form.querySelector('input').value.trim();
   const detail = form.querySelector('textarea').value;
-  const projEl = form.querySelector('.req-edit-project');
-  const project = projEl ? projEl.value.trim() : '';
+  const pickEl = form.querySelector('.req-edit-project-pick');
+  const newEl = form.querySelector('.req-edit-project');
+  const project = (pickEl && pickEl.value === '__new__')
+    ? (newEl ? newEl.value.trim() : '')
+    : ((pickEl && pickEl.value) || '').trim();
   if (!title) { msg.textContent = '제목은 비워 둘 수 없습니다'; msg.className = 'form-msg error'; return; }
   const buttons = form.querySelectorAll('button');
   buttons.forEach((b) => { b.disabled = true; });
   msg.textContent = '저장 중…'; msg.className = 'form-msg';
   try {
     if (DEMO) {
-      req.title = title; req.detail = detail; if (projEl) req.project = project;
+      req.title = title; req.detail = detail; if (pickEl) req.project = project;
     } else {
       const res = await fetch('/api/requests/' + encodeURIComponent(req.id) + '/edit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify(projEl ? { title, detail, project } : { title, detail }),
+        body: JSON.stringify(pickEl ? { title, detail, project } : { title, detail }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !body.ok) throw new Error(body.error || ('HTTP ' + res.status));
@@ -2676,10 +2805,44 @@ function requestEditForm(req) {
   ph.className = 'hint';
   ph.textContent = '결과물이 쌓일 곳 · 비우면 함대 자체의 일';
   pl.appendChild(ph);
+  const names = projectNameList(state.data);
+  const ps = document.createElement('select');
+  ps.className = 'req-edit-project-pick';
+  const base = document.createElement('option');
+  base.value = '';
+  base.textContent = '(함대 자체의 일 - 프로젝트 없음)';
+  ps.appendChild(base);
+  for (const name of names) {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    ps.appendChild(opt);
+  }
+  if (req.project && !names.includes(req.project)) {
+    const opt = document.createElement('option');
+    opt.value = req.project;
+    opt.textContent = req.project;
+    ps.appendChild(opt);
+  }
+  const fresh = document.createElement('option');
+  fresh.value = '__new__';
+  fresh.textContent = '+ 새 프로젝트…';
+  ps.appendChild(fresh);
+  ps.value = req.project || '';
   const pi = document.createElement('input');
   pi.type = 'text'; pi.className = 'req-edit-project'; pi.maxLength = 40;
-  pi.setAttribute('list', 'project-list'); pi.placeholder = '예: reefwiz-앱';
-  pi.value = show(req.project, '');
+  pi.placeholder = '새 프로젝트 이름'; pi.hidden = true;
+  const syncEditProject = () => {
+    if (ps.value === '__new__') {
+      pi.hidden = false;
+      pi.focus();
+    } else {
+      pi.hidden = true;
+      pi.value = '';
+    }
+  };
+  ps.addEventListener('change', syncEditProject);
+  syncEditProject();
   const dl = document.createElement('label');
   dl.textContent = '본문';
   const ta = document.createElement('textarea');
@@ -2694,7 +2857,7 @@ function requestEditForm(req) {
   const msg = document.createElement('span');
   msg.className = 'form-msg'; msg.setAttribute('role', 'status');
   row.append(save, cancel, msg);
-  form.append(tl, ti, pl, pi, dl, ta, row);
+  form.append(tl, ti, pl, ps, pi, dl, ta, row);
   form.addEventListener('submit', (e) => { e.preventDefault(); saveRequestEdit(req, form); });
   if (req.detail_truncated === true) {
     // 목록의 본문은 600자로 잘려 있다 - 잘린 채 저장하면 뒷부분이 사라지므로 전문을 받아 온 뒤에만 저장을 연다
@@ -2742,7 +2905,6 @@ function renderRequests(data) {
         + ` · 끝난 그래프 ${closedGraphs.length}개`;
     }
     tools.appendChild(label);
-    tools.appendChild(linkButton('끝난 것 정리…', openArchivePanel));
   }
   if (!requests.length) {
     list.appendChild(emptyP('작업 요청 없음'));
@@ -2992,7 +3154,7 @@ function renderLog(data) {
   if (more) more.textContent = '';
   const all = Array.isArray(data.log) ? data.log : [];   // reader 가 최신 먼저로 준다
   if (!all.length) {
-    wrap.appendChild(emptyP('핸드오프 로그 없음'));
+    wrap.appendChild(emptyP('라운드 핸드오프 로그 없음'));
     return;
   }
   const log = state.logShowAll ? all : all.slice(0, LOG_PAGE);
@@ -3041,6 +3203,12 @@ function renderTabCounts(data) {
   const runs = Array.isArray(data.runs) ? data.runs : [];
   const running = runs.filter((r) => r && r.state === 'running').length;
   setTabCount('tab-count-fleet', running, true);
+  const projects = Array.isArray(data.projects) ? data.projects : [];
+  const unfinished = projects.filter((p) => !projectDone(p)).length;
+  // 다른 탭처럼 늘 숫자를 보인다 (2026-11-12 태석님: 일관성) - 프로젝트 수, 끝나지 않은 것이 있으면 색
+  setTabCount('tab-count-projects', projects.length, false);
+  const pjc = $('tab-count-projects');
+  if (pjc) pjc.classList.toggle('is-hot', unfinished > 0);
   const queue = Array.isArray(data.queue) ? data.queue.length : 0;
   setTabCount('tab-count-board', queue, false);
   const reqs = Array.isArray(data.requests) ? data.requests : [];
@@ -3048,10 +3216,17 @@ function renderTabCounts(data) {
   setTabCount('tab-count-requests', active, true);
   const f = $('tab-count-fleet');
   if (f) f.title = '실행 중인 작업자';
+  const pj = $('tab-count-projects');
+  if (pj) pj.title = `프로젝트 ${projects.length}개` + (unfinished ? ` · 진행 중 ${unfinished}개` : ' · 모두 끝남');
   const b = $('tab-count-board');
   if (b) b.title = '대기 큐 항목';
   const q = $('tab-count-requests');
   if (q) q.title = '끝나지 않은 요청';
+  const closedRequests = reqs.filter((r) => REQ_CLOSED.has(String(r.status || '').toUpperCase()));
+  const closedGraphs = (Array.isArray(data.graphs) ? data.graphs : []).filter(graphArchivable);
+  setTabCount('archive-count', closedRequests.length + closedGraphs.length, false);
+  const archBtn = $('archive-open');
+  if (archBtn) archBtn.title = `끝난 요청 ${closedRequests.length}건 · 끝난 그래프 ${closedGraphs.length}개`;
 }
 
 // ---- 프로젝트 결과물 보기 (REV 146) - `projects/<이름>/` 의 파일 목록과 본문을 상세 패널에서
@@ -3251,16 +3426,64 @@ function openProjectApp(pr) {
   });
 }
 
+// 프로젝트가 끝났나 - 탭 숫자와 필터가 같은 기준을 쓴다 (목표가 있으면 목표, 없으면 요청 진행률)
+function projectDone(p) {
+  const g = p && p.goals;
+  if (g && g.total) return g.done >= g.total;
+  return Number(p && p.percent) >= 100;
+}
+
+const PROJECT_FILTERS = [
+  { key: 'active', label: '진행 중', test: (p) => !projectDone(p) },
+  { key: 'done', label: '끝남', test: (p) => projectDone(p) },
+  { key: 'all', label: '전체', test: () => true },
+];
+const PROJECT_SEARCH_MIN = 7;     // 이보다 많으면 이름 찾기 칸을 보인다
+
 function renderProjects(data) {
   const box = document.getElementById('projects-list');
   if (!box) return;
-  const list = Array.isArray(data.projects) ? data.projects : [];
+  const all = Array.isArray(data.projects) ? data.projects : [];
   box.replaceChildren();
-  if (!list.length) {
+  const chips = document.getElementById('projects-filter-chips');
+  const search = document.getElementById('projects-search');
+  if (chips) chips.replaceChildren();
+  if (search) {
+    search.hidden = all.length < PROJECT_SEARCH_MIN;
+    if (!search.dataset.bound) {
+      search.dataset.bound = '1';
+      search.addEventListener('input', () => { if (state.data) renderProjects(state.data); });
+    }
+  }
+  if (!all.length) {
     const p = document.createElement('p');
     p.className = 'empty';
     p.textContent = "아직 프로젝트가 없습니다. '작업 요청' 의 프로젝트 칸에 이름을 적어 보내면 생깁니다.";
     box.appendChild(p);
+    return;
+  }
+  // 필터 칩 (작업 보드의 미완료/완료/전체와 같은 꼴). 처음에는 진행 중이 있으면 진행 중을 보인다
+  const fkey = state.projectFilter || (all.some((p) => !projectDone(p)) ? 'active' : 'all');
+  if (chips) {
+    for (const f of PROJECT_FILTERS) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip';
+      chip.setAttribute('aria-pressed', String(fkey === f.key));
+      chip.textContent = `${f.label} ${all.filter(f.test).length}`;
+      chip.addEventListener('click', () => { state.projectFilter = f.key; if (state.data) renderProjects(state.data); });
+      chips.appendChild(chip);
+    }
+  }
+  const filter = PROJECT_FILTERS.find((f) => f.key === fkey) || PROJECT_FILTERS[2];
+  const q = search && !search.hidden ? search.value.trim().toLowerCase() : '';
+  // 진행 중 먼저, 그 안에서는 최근에 움직인 것 먼저
+  const recent = (p) => Math.max(Number(p.last_round) || 0, 0) * 1e12 + (Date.parse(p.updated || '') || 0) / 1000;
+  const list = all.filter(filter.test)
+    .filter((p) => !q || String(p.name || '').toLowerCase().includes(q))
+    .sort((a, b) => (projectDone(a) - projectDone(b)) || (recent(b) - recent(a)));
+  if (!list.length) {
+    box.appendChild(emptyP(q ? `'${q}' 에 맞는 프로젝트가 없습니다` : '이 필터에 해당하는 프로젝트가 없습니다'));
     return;
   }
   for (const pr of list) {
@@ -3272,10 +3495,20 @@ function renderProjects(data) {
     head.className = 'proj-head';
     const name = document.createElement('h3');
     name.textContent = show(pr.name);
+    name.title = show(pr.path, '');
     head.appendChild(name);
+    if (projectDone(pr)) {
+      const done = document.createElement('span');
+      done.className = 'badge badge-done';
+      done.textContent = '끝남';
+      head.appendChild(done);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'proj-actions';
+    head.appendChild(actions);
     const rq = pr.requests || {};
-    const meta = document.createElement('span');
-    meta.className = 'proj-meta';
+    const meta = document.createElement('div');
+    meta.className = 'proj-meta proj-sub';
     const bits = [];
     bits.push(rq.total ? `요청 ${rq.done || 0}/${rq.total} 완료` : '요청 없음');
     if (rq.active) bits.push(`진행 중 ${rq.active}`);
@@ -3285,25 +3518,27 @@ function renderProjects(data) {
       ? `라운드 ${rounds.length}회 (${rounds.length > 6 ? 'R' + rounds[0] + ' … R' + rounds[rounds.length - 1] : rounds.map((n) => 'R' + n).join(' · ')})`
       : '아직 라운드 없음');
     meta.textContent = bits.join(' · ');
-    head.appendChild(meta);
+    // '실행' 은 함대 모드 '실행' 과 헷갈려 '앱 열기' 로 (2026-11-12)
     if (pr.app && pr.app.runnable) {
-      const run = linkButton('실행', () => openProjectApp(pr));
+      const run = linkButton('앱 열기 ▶', () => openProjectApp(pr));
       run.classList.add('proj-run');
       run.title = `${pr.app.title} 을(를) 모니터 안에서 바로 돌려 봅니다 (projects/${pr.name}/${pr.app.root}/)`;
-      head.appendChild(run);
-    } else if (pr.app) {
-      const bad = document.createElement('span');
-      bad.className = 'proj-meta';
-      bad.textContent = '실행 선언(app.json)에 문제가 있습니다: ' + show(pr.app.reason, '이유 없음');
-      head.appendChild(bad);
+      actions.appendChild(run);
     }
     if (pr.exists) {
       const view = linkButton('결과물 보기', () => openProjectFiles(pr));
       view.classList.add('proj-view');
       view.title = `projects/${show(pr.name, '')}/ 의 파일 목록과 본문`;
-      head.appendChild(view);
+      actions.appendChild(view);
     }
     item.appendChild(head);
+    item.appendChild(meta);
+    if (pr.app && !pr.app.runnable) {
+      const bad = document.createElement('div');
+      bad.className = 'proj-meta warn-text';
+      bad.textContent = '앱 실행 선언(app.json)에 문제가 있습니다: ' + show(pr.app.reason, '이유 없음');
+      item.appendChild(bad);
+    }
     const when = [];
     if (pr.last_round_at) when.push(`마지막 라운드 R${pr.last_round} ${fmtDateTime(pr.last_round_at)}`);
     if (pr.updated) when.push(`기록 갱신 ${fmtDateTime(pr.updated)}`);
@@ -3333,7 +3568,7 @@ function renderProjects(data) {
       label.title = '관리자가 PROGRESS.md 의 "## 목표" 에 적은 목표 중 끝난 것'
         + (typeof pr.request_percent === 'number' ? ` (요청 기준 ${Math.round(pr.request_percent)}%)` : '');
     } else {
-      label.textContent = typeof pr.percent === 'number' ? `요청 기준 ${Math.round(pct)}%` : '-';
+      label.textContent = typeof pr.percent === 'number' ? `요청 기준 ${Math.round(pct)}%` : '목표·요청 없음';
       label.title = '목표가 아직 안 적혀 넣은 요청 중 끝난 비율로 셉니다 - 관리자가 PROGRESS.md 에 "## 목표" 를 쓰면 목표 대비로 바뀝니다';
     }
     prog.appendChild(label);
@@ -3364,10 +3599,29 @@ function renderProjects(data) {
   }
 }
 
+// 옆으로 밀어야 보이는 표에 표시 (2026-11-12 모바일 검수) - 폰에서는 칸 절반이 화면 밖인데 단서가 없었다
+function markScrollableTables() {
+  for (const w of document.querySelectorAll('.tablewrap')) {
+    const update = () => {
+      const more = w.scrollWidth - w.clientWidth > 4;
+      w.classList.toggle('is-scrollable', more);
+      w.classList.toggle('at-end', !more || w.scrollLeft + w.clientWidth >= w.scrollWidth - 4);
+    };
+    if (!w.dataset.scrollHint) {
+      w.dataset.scrollHint = '1';
+      w.addEventListener('scroll', update, { passive: true });
+    }
+    update();
+  }
+}
+window.addEventListener('resize', () => markScrollableTables());
+
 function renderAll(data) {
   renderErrors(data);
   renderTabCounts(data);
   renderFleetControl(data);
+  renderClaudeUsage(data);
+  renderProjectPicker(data);
   renderManager(data);
   renderProjects(data);
   renderMeta(data);
@@ -3378,6 +3632,7 @@ function renderAll(data) {
   renderLog(data);
   renderGraphs(data);
   renderRequests(data);
+  markScrollableTables();
 }
 
 function demoState() {
@@ -3431,7 +3686,12 @@ function updateLastRefresh() {
     return;
   }
   const seconds = Math.max(0, Math.floor((Date.now() - state.fetchedAt) / 1000));
-  el.textContent = `마지막 갱신 ${seconds}초 전`;
+  // '마지막 갱신' 은 좁은 화면에서 숨긴다 (2026-11-12 모바일 검수: 세 줄로 꺾여 상단 바를 키웠다)
+  const lab = document.createElement('span');
+  lab.className = 'rs-label';
+  lab.textContent = '마지막 갱신 ';
+  el.replaceChildren(lab, document.createTextNode(`${seconds}초 전`));
+  el.title = `마지막 갱신 ${seconds}초 전`;
 }
 
 async function refresh() {
@@ -3473,8 +3733,11 @@ async function onSubmit(event) {
     titleEl.focus();
     return;
   }
+  const pickEl = $('req-project-pick');
   const projectEl = $('req-project');
-  const project = projectEl ? projectEl.value.trim() : '';
+  const project = (pickEl && pickEl.value === '__new__')
+    ? ((projectEl && projectEl.value) || '').trim()
+    : ((pickEl && pickEl.value) || '').trim();
   const payload = {
     title,
     detail: detailEl.value,
@@ -3509,7 +3772,8 @@ async function onSubmit(event) {
       result = body;
     }
     $('request-form').reset();
-    if (projectEl) projectEl.value = project;   // 같은 프로젝트에 이어서 넣기 쉽게 남겨 둔다
+    if (pickEl) pickEl.value = '';
+    if (projectEl) { projectEl.value = ''; projectEl.hidden = true; }
     msg.className = 'form-msg success';
     msg.textContent = '요청 생성됨: ' + show(result.id, '-') +
       (project ? ` · 프로젝트 ${project}` : ' · 함대 자체');
@@ -3597,6 +3861,9 @@ function init() {
     refresh();
   });
 
+  const archBtn = $('archive-open');
+  if (archBtn) archBtn.addEventListener('click', openArchivePanel);
+
   $('request-form').addEventListener('submit', onSubmit);
 
   setInterval(updateLastRefresh, 1000);
@@ -3609,6 +3876,7 @@ init();
 // --- 탭 전환 (Q-261110-549a) ---------------------------------------------
 const TABS = [
   { tab: 'tab-fleet', panel: 'panel-fleet', key: 'fleet' },
+  { tab: 'tab-projects', panel: 'panel-projects', key: 'projects' },
   { tab: 'tab-board', panel: 'panel-board', key: 'board' },
   { tab: 'tab-requests', panel: 'panel-requests', key: 'requests' },
 ];
@@ -3627,6 +3895,7 @@ function selectTab(key, moveFocus) {
     }
     if (panel) panel.hidden = !on;      // 보이는 패널은 항상 정확히 1개
   });
+  markScrollableTables();               // 숨어 있던 패널의 표는 폭이 0 이라 보일 때 다시 잰다
   if (location.hash !== '#tab=' + target) {
     history.replaceState(null, '', '#tab=' + target);   // 기존 쿼리스트링(?demo=1)은 건드리지 않는다
   }

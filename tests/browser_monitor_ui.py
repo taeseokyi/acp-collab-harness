@@ -71,15 +71,18 @@ def scenario(browser, base, checks):
     page = ctx.new_page()
     try:
         page.goto(base + "/", wait_until="load")
+        page.click("#tab-projects")
         page.wait_for_selector("#projects-list .proj-item", timeout=15000)
+        # 진행 중 프로젝트가 있으면 처음 필터가 '진행 중' 이라 끝난 웹워들이 숨는다 - 전체로 (2026-11-12)
+        page.locator("#projects-filter-chips .chip").filter(has_text="전체").first.click()
 
         project = page.locator("#projects-list .proj-item").filter(has_text="웹워들").first
         run_button = project.locator(".proj-run").first
         run_visible = run_button.is_visible()
         run_text = run_button.inner_text().strip() if run_visible else ""
         checks.ok(
-            "'실행' 단추가 눈에 보인다",
-            run_visible and run_text == "실행",
+            "'앱 열기' 단추가 눈에 보인다",
+            run_visible and run_text == "앱 열기 ▶",
             f"visible={run_visible}, text={run_text!r}",
         )
 
@@ -151,6 +154,7 @@ def narrow_scenario(browser, base, checks):
     page = ctx.new_page()
     try:
         page.goto(base + "/", wait_until="load")
+        page.click("#tab-projects")
         page.wait_for_selector("#projects-list .proj-item", timeout=15000)
         project = page.locator("#projects-list .proj-item").filter(has_text="웹워들").first
         project.locator(".proj-run").first.click()
@@ -190,6 +194,7 @@ def short_scenario(browser, base, checks):
     page = ctx.new_page()
     try:
         page.goto(base + "/", wait_until="load")
+        page.click("#tab-projects")
         page.wait_for_selector("#projects-list .proj-item", timeout=15000)
         project = page.locator("#projects-list .proj-item").filter(has_text="웹워들").first
         project.locator(".proj-run").first.click()
@@ -213,7 +218,7 @@ def changed_ui_scenario(browser, base, checks):
     page = ctx.new_page()
     try:
         page.goto(base + "/", wait_until="load")
-        page.wait_for_selector("#projects-list .proj-item", timeout=15000)
+        page.wait_for_selector("#aimem-meta .meta-goal", state="visible", timeout=15000)
 
         card = page.query_selector("#kisti-section")
         inner_card = page.query_selector("#kisti-card")
@@ -244,29 +249,6 @@ def changed_ui_scenario(browser, base, checks):
             and value_text not in ("", "-"),
             f"meta visible={meta.is_visible()}, '현재 목표'={('현재 목표' in meta_text)}, "
             f"label={label_text!r}, value={value_text!r}",
-        )
-
-        page.click("#tab-fleet")
-        page.wait_for_selector("#runs-table-wrap", state="visible", timeout=15000)
-        project_names = page.query_selector_all("#runs-table-wrap .proj-tag:not(.none) .proj-name")
-        none_names = page.query_selector_all("#runs-table-wrap .proj-tag.none .proj-name")
-        rounds = page.query_selector_all("#runs-table-wrap .proj-round")
-
-        def weight(el):
-            return int(el.evaluate("e=>getComputedStyle(e).fontWeight"))
-
-        project_weights = [weight(e) for e in project_names]
-        none_weights = [weight(e) for e in none_names]
-        round_weights = [weight(e) for e in rounds]
-        checks.ok(
-            "프로젝트 칸의 볼드 기준",
-            bool(project_names)
-            and bool(none_names)
-            and bool(rounds)
-            and all(w >= 700 for w in project_weights)
-            and all(w <= 500 for w in none_weights)
-            and all(w <= 500 for w in round_weights),
-            f"프로젝트 이름 {project_weights}, 프로젝트 없음 {none_weights}, 라운드 꼬리표 {round_weights}",
         )
 
         page.set_viewport_size({"width": 390, "height": 780})
@@ -336,6 +318,76 @@ def write_fixed_requests(root):
             "subtasks": [],
         }
         (req_dir / f"Q-FIXED-{status}.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def write_fixed_graph(root):
+    """제목이 아주 긴, 아직 끝나지 않은 그래프 하나를 임시 저장소에 씁니다."""
+    gdir = root / ".aimem" / "graph"
+    gdir.mkdir(parents=True, exist_ok=True)
+    long_title = (
+        "임시 저장소 고정 그래프의 아주 긴 제목입니다 "
+        + "가나다라마바사아자차카타파하" * 14
+    )
+    data = {
+        "id": "G-FIXED",
+        "request": long_title,
+        "created": "2026-11-12T00:00:00",
+        "updated": "2026-11-12T00:00:00",
+        "rev": 159,
+        "round": 17,
+        "concurrency": 1,
+        "nodes": [
+            {
+                "id": "T-900",
+                "slot": "S3",
+                "deps": [],
+                "status": "todo",
+                "title": "임시 저장소 고정 그래프 노드",
+                "attempts": [],
+                "max_attempts": 2,
+            },
+            {
+                "id": "T-901",
+                "slot": "S3",
+                "deps": ["T-900"],
+                "status": "done",
+                "title": "임시 저장소 고정 그래프 완료 노드",
+                "attempts": [],
+                "max_attempts": 2,
+            },
+        ],
+    }
+    (gdir / "G-FIXED.json").write_text(
+        json.dumps(data, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def write_fixed_runs(root):
+    """프로젝트가 붙은 실행과 안 붙은 실행을 임시 저장소에 하나씩 씁니다."""
+    runs_dir = root / ".aimem" / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    for run_id, project, label in (
+        ("T-901-S3-a1-000001", "데모프로젝트", "임시 실행 (프로젝트 있음)"),
+        ("T-901-S3-a1-000002", "", "임시 실행 (프로젝트 없음)"),
+    ):
+        data = {
+            "id": run_id,
+            "slot": "S3",
+            "harness": "opencode",
+            "task": "T-901",
+            "attempt": 1,
+            "date": "2026-11-01",
+            "label": label,
+            "rev": 159,
+            "write": [],
+            "started": "2026-11-01T00:00:01",
+            "project": project,
+            "round": 9,
+        }
+        (runs_dir / f"{run_id}.json").write_text(
+            json.dumps(data, ensure_ascii=False), encoding="utf-8"
+        )
+        (runs_dir / f"{run_id}.rc").write_text("0\n", encoding="utf-8")
 
 
 def zero_subtask_scenario(browser, base, checks):
@@ -422,25 +474,28 @@ def request_tree_scenario(browser, base, checks):
     page = ctx.new_page()
     try:
         page.goto(base + "/", wait_until="load")
-        page.wait_for_selector("#projects-list .proj-item", timeout=15000)
+        archive_button = page.locator("#archive-open").first
+        fleet_visible = archive_button.is_visible()
         page.click("#tab-requests")
         page.wait_for_selector("#requests-list .req-block", state="visible", timeout=15000)
 
         tools = page.locator("#requests-tools")
-        tool_button = tools.locator("button").filter(has_text="끝난 것 정리").first
         tools_text = tools.inner_text()
         count_match = re.search(r"끝난 요청\s*(\d+)\s*건", tools_text)
+        requests_visible = archive_button.is_visible()
         checks.ok(
             "요청 트리에서도 정리할 수 있다",
-            tools.is_visible()
-            and tool_button.is_visible()
+            fleet_visible
+            and requests_visible
+            and tools.is_visible()
             and count_match is not None
             and int(count_match.group(1)) > 0,
-            f"tools visible={tools.is_visible()}, 단추 visible={tool_button.is_visible()}, "
-            f"글={tools_text!r}, 끝난 요청 수={count_match.group(1) if count_match else None}",
+            f"함대 탭 단추 visible={fleet_visible}, 요청 트리 단추 visible={requests_visible}, "
+            f"tools visible={tools.is_visible()}, 글={tools_text!r}, "
+            f"끝난 요청 수={count_match.group(1) if count_match else None}",
         )
 
-        tool_button.click()
+        archive_button.click()
         panel = page.locator("#detail-overlay")
         panel.locator("h2").first.wait_for(state="visible", timeout=10000)
         title = panel.locator("h2").first.inner_text()
@@ -570,6 +625,123 @@ def request_tree_scenario(browser, base, checks):
             f"tools={tools_box}, 첫 블록={first_box}, 겹침없음={no_overlap}, "
             f"390px 가로스크롤={scroll}px",
         )
+
+        page.click("#tab-board")
+        page.wait_for_selector("#board-filter button", state="visible", timeout=15000)
+        archive_like = page.locator("#board-filter button").filter(has_text="끝난 것 정리")
+        checks.ok(
+            "보드 필터줄에 '끝난 것 정리' 단추가 없다",
+            archive_like.count() == 0,
+            f"#board-filter 안에 '끝난 것 정리' 글자를 가진 단추={archive_like.count()}개",
+        )
+    finally:
+        ctx.close()
+
+
+def graph_title_expand_scenario(browser, base, checks):
+    """폰 폭(390x844)에서 그래프 제목을 눌러 펼치고, 다시 그려도 유지되는가."""
+    ctx = browser.new_context(viewport={"width": 390, "height": 844})
+    page = ctx.new_page()
+    try:
+        page.goto(base + "/", wait_until="load")
+        page.click("#tab-requests")
+        try:
+            page.wait_for_selector("#graphs-list .graph-title", state="visible", timeout=15000)
+        except Exception:
+            checks.ok("그래프 제목 펼치기", False, "그래프 없음")
+            return
+
+        title = page.locator("#graphs-list .graph-title").first
+        visible = title.is_visible()
+        class_before = title.get_attribute("class") or ""
+        aria_before = title.get_attribute("aria-expanded")
+        sw = title.evaluate("e => e.scrollWidth")
+        cw = title.evaluate("e => e.clientWidth")
+        box_before = title.bounding_box()
+        checks.ok(
+            "그래프 제목이 처음에는 줄여져 있다 (폰 폭 390px)",
+            visible
+            and "elide-open" not in class_before.split()
+            and (sw > cw + 1 or aria_before == "false"),
+            f"visible={visible}, class={class_before!r}, aria-expanded={aria_before!r}, "
+            f"scrollWidth={sw}, clientWidth={cw}",
+        )
+
+        title.click()
+        page.wait_for_timeout(300)
+        class_after = title.get_attribute("class") or ""
+        aria_after = title.get_attribute("aria-expanded")
+        box_after = title.bounding_box()
+        checks.ok(
+            "누르면 그래프 제목이 펼쳐진다",
+            "elide-open" in class_after.split()
+            and aria_after == "true"
+            and box_before is not None
+            and box_after is not None
+            and box_after["height"] > box_before["height"],
+            f"전 높이={box_before and round(box_before['height'], 2)}, "
+            f"후 class={class_after!r}, aria-expanded={aria_after!r}, "
+            f"후 높이={box_after and round(box_after['height'], 2)}",
+        )
+
+        checks.ok(
+            "펼친 그래프 제목이 화면 밖으로 나가지 않는다",
+            box_after is not None
+            and box_after["x"] >= -1
+            and box_after["x"] + box_after["width"] <= 390 + 1,
+            f"box={box_after}",
+        )
+
+        page.wait_for_timeout(6000)
+        later = page.locator("#graphs-list .graph-title").first
+        class_later = later.get_attribute("class") or ""
+        checks.ok(
+            "5초 뒤 다시 그려도 펼친 채다",
+            "elide-open" in class_later.split(),
+            f"class={class_later!r}, aria-expanded={later.get_attribute('aria-expanded')!r}",
+        )
+
+        later.click()
+        page.wait_for_timeout(300)
+        class_final = later.get_attribute("class") or ""
+        aria_final = later.get_attribute("aria-expanded")
+        checks.ok(
+            "다시 누르면 그래프 제목이 접힌다",
+            "elide-open" not in class_final.split() and aria_final == "false",
+            f"class={class_final!r}, aria-expanded={aria_final!r}",
+        )
+    finally:
+        ctx.close()
+
+
+def run_project_tag_scenario(browser, base, checks):
+    """임시 저장소의 고정 실행 기록으로 프로젝트 칸의 볼드 기준을 잽니다."""
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    try:
+        page.goto(base + "/", wait_until="load")
+        page.click("#tab-fleet")
+        page.wait_for_selector("#runs-table-wrap", state="visible", timeout=15000)
+        project_names = page.query_selector_all("#runs-table-wrap .proj-tag:not(.none) .proj-name")
+        none_names = page.query_selector_all("#runs-table-wrap .proj-tag.none .proj-name")
+        rounds = page.query_selector_all("#runs-table-wrap .proj-round")
+
+        def weight(el):
+            return int(el.evaluate("e=>getComputedStyle(e).fontWeight"))
+
+        project_weights = [weight(e) for e in project_names]
+        none_weights = [weight(e) for e in none_names]
+        round_weights = [weight(e) for e in rounds]
+        checks.ok(
+            "프로젝트 칸의 볼드 기준",
+            bool(project_names)
+            and bool(none_names)
+            and bool(rounds)
+            and all(w >= 700 for w in project_weights)
+            and all(w <= 500 for w in none_weights)
+            and all(w <= 500 for w in round_weights),
+            f"프로젝트 이름 {project_weights}, 프로젝트 없음 {none_weights}, 라운드 꼬리표 {round_weights}",
+        )
     finally:
         ctx.close()
 
@@ -590,8 +762,12 @@ def main():
                 with tempfile.TemporaryDirectory() as temp_dir:
                     temp_root = pathlib.Path(temp_dir)
                     write_fixed_requests(temp_root)
+                    write_fixed_graph(temp_root)
+                    write_fixed_runs(temp_root)
                     with monitor_server(root=temp_root) as temp_base:
                         zero_subtask_scenario(browser, temp_base, checks)
+                        graph_title_expand_scenario(browser, temp_base, checks)
+                        run_project_tag_scenario(browser, temp_base, checks)
             finally:
                 browser.close()
     except Exception as exc:

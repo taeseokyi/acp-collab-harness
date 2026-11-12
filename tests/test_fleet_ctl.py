@@ -358,6 +358,50 @@ class ChainTest(unittest.TestCase):
         (self.repo / "projects" / "알파" / "PROGRESS.md").write_text("# 알파\n\n## R7\n- 한 일\n", encoding="utf-8")
         self.assertIn("남은 일이 없습니다", fleet_ctl.chain_decide(7)["why"])       # 목표도 열린 요청도 없다
 
+    def test_round_hit_limit_only_when_graph_log_has_limit_line(self):
+        gd = self.repo / ".aimem" / "graph"
+        gd.mkdir(parents=True, exist_ok=True)
+        (gd / "G-920.json").write_text(
+            json.dumps({"id": "G-920", "round": 7, "nodes": []}), encoding="utf-8"
+        )
+        (gd / "G-920.log").write_text(
+            "2026-11-10T22:40:25 retry-queued T-1 rc=1\n", encoding="utf-8"
+        )
+        self.assertFalse(fleet_ctl._round_hit_limit(7))
+        (gd / "G-920.log").write_text(
+            "2026-11-10T22:40:25 limit T-1 (R-1) - 사용 한도로 끊김\n", encoding="utf-8"
+        )
+        self.assertTrue(fleet_ctl._round_hit_limit(7))
+        self.assertFalse(fleet_ctl._round_hit_limit(8))
+
+    def test_limit_is_added_to_report_stop_reason_only_when_log_says_limit(self):
+        gd = self.repo / ".aimem" / "graph"
+        gd.mkdir(parents=True, exist_ok=True)
+        (gd / "G-921.json").write_text(
+            json.dumps({"id": "G-921", "round": 3, "nodes": []}), encoding="utf-8"
+        )
+        (gd / "G-921.log").write_text("limit T-1 (R-1) - 사용 한도로 끊김\n", encoding="utf-8")
+        fleet_ctl.chain_set(True, None, 3, "t", all_=True)
+        self.report(3, "PARTIAL")
+        d = fleet_ctl.chain_decide(3)
+        self.assertEqual((d["action"], d["kind"]), ("stop", "report"))
+        self.assertIn("사용 한도로 끊긴 시도가 있습니다", d["why"])
+        (gd / "G-921.log").write_text("spawn T-1 attempt 1 -> R-1\n", encoding="utf-8")
+        d = fleet_ctl.chain_decide(3)
+        self.assertIn("사람이 봐야 합니다", d["why"])
+        self.assertNotIn("사용 한도", d["why"])
+
+    def test_round_hit_limit_swallows_unreadable_graph_or_missing_log(self):
+        gd = self.repo / ".aimem" / "graph"
+        gd.mkdir(parents=True, exist_ok=True)
+        (gd / "G-922.json").write_text("{깨진", encoding="utf-8")
+        (gd / "G-922.log").write_text("limit T-1 - 사용 한도로 끊김\n", encoding="utf-8")
+        self.assertFalse(fleet_ctl._round_hit_limit(9))
+        (gd / "G-923.json").write_text(
+            json.dumps({"id": "G-923", "round": 9, "nodes": []}), encoding="utf-8"
+        )
+        self.assertFalse(fleet_ctl._round_hit_limit(9))
+
     def req(self, rid, status, project=""):
         d = self.repo / ".aimem" / "requests"
         d.mkdir(parents=True, exist_ok=True)

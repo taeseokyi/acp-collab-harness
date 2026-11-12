@@ -13,6 +13,7 @@ import os
 import pathlib
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -973,3 +974,78 @@ class ArchiveAttachedRecordsTest(AimemDbCliTest):
         self.assertEqual(len(row), 1)
         self.assertEqual(row[0]["rev"], 150)
         self.assertEqual(row[0]["body"], "첫줄\n둘째 줄")
+
+    def test_long_node_task_is_not_taken_as_an_identifier(self):
+        long_task = "# T-900 어떤 지시\n" + "가" * 3000
+        self._graph("G-900", [
+            {"id": "T-900", "task": long_task, "status": "running", "attempts": []},
+        ])
+        self._event("어떤 이벤트 본문")
+        lengths = []
+        real_mentions = aimem_db._mentions
+
+        def spy(body, ident):
+            lengths.append(len(ident))
+            return real_mentions(body, ident)
+
+        with mock.patch.object(aimem_db, "_mentions", spy):
+            aimem_db.archive_plan(0)
+        self.assertTrue(lengths)
+        self.assertFalse([n for n in lengths if n > 80])
+
+    def test_open_graph_node_id_is_still_protected(self):
+        self._graph("G-900", [
+            {"id": "T-900", "task": "T-900", "status": "running", "attempts": []},
+        ])
+        seq = self._event("T-900 열린 노드", kind="note")
+        plan = aimem_db.archive_plan(0)
+        self.assertNotIn(seq, [e["seq"] for e in plan["events"]])
+
+    def test_archive_plan_on_the_real_repo_is_fast(self):
+        db = ROOT / ".aimem" / "aimem.db"
+        with mock.patch.object(aimem_db, "ROOT", ROOT), mock.patch.object(aimem_db, "DB", db):
+            start = time.monotonic()
+            aimem_db.archive_plan(14)
+            elapsed = time.monotonic() - start
+        self.assertLess(elapsed, 8.0)
+
+
+class QueueFindingIdsTest(AimemDbCliTest):
+    """큐의 검수 발견 번호에는 라운드를 붙인다 (2026-11-12) - 번호가 보고서마다 1부터 다시 세어져 섞였다."""
+
+    def q(self, action, **kw):
+        base = {"task": None, "slot_hint": None, "inherited": None, "note": None, "pos": None, "verbose": False}
+        base.update(kw)
+        return self.run_cmd(aimem_db.cmd_queue, action=action, **base)
+
+    def tasks(self):
+        with aimem_db.connect() as con:
+            return [r["task"] for r in con.execute("SELECT task FROM queue ORDER BY pos")]
+
+    def test_bare_ids_are_found_and_qualified_ones_pass(self):
+        f = aimem_db.bare_finding_ids
+        self.assertEqual(f("검수 N5·N6(낮음)"), ["N5", "N6"])
+        self.assertEqual(f("(N7) 상한 ... M13 와 D5"), ["N7", "M13", "D5"])
+        for ok in ("R17-N5", "R17-N5·N6", "R17-N7, N8, N10", "R17-M13/M14", "'생략 N건'", "60→3", "T-224", "G-045",
+                   "S2", "REV 160", "R17 T-224 검수", "Q-261112-c3a1", "UTF-N8X", "N", "SN5"):
+            self.assertEqual(f(ok), [], ok)
+        self.assertEqual(f("R17-N5·N6 그리고 N9"), ["N9"])
+
+    def test_add_refuses_bare_and_accepts_qualified(self):
+        with self.assertRaises(SystemExit) as cm:
+            self.q("add", task="검수 N5·N6(낮음): 고칠 것")
+        self.assertIn("R17-N5", str(cm.exception))
+        with self.assertRaises(SystemExit):
+            self.q("add", task="R17 검수 결과", note="N3 참고")
+        self.assertEqual(self.tasks(), [])
+        self.q("add", task="R17-N5·N6(낮음): 고칠 것")
+        self.assertEqual(self.tasks(), ["R17-N5·N6(낮음): 고칠 것"])
+
+    def test_edit_in_place_keeps_order(self):
+        for t in ("하나", "둘", "셋"):
+            self.q("add", task=t)
+        self.q("edit", pos=2, task="R17-N7: 둘 고침")
+        self.assertEqual(self.tasks(), ["하나", "R17-N7: 둘 고침", "셋"])
+        with self.assertRaises(SystemExit):
+            self.q("edit", pos=1, task="N1 고침")
+        self.assertEqual(self.q("edit", pos=9, task="R1-N1"), "큐에 9 번이 없습니다\n")

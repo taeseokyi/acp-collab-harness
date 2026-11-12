@@ -57,6 +57,7 @@ import subprocess
 import shutil
 import secrets
 import socket
+import signal
 import ssl
 import sys
 import threading
@@ -640,8 +641,15 @@ _audit_lock = threading.Lock()
 
 _REVOKED_AUDIT_MIN_SEC = 60
 _REVOKED_AUDIT_MAX = 256
+_DENIED_AUDIT_MAX_PER_MIN = 60
+_DENIED_AUDIT_FIRST_MAX = 256
 _revoked_last = collections.OrderedDict()
 _revoked_lock = threading.Lock()
+_denied_window_start = 0.0
+_denied_window_written = 0
+_denied_cap_skipped = 0
+_denied_evicted_skipped = 0
+_denied_window_seen = set()
 
 
 def _parse_env(text):
@@ -704,38 +712,87 @@ def audit(root, event, ip="-", subject=None, detail=""):
         pass
 
 
-def _audit_denied(root, event, ip, subject, path, method="GET", reason=""):
+def _audit_denied(root, event, ip, subject, path, method="GET", reason="", authenticated=False):
     """거절 한 건을 감사에 남긴다.
 
-    억제 키는 `(event, subject, path, method)` - **ip 는 넣지 않는다**(D3).
-    억제된 동안의 건수를 세어 다음에 남길 때 detail 에 `생략 N건` 으로 싣는다.
+    인증된 주체만 `(event, subject, path, method)`, URL 이 주장한 주체는 `(event, subject, method)`,
+    주체가 없으면 `(event, "-", method)`. **ip 는 넣지 않는다.**
+    상한에 걸린 건은 기록 표시를 하지 않는다.
     """
+    global _denied_window_start, _denied_window_written, _denied_cap_skipped
+    global _denied_evicted_skipped
     now = time.time()
     safe_path = _TICKET_LOG_RE.sub("/app/~***", str(path))
     safe_method = str(method or "GET")
-    key = (event, subject if subject is not None else "-", safe_path, safe_method)
+    safe_reason = str(reason)[:24]
+    authenticated = authenticated or event == "github-revoked"
+    has_subject = bool(subject) and subject != "-"
+    if has_subject and authenticated:
+        key = (event, subject, safe_path, safe_method, safe_reason)
+    elif has_subject:
+        key = (event, subject, safe_method, safe_reason)
+    else:
+        key = (event, "-", safe_method, safe_reason)
+    bucket = (event, subject or "-")
     with _revoked_lock:
+        if not _revoked_last:
+            _denied_window_start = now
+            _denied_window_written = 0
+            _denied_cap_skipped = 0
+            _denied_window_seen.clear()
         rec = _revoked_last.get(key)
         if rec is not None and now - rec[0] < _REVOKED_AUDIT_MIN_SEC:
             _revoked_last[key] = (rec[0], rec[1] + 1)
             _revoked_last.move_to_end(key)
             return
+
+        dropped = 0
+        if now - _denied_window_start >= 60:
+            _denied_window_start = now
+            _denied_window_written = 0
+            dropped = _denied_cap_skipped + _denied_evicted_skipped
+            _denied_cap_skipped = 0
+            _denied_evicted_skipped = 0
+            _denied_window_seen.clear()
+        first_seen = bucket not in _denied_window_seen
+        guaranteed = first_seen and len(_denied_window_seen) < _DENIED_AUDIT_FIRST_MAX
+        if not guaranteed and _denied_window_written >= _DENIED_AUDIT_MAX_PER_MIN:
+            _denied_cap_skipped += 1
+            return
+        _denied_window_written += 1
+        if guaranteed:
+            _denied_window_seen.add(bucket)
         skipped = rec[1] if rec is not None else 0
         _revoked_last[key] = (now, 0)
         _revoked_last.move_to_end(key)
         while len(_revoked_last) > _REVOKED_AUDIT_MAX:
-            _revoked_last.popitem(last=False)
+            _, evicted = _revoked_last.popitem(last=False)
+            if evicted[1] > 0:
+                _denied_evicted_skipped += evicted[1]
     detail = f"{safe_method} {safe_path}"
     if skipped:
         detail += f" 생략 {skipped}건"
     if reason:
         detail += f" {reason}"
+    if dropped:
+        audit(root, "audit-dropped", "-", None, f"상한 생략 {dropped}건")
     audit(root, event, ip, subject, detail)
+
+
+def flush_denied_audit(root):
+    """남은 상한 생략 수를 한 줄로 내보내고 비웁니다. 0 이면 아무것도 쓰지 않습니다."""
+    global _denied_cap_skipped, _denied_evicted_skipped
+    with _revoked_lock:
+        skipped = _denied_cap_skipped + _denied_evicted_skipped
+        _denied_cap_skipped = 0
+        _denied_evicted_skipped = 0
+    if skipped > 0:
+        audit(root, "audit-dropped", "-", None, f"상한 생략 {skipped}건")
 
 
 def _audit_revoked(root, ip, subject, path="-", method="GET"):
     """허용 목록 밖 GitHub 주체를 일정 간격으로 한 번만 기록한다."""
-    _audit_denied(root, "github-revoked", ip, subject, path, method, "허용 목록 밖")
+    _audit_denied(root, "github-revoked", ip, subject, path, method, "허용 목록 밖", authenticated=True)
 
 
 def subject_label(subject):
@@ -836,6 +893,7 @@ def _empty_state(root, errors):
     state.update({"graphs": collect_graphs(root, errors),
                   "managers": manager_status(root), "errors": errors, "projects": list_projects(root)})
     state["fleet"] = fleet_state(root, state["managers"])
+    state["claude_usage"] = _safe_claude_usage(root)
     return scrub_public(state, root)
 
 
@@ -845,7 +903,107 @@ def _blank_keys(root):
         "generated": datetime.datetime.now().isoformat(timespec="seconds"),
         "aimem": {}, "slots": [], "board": [], "queue": [],
         "log": [], "runs": [], "eta": {}, "requests": [],
+        "claude_usage": None,
     }
+
+
+CLAUDE_USAGE_MAX_BYTES = 64 * 1024
+
+#: 상태줄 파일의 칸 이름과 화면 라벨. 차례도 이 표가 정합니다.
+CLAUDE_USAGE_ROWS = (
+    ("five_hour", "5시간"),
+    ("seven_day", "주간"),
+    ("seven_day_opus", "주간·Opus"),
+    ("seven_day_sonnet", "주간·Sonnet"),
+)
+
+
+def _usage_percent(row):
+    """`used_percentage` → `utilization` → `percent` 중 첫 숫자. `bool` 은 숫자가 아닙니다."""
+    for name in ("used_percentage", "utilization", "percent"):
+        value = row.get(name)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return min(100.0, max(0.0, float(value)))
+    return None
+
+
+def _usage_resets_at(value):
+    """초기 시각·ISO 문자열을 현지 시각 문자열로. 읽을 수 없으면 `None`."""
+    try:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return datetime.datetime.fromtimestamp(value).isoformat(timespec="seconds")
+        if isinstance(value, str):
+            parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone().replace(tzinfo=None)
+            return parsed.isoformat(timespec="seconds")
+    except (OSError, OverflowError, ValueError):
+        return None
+    return None
+
+
+def _safe_claude_usage(root):
+    """곁다리 카드 하나가 상태 전체를 죽이지 않게 감싼 `claude_usage()`.
+
+    깊은 중첩 JSON 은 `json.loads` 에서 `RecursionError` 를 던질 수 있고,
+    그 예외는 카드 실패일 뿐 `/api/state` 실패가 아니어야 합니다.
+    """
+    try:
+        return claude_usage(root)
+    except Exception:  # noqa: BLE001 - 곁다리 카드가 상태 전체를 죽이지 않게
+        return None
+
+
+def claude_usage(root=ROOT):
+    """`.aimem/claude-usage.json` 을 읽어 함대 탭 행을 만듭니다.
+
+    파일 하나만 봅니다 - 자격 증명·환경 변수는 읽지 않습니다. 파일이 없거나
+    깨졌으면 `None` 이고 **로그도 예외도 없습니다** (`/api/state` 는 5초마다 돕니다).
+    """
+    path = pathlib.Path(root) / ".aimem" / "claude-usage.json"
+    try:
+        if path.stat().st_size > CLAUDE_USAGE_MAX_BYTES:
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError, RecursionError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    limits = data.get("rate_limits")
+    if not isinstance(limits, dict) or not limits:
+        return None
+
+    rows = []
+    for key, label in CLAUDE_USAGE_ROWS:
+        row = limits.get(key)
+        if not isinstance(row, dict):
+            continue
+        percent = _usage_percent(row)
+        if percent is None:
+            continue
+        rows.append({
+            "key": key,
+            "label": label,
+            "percent": round(percent, 1),
+            "resets_at_iso": _usage_resets_at(row.get("resets_at")),
+        })
+    if not rows:
+        return None
+
+    at = data.get("at")
+    if not isinstance(at, str):
+        at = None
+    age_seconds = None
+    if at is not None:
+        try:
+            parsed_at = datetime.datetime.fromisoformat(at.replace("Z", "+00:00"))
+            if parsed_at.tzinfo is not None:
+                parsed_at = parsed_at.astimezone().replace(tzinfo=None)
+            age_seconds = max(0, int((datetime.datetime.now() - parsed_at).total_seconds()))
+        except (TypeError, ValueError, OverflowError):
+            age_seconds = None
+
+    return {"at": at, "age_seconds": age_seconds, "rows": rows}
 
 
 #: 확인토큰 꼴. **이 꼴일 때만 비밀로 취급합니다** - 길이 하한만 두면 토큰이
@@ -987,6 +1145,7 @@ def collect_state(root=ROOT):
     state["projects"] = list_projects(root, state.get("requests") if isinstance(state.get("requests"), list) else None)
     state["managers"] = manager_status(root)
     state["fleet"] = fleet_state(root, state["managers"])
+    state["claude_usage"] = _safe_claude_usage(root)
     return scrub_public(state, root)
 
 
@@ -1639,7 +1798,9 @@ def collect_graphs(root=ROOT, errors=None):
             if tools_dir not in sys.path:
                 sys.path.insert(0, tools_dir)
             import fleet_graph  # noqa: PLC0415 - 지연 import. 없어도 화면은 떠야 한다
-            prog = fleet_graph.progress
+            # 하네스별 소요 표본은 한 번만 구해 모든 그래프에 쓴다 (2026-11-12: 그래프마다 다시 구해 /api/state 가 7~11초)
+            durations = fleet_graph.harness_durations()
+            prog = lambda g, _d=durations: fleet_graph.progress(g, _d)  # noqa: E731
         except Exception as e:  # noqa: BLE001
             errors.append(f"fleet_graph 를 쓰지 못해 그래프 ETA 를 생략합니다: {type(e).__name__}: {e}")
     out = []
@@ -2398,10 +2559,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             _audit_denied(self.root, "token-bad", self._client_ip(), None,
                           self._path() or self.path, self.command, "토큰 불일치")
             return None
-        raw_cookie = self.headers.get("Cookie")
         sess = verify_session(tok, self._cookie(SESSION_COOKIE))
         if not sess:
-            if raw_cookie is not None:
+            if self._cookie(SESSION_COOKIE) is not None:
                 _audit_denied(self.root, "session-bad", self._client_ip(), None,
                               self._path() or self.path, self.command, "서명·만료")
             return None
@@ -2662,7 +2822,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if credential_subject is not None and (
                     _app_ticket_canon(credential_subject) != _app_ticket_canon(ticket_subject)):
                 _audit_denied(self.root, "app-ticket-bad", self._client_ip(), credential_subject,
-                              raw_path, self.command, "주체 불일치")
+                              raw_path, self.command, "주체 불일치", authenticated=True)
                 return self._json(403, {"ok": False, "error": APP_TICKET_INVALID_ERROR})
             rel = urllib.parse.unquote(am.group("rel") or "").split("?", 1)[0]
             code, data, ctype = project_app_file(app_name, rel, self.root)
@@ -3022,6 +3182,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return json.loads(r.read(64 * 1024).decode("utf-8")).get("login")
 
 
+def _sigterm_interrupt(signum, frame):
+    """SIGTERM 을 `KeyboardInterrupt` 로 바꿔 `serve()` 의 `finally` 를 돌게 합니다."""
+    raise KeyboardInterrupt
+
+
 def serve(host=HOST, port=PORT, root=ROOT, once=False, tls=False, auth=None):
     """`auth=None` 이면 `tls` 값을 따릅니다 - **공개하면 인증이 자동으로 켜집니다.**
 
@@ -3045,6 +3210,15 @@ def serve(host=HOST, port=PORT, root=ROOT, once=False, tls=False, auth=None):
         httpd.ssl_context = ctx
     else:
         httpd = http.server.ThreadingHTTPServer((host, port), handler)
+    # 운영은 `monitorctl.sh` 가 SIGTERM 으로 내립니다. 기본 처리기는 즉사라
+    # `finally` 의 감사 비우기가 돌지 않습니다. 주 스레드가 아니면 signal.signal
+    # 이 ValueError 를 던지므로 조용히 건너뜁니다 (시험은 스레드에서 띄웁니다).
+    sigterm_installed = False
+    try:
+        old_sigterm = signal.signal(signal.SIGTERM, _sigterm_interrupt)
+        sigterm_installed = True
+    except (ValueError, OSError):
+        pass
     scheme = "https" if tls else "http"
     log_line(f"AIMEM 모니터: {scheme}://{host}:{port}/  (저장소 {root})")
     log_line("  GET  /api/state  GET /api/health  POST /api/requests")
@@ -3063,6 +3237,12 @@ def serve(host=HOST, port=PORT, root=ROOT, once=False, tls=False, auth=None):
     except KeyboardInterrupt:
         log_line("\n내립니다.")
     finally:
+        if sigterm_installed:
+            try:
+                signal.signal(signal.SIGTERM, old_sigterm)
+            except (ValueError, OSError):
+                pass
+        flush_denied_audit(root)
         httpd.server_close()
     return 0
 

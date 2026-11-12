@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """T-184 브라우저 실측: 모니터 미리보기 칸에서 보관함 기록이 남고 칸이 섞이지 않는지 잰다."""
+import re
 import http.server
 import json
 import pathlib
@@ -62,10 +63,16 @@ def part_for(name):
 
 
 def open_preview(page, name=None, wait_selector="#board .tile"):
-    if name:
-        page.locator("#projects-list article", has_text=name).locator("button", has_text="실행").first.click()
-    else:
-        page.locator("#projects-list button", has_text="실행").first.click()
+    # 프로젝트 탭은 처음에 '진행 중' 만 보인다 - 끝난 웹워들도 보이게 '전체' 로 (2026-11-12).
+    # 단추 글자는 '실행' → '앱 열기 ▶' 로 바뀌었다 - 글자 대신 class 로 찾는다
+    # 진행 중 프로젝트가 앞에 오도록 정렬되므로 '첫 단추' 가 아니라 이름이 정확히 같은 카드를 찾는다
+    all_chip = page.locator("#projects-filter-chips .chip", has_text="전체").first
+    if all_chip.count() and all_chip.get_attribute("aria-pressed") != "true":
+        all_chip.click()
+    target = name or "웹워들"
+    card = page.locator("#projects-list article").filter(
+        has=page.locator("h3", has_text=re.compile("^" + re.escape(target) + "$")))
+    card.locator(".proj-run").first.click()
     page.wait_for_selector("iframe.proj-app-frame", timeout=10000)
     iframe = page.locator("iframe.proj-app-frame").first
     frame = iframe.element_handle().content_frame()
@@ -106,6 +113,7 @@ def webwordle_checks(browser, base, checks):
     setup_error = ""
     try:
         page.goto(base + "/", wait_until="load")
+        page.click("#tab-projects")      # 프로젝트가 별도 탭이 됐다 (2026-11-12)
         page.wait_for_selector("#projects-list", timeout=10000)
         f = open_preview(page)
         close_help(f)

@@ -18,9 +18,10 @@
   <header class="topbar">
     <div class="brand">AIMEM 함대 모니터 <span id="brand-rev" class="brand-rev"></span> <span id="fleet-mode-pill" class="mode-pill"></span></div>
     <div class="controls">
-      <label class="toggle"><input type="checkbox" id="autoRefresh" checked> 자동 새로고침</label>
+      <label class="toggle"><input type="checkbox" id="autoRefresh" checked> 자동<span class="tl-more"> 새로고침</span></label>
       <span id="refresh-status" class="refresh-status">마지막 갱신 -</span>
       <button type="button" id="refresh-now">지금 갱신</button>
+      <button type="button" id="archive-open" title="끝난 태스크·닫힌 요청·끝난 그래프를 한꺼번에 아카이브로 옮깁니다 (지우지 않음)">끝난 것 정리… <span id="archive-count" class="tab-count"></span></button>
       <button type="button" id="theme-toggle" aria-pressed="false">어두운 모드</button>
       <span id="auth-box" class="auth-box" hidden><span id="auth-who" class="auth-who"></span><button type="button" id="logout">로그아웃</button></span>
     </div>
@@ -34,11 +35,17 @@
 
       <div class="tabs" role="tablist" aria-label="화면 전환">
         <button type="button" role="tab" id="tab-fleet"    aria-controls="panel-fleet"    aria-selected="true"  tabindex="0">함대 <span class="tab-count" id="tab-count-fleet"></span></button>
+        <button type="button" role="tab" id="tab-projects" aria-controls="panel-projects" aria-selected="false" tabindex="-1">프로젝트 <span class="tab-count" id="tab-count-projects"></span></button>
         <button type="button" role="tab" id="tab-board"    aria-controls="panel-board"    aria-selected="false" tabindex="-1">보드·큐 <span class="tab-count" id="tab-count-board"></span></button>
         <button type="button" role="tab" id="tab-requests" aria-controls="panel-requests" aria-selected="false" tabindex="-1">요청 트리 <span class="tab-count" id="tab-count-requests"></span></button>
       </div>
 
       <div id="panel-fleet" role="tabpanel" aria-labelledby="tab-fleet">
+        <section class="card" id="usage-section">
+          <h2>Claude 사용 한도 <span class="hint" id="usage-stale"></span></h2>
+          <div id="claude-usage" class="claude-usage"></div>
+        </section>
+
         <section class="card" id="fleet-section">
           <h2>함대 현황</h2>
           <div id="fleet-control" class="fleet-control"></div>
@@ -47,15 +54,21 @@
           <div class="tablewrap" id="slots-table-wrap"></div>
         </section>
 
-        <section class="card" id="projects-section">
-          <h2>프로젝트 <span class="hint">여러 라운드에 걸친 진행 상황 · 결과물 projects/&lt;이름&gt;/</span></h2>
-          <div id="projects-list"></div>
-        </section>
-
         <section class="card" id="runs-section">
           <h2>작업자 실행 상태 <span class="hint">최신이 위</span></h2>
           <div class="tablewrap" id="runs-table-wrap"></div>
           <div id="runs-more" class="more-row"></div>
+        </section>
+      </div>
+
+      <div id="panel-projects" role="tabpanel" aria-labelledby="tab-projects" hidden>
+        <section class="card" id="projects-section">
+          <h2>프로젝트 <span class="hint">여러 라운드에 걸친 진행 상황 · 결과물 projects/&lt;이름&gt;/</span></h2>
+          <div class="filter-row proj-filter" id="projects-filter">
+            <span id="projects-filter-chips" class="proj-chips"></span>
+            <input type="search" id="projects-search" class="proj-search" placeholder="이름으로 찾기" aria-label="프로젝트 이름으로 찾기" autocomplete="off" hidden>
+          </div>
+          <div id="projects-list"></div>
         </section>
       </div>
 
@@ -66,11 +79,19 @@
           <div class="tablewrap" id="board-table-wrap"></div>
         </section>
         <section class="card" id="queue-section">
-          <h2>대기 큐</h2>
+          <h2>대기 큐 <span class="hint">후속 일 · 요청을 처리하다 생긴 다음 할 일(검수 지적 등)</span></h2>
+          <p class="form-help">관리자가 라운드마다 <b>새 작업 요청을 먼저</b> 하고 그다음 여기서 위부터 가져갑니다. 요청과 이것이 모두 비면 이어 달리기가 멈춥니다. 순서 번호는 처리된 항목이 빠지면 다시 매겨집니다.</p>
+          <dl class="id-legend" aria-label="검수 번호 읽는 법">
+            <dt><code>R17-N5</code></dt><dd>R17 라운드 검수 보고서(<code>rounds/R17/REVIEW-….md</code>)의 5번 항목. 번호는 보고서마다 1부터 다시 세므로 라운드를 꼭 붙입니다</dd>
+            <dt><code>N</code></dt><dd>결함·발견 - 검수자가 찾은 문제. 등급은 높음 · 중간 · 낮음 · 정보(고치지 않아도 되지만 알아 둘 것)</dd>
+            <dt><code>M</code></dt><dd>변이 시험 - 코드를 일부러 망가뜨려 테스트가 잡는지 본 것. "살아남음" 이면 테스트 구멍입니다</dd>
+            <dt><code>D</code></dt><dd>넘어온 결함 - 앞 라운드에서 다 못 닫고 이어받은 문제</dd>
+          </dl>
           <div class="tablewrap" id="queue-table-wrap"></div>
         </section>
         <section class="card" id="log-section">
-          <h2>핸드오프 로그 <span class="hint">DB events · 최신이 위 · 행을 누르면 전문</span></h2>
+          <h2>라운드 핸드오프 로그 <span class="hint">인수인계 기록 · 최신이 위 · 행을 누르면 전문</span></h2>
+          <p class="form-help">라운드(또는 클로드 코드 작업)가 끝날 때 <b>다음 관리자에게 남기는 요약</b>입니다 - 한 일, 바뀐 것, 남은 일. 관리자는 라운드마다 기억 없이 새로 뜨므로 시작할 때 최근 두 건부터 읽고 이어받습니다. 항목마다 대개 <b>REV</b> 가 하나 오릅니다(커밋의 REV 번호). 본문의 <code>N</code>·<code>M</code>·<code>D</code> 번호는 그 라운드 검수 보고서의 결함·변이 시험·넘어온 결함입니다(읽는 법은 위 '대기 큐').</p>
           <div class="tablewrap" id="log-table-wrap"></div>
           <div id="log-more" class="more-row"></div>
         </section>
@@ -96,9 +117,12 @@
         <form id="request-form" autocomplete="off">
           <label for="req-title">제목 <span class="required">*</span></label>
           <input id="req-title" name="title" type="text" required placeholder="한 줄 제목">
-          <label for="req-project">프로젝트 <span class="hint">결과물이 쌓일 곳 · 비우면 함대 자체의 일</span></label>
-          <input id="req-project" name="project" type="text" list="project-list" maxlength="40" placeholder="예: reefwiz-앱">
-          <datalist id="project-list"></datalist>
+          <label for="req-project-pick">프로젝트 <span class="hint">결과물이 쌓일 곳 · 비우면 함대 자체의 일</span></label>
+          <select id="req-project-pick" name="project_pick">
+            <option value="">(함대 자체의 일 - 프로젝트 없음)</option>
+            <option value="__new__">+ 새 프로젝트…</option>
+          </select>
+          <input id="req-project" name="project" type="text" maxlength="40" placeholder="새 프로젝트 이름" hidden>
           <label for="req-detail">본문 <span class="hint">줄바꿈은 그대로 보존됩니다</span></label>
           <textarea id="req-detail" name="detail" rows="8" placeholder="요청 내용"></textarea>
           <label for="req-requester">요청자 <span class="required">*</span></label>

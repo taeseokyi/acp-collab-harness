@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/o
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 159** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-12 08:00 KST
+- **REV: 161** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-12 17:16 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **a Claude ACP session** (harness claude, model Opus 5.5 = `opus[1m]`),
@@ -168,7 +168,8 @@ Status values: `TODO` / `ASSIGNED` / `IN-PROGRESS` / `REVIEW` / `DONE` / `BLOCKE
 > `4. 이벤트 로그` of **`AIMEM-state.md`** are generated views. This section states only the method.
 
 The handoff log is the narrative continuity record: the next round's Manager starts blank (`8.0-7`) and reads the
-latest entries first.
+latest entries first. The web shows it as `라운드 핸드오프 로그` (round handoff log: what was done,
+what changed, what remains - one entry per round close or Claude Code commit, usually one REV each).
 
 ```bash
 python3 tools/aimem_db.py handoff list --last 2        # read at round start (`--all` for everything)
@@ -193,8 +194,16 @@ python3 tools/aimem_db.py handoff add --bump --expect-rev N --actor "Manager (R8
 > **Source of truth: `.aimem/aimem.db`.** Read `4.5 대기 큐` in **`AIMEM-state.md`**.
 
 ```bash
-python3 tools/aimem_db.py queue list | add --task "..." --slot-hint S1 | drop --pos 3   # Manager only
+python3 tools/aimem_db.py queue list | add --task "..." --slot-hint S1 | edit --pos 2 --task "..." | drop --pos 3   # Manager only
 ```
+
+**What it is:** follow-up work that came out of handling requests - mostly review findings and "next time" items.
+New web requests (`NEW`) come first each round; then the queue, top down. An empty queue and no open requests
+end the relay (`이어 달리기`). The web shows it as `대기 큐 · 후속 일` (columns: 할 일 / 추천 슬롯 / 출처 태스크).
+- **Finding IDs carry their round:** `R17-N5`, `R17-N5·N6`, `R17-M13` - never bare `N5`. Review reports number
+  findings (N = finding, M = mutation, D = carried defect) from 1 in every report, so a bare ID is ambiguous across
+  rounds. `queue add/edit` refuses bare IDs
+- **Refer to an item by its finding ID or text, not its position:** positions are renumbered after every `drop`
 
 The Manager takes the next task from the top (`8.0-4`). When the queue is empty it reports a summary and stops; it
 never invents items. Items removed earlier and why: `retired-sections-2026-11.md`, `[REV 128 내림] 4.5`.

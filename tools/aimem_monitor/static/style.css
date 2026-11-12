@@ -543,12 +543,14 @@ button:disabled {
 
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
 textarea:focus-visible {
   outline: 2px solid var(--st-focus);
   outline-offset: 2px;
 }
 
 input,
+select,
 textarea {
   background: var(--input-bg);
   color: var(--text);
@@ -1066,6 +1068,7 @@ form { max-width: none; gap: var(--st-s-2); }
 form label { font-size: var(--st-fs-sm); font-weight: var(--st-fw-medium); color: var(--st-ink-soft); margin-top: var(--st-s-1); }
 form label .hint { font-weight: var(--st-fw-regular); font-size: var(--st-fs-xs); }
 input, textarea { width: 100%; font-size: 15px; }
+select { width: 100%; font-size: 15px; }
 textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .form-row { margin-top: var(--st-s-2); }
 
@@ -1160,6 +1163,34 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .fc-checks .warn { color: var(--st-warn-text); }
 @media (max-width: 720px) { .fc-sep { display: none; } .fc-buttons .btn-primary { width: 100%; } }
 
+/* Claude 사용 한도 */
+.claude-usage { display: grid; gap: var(--st-s-2); }
+.usage-row {
+  display: flex; align-items: center; gap: var(--st-s-2);
+  min-width: 0;
+}
+.usage-label {
+  flex: 0 0 auto; font-size: var(--st-fs-sm); color: var(--st-ink-soft);
+  white-space: nowrap;
+}
+.usage-bar {
+  flex: 1 1 80px; min-width: 40px; height: 10px;
+  background: var(--bar-bg); border: 1px solid var(--st-line);
+  border-radius: var(--st-r-pill); overflow: hidden;
+}
+.usage-fill { display: block; height: 100%; }
+.usage-ok .usage-fill { background-color: var(--st-accent-fill); }
+.usage-warn .usage-fill { background-color: var(--st-warn); }
+.usage-crit .usage-fill { background-color: var(--st-danger); }
+.usage-pct {
+  flex: 0 0 auto; color: var(--st-ink); font-size: var(--st-fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.usage-reset {
+  flex: 0 0 auto; color: var(--st-ink-muted); font-size: var(--st-fs-xs);
+  white-space: nowrap;
+}
+
 /* 관리자 줄 */
 .manager-card {
   display: grid; gap: 4px; margin-bottom: var(--st-s-3);
@@ -1208,6 +1239,23 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
   .graph-head { flex-wrap: wrap; }
   .graph-block, .req-block { padding: var(--st-s-3); }
   .req-top { flex-wrap: wrap; }
+}
+
+/* 탭 넷 (2026-11-12, T-220): 폰 폭에서는 줄을 바꿔 넷이 모두 보이게 한다 */
+@media (max-width: 480px) {
+  .tabs { flex-wrap: wrap; overflow-x: visible; overflow-y: visible; padding-bottom: var(--st-s-2); }
+  .tabs [role="tab"] { flex: 1 1 auto; padding: 8px 9px; font-size: 14px; }
+}
+
+/* 상단 전역 바에 단추가 늘어난 뒤(T-225): 폰 폭에서 요소가 겹치거나 화면 밖으로 나가지 않게 줄인다 */
+@media (max-width: 480px) {
+  .topbar { padding: 8px 10px; gap: 6px; }
+  .brand { font-size: 16px; gap: var(--st-s-1); }
+  .controls { gap: 6px; }
+  .controls button { padding: 5px 8px; font-size: 12px; }
+  .toggle, .refresh-status { font-size: 12px; }
+  .refresh-status { white-space: normal; }
+  .auth-box { flex-wrap: wrap; gap: 6px; }
 }
 
 /* 상세 패널 안의 동작 줄 (태스크 → 요청, 큐 → 태스크) - 2026-11-10 */
@@ -1291,7 +1339,7 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .fc-prep-old > summary { color: var(--st-ink-muted); }
 
 /* REV 146: 프로젝트 결과물 보기, 요청 수정 폼의 프로젝트 칸 */
-.proj-head .proj-view { margin-left: auto; font-size: 13px; padding: 2px 10px; }
+.proj-head .proj-view { font-size: 13px; padding: 2px 10px; }
 .proj-run { font-size: 13px; padding: 2px 10px; background: var(--st-accent-fill); border-color: var(--st-accent-fill);
   color: var(--st-accent-ink); font-weight: var(--st-fw-bold); }
 .proj-run:hover { background: var(--st-accent-fill); filter: brightness(1.08); }
@@ -1382,4 +1430,80 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
   margin-top: var(--st-s-2);
   color: var(--muted);
   font-size: var(--st-fs-sm);
+}
+
+/* 펼친 그래프 제목은 머리줄 아래 한 줄을 통째로 쓴다 - 폰에서는 제목 칸이 수십 px 라 그 자리에서 펼치면 한 글자씩 세로로 늘어진다 */
+.graph-head:has(.graph-title.elide-open) { flex-wrap: wrap; }
+.graph-title.elide-open { flex: 1 0 100%; order: 10; max-width: none; }
+
+/* 검수 번호 읽는 법 (2026-11-12) - 대기 큐 설명 아래 */
+.id-legend { display: grid; grid-template-columns: max-content 1fr; gap: 2px var(--st-s-3); margin: 0 0 var(--st-s-3);
+  font-size: 13px; line-height: 1.5; color: var(--st-ink-muted); }
+.id-legend dt { margin: 0; }
+.id-legend dd { margin: 0; }
+
+/* ---- 모바일 검수 (2026-11-12) ------------------------------------------------------------
+   상단 바가 세 줄(134px)이었고 '마지막 갱신' 이 세 줄로 꺾였다 / 탭 넷이 두 줄로 나뉘어 스크롤하면 잘렸다 /
+   누르는 곳이 13~31px 였다 / '완전 중지' 만 혼자 다음 줄 / 옆으로 미는 표에 단서가 없었다 */
+.rs-label { white-space: nowrap; }
+@media (max-width: 480px) {
+  .topbar { row-gap: 6px; }
+  .brand { width: 100%; display: flex; flex-wrap: wrap; align-items: baseline; }
+  .controls { gap: 6px; }
+  .controls > * { white-space: nowrap; }
+  .controls button { min-height: 36px; padding: 6px 10px; font-size: 13px; }
+  .refresh-status { flex: 0 0 auto; white-space: nowrap; }
+  .rs-label { display: none; }
+  .toggle { gap: 6px; font-size: 13px; }
+  .toggle input { width: 20px; height: 20px; margin: 0; }
+  .auth-box { flex-wrap: nowrap; }
+  .auth-who { font-size: 12px; }
+
+  /* 탭 넷을 한 줄에 */
+  .tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); flex-wrap: nowrap; padding-bottom: 0; }
+  .tabs [role="tab"] { padding: 10px 2px; font-size: 14px; white-space: nowrap; min-width: 0; text-align: center; }
+  .tabs .tab-count { margin-left: 2px; padding: 0 5px; min-width: 16px; font-size: 11px; }
+
+  /* 함대 제어 단추 넷은 한 줄, 라운드 실행은 그 아래 한 줄 */
+  .fc-buttons { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .fc-buttons .fc-btn { padding: 8px 4px; font-size: 14px; min-height: 40px; white-space: nowrap; }
+  .fc-buttons > :not(.fc-btn):not(.fc-sep), .fc-buttons .btn-primary { grid-column: 1 / -1; }
+  .fc-buttons .btn-primary { padding: 10px; }
+
+  /* 상단 바 세 줄: 제목 / 자동·갱신 시각·지금 갱신·어두운 모드 / 정리·로그인 */
+  .tl-more { display: none; }
+  #theme-toggle { order: 1; }
+  #archive-open { order: 2; }
+  .auth-box { order: 3; }
+}
+@media (pointer: coarse) {
+  .btn-link, .fc-hint .fc-write, .req-edit-btn { min-height: 36px; }
+}
+/* 옆으로 밀어야 보이는 표: 오른쪽 끝이 흐려진다 (끝까지 밀면 사라짐) */
+.tablewrap.is-scrollable { position: relative; }
+.tablewrap.is-scrollable:not(.at-end) { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+@media (max-width: 380px) {
+  .tabs [role="tab"] { font-size: 13px; letter-spacing: -0.02em; }
+  .tabs .tab-count { padding: 0 4px; min-width: 14px; }
+  .fc-buttons .fc-btn { font-size: 13px; padding: 8px 2px; }
+}
+@media (max-width: 340px) {
+  .tabs [role="tab"] { font-size: 12px; padding: 10px 0; }
+  .tabs .tab-count { font-size: 10px; padding: 0 3px; margin-left: 1px; }
+  .fc-buttons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* 프로젝트 탭 - 여러 개일 때 (2026-11-12): 필터 칩·이름 찾기, 이름 줄 오른쪽에 동작 묶음, 아래 줄에 요약 */
+.proj-filter { display: flex; flex-wrap: wrap; align-items: center; gap: var(--st-s-2); margin-bottom: var(--st-s-3); }
+.proj-chips { display: inline-flex; flex-wrap: wrap; gap: var(--st-s-2); }
+.proj-search { margin-left: auto; width: 200px; max-width: 100%; padding: 6px 10px; font-size: 14px; }
+.proj-head { align-items: center; }
+.proj-head h3 { overflow-wrap: anywhere; min-width: 0; }
+.proj-actions { margin-left: auto; display: inline-flex; gap: var(--st-s-2); flex-wrap: wrap; }
+.proj-sub { margin-top: 2px; }
+@media (max-width: 480px) {
+  .proj-search { margin-left: 0; width: 100%; }
+  .proj-actions { margin-left: 0; width: 100%; }
+  .proj-actions button { flex: 1 1 0; min-height: 36px; }
 }

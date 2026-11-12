@@ -239,6 +239,151 @@ class FleetGraphContractTests(unittest.TestCase):
         verify_mock.assert_not_called()
         self.assertIsNone(attempt["verify_rc"])
 
+    def test_report_limit_hit_contract_table(self):
+        cases = [
+            ("상태: DONE\nClaude hit your 5-hour limit", True),
+            ("5-hour limit reached", True),
+            ("주간 한도에 걸렸습니다", True),
+            ("사용 한도로 끝났습니다", True),
+            ("Session limit reached ∙ resets 3pm", True),
+            ("You've reached your usage limit", True),
+            ("상태: DONE\n- 검증 통과", False),
+            ("DONE\n- 함대 탭에 Claude 사용 한도 카드를 넣었습니다", False),
+            ("DONE\n- rate limit 글자를 설명에 적었습니다", False),
+            ("상태: DONE\n- 주간 한도 표시를 style.css 에 넣었습니다", False),
+        ]
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(fleet_graph.report_limit_hit(text), expected)
+
+    def test_report_limit_hit_ignores_bare_limit_words(self):
+        for text in ("상태: DONE\n사용 한도", "사용 한도 카드를 넣었습니다", "주간 한도 표시"):
+            with self.subTest(text=text):
+                self.assertFalse(fleet_graph.report_limit_hit(text))
+
+    def test_report_limit_hit_ignores_empty_and_non_string(self):
+        for text in ("", None, 0, [], {"limit": "사용 한도"}):
+            with self.subTest(text=repr(text)):
+                self.assertFalse(fleet_graph.report_limit_hit(text))
+
+    def test_report_limit_hit_only_reads_last_2000_chars(self):
+        self.assertFalse(fleet_graph.report_limit_hit("5-hour limit reached\n" + "x" * 2500 + "\n상태: DONE"))
+        self.assertTrue(fleet_graph.report_limit_hit("x" * 2500 + "\n사용 한도로 끊겼습니다"))
+
+    def test_step_limit_hit_blocks_without_retry(self):
+        attempt = self._attempt()
+        node = self._node(attempts=[attempt], max_attempts=2)
+        graph = self._graph([node])
+        with mock.patch.object(fleet, "_run_state", return_value=("done", 1)), \
+             mock.patch.object(fleet, "run_report", return_value="상태: DONE\nClaude hit your 5-hour limit"), \
+             mock.patch.object(fleet_graph, "_verify") as verify_mock:
+            fleet_graph.step(graph)
+        self.assertEqual(node["status"], "blocked")
+        self.assertEqual(len(node["attempts"]), 1)
+        self.assertIs(attempt["limit"], True)
+        self.assertEqual(attempt["verify_rc"], -4)
+        self.assertIn("사용 한도", attempt["verify_tail"])
+        verify_mock.assert_not_called()
+
+    def test_step_limit_like_report_with_passing_verify_is_done(self):
+        attempt = self._attempt()
+        node = self._node(attempts=[attempt], verify="true")
+        graph = self._graph([node])
+        with mock.patch.object(fleet, "_run_state", return_value=("done", 0)), \
+             mock.patch.object(fleet, "run_report", return_value="상태: DONE\n5-hour limit reached"), \
+             mock.patch.object(fleet_graph, "_verify", return_value=(0, "ok")) as verify_mock:
+            fleet_graph.step(graph)
+        self.assertEqual(node["status"], "done")
+        self.assertFalse(attempt.get("limit"))
+        self.assertEqual(attempt["verify_rc"], 0)
+        verify_mock.assert_called_once_with(node)
+
+    def test_step_limit_like_report_with_failing_verify_is_retried_without_limit(self):
+        attempt = self._attempt()
+        node = self._node(attempts=[attempt], verify="true")
+        graph = self._graph([node])
+        with mock.patch.object(fleet, "_run_state", return_value=("done", 0)), \
+             mock.patch.object(fleet, "run_report", return_value="상태: DONE\n5-hour limit reached"), \
+             mock.patch.object(fleet_graph, "_verify", return_value=(1, "빨강")) as verify_mock:
+            fleet_graph.step(graph, allow_spawn=False)
+        self.assertEqual(node["status"], "todo")
+        self.assertFalse(attempt.get("limit"))
+        self.assertEqual(attempt["verify_rc"], 1)
+        verify_mock.assert_called_once_with(node)
+
+    def test_step_limit_hit_keeps_attempt_count_at_two(self):
+        first = self._attempt("R-1")
+        second = self._attempt("R-2")
+        node = self._node(attempts=[first, second], max_attempts=2)
+        graph = self._graph([node])
+        with mock.patch.object(fleet, "_run_state", return_value=("done", 1)), \
+             mock.patch.object(fleet, "run_report", return_value="5-hour limit reached"):
+            fleet_graph.step(graph)
+        self.assertEqual(node["status"], "blocked")
+        self.assertEqual(len(node["attempts"]), 2)
+        self.assertTrue(second["limit"])
+
+    def test_step_limit_flag_remains_in_saved_graph_json(self):
+        attempt = self._attempt()
+        node = self._node(attempts=[attempt], max_attempts=2)
+        graph = self._graph([node])
+        with mock.patch.object(fleet, "_run_state", return_value=("done", 1)), \
+             mock.patch.object(fleet, "run_report", return_value="상태: DONE\n사용 한도에 도달했습니다"):
+            fleet_graph.step(graph)
+        saved = json.loads((self.graphs / "G-900.json").read_text(encoding="utf-8"))
+        self.assertIs(saved["nodes"][0]["limit"], True)
+        self.assertIs(saved["nodes"][0]["attempts"][-1]["limit"], True)
+
+    def test_step_limit_report_with_rc_zero_is_not_a_limit(self):
+        attempt = self._attempt()
+        node = self._node(attempts=[attempt], verify=None, max_attempts=2)
+        graph = self._graph([node])
+        with mock.patch.object(fleet, "_run_state", return_value=("done", 0)), \
+             mock.patch.object(fleet, "run_report", return_value="상태: DONE\n5-hour limit reached"):
+            fleet_graph.step(graph)
+        self.assertNotEqual(node["status"], "blocked")
+        self.assertEqual(node["status"], "done")
+        self.assertFalse(attempt.get("limit"))
+        self.assertEqual(attempt["verify_rc"], 0)
+
+    def test_step_limit_report_with_rc_nonzero_blocks_with_limit(self):
+        attempt = self._attempt()
+        node = self._node(attempts=[attempt], verify="true", max_attempts=2)
+        graph = self._graph([node])
+        with mock.patch.object(fleet, "_run_state", return_value=("done", 1)), \
+             mock.patch.object(fleet, "run_report", return_value="상태: DONE\n5-hour limit reached"), \
+             mock.patch.object(fleet_graph, "_verify") as verify_mock:
+            fleet_graph.step(graph)
+        self.assertEqual(node["status"], "blocked")
+        self.assertIs(attempt["limit"], True)
+        self.assertEqual(attempt["verify_rc"], -4)
+        self.assertIn("사용 한도", attempt["verify_tail"])
+        verify_mock.assert_not_called()
+
+    def test_step_limit_text_before_last_2000_chars_with_nonzero_rc_is_not_limit(self):
+        attempt = self._attempt()
+        node = self._node(attempts=[attempt], max_attempts=2)
+        graph = self._graph([node])
+        report = "5-hour limit reached\n" + "x" * 2500 + "\n상태: DONE"
+        with mock.patch.object(fleet, "_run_state", return_value=("done", 1)), \
+             mock.patch.object(fleet, "run_report", return_value=report):
+            fleet_graph.step(graph, allow_spawn=False)
+        self.assertEqual(node["status"], "todo")
+        self.assertFalse(attempt.get("limit"))
+        self.assertEqual(attempt["verify_rc"], -1)
+
+    def test_cmd_status_marks_limit_nodes(self):
+        node = self._node(status="blocked", attempts=[self._attempt()])
+        node["limit"] = True
+        self._save_graph(self._graph([node]))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = fleet_graph.cmd_status(argparse.Namespace(id="G-900"))
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("(사용 한도)", out)
+        self.assertIn('"limit": true', out)
+
     def test_step_dependents_of_blocked_node_become_blocked(self):
         blocked = self._node("T-1", status="blocked", attempts=[self._attempt()])
         blocked["attempts"][0].update({"rc": 0, "state": "done", "report_status": "BLOCKED"})

@@ -128,6 +128,7 @@ def scenario(browser, base, checks):
     ctx = browser.new_context(viewport={"width": 420, "height": 900})
     page = ctx.new_page()
     page.goto(base + "/", wait_until="load")
+    page.click("#tab-projects")      # 프로젝트가 별도 탭이 됐다 (2026-11-12)
     page.wait_for_selector("#projects-list .proj-run", timeout=10000)
     page.locator("#projects-list .proj-run").first.click()
     page.wait_for_selector("iframe.proj-app-frame", timeout=10000)
