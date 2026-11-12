@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/a
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 166** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-13 02:01 KST
+- **REV: 167** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-13 02:38 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **the `role=manager` session the engine starts for a round** (harness claude,
@@ -433,6 +433,12 @@ starts blank every round and uses this file plus the handoff log as memory; it m
 #### 8.0-8 Manager Round Routine and Control
 
 The standing routine every round brief points to; briefs list only the round's tasks.
+
+**Two round modes** (`fleet.toml` `[manager] mode`; default `resident`). `resident`: one Manager session lives for
+the whole round and does everything below. `calls`: the Manager is started as short separate sessions - ① plan
+(Start + graph planning), ② judge (graph checkpoints, follow-up graphs; repeats), ③ close (Close) - and **the
+engine runs `fleet_graph.py run` between them**; each call ends its report with a `NEXT: RUN G-… | CLOSE | STOP
+<reason>` line, which is all the engine reads. The routine is the same; only who waits differs.
 
 **Round content, projects, records.** A round is launched from the web (`라운드 실행`). Without a round-specific
 brief (`.aimem/briefs/manager-round<N>-<date>.md`) the standard brief `.aimem/briefs/manager-round-standard.md` is

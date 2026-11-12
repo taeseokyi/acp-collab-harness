@@ -26,7 +26,12 @@ DEFAULTS = {
         "codex": {"binary": "codex", "providers": ["kisti", "openrouter"], "default_model": "kisti/kistillm"},
         "opencode": {"binary": "opencode", "providers": ["kisti", "exaone", "openrouter"], "default_model": "kisti/kistillm"},
     },
+    "manager": {"mode": "resident"},
 }
+
+#: 관리자 운용 방식 (설계 5.9). `resident` 는 관리자 하나가 라운드 내내 산다(지금까지의 방식).
+#: `calls` 는 관리자가 계획·판정·마감 세 곳에서만 짧게 뜨고, 그 사이 그래프는 엔진(`fleet_ctl` 의 라운드 구동기)이 돌린다.
+MANAGER_MODES = ("resident", "calls")
 
 #: claude CLI 가 받는 모델 별칭·꼴: 이런 이름은 공급자 접두 없이도 anthropic 이다
 _CLAUDE_ALIASES = ("opus", "sonnet", "haiku", "fable")
@@ -84,6 +89,10 @@ class Config:
                 return p
         return None
 
+    def manager_mode(self):
+        """`[manager] mode` - `resident`(기본) 또는 `calls`. 표가 없으면 기본값 - 옛 설정 파일도 그대로 돈다."""
+        return str((self.data.get("manager") or {}).get("mode") or "resident")
+
     def models_for(self, harness):
         """모니터 모델 선택기용 목록. claude 는 공급자 접두 없는 별칭, 나머지는 `공급자/모델`."""
         out = []
@@ -126,7 +135,7 @@ def _copy(d):
 
 
 def _validate(data):
-    for sec in ("providers", "harness"):
+    for sec in ("providers", "harness", "manager"):
         if not isinstance(data.get(sec, {}), dict):
             raise ConfigError(f"{FILE}: [{sec}] 가 표가 아닙니다")
     for name, p in data.get("providers", {}).items():
@@ -143,3 +152,7 @@ def _validate(data):
         for pn in h.get("providers", []):
             if pn not in data.get("providers", {}):
                 raise ConfigError(f"{FILE}: harness.{name} 가 모르는 공급자 '{pn}' 를 가리킵니다")
+    mode = data.get("manager", {}).get("mode", "resident")
+    if mode not in MANAGER_MODES:
+        # 모르는 값을 기본값으로 삼키지 않는다 - 'call' 같은 오타로 사람이 고른 방식과 다르게 돌면 비용이 달라진다
+        raise ConfigError(f"{FILE}: manager.mode 는 {' · '.join(MANAGER_MODES)} 가운데 하나여야 합니다 (받은 값 {mode!r})")

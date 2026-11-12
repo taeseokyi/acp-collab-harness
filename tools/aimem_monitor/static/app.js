@@ -840,22 +840,42 @@ function openLogDetail(entry) {
 
 function openManagerList(sessions) {
   openPanel('관리자 세션 ' + sessions.length + '개', (body) => {
-    const rows = sessions.map((s) => [
-      show(s.label),
-      mgrStateBadge(s.session_state, s.status),
-      fmtDateTime(s.started),
-      fmtDateTime(s.updated),
-      (s.record_kb === null || s.record_kb === undefined) ? '-'
-        : (s.record_kb >= 1024 ? (s.record_kb / 1024).toFixed(1) + 'MB' : s.record_kb + 'KB'),
-    ]);
-    const tw = document.createElement('div');
-    tw.className = 'tablewrap';
-    tw.appendChild(newTable(['라벨', '상태', '시작', '갱신', '기록'], rows, null, {
-      widths: [null, '80px', '150px', '150px', '70px'],
-      center: [1], ellipsis: [0],
-      rowOpen: sessions.map((s) => ({ fn: () => openManagerDetail(s), title: '관리자 세션 상세: ' + show(s.label, '') })),
-    }));
-    body.appendChild(tw);
+    const sizeText = (s) => (s.record_kb === null || s.record_kb === undefined) ? '-'
+      : (s.record_kb >= 1024 ? (s.record_kb / 1024).toFixed(1) + 'MB' : s.record_kb + 'KB');
+    const addTable = (list, calls) => {
+      const rows = list.map((s) => [
+        calls && s.phase ? `R${s.round} ${mgrPhaseText(s.phase)}` : show(s.label),
+        mgrStateBadge(s.session_state, s.status),
+        fmtDateTime(s.started),
+        fmtDateTime(s.updated),
+        sizeText(s),
+      ]);
+      const tw = document.createElement('div');
+      tw.className = 'tablewrap';
+      tw.appendChild(newTable(['라벨', '상태', '시작', '갱신', '기록'], rows, null, {
+        widths: [null, '80px', '150px', '150px', '70px'],
+        center: [1], ellipsis: [0],
+        rowOpen: list.map((s) => ({ fn: () => openManagerDetail(s), title: '관리자 세션 상세: ' + show(s.label, '') })),
+      }));
+      body.appendChild(tw);
+    };
+    // 같은 라운드의 호출 세션(phase 있음)은 라운드 머리글 아래로 묶는다. 상주 세션은 옛 모양 그대로 한 표.
+    let run = [];
+    const flush = () => { if (run.length) { addTable(run, false); run = []; } };
+    for (let i = 0; i < sessions.length;) {
+      const s = sessions[i];
+      if (!s.phase) { run.push(s); i += 1; continue; }
+      let k = i;
+      while (k < sessions.length && sessions[k].phase && sessions[k].round === s.round) k += 1;
+      flush();
+      const h = document.createElement('div');
+      h.className = 'manager-round-head';
+      h.textContent = `R${s.round} · 호출 ${k - i}개`;
+      body.appendChild(h);
+      addTable(sessions.slice(i, k), true);
+      i = k;
+    }
+    flush();
   });
 }
 
@@ -1179,12 +1199,28 @@ function renderMeta(data) {
 
 // ---- 관리자 세션 (.aimem/sessions/M-R<N>-…) - 상태 낱말은 서버가 준 것 그대로 (설계 5.6)
 const MGR_STATE_TEXT = {
-  running: '실행 중', launching: '띄우는 중', done: '끝남', failed: '실패', killed: '중단',
+  running: '실행 중', launching: '띄우는 중', driving: '엔진이 그래프 실행 중', done: '끝남', failed: '실패', killed: '중단',
   timeout: '시간 초과', stalled: '침묵으로 끊김', lost: '끊김(감독 사라짐)',
 };
+// 호출 방식 라운드의 호출 단계 (서버 PHASE_LABEL 과 같은 글자)
+const MGR_PHASE_TEXT = { plan: '① 계획', judge: '② 판정', close: '③ 마감' };
+function mgrPhaseText(p) { return MGR_PHASE_TEXT[p] || ''; }
+// 함대 카드의 호출 방식 라운드 한 줄. 상주 라운드(mode 없음)는 null 을 돌려 옛 문구를 그대로 쓴다.
+function callsRoundText(mg) {
+  if (!mg || mg.mode !== 'calls') return null;
+  const ph = mgrPhaseText(mg.phase);
+  if (mg.state === 'driving') return `R${mg.round} 호출 사이 - 엔진이 그래프를 돌리는 중` + (ph ? ` (마지막 호출: ${ph})` : '');
+  if (mg.state === 'launching') return `R${mg.round} ${ph} 호출을 띄우는 중입니다`;
+  if (mg.state === 'running') {
+    const ago = agoText(mg.last_event_at);
+    return `R${mg.round} ${ph} 호출 중` + (mg.phase === 'judge' && mg.calls ? ` (${mg.calls}번째 호출)` : '')
+      + (ago ? ` · 마지막 사건 ${ago}` : '');
+  }
+  return null;
+}
 function mgrStateBadge(sessionState, status) {
   const key = sessionState || status || 'unknown';
-  const cls = key === 'running' || key === 'launching' ? 'running' : (key === 'done' ? 'done'
+  const cls = key === 'running' || key === 'launching' || key === 'driving' ? 'running' : (key === 'done' ? 'done'
     : (['failed', 'timeout', 'stalled', 'lost'].includes(key) || status === 'failed' ? 'blocked' : 'neutral'));
   const b = badge(MGR_STATE_TEXT[key] || show(key), cls);
   b.dataset.status = key;
@@ -1831,7 +1867,7 @@ function renderFleetControl(data) {
     const fresh = reqs.filter((q) => String(q.status || '').toUpperCase() === 'NEW');
     const txt = document.createElement('span');
     // 라운드가 도는 중에는 '지금 도는 라운드' 를 먼저 보인다 - 다음 번호만 보여 R7 이 도는데 R8 로 읽혔다 (2026-11-10 R7 실측)
-    const curRound = (md === 'running' && !f.idle && f.manager && f.manager.round && ['launching', 'running'].includes(f.manager.state)) ? f.manager : null;
+    const curRound = (md === 'running' && !f.idle && f.manager && f.manager.round && ['launching', 'running', 'driving'].includes(f.manager.state)) ? f.manager : null;
     if (curRound) {
       const now = document.createElement('div');
       now.className = 'fc-hint-now';
@@ -1878,7 +1914,11 @@ function renderFleetControl(data) {
   if (mg && mg.round) {
     const r = document.createElement('div');
     r.className = 'fc-hint';
-    if (mg.state === 'launching') {
+    const ct = callsRoundText(mg);
+    if (ct) {
+      r.textContent = ct;
+      r.dataset.status = mg.state;
+    } else if (mg.state === 'launching') {
       r.textContent = `R${mg.round} 관리자를 띄우는 중입니다`;
     } else if (mg.state === 'running') {
       const ago = agoText(mg.last_event_at);
@@ -1991,7 +2031,8 @@ async function openManagerDetail(cur, all = false) {
   state.detailOpen = true;
   state.detailSeq += 1;
   const seq = state.detailSeq;
-  $('detail-label').textContent = '관리자 - ' + show(cur.label);
+  $('detail-label').textContent = '관리자 - ' + show(cur.label)
+    + (cur.phase && mgrPhaseText(cur.phase) && !String(cur.label || '').includes(mgrPhaseText(cur.phase)) ? ' ' + mgrPhaseText(cur.phase) : '');
   const body = $('detail-body');
   body.textContent = '';
   body.appendChild(emptyP('불러오는 중…'));
@@ -2100,11 +2141,18 @@ function renderManager(data) {
     return;
   }
   const isRun = cur.status === 'running';
-  head.appendChild(mgrStateBadge(cur.session_state, cur.status));
+  const driving = !!(mg && mg.state === 'driving' && !isRun);
+  head.appendChild(driving ? mgrStateBadge('driving') : mgrStateBadge(cur.session_state, cur.status));
   const label = document.createElement('span');
   label.className = 'manager-label';
   label.textContent = show(cur.label);
   head.appendChild(label);
+  if (cur.phase && mgrPhaseText(cur.phase)) {
+    const ph = document.createElement('span');
+    ph.className = 'manager-phase';
+    ph.textContent = (cur.round ? 'R' + cur.round + ' ' : '') + mgrPhaseText(cur.phase);
+    head.appendChild(ph);
+  }
   box.appendChild(head);
 
   const detailBtn = document.createElement('button');
@@ -2117,6 +2165,7 @@ function renderManager(data) {
   const what = document.createElement('div');
   what.className = 'manager-what';
   what.textContent = isRun ? managerActivity(data)
+    : driving ? `R${mg.round} 호출 사이 - 엔진이 그래프를 돌리는 중입니다`
     : '실행 중인 관리자 없음' + ((data.fleet || {}).idle ? ' - 라운드가 끝났습니다' : ' - 함대는 다음 라운드 대기(정지) 상태입니다');
   box.appendChild(what);
 

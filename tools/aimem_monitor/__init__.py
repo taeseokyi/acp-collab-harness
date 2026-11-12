@@ -66,9 +66,9 @@ SERVER_KEYS = {
     # (캐시·pending 없음). id = 세션 id(`M-R21-193012`). status = running|done|failed|killed (timeout·stalled·lost 는 failed),
     # session_state = 세션의 원래 상태. last_activity = 마지막 사건 시각. steps = 글·도구 호출 사건 수.
     "managers": "{ok, error, sessions:[{label, status, started, updated, id, record_kb, "
-                "last_activity, steps, last_step, round, session_state, orphaned}]}",
+                "last_activity, steps, last_step, round, session_state, orphaned, phase (plan|judge|close|null: 호출 방식 라운드의 호출 단계)}]}",
     # 함대 제어 상태 (`tools/fleet_ctl.public_state`, 2026-11-10). can = 지금 누를 수 있는 동작
-    "fleet": "{mode, label, at, by, note, default, running_runs, graphs, brief, prepare, manager:{round, label, session, state (launching|running|done|failed|killed|timeout|stalled|lost), by, at, ended, brief, workspace, last_event_at} | null, "
+    "fleet": "{mode, label, at, by, note, default, running_runs, graphs, brief, prepare, manager:{round, label, session, state (launching|running|driving|done|failed|killed|timeout|stalled|lost; driving = 호출 사이에 엔진이 그래프를 돌리는 중), by, at, ended, brief, workspace, last_event_at, mode? (\"calls\" 호출 방식 라운드만), phase? (plan|judge|close), calls? (호출 수)} | null, "
              "can:{prepare, run, pause, stop, round}, idle, last_round:{round, label, at, state, report_status, report}, chain:{on, all, fleet, projects, label, max_rounds (한 묶음의 상한), renew (닿으면 새 묶음으로), autonomous, strikes, cycles, total_rounds, stopped_kind (done|cap|safety|stuck|report|error|off|wait), stopped_at, stopped_round, stopped_left, rounds_done, goals_done, open_requests, stopped_why, last}}",   # idle = '실행' 인데 도는 것이 없다(라운드 끝)
     # 프로젝트 목록 (2026-11-10) - `projects/` 아래 폴더 + 요청이 가리키는 이름. exists = 폴더가 이미 있나
     # percent = 목표 대비(`PROGRESS.md` 의 `## 목표` 체크리스트, basis "goals") - 목표가 없으면 요청들의 평균(basis "requests").

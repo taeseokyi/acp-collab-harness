@@ -1749,3 +1749,8 @@ button:disabled { opacity: 0.6; }
 .attempt-item { margin: 6px 0; overflow-wrap: anywhere; }
 .attempt-kind.is-infra, .attempt-kind.is-limit { color: var(--badge-blocked-text); }
 .attempt-why { font-size: 12px; opacity: .8; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* 호출 방식 라운드: 관리자 카드의 단계 표시, 세션 목록의 라운드 머리글 */
+.manager-phase { color: var(--muted, inherit); font-size: 13px; white-space: nowrap; }
+.manager-round-head { font-weight: var(--st-fw-bold); font-size: 13px; margin: 12px 0 4px; }
+.manager-round-head:first-child { margin-top: 0; }

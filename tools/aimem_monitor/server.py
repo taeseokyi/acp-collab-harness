@@ -1318,6 +1318,7 @@ def _manager_row(d, live=None):
     n, last = _steps_summary(d)
     rnd = meta.get("round")
     redact = _reader()._redact
+    ph = (meta.get("extra") or {}).get("phase") if isinstance(meta.get("extra"), dict) else None
     return {
         "label": redact(str(meta.get("label") or d.name)[:80]),
         "status": _MGR_STATUS.get(sstate, "failed"),
@@ -1331,6 +1332,7 @@ def _manager_row(d, live=None):
         "round": rnd if isinstance(rnd, int) and not isinstance(rnd, bool) else None,
         "session_state": sstate,
         "orphaned": bool(stt.get("orphaned")),
+        "phase": ph if ph in ("plan", "judge", "close") else None,   # 호출 방식 라운드의 호출 단계, 상주 관리자는 None
     }
 
 

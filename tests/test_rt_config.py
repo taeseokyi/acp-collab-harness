@@ -51,6 +51,20 @@ class ConfigTest(unittest.TestCase):
         self.assertIsNone(cfg.source)
         self.assertEqual(cfg.max_concurrent("kisti"), 1)
         self.assertEqual(cfg.idle_timeout("anthropic"), 600.0)
+        self.assertEqual(cfg.manager_mode(), "resident")
+
+    def test_manager_mode(self):
+        """`[manager] mode` - 기본은 상주(resident). 표가 없는 옛 설정도 상주. 모르는 값·표가 아닌 것은 거절 (설계 5.9)."""
+        self.assertEqual(config.load(REPO).manager_mode(), "resident")         # 저장소의 설정은 상주 그대로
+        def root_with(text):          # 변형마다 새 폴더 - 같은 파일을 고쳐 쓰면 mtime 캐시가 끼어든다
+            d = pathlib.Path(tempfile.mkdtemp(dir=self.root))
+            (d / "fleet.toml").write_text(text, encoding="utf-8")
+            return d
+        self.assertEqual(config.load(root_with('[providers.a]\nmodels = ["x"]\n')).manager_mode(), "resident")
+        self.assertEqual(config.load(root_with('[manager]\nmode = "calls"\n')).manager_mode(), "calls")
+        for bad in ('[manager]\nmode = "call"\n', 'manager = "calls"\n', '[manager]\nmode = 1\n'):
+            with self.assertRaises(config.ConfigError, msg=bad):
+                config.load(root_with(bad))
 
     def test_malformed_raises(self):
         (self.root / "fleet.toml").write_text("[providers.x\nfoo =", encoding="utf-8")
