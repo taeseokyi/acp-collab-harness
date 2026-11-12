@@ -652,24 +652,36 @@ def cmd_spawn(args):
     return 0
 
 
-def _list_runs():
-    """시작 시각 순. (옛 `YYYYMMDD-HHMMSS-S#` 와 새 `T-050-S1-a1-HHMMSS` 가 섞여 있어 이름순은 안 된다)"""
-    def key(m):
+def _list_runs(managers=False):
+    """시작 시각 순. (옛 `YYYYMMDD-HHMMSS-S#` 와 새 `T-050-S1-a1-HHMMSS` 가 섞여 있어 이름순은 안 된다)
+
+    **작업자 실행만 준다.** 관리자도 같은 `sessions/` 에 사는 세션이지만 슬롯이 없고 라운드 내내 돈다 -
+    목록에 섞이면 '돌고 있는데 슬롯을 모르는 실행' 으로 보여 그래프가 아무 노드도 못 띄운다 (R21 실측).
+    관리자까지 보려면 `managers=True` (`fleet.py runs` 표).
+    """
+    def meta(m):
         try:
-            return json.loads(m.read_text(encoding="utf-8")).get("started") or ""
+            d = json.loads(m.read_text(encoding="utf-8"))
+            return d if isinstance(d, dict) else {}
         except (OSError, ValueError):
-            return ""
-    pairs = [(key(m), m.stem) for m in RUNS.glob("*.json")] if RUNS.exists() else []
+            return {}
+    pairs = [(meta(m).get("started") or "", m.stem) for m in RUNS.glob("*.json")] if RUNS.exists() else []
     sroot = _sessions_root()
     if sroot.is_dir():
-        pairs += [(key(d / "meta.json"), d.name) for d in sroot.iterdir() if _session_dir(d.name) is not None]
+        for d in sroot.iterdir():
+            if _session_dir(d.name) is None:
+                continue
+            m = meta(d / "meta.json")
+            if m.get("role") == "manager" and not managers:
+                continue
+            pairs.append((m.get("started") or "", d.name))
     return [rid for _k, rid in sorted(pairs, key=lambda t: t[0])]
 
 
 def cmd_runs(args):
     """띄운 작업자들의 상태 표. 읽기 전용."""
     import datetime
-    ids = _list_runs()
+    ids = _list_runs(managers=True)
     if not ids:
         print("실행 기록 없음 (.aimem/runs 비어 있음)")
         return 0
@@ -691,7 +703,7 @@ def cmd_runs(args):
             elapsed = f"{(end - started).total_seconds():6.0f}s"
         else:
             elapsed = "?"
-        print(f"{rid:<30} {meta.get('slot','?'):<4} {meta.get('harness','?'):<9} {state:<8} "
+        print(f"{rid:<30} {meta.get('slot') or ('관리' if meta.get('role') == 'manager' else '?'):<4} {meta.get('harness') or '?':<9} {state:<8} "
               f"{'' if rc is None else rc:>3}  {elapsed:>7}  {meta.get('label') or ''}")
     return 0
 

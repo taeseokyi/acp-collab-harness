@@ -616,12 +616,14 @@ def state_dict():
         for r in out["sessions"]:
             r["write_paths"] = json.loads(r["write_paths"] or "[]")
         # 화면은 아직 `runs` 키 하나를 읽는다: 옛 실행 + 새 세션을 같은 꼴로 합쳐 시작 시각 순(새것이 뒤)으로 준다
+        # 관리자 세션은 뺀다 - 작업자 실행이 아니고, 관리자가 라운드를 닫으며 뜬 스냅샷에 자기 자신이
+        # `running` 으로 찍혀 끝나자마자 스냅샷이 낡는다 (R21 실측: STATE_SNAPSHOT_STALE)
         out["runs"] += [{"id": r["id"], "task_id": r["task_id"], "slot": r["slot"], "harness": r["harness"],
                          "model": r["model"], "attempt": r["attempt"], "label": r["label"],
                          "write_paths": r["write_paths"], "pid": r["pid"], "started": r["started"], "ended": r["ended"],
                          "rc": r["rc"], "state": r["state"], "report_status": r["report_status"],
                          "brief_path": str(pathlib.Path(r["dir"]) / "brief.md") if r["dir"] else None, "rev": None}
-                        for r in out["sessions"]]
+                        for r in out["sessions"] if r.get("role") != "manager"]
         out["runs"].sort(key=lambda r: r["started"] or "")
         for n in out["nodes"]:
             n["deps"] = json.loads(n["deps"] or "[]")

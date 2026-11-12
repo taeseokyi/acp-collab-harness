@@ -177,6 +177,34 @@ class Base(unittest.TestCase):
         return d
 
 
+class WorkersNextToTheManager(Base):
+    """관리자 세션은 슬롯이 없다. 돌고 있는 동안에도 그래프는 작업자를 띄울 수 있어야 한다 (R21 실측:
+    '슬롯을 모르는 실행' 규칙에 관리자 자신이 걸려 모든 슬롯이 바쁜 것으로 보였고 작업자가 한 명도 못 떴다)."""
+
+    def test_a_running_manager_does_not_make_any_slot_busy(self):
+        import argparse
+        import contextlib
+        import io
+        out = self.launch("hang")
+        sid = out["session"]
+        self.assertTrue(_wait(lambda: sessions.state(self.sroot / sid)["state"] == "running", 10))
+        self.assertNotIn(sid, fleet._list_runs())                  # 실행 목록은 작업자만
+        self.assertIn(sid, fleet._list_runs(managers=True))
+        g = {"id": "G-1", "concurrency": 2, "nodes": [
+            {"id": "T-1", "title": "t", "slot": "S2", "task": "FAKE: report DONE\\nok", "deps": [], "write": [],
+             "max_attempts": 1, "status": "todo", "attempts": []}]}
+        self.assertEqual(fleet_graph._busy_slots(g), set())
+        self.graphs.mkdir(parents=True, exist_ok=True)
+        with mock.patch.object(fleet, "owned_paths", return_value=[]):
+            self.assertTrue(_wait(lambda: fleet_graph.step(g) or g["nodes"][0]["status"] == "done", 30, 0.3))
+        self.assertEqual(g["nodes"][0]["status"], "done")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):                      # 슬롯 없는 행에서도 표가 죽지 않는다
+            self.assertEqual(fleet.cmd_runs(argparse.Namespace(last=None)), 0)
+        self.assertIn(sid, buf.getvalue())
+        self.assertEqual([r["id"] for r in fleet_ctl.running_runs()], [])   # 관리자는 작업자 수에 안 든다
+
+
 class LaunchAndStop(Base):
     def test_launch_spawns_a_manager_session_and_stop_ends_it_with_a_minimal_close(self):
         (self.root / "rounds" / "R7").mkdir(parents=True)
