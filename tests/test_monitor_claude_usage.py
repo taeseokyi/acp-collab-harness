@@ -274,6 +274,88 @@ class ClaudeUsageTest(unittest.TestCase):
         self.assertIsInstance(failed.get("errors"), list)
         self.assertTrue(failed["errors"])
 
+    def test_surrogate_at_returns_without_exception(self):
+        self.path.write_text(
+            '{"at": "\\ud800", "rate_limits": {"five_hour": {"used_percentage": 40}}}',
+            encoding="utf-8",
+        )
+        try:
+            out = server.claude_usage(self.root)
+        except Exception as e:
+            self.fail(
+                "짝 없는 서러게이트 `at` 에서 claude_usage 가 예외를 던졌습니다: "
+                f"{type(e).__name__}: {e}"
+            )
+        self.assertIsNotNone(out)
+        self.assertIsNone(out["at"])
+        self.assertEqual([r["key"] for r in out["rows"]], ["five_hour"])
+        self.assertAlmostEqual(out["rows"][0]["percent"], 40.0)
+
+    def test_api_state_200_with_surrogate_at_normal_branch(self):
+        self.path.write_text(
+            '{"at": "\\ud800", "rate_limits": {"five_hour": {"used_percentage": 40}}}',
+            encoding="utf-8",
+        )
+        with monitor_server(self.root) as base:
+            with urllib.request.urlopen(base + "/api/state", timeout=10) as resp:
+                self.assertEqual(resp.status, 200)
+                body = resp.read().decode("utf-8")
+        data = json.loads(body)
+        self.assertIsInstance(data, dict)
+        self.assertIn("claude_usage", data)
+
+    def test_api_state_200_with_surrogate_at_failed_branch(self):
+        self.path.write_text(
+            '{"at": "\\ud800", "rate_limits": {"five_hour": {"used_percentage": 40}}}',
+            encoding="utf-8",
+        )
+        with mock.patch.object(reader, "collect", side_effect=RuntimeError("boom")):
+            with monitor_server(self.root) as base:
+                with urllib.request.urlopen(base + "/api/state", timeout=10) as resp:
+                    self.assertEqual(resp.status, 200)
+                    body = resp.read().decode("utf-8")
+        data = json.loads(body)
+        self.assertIsInstance(data, dict)
+        self.assertIn("claude_usage", data)
+
+    def test_side_card_failure_does_not_kill_normal_state(self):
+        with mock.patch.object(server, "claude_usage", side_effect=RuntimeError("boom")):
+            try:
+                state = server.collect_state(self.root)
+            except Exception as e:
+                self.fail(
+                    "곁다리 카드 실패가 collect_state 를 죽였습니다: "
+                    f"{type(e).__name__}: {e}"
+                )
+        self.assertIsInstance(state, dict)
+        self.assertIn("claude_usage", state)
+        self.assertIsNone(state["claude_usage"])
+
+    def test_side_card_failure_does_not_kill_failed_branch(self):
+        with mock.patch.object(reader, "collect", side_effect=RuntimeError("boom")):
+            with mock.patch.object(server, "claude_usage", side_effect=RuntimeError("boom")):
+                try:
+                    state = server.collect_state(self.root)
+                except Exception as e:
+                    self.fail(
+                        "곁다리 카드 실패가 실패 갈래 collect_state 를 죽였습니다: "
+                        f"{type(e).__name__}: {e}"
+                    )
+        self.assertIsInstance(state, dict)
+        self.assertIn("claude_usage", state)
+        self.assertIsNone(state["claude_usage"])
+        self.assertIsInstance(state.get("errors"), list)
+        self.assertTrue(state["errors"])
+
+    def test_normal_branch_has_claude_usage_key(self):
+        state = server.collect_state(self.root)
+        self.assertIn("claude_usage", state)
+
+    def test_failed_branch_has_claude_usage_key(self):
+        with mock.patch.object(reader, "collect", side_effect=RuntimeError("boom")):
+            state = server.collect_state(self.root)
+        self.assertIn("claude_usage", state)
+
 
 if __name__ == "__main__":
     unittest.main()

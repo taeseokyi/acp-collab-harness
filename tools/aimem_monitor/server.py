@@ -993,6 +993,13 @@ def claude_usage(root=ROOT):
     at = data.get("at")
     if not isinstance(at, str):
         at = None
+    if at is not None:
+        # 짝 없는 서러게이트는 UTF-8 로 내보낼 수 없습니다. `at` 하나가 응답 전체의
+        # 직렬화를 죽이지 않도록 여기서 미리 걸러 둡니다 (재검수 P1).
+        try:
+            at.encode("utf-8")
+        except UnicodeEncodeError:
+            at = None
     age_seconds = None
     if at is not None:
         try:
@@ -2486,7 +2493,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     # -- 응답 도우미 ---------------------------------------------------------
     def _send(self, code, body, ctype="application/json; charset=utf-8", extra=(), csp=None):
         if isinstance(body, str):
-            body = body.encode("utf-8")
+            # 상태 어디에 짝 없는 서러게이트가 들어와도(파일 이름, 요청 제목 등)
+            # 응답 인코딩이 터지지 않게 대체 문자로 바꿉니다 (재검수 P1).
+            body = body.encode("utf-8", "replace")
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))

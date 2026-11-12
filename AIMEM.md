@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/o
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 161** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-12 17:16 KST
+- **REV: 162** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-12 17:32 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **a Claude ACP session** (harness claude, model Opus 5.5 = `opus[1m]`),
@@ -522,6 +522,7 @@ never executes an item here on its own.
 | # | Item | Why | Risk | Status |
 | - | ---- | --- | ---- | ------ |
 | 1 | `python3 -m playwright install firefox` | The queue's "run the monitor's browser checks in Firefox too" cannot start: only chromium is installed. Installing is a hard limit (`0.2`), so R12 stopped and reported instead | Downloads ~90 MB into `~/.cache/ms-playwright`; no repo or config change. Declining only means the CSP `sandbox` directive and the ticket path stay checked in chromium alone | Waiting (R12) |
+| 2 | Register the status line in `~/.claude/settings.json`: `"statusLine": {"type": "command", "command": "python3 /home/tsyi/work/opencode/tools/claude_usage_statusline.py"}` | The Fleet tab's "Claude usage" card (R18-R19) reads `.aimem/claude-usage.json`, which only that status-line command writes. The file does not exist yet, so the card shows "register the status-line command" and nothing else. Writing a user-global file outside this folder is a hard limit (`0.2`), so R19 stopped and reported instead | One line in Taeseok's own Claude Code settings; the script reads nothing but the session JSON Claude Code already hands it (no credentials) and writes one file inside this folder. Declining only means the card stays empty | Waiting (R19) |
 
 Approved and removed items: `retired-sections-2026-11.md` `[REV 128 내림] 9절`, `[REV 135 내림] 9절 1번`; older history in
 `retired-sections-2026-09.md`.

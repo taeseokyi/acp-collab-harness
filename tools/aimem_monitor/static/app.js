@@ -2309,7 +2309,7 @@ function renderRuns(data) {
   });
   wrap.appendChild(newTable(['슬롯', '상태', '보고', '프로젝트', '작업 · run id', '경과', 'rc', '보고 머리말'], rows, rowClasses, {
     className: 'runs-table',
-    widths: ['52px', '80px', '100px', '130px', '250px', '104px', '40px', null],
+    widths: ['52px', '80px', '116px', '130px', '250px', '96px', '40px', null],
     num: [5, 6],
     center: [1, 2],
     ellipsis: [3, 7],
@@ -2500,7 +2500,7 @@ function renderBoard(data) {
     ];
   });
   const table = newTable(['ID', '작업', '슬롯', '보드 상태', '최근 실행', '산출물'], rows, null, {
-    widths: ['76px', '380px', '76px', '100px', '170px', null],
+    widths: ['76px', '380px', '64px', '124px', '170px', null],
     center: [3],
     ellipsis: [1, 5],
     rowOpen: board.map((b) => ({ fn: () => openTaskDetail(b.id, state.data), title: '태스크 상세 보기: ' + show(b.id, '') })),
@@ -3076,7 +3076,8 @@ function renderRequests(data) {
     body.className = 'req-body';
     body.hidden = !open;
     if (!subtasks.length) {
-      const emptyText = subtaskEmptyText(req);
+      // 진행 중이면 위의 안내 줄(req-wait-line)이 같은 말을 한다 - 펼쳤을 때 두 번 적지 않는다 (2026-11-12)
+      const emptyText = String(req.status || '').toUpperCase() === 'IN-PROGRESS' ? '' : subtaskEmptyText(req);
       if (emptyText) body.appendChild(emptyP(emptyText));
     } else {
       const subRows = subtasks.map((st) => {
@@ -3160,7 +3161,7 @@ function renderLog(data) {
   const log = state.logShowAll ? all : all.slice(0, LOG_PAGE);
   const rows = log.map((e) => [show(e.when), plainText(e.text) || '-']);
   wrap.appendChild(newTable(['시각', '내용'], rows, null, {
-    widths: ['130px', null],
+    widths: ['158px', null],      // 'YYYY-MM-DD HH:MM' 이 잘리지 않게 (2026-11-12 데스크톱 검수)
     ellipsis: [1],
     rowOpen: log.map((e) => ({ fn: () => openLogDetail(e), title: '로그 전문 보기' })),
   }));
@@ -3822,6 +3823,24 @@ function initTheme() {
   });
 }
 
+// 폰의 ⚙ 설정 메뉴 (2026-11-12) - 어두운 모드 · 로그인한 이름 · 로그아웃. 바깥을 누르거나 Esc 면 닫힌다
+function initSettingsMenu() {
+  const btn = $('settings-toggle');
+  const menu = $('settings-menu');
+  if (!btn || !menu) return;
+  const set = (open) => {
+    menu.classList.toggle('is-open', open);
+    btn.setAttribute('aria-expanded', String(open));
+  };
+  btn.addEventListener('click', (e) => { e.stopPropagation(); set(!menu.classList.contains('is-open')); });
+  document.addEventListener('click', (e) => {
+    if (menu.classList.contains('is-open') && !menu.contains(e.target)) set(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && menu.classList.contains('is-open')) { set(false); btn.focus(); }
+  });
+}
+
 async function initAuth() {
   if (DEMO) return;
   try {
@@ -3847,6 +3866,7 @@ function init() {
   const demoBanner = $('demo-banner');
   demoBanner.hidden = !DEMO;
   initTheme();
+  initSettingsMenu();
   bindDetailControls();
 
   const autoRefreshBox = $('autoRefresh');

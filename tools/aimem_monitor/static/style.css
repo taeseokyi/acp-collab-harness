@@ -1507,3 +1507,44 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
   .proj-actions { margin-left: 0; width: 100%; }
   .proj-actions button { flex: 1 1 0; min-height: 36px; }
 }
+
+/* ⚙ 설정 (2026-11-12 태석님: 폰 상단 바를 2행으로, 데스크톱도 같은 꼴로 정리) - 어두운 모드·로그인·로그아웃을 메뉴 하나로 */
+.controls { position: relative; }
+.settings-toggle { display: inline-flex; align-items: center; gap: 6px; }
+.settings-toggle[aria-expanded="true"] { background: var(--st-surface-2); }
+.settings-menu { display: none; }
+.settings-menu.is-open {
+  display: flex; flex-direction: column; align-items: stretch; gap: 8px;
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; min-width: 220px;
+  padding: 12px; background: var(--st-surface); border: 1px solid var(--st-line); border-radius: var(--st-r-md, 10px);
+  box-shadow: var(--st-sh-bar, 0 6px 20px rgba(0,0,0,.15));
+}
+.settings-menu.is-open > button, .settings-menu.is-open .auth-box button { width: 100%; min-height: 36px; }
+.settings-menu.is-open .auth-box { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.settings-menu.is-open .auth-box[hidden] { display: none; }
+.settings-menu.is-open .auth-who { font-size: 13px; text-align: center; }
+.settings-menu.is-open .auth-who::before { content: '로그인: '; }
+@media (max-width: 480px) {
+  .topbar { position: relative; }
+  .controls { position: static; }
+  .settings-menu.is-open { right: 10px; top: calc(100% - 4px); min-width: 200px; }
+  .controls { flex-wrap: nowrap; }
+  .controls > * { flex: 0 0 auto; }
+  .refresh-status { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .settings-toggle { justify-content: center; min-width: 40px; font-size: 18px; padding: 4px 8px; }
+  .settings-toggle .tl-more { display: none; }
+  .settings-menu.is-open > button, .settings-menu.is-open .auth-box button { min-height: 40px; }
+  #theme-toggle, #archive-open, .auth-box { order: 0; }
+}
+/* 폰과 데스크톱 사이 폭(481~720px, 좁힌 브라우저 창·태블릿 세로)도 같은 2행 꼴로 (2026-11-12 태석님 지적: 490px 창에서 3행).
+   720px 이하는 제목이 한 줄을 다 쓰므로 둘째 줄의 단추가 줄바꿈 없이 들어가게 짧은 글자를 쓴다 */
+@media (max-width: 720px) {
+  .controls { flex-wrap: nowrap; }
+  .controls > * { flex: 0 0 auto; white-space: nowrap; }
+  .refresh-status { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .rs-label, .tl-more { display: none; }
+  .settings-toggle { justify-content: center; min-width: 40px; }
+}
+@media (max-width: 350px) {
+  .rs-label, .refresh-status { display: none; }
+}

@@ -18,12 +18,16 @@
   <header class="topbar">
     <div class="brand">AIMEM 함대 모니터 <span id="brand-rev" class="brand-rev"></span> <span id="fleet-mode-pill" class="mode-pill"></span></div>
     <div class="controls">
-      <label class="toggle"><input type="checkbox" id="autoRefresh" checked> 자동<span class="tl-more"> 새로고침</span></label>
+      <label class="toggle"><input type="checkbox" id="autoRefresh" checked><span>자동<span class="tl-more"> 새로고침</span></span></label>
       <span id="refresh-status" class="refresh-status">마지막 갱신 -</span>
       <button type="button" id="refresh-now">지금 갱신</button>
-      <button type="button" id="archive-open" title="끝난 태스크·닫힌 요청·끝난 그래프를 한꺼번에 아카이브로 옮깁니다 (지우지 않음)">끝난 것 정리… <span id="archive-count" class="tab-count"></span></button>
-      <button type="button" id="theme-toggle" aria-pressed="false">어두운 모드</button>
-      <span id="auth-box" class="auth-box" hidden><span id="auth-who" class="auth-who"></span><button type="button" id="logout">로그아웃</button></span>
+      <button type="button" id="archive-open" title="끝난 태스크·닫힌 요청·끝난 그래프를 한꺼번에 아카이브로 옮깁니다 (지우지 않음)"><span class="tl-more">끝난 것 </span>정리… <span id="archive-count" class="tab-count"></span></button>
+      <!-- 화면·로그인 설정을 ⚙ 하나로 묶는다 (2026-11-12 태석님: 상단 바 정리 - 폰 2행, 데스크톱도 같은 꼴) -->
+      <button type="button" id="settings-toggle" class="settings-toggle" aria-haspopup="true" aria-expanded="false" aria-controls="settings-menu" aria-label="설정" title="설정 - 어두운 모드 · 로그인">⚙<span class="tl-more">설정</span></button>
+      <div id="settings-menu" class="settings-menu">
+        <button type="button" id="theme-toggle" aria-pressed="false">어두운 모드</button>
+        <span id="auth-box" class="auth-box" hidden><span id="auth-who" class="auth-who"></span><button type="button" id="logout">로그아웃</button></span>
+      </div>
     </div>
   </header>
 
