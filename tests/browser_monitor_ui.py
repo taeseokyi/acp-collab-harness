@@ -6,7 +6,7 @@ import io
 import json
 import pathlib
 import re
-import shutil
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -70,6 +70,11 @@ def contains(inner, outer, tolerance=2):
     )
 
 
+def show_all_projects(page):
+    """'전체' 칩을 무조건 누릅니다 - 칩이 없으면 여기서 예외가 나 검사가 빨개진다."""
+    page.locator("#projects-filter-chips .chip").filter(has_text="전체").first.click(timeout=5000)
+
+
 def scenario(browser, base, checks):
     ctx = browser.new_context(viewport={"width": 1280, "height": 900})
     page = ctx.new_page()
@@ -77,11 +82,8 @@ def scenario(browser, base, checks):
         page.goto(base + "/", wait_until="load")
         page.click("#tab-projects")
         page.wait_for_selector("#projects-list .proj-item", timeout=15000)
-        # 진행 중 프로젝트가 있으면 처음 필터가 '진행 중' 이라 끝난 웹워들이 숨는다 - 전체로 (2026-11-12)
-        # 임시 저장소에는 칩이 없을 수 있으므로, 없으면 조용히 넘어간다
-        chip = page.locator("#projects-filter-chips .chip").filter(has_text="전체")
-        if chip.count() and chip.first.is_visible():
-            chip.first.click()
+        # 진행 중 프로젝트가 있어 처음 필터가 '진행 중' 이라 끝난 웹워들이 숨는다 - 전체로 (2026-11-12)
+        show_all_projects(page)
 
         project = page.locator("#projects-list .proj-item").filter(has_text="웹워들").first
         run_button = project.locator(".proj-run").first
@@ -163,6 +165,7 @@ def narrow_scenario(browser, base, checks):
         page.goto(base + "/", wait_until="load")
         page.click("#tab-projects")
         page.wait_for_selector("#projects-list .proj-item", timeout=15000)
+        show_all_projects(page)
         project = page.locator("#projects-list .proj-item").filter(has_text="웹워들").first
         project.locator(".proj-run").first.click()
         page.wait_for_selector("iframe.proj-app-frame", state="visible", timeout=15000)
@@ -203,6 +206,7 @@ def short_scenario(browser, base, checks):
         page.goto(base + "/", wait_until="load")
         page.click("#tab-projects")
         page.wait_for_selector("#projects-list .proj-item", timeout=15000)
+        show_all_projects(page)
         project = page.locator("#projects-list .proj-item").filter(has_text="웹워들").first
         project.locator(".proj-run").first.click()
         page.wait_for_selector("iframe.proj-app-frame", state="visible", timeout=15000)
@@ -256,6 +260,12 @@ def changed_ui_scenario(browser, base, checks):
             and value_text not in ("", "-"),
             f"meta visible={meta.is_visible()}, '현재 목표'={('현재 목표' in meta_text)}, "
             f"label={label_text!r}, value={value_text!r}",
+        )
+        round_text = value.locator("span").first.inner_text().strip()
+        checks.ok(
+            "'이번 라운드' 값이 임시 저장소 고정 자료(rounds/R1/round.json)에서 나온다",
+            round_text == FIXED_ROUND_TEXT,
+            f"화면={round_text!r}, 기대={FIXED_ROUND_TEXT!r}",
         )
 
         page.set_viewport_size({"width": 390, "height": 780})
@@ -412,12 +422,71 @@ def write_fixed_runs(root):
         (runs_dir / f"{run_id}.rc").write_text("0\n", encoding="utf-8")
 
 
+FIXED_ROUND = {"round": 1, "at": "2026-11-05T09:30:00", "brief": "BRIEF-fixed.md",
+               "requests": [], "projects": []}
+FIXED_ROUND_TEXT = "R1 · 2026-11-05 09:30"     # 화면이 고정 자료에서 만들어야 하는 '이번 라운드' 글
+
+
+def write_fixed_round(root):
+    """`rounds/R1/round.json` 하나 - fleet_ctl._round_record/_record_rounds 가 읽는 꼴 (세션 칸 없음 = 옛 라운드)."""
+    d = root / "rounds" / "R1"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "round.json").write_text(json.dumps(FIXED_ROUND, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+
+FIXED_TILES = "\n".join('    <div class="tile">{}</div>'.format(i) for i in range(30))
+FIXED_INDEX_HTML = f"""<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>임시 앱</title>
+<style>
+  body {{ margin: 0; font-family: sans-serif; }}
+  #board {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; padding: 8px; }}
+  .tile {{ min-height: 40px; border: 1px solid #888; text-align: center; }}
+  .key {{ display: inline-block; min-width: 40px; min-height: 44px; margin: 4px; }}
+</style>
+</head>
+<body>
+<div id="board">
+{FIXED_TILES}
+</div>
+<div id="keys"><button class="key">A</button><button class="key">B</button></div>
+</body>
+</html>
+"""
+
+
 def write_fixed_project(root):
-    """git 에 들어 있는 웹워들 프로젝트를 임시 저장소로 통째로 복사합니다."""
-    src = ROOT / "projects" / "웹워들"
-    dst = root / "projects" / "웹워들"
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(src, dst)
+    """시험이 스스로 만드는 최소 프로젝트 둘 - 끝난 앱(웹워들)과 진행 중(진행앱). 진짜 projects/ 는 읽지 않는다."""
+    done = root / "projects" / "웹워들"
+    (done / "web").mkdir(parents=True, exist_ok=True)
+    (done / "app.json").write_text(
+        json.dumps({"root": "web", "entry": "index.html", "title": "웹워들",
+                    "note": "정적 파일만 - 백엔드가 없습니다"}, ensure_ascii=False, indent=2),
+        encoding="utf-8")
+    (done / "web" / "index.html").write_text(FIXED_INDEX_HTML, encoding="utf-8")
+    (done / "PROGRESS.md").write_text("# 웹워들\n\n## 목표\n- [x] 첫째\n- [x] 둘째\n", encoding="utf-8")
+    active = root / "projects" / "진행앱"
+    active.mkdir(parents=True, exist_ok=True)
+    (active / "PROGRESS.md").write_text("# 진행앱\n\n## 목표\n- [x] 첫째\n- [ ] 둘째\n", encoding="utf-8")
+
+
+def write_fixed_board(root):
+    """임시 DB 에 제목이 아주 긴 보드 태스크와 큐 항목을 하나씩 넣습니다 (생략된 제목 검사용). init 뒤에 부른다."""
+    long_title = "임시 저장소 고정 보드의 아주 긴 제목입니다 " + "가나다라마바사아자차카타파하" * 8
+    con = sqlite3.connect(str(root / ".aimem" / "aimem.db"))
+    try:
+        con.execute("INSERT OR REPLACE INTO tasks(id, title, slot, status, inherited, artifacts, created, updated)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    ("T-FIXED-1", long_title, "S3", "IN-PROGRESS", "", "tests/fixed.py",
+                     "2026-11-12T00:00:00", "2026-11-12T00:00:00"))
+        con.execute("INSERT OR REPLACE INTO queue(pos, task, slot_hint, inherited, note) VALUES (?,?,?,?,?)",
+                    (1, long_title, "S3", "", long_title))
+        con.commit()
+    finally:
+        con.close()
 
 
 @contextmanager
@@ -428,9 +497,14 @@ def temporary_aimem_root(root):
     임시 저장소를 잠시 정본으로 만들어 준다 (tests/test_archive_api.py 와 같은 수법).
     """
     import aimem_db
+    import fleet
 
     root = pathlib.Path(root).resolve()
+    # '이번 라운드' 는 fleet_ctl 이 fleet.RUNS(.aimem 위치)와 fleet.ROOT(rounds/ 위치)에서 읽는다 - 둘 다 갈아끼워야
+    # 진짜 저장소의 라운드가 새지 않는다.
     targets = (
+        (fleet, "RUNS", root / ".aimem" / "runs"),
+        (fleet, "ROOT", root),
         (aimem_db, "ROOT", root),
         (aimem_db, "DB", root / ".aimem" / "aimem.db"),
         (aimem_db, "AIMEM", root / "AIMEM.md"),
@@ -805,23 +879,74 @@ def run_project_tag_scenario(browser, base, checks):
         ctx.close()
 
 
+def wide_truncated_title_scenario(browser, base, checks):
+    """넓은 폭(1280px, 표 배치)에서 옆으로 잘린 제목을 눌러 전문이 그려지는가 - 카드 배치 대체 갈래가 아닌 원래 갈래."""
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    try:
+        page.goto(base + "/", wait_until="load")
+
+        def find_clipped(selector):
+            for cand in page.query_selector_all(selector):
+                if cand.is_visible() and cand.evaluate("e=>e.scrollWidth") > cand.evaluate("e=>e.clientWidth") + 1:
+                    return cand
+            return None
+
+        def probe(goal, el):
+            if el is None:
+                checks.ok(goal, False, "옆으로 잘린 제목이 없다 (고정 자료가 넓은 폭에서 안 잘림)")
+                return
+            before = el.bounding_box()
+            sw, cw = el.evaluate("e=>e.scrollWidth"), el.evaluate("e=>e.clientWidth")
+            el.click()
+            page.wait_for_timeout(400)
+            after = el.bounding_box()
+            sw2, cw2 = el.evaluate("e=>e.scrollWidth"), el.evaluate("e=>e.clientWidth")
+            cls = (el.get_attribute("class") or "").split()
+            inside = (after is not None and after["x"] >= -1 and after["x"] + after["width"] <= 1280 + 1
+                      and after["y"] >= -1 and after["height"] > 0)
+            checks.ok(
+                goal,
+                el.is_visible() and "elide-open" in cls and inside and sw2 <= cw2 + 1
+                and before is not None and after["height"] > before["height"],
+                f"전: scrollWidth={sw}>clientWidth={cw}, 높이={before and round(before['height'], 1)}; "
+                f"후: class={cls}, scrollWidth={sw2}, clientWidth={cw2}, box={after and {k: round(v, 1) for k, v in after.items()}}",
+            )
+
+        page.click("#tab-board")
+        page.wait_for_selector("#panel-board", state="visible", timeout=15000)
+        probe("넓은 폭(1280px)에서 옆으로 잘린 보드 제목을 누르면 전문이 보인다",
+              find_clipped("#board-section .elide[role=button], #queue-section .elide[role=button]"))
+
+        page.click("#tab-requests")
+        try:
+            page.wait_for_selector("#graphs-list .graph-title", state="visible", timeout=15000)
+        except Exception:
+            checks.ok("넓은 폭(1280px)에서 옆으로 잘린 그래프 제목을 누르면 전문이 보인다", False, "그래프 없음")
+            return
+        probe("넓은 폭(1280px)에서 옆으로 잘린 그래프 제목을 누르면 전문이 보인다",
+              find_clipped("#graphs-list .graph-title"))
+    finally:
+        ctx.close()
+
+
 def main():
     checks = Checks()
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch()
             try:
-                with monitor_server() as base:
-                    changed_ui_scenario(browser, base, checks)
-
                 with tempfile.TemporaryDirectory() as temp_dir:
                     temp_root = pathlib.Path(temp_dir)
                     write_fixed_project(temp_root)
                     write_fixed_requests(temp_root)
                     write_fixed_graph(temp_root)
                     write_fixed_runs(temp_root)
+                    write_fixed_round(temp_root)
                     with temporary_aimem_root(temp_root):
+                        write_fixed_board(temp_root)
                         with monitor_server(root=temp_root) as temp_base:
+                            changed_ui_scenario(browser, temp_base, checks)
                             scenario(browser, temp_base, checks)
                             narrow_scenario(browser, temp_base, checks)
                             short_scenario(browser, temp_base, checks)
@@ -829,6 +954,7 @@ def main():
                             zero_subtask_scenario(browser, temp_base, checks)
                             graph_title_expand_scenario(browser, temp_base, checks)
                             run_project_tag_scenario(browser, temp_base, checks)
+                            wide_truncated_title_scenario(browser, temp_base, checks)
             finally:
                 browser.close()
     except Exception as exc:

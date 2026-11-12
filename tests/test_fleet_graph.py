@@ -400,7 +400,7 @@ class FleetGraphContractTests(unittest.TestCase):
     def test_run_limit_signal_is_none_for_text_only_harnesses(self):
         for run_id, harness in (("R-CODEX", "codex"), ("R-OPEN", "opencode")):
             with self.subTest(harness=harness):
-                self._write_run(run_id, harness, "5-hour limit reached\n상태: DONE")
+                self._write_run(run_id, harness, "DONE: something")
                 self.assertIsNone(fleet_graph.run_limit_signal(run_id))
 
     def test_run_limit_signal_broken_records_return_none_without_raising(self):
@@ -472,6 +472,195 @@ class FleetGraphContractTests(unittest.TestCase):
         verify_mock.assert_not_called()
         log = (self.graphs / "G-900.log").read_text(encoding="utf-8")
         self.assertNotIn("limit", log)
+
+    # ---------------------------------------------------------------- T-264: 한도 판정 회귀·변이 구멍 (N3~N7, M3~M8)
+    _N3 = {"is_error": True, "result": "You've hit your 5-hour limit · resets 11:20am"}
+
+    def _step_rc1(self, run_id, report="상태: DONE", verify="true"):
+        attempt = self._attempt(run_id)
+        node = self._node(attempts=[attempt], verify=verify, max_attempts=2)
+        graph = self._graph([node])
+        with mock.patch.object(fleet, "_run_state", return_value=("done", 1)), \
+             mock.patch.object(fleet, "run_report", return_value=report), \
+             mock.patch.object(fleet_graph, "_verify") as verify_mock:
+            fleet_graph.step(graph, allow_spawn=False)
+        verify_mock.assert_not_called()
+        log = (self.graphs / "G-900.log").read_text(encoding="utf-8")
+        return node, attempt, log
+
+    def test_n3_is_error_without_structural_marker_is_none(self):
+        self._write_run("R-1", "claude", json.dumps(self._N3))
+        self.assertIsNone(fleet_graph.run_limit_signal("R-1"))
+
+    def test_n3_is_error_false_stays_false(self):
+        self._write_run("R-1", "claude", json.dumps(
+            {"is_error": False, "result": "You've hit your 5-hour limit"}))
+        self.assertIs(fleet_graph.run_limit_signal("R-1"), False)
+
+    def test_n3_step_falls_through_to_text_judgement_and_blocks(self):
+        # M5: 구조 표지가 없는 오류 기록 + rc != 0 -> 글자 판정이 살아 있어 limit 으로 blocked
+        self._write_run("R-N3", "claude", json.dumps(self._N3))
+        node, attempt, _log_text = self._step_rc1(
+            "R-N3", report="You've hit your 5-hour limit · resets 11:20am")
+        self.assertEqual(node["status"], "blocked")
+        self.assertIs(node["limit"], True)
+        self.assertIs(attempt["limit"], True)
+        self.assertEqual(attempt["verify_rc"], -4)
+
+    def test_m3_is_error_false_wins_over_429_and_api_error_markers(self):
+        self._write_run("R-1", "claude", json.dumps(
+            {"is_error": False, "api_error_status": 429,
+             "terminal_reason": "api_error", "result": "limit"}))
+        self.assertIs(fleet_graph.run_limit_signal("R-1"), False)
+
+    def test_m4_terminal_reason_api_error_branch_alone_is_true(self):
+        self._write_run("R-1", "claude", json.dumps(
+            {"is_error": True, "terminal_reason": "api_error",
+             "result": "You've hit your 5-hour limit · resets 11:20am"}))
+        self.assertIs(fleet_graph.run_limit_signal("R-1"), True)
+
+    def test_n4_context_window_limit_is_not_a_usage_limit(self):
+        self._write_run("R-1", "claude", json.dumps(
+            {"is_error": True, "terminal_reason": "api_error",
+             "result": "Prompt exceeds the context window limit"}))
+        self.assertIsNone(fleet_graph.run_limit_signal("R-1"))
+
+    def test_m6_non_claude_harness_ignores_claude_shaped_json(self):
+        body = json.dumps({"is_error": True, "api_error_status": 429})
+        for run_id, harness in (("R-CODEX", "codex"), ("R-OPEN", "opencode")):
+            with self.subTest(harness=harness):
+                self._write_run(run_id, harness, body)
+                self.assertIsNone(fleet_graph.run_limit_signal(run_id))
+
+    def _session(self, run_id, events):
+        root = self.tmp / "sessions"
+        d = root / run_id
+        d.mkdir(parents=True)
+        (d / "meta.json").write_text(json.dumps({"harness_effective": "claude"}), encoding="utf-8")
+        (d / "events.jsonl").write_text(
+            "".join(f"2026-11-12T10:00:00\t{json.dumps(e)}\n" for e in events), encoding="utf-8")
+        p = mock.patch.object(fleet, "_sessions_root", return_value=root)
+        p.start()
+        self.addCleanup(p.stop)
+        # tests/_fleet_env.py 가 AIFLEET_HARNESS=fake 를 깔아 get() 이 늘 fake 를 준다 - 그 안전 장치는
+        # 두고, 어댑터 고르기만 claude 어댑터(파일만 읽는다)로 바꾼다.
+        from fleet_rt.harness import claude as claude_harness  # noqa: PLC0415
+        self.harness_get = mock.Mock(side_effect=lambda name: claude_harness.ADAPTER)
+        p2 = mock.patch("fleet_rt.harness.get", self.harness_get)
+        p2.start()
+        self.addCleanup(p2.stop)
+
+    def _res(self, **kw):
+        d = {"type": "result", "subtype": "error", "is_error": True, "session_id": "s1"}
+        d.update(kw)
+        return d
+
+    def test_q2_session_branch_n3_record_is_none(self):
+        self._session("T-1-S1-a1-000000", [self._res(result="You've hit your 5-hour limit")])
+        self.assertIsNone(fleet_graph.run_limit_signal("T-1-S1-a1-000000"))
+
+    def test_q2_session_branch_context_window_text_is_not_true(self):
+        self._session("T-1-S1-a1-000000", [self._res(
+            terminal_reason="api_error", result="Prompt exceeds the context window limit")])
+        self.assertIsNone(fleet_graph.run_limit_signal("T-1-S1-a1-000000"))
+
+    def test_fifo_out_does_not_block_and_is_none(self):
+        import threading  # noqa: PLC0415
+        self._write_run("X", "claude")
+        os.mkfifo(self.runs / "X.out")
+        box = []
+        t = threading.Thread(target=lambda: box.append(fleet_graph.run_limit_signal("X")), daemon=True)
+        t.start()
+        t.join(3)
+        if t.is_alive():
+            # 막힌 스레드를 풀어 준다(쓰는 쪽을 열어 줌) - 시험이 남기지 않게
+            try:
+                fd = os.open(self.runs / "X.out", os.O_WRONLY | os.O_NONBLOCK)
+                os.close(fd)
+            except OSError:
+                pass
+            self.fail("run_limit_signal 이 FIFO .out 에서 막혔다")
+        self.assertEqual(box, [None])
+
+    def test_oversized_meta_is_none(self):
+        (self.runs / "Y.json").write_bytes(b'{"harness": "claude", "pad": "' + b"x" * (2 * 1024 * 1024) + b'"}')
+        self.assertIsNone(fleet._run_meta("Y"))
+
+    def test_read_regular_bytes_cases(self):
+        f = self.tmp / "f.bin"
+        f.write_bytes(b"hello")
+        self.assertEqual(fleet.read_regular_bytes(f, 10), b"hello")
+        self.assertEqual(fleet.read_regular_bytes(f, 5), b"hello")
+        self.assertIsNone(fleet.read_regular_bytes(f, 4))
+        self.assertIsNone(fleet.read_regular_bytes(self.tmp, 10))
+        self.assertIsNone(fleet.read_regular_bytes(self.tmp / "nope", 10))
+
+    def test_q2_session_branch_429_is_true(self):
+        self._session("T-1-S1-a1-000000", [self._res(api_error_status=429)])
+        self.assertIs(fleet_graph.run_limit_signal("T-1-S1-a1-000000"), True)
+        self.harness_get.assert_called_once_with("claude")
+
+    def test_q1_run_id_with_path_segments_is_none(self):
+        self._session("T-1-S1-a1-000000", [self._res(api_error_status=429)])
+        root = self.tmp / "sessions"
+        outside = self.tmp / "outside" / "evil"
+        outside.mkdir(parents=True)
+        (outside / "meta.json").write_text(json.dumps({"harness_effective": "claude"}), encoding="utf-8")
+        (outside / "events.jsonl").write_text(
+            "2026-11-12T10:00:00\t" + json.dumps(self._res(api_error_status=429)) + "\n", encoding="utf-8")
+        bad = "T-1-S1-a1-000000/../../outside/evil"
+        # 정규식이 `/` 를 허용하면 이 경로가 실제로 풀려 True 가 나온다 - 풀리는 것부터 확인한다.
+        self.assertTrue((root / bad / "meta.json").exists())
+        self.assertTrue(fleet._session_dir(bad) is not None)
+        self.assertIs(fleet_graph.run_limit_signal("T-1-S1-a1-000000"), True)
+        for b in (bad, "T-1-S1-a1-000000/../x"):
+            with self.subTest(run_id=b):
+                self.assertIsNone(fleet_graph.run_limit_signal(b))
+
+    def test_m7_read_is_capped_at_one_mib(self):
+        head = '{"is_error": true, "api_error_status": 429'
+        # 끝까지 읽으면 올바른 JSON(True), 1 MiB 에서 자르면 깨진 JSON(None)
+        pad = ', "pad": "' + "x" * (1024 * 1024 + 4096) + '"}'
+        self._write_run("R-BIG", "claude", head + pad)
+        self.assertGreater((self.runs / "R-BIG.out").stat().st_size, 1024 * 1024)
+        self.assertIsNone(fleet_graph.run_limit_signal("R-BIG"))
+
+    def test_m8_log_marks_structural_source(self):
+        self._write_run("R-S", "claude", json.dumps(
+            {"is_error": True, "api_error_status": 429, "terminal_reason": "api_error"}))
+        node, _att, log = self._step_rc1("R-S")
+        self.assertEqual(node["status"], "blocked")
+        self.assertIn("(구조 신호)", log)
+        self.assertNotIn("(보고 글자)", log)
+
+    def test_m8_log_marks_report_text_source(self):
+        self._write_run("R-T", "claude", json.dumps(self._N3))
+        node, _att, log = self._step_rc1("R-T", report="You've hit your weekly limit")
+        self.assertEqual(node["status"], "blocked")
+        self.assertIn("(보고 글자)", log)
+        self.assertNotIn("(구조 신호)", log)
+
+    def test_n5_report_limit_hit_rejects_non_limit_reports(self):
+        self.assertIs(fleet_graph.report_limit_hit(
+            "NEEDS-FIX: verify step time limit reached, test failed"), False)
+        self.assertIs(fleet_graph.report_limit_hit(
+            "DONE - added handler for HTTP 429 Too Many Requests"), False)
+
+    def test_n5_report_limit_hit_accepts_weekly_limit(self):
+        self.assertIs(fleet_graph.report_limit_hit("You've hit your weekly limit"), True)
+
+    def test_n7_run_id_escaping_runs_dir_is_none(self):
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        (outside / "evil.json").write_text(json.dumps({"harness": "claude"}), encoding="utf-8")
+        (outside / "evil.out").write_text(
+            json.dumps({"is_error": True, "api_error_status": 429}), encoding="utf-8")
+        self.assertIsNone(fleet_graph.run_limit_signal("../outside/evil"))
+
+    def test_n7_non_string_run_id_is_none(self):
+        for bad in (None, 123, ["R-1"], b"R-1", {"a": 1}):
+            with self.subTest(run_id=bad):
+                self.assertIsNone(fleet_graph.run_limit_signal(bad))
 
     def test_cmd_status_marks_limit_nodes(self):
         node = self._node(status="blocked", attempts=[self._attempt()])

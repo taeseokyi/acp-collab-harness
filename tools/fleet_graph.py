@@ -48,6 +48,8 @@ import time
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import fleet  # noqa: E402
+from fleet_rt.harness.claude import (  # noqa: E402
+    LIMIT_PATTERNS as _LIMIT_PATTERNS, limit_text_hit as _limit_text_hit, result_limit_signal as _result_limit_signal)
 
 ROOT = fleet.ROOT
 GRAPHS = ROOT / ".aimem" / "graph"
@@ -427,15 +429,6 @@ def report_block_reason(report):
 _TOOLCALL_TAIL = re.compile(r"^</?(?:tool_call|function|parameter)\b|^<function=", re.IGNORECASE)
 
 
-_LIMIT_PATTERNS = (
-    "hit your 5-hour limit", "5-hour limit reached", "weekly limit reached",
-    "usage limit reached", "rate limit exceeded", "rate_limit_error",
-    "session limit reached", "reached your usage limit",
-    "hit your weekly limit", "hit your usage limit", "limit reached", "too many requests",
-    "한도에 도달", "한도에 걸", "한도를 초과", "한도로 끊", "한도로 끝", "한도에 막",
-)
-
-
 def report_limit_hit(text):
     """보고 글자에 사용 한도 꼴이 있으면 True.
 
@@ -443,48 +436,39 @@ def report_limit_hit(text):
     한도에 걸린 시도는 재시도해도 같은 벽에 부딪히므로 평범한 실패와 구별해야 합니다.
     보고의 마지막 2000자만 봅니다 - 본문 중간에 인용된 한도 문구까지 잡지 않기 위해서입니다.
     """
-    if not isinstance(text, str) or not text:
-        return False
-    tail = text[-2000:].lower()
-    return any(pattern in tail for pattern in _LIMIT_PATTERNS)
+    return _limit_text_hit(text)
+
+
+# run id 는 폴더를 벗어날 수 없는 꼴만 받습니다(`..`·`/` 불가) - reader.RUN_ID_RE 와 같은 목적.
+_RUN_ID_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 
 def run_limit_signal(run_id):
     """실행 기록의 구조 신호로 사용 한도를 봅니다. 모르면 None.
 
     claude 하네스만 JSON 을 남깁니다. True/False/None 셋을 돌려줍니다 -
-    None 은 "구조 신호가 없다"(codex·opencode, 깨진 파일)이고 글자 판정으로 넘깁니다.
+    False 는 "JSON 을 읽었고 오류가 아니다"뿐입니다. 오류인데 한도 표지가 없으면 None 이어야
+    `step()` 이 글자 판정으로 넘어갑니다. None 은 "구조 신호가 없다"(codex·opencode, 깨진 파일,
+    run_id 꼴 불량)입니다.
     """
+    if not isinstance(run_id, str) or len(run_id) > 128 or not _RUN_ID_RE.fullmatch(run_id):
+        return None
     try:
         sd = fleet._session_dir(run_id)
         if sd is not None:
             from fleet_rt import harness as rt_harness  # noqa: PLC0415
-            return rt_harness.get(json.loads((sd / "meta.json").read_text(encoding="utf-8"))["harness_effective"]).limit_signal(sd)
+            sm = fleet._read_json_capped(sd / "meta.json")
+            if not isinstance(sm, dict):
+                return None
+            return rt_harness.get(sm["harness_effective"]).limit_signal(sd)
         meta = fleet._run_meta(run_id)
         if not isinstance(meta, dict) or meta.get("harness") != "claude":
             return None
-        with (fleet.RUNS / f"{run_id}.out").open("rb") as f:
-            raw = f.read(1024 * 1024)
-        data = json.loads(raw)
-        if not isinstance(data, dict):
+        raw = fleet.read_regular_bytes(fleet.RUNS / f"{run_id}.out", 1024 * 1024)
+        if raw is None:
             return None
-        if not data.get("is_error"):
-            return False
-        status = data.get("api_error_status")
-        if status == 429 or str(status) == "429":
-            return True
-        api_error = data.get("api_error")
-        api_error_text = api_error.lower() if isinstance(api_error, str) else ""
-        if "usage_limit" in api_error_text or "rate_limit" in api_error_text:
-            return True
-        if data.get("terminal_reason") == "api_error":
-            for key in ("result", "api_error", "stop_reason"):
-                value = data.get(key)
-                if not isinstance(value, str):
-                    continue
-                if report_limit_hit(value) or "limit" in value.lower():
-                    return True
-        return False
+        data = json.loads(raw)
+        return _result_limit_signal(data)
     except Exception:
         return None
 

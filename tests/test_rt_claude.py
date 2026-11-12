@@ -193,8 +193,39 @@ class LimitTest(unittest.TestCase):
         self.assertIs(self._sig([_result(is_error=True, terminal_reason="api_error",
                                          result="You've hit your limit")]), True)
 
-    def test_other_error_false(self):
-        self.assertIs(self._sig([_result(is_error=True, api_error_status=500, result="boom")]), False)
+    def test_other_error_none(self):
+        # 오류인데 표지가 없으면 False 가 아니라 None (호출자가 글자 판정으로 넘어간다)
+        self.assertIsNone(self._sig([_result(is_error=True, api_error_status=500, result="boom")]))
+
+    def test_error_without_marker_even_with_limit_text_is_none(self):
+        self.assertIsNone(self._sig([_result(is_error=True, result="You've hit your 5-hour limit")]))
+
+    def test_api_error_branch_ignores_non_usage_limit_phrases(self):
+        for text in ("Prompt exceeds the context window limit",
+                     "max_tokens limit: output token limit exceeded",
+                     "API Error: 400 input length and max_tokens exceed context limit"):
+            with self.subTest(text=text):
+                sig = self._sig([_result(is_error=True, terminal_reason="api_error", result=text)])
+                self.assertIsNot(sig, True)
+
+    def test_events_raising_is_none(self):
+        # limit_signal 의 except 갈래: 읽기·해석이 예외를 던져도 None(모름)이지 예외가 새지 않는다
+        with tempfile.TemporaryDirectory() as tmp:
+            sd = _session_dir(tmp, [_result(is_error=True, api_error_status=429)])
+            with mock.patch.object(claude_h.ClaudeHarness, "_events", side_effect=RuntimeError("boom")):
+                self.assertIsNone(claude_h.ADAPTER.limit_signal(sd))
+            # 같은 세션이 예외 없이는 True 임 - 위 None 이 except 갈래 덕임을 확인
+            self.assertIs(claude_h.ADAPTER.limit_signal(sd), True)
+
+    def test_result_limit_signal_direct_events_rejected_is_true(self):
+        ev = {"type": "rate_limit_event", "rate_limit_info": {"status": "rejected"}}
+        self.assertIs(claude_h.result_limit_signal({"is_error": True, "result": "stopped"}, [ev]), True)
+        self.assertIsNone(claude_h.result_limit_signal({"is_error": True, "result": "stopped"}, []))
+
+    def test_result_limit_signal_direct_non_dict_is_none(self):
+        for bad in (None, "x", [1], 5):
+            with self.subTest(res=bad):
+                self.assertIsNone(claude_h.result_limit_signal(bad))
 
     def test_rejected_event_then_error(self):
         ev = json.dumps({"type": "rate_limit_event", "rate_limit_info": {"status": "rejected"}})

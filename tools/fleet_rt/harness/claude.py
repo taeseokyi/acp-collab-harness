@@ -89,9 +89,48 @@ def _parse_json(raw):
     return d if isinstance(d, dict) else None
 
 
-def _limit_text(value):
-    v = value.lower()
-    return "limit" in v or "usage" in v and "reached" in v
+LIMIT_PATTERNS = (
+    "hit your 5-hour limit", "5-hour limit reached", "weekly limit reached",
+    "usage limit reached", "rate limit exceeded", "rate_limit_error",
+    "session limit reached", "reached your usage limit",
+    "hit your weekly limit", "hit your usage limit", "hit your limit",
+    "한도에 도달", "한도에 걸", "한도를 초과", "한도로 끊", "한도로 끝", "한도에 막",
+)
+
+
+def limit_text_hit(text) -> bool:
+    """글자 끝 2000자에 사용 한도 문구가 있으면 True (문자열이 아니면 False). 판정은 여기 한 벌만 둔다."""
+    if not isinstance(text, str) or not text:
+        return False
+    tail = text[-2000:].lower()
+    return any(p in tail for p in LIMIT_PATTERNS)
+
+
+def result_limit_signal(res, events=()) -> Optional[bool]:
+    """result 사건 하나(+ 그 앞 사건들)로 본 사용 한도: True/False/None(모름 - 호출자가 글자 판정으로 넘어간다)."""
+    if not isinstance(res, dict):
+        return None
+    if not res.get("is_error"):
+        return False
+    status = res.get("api_error_status")
+    if status == 429 or str(status) == "429":
+        return True
+    api_error = res.get("api_error")
+    ae = api_error.lower() if isinstance(api_error, str) else ""
+    if "usage_limit" in ae or "rate_limit" in ae:
+        return True
+    if res.get("terminal_reason") == "api_error":
+        for key in ("result", "api_error", "stop_reason"):
+            if limit_text_hit(res.get(key)):
+                return True
+    # 오류로 끝났고 그 전에 한도 거절 신호가 있었으면 한도다 (overageStatus 가 아니라 status 만 본다)
+    for d in events or ():
+        if isinstance(d, dict) and d.get("type") == "rate_limit_event":
+            info = d.get("rate_limit_info")
+            st = str((info or {}).get("status") or "").lower() if isinstance(info, dict) else ""
+            if st in ("rejected", "blocked"):
+                return True
+    return None  # 오류인데 표지가 없다 - False 면 호출자가 글자 판정을 건너뛴다
 
 
 class ClaudeHarness:
@@ -214,27 +253,7 @@ class ClaudeHarness:
             res = next((d for d in reversed(evs) if d.get("type") == "result"), None)
             if res is None:
                 return None
-            if not res.get("is_error"):
-                return False
-            status = res.get("api_error_status")
-            if status == 429 or str(status) == "429":
-                return True
-            api_error = res.get("api_error")
-            ae = api_error.lower() if isinstance(api_error, str) else ""
-            if "usage_limit" in ae or "rate_limit" in ae:
-                return True
-            if res.get("terminal_reason") == "api_error":
-                for key in ("result", "api_error", "stop_reason"):
-                    v = res.get(key)
-                    if isinstance(v, str) and _limit_text(v):
-                        return True
-            # 오류로 끝났고 그 전에 한도 거절 신호가 있었으면 한도다 (overageStatus 가 아니라 status 만 본다)
-            for d in evs:
-                if d.get("type") == "rate_limit_event":
-                    st = str((d.get("rate_limit_info") or {}).get("status") or "").lower()
-                    if st in ("rejected", "blocked"):
-                        return True
-            return False
+            return result_limit_signal(res, evs)
         except Exception:
             return None
 

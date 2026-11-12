@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-12T23:35:41 / REV 164
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-13T01:23:56 / REV 165
 
 ## 2. 세션 명부
 
@@ -182,63 +182,75 @@
 | T-260 | Q-261112-7d68 | 적대적 검수: R20 의 SIGTERM 종료·한도 구조 신호·고정 자료 브라우저 검사·시험 구멍 넷 | S1 | DONE | T-262 가 같은 검수를 다시 해 rounds/R20/REVIEW-r20.md 로 닫음 (R21 정리) |
 | T-261 | Q-261112-7d68 | test_monitor_shutdown.py: 빨간 시험 둘 고치기 (T-252 이어받기) | S3 | DONE |  |
 | T-262 | Q-261112-7d68 | 적대적 검수: R20 의 SIGTERM 종료·한도 구조 신호·고정 자료 브라우저 검사·시험 구멍 넷 | S1 | DONE |  |
-| T-263 | Q-261112-7d68 | fleet_graph.py: 한도 판정 회귀 N3 + 너무 넓은 걸림말 N4·N5 + run_id 검사 N7 | S2 | TODO |  |
-| T-264 | Q-261112-7d68 | test_fleet_graph.py: N3·N4·N5·N7 회귀 + 변이 구멍 여섯 (M3~M8) | S3 | TODO |  |
-| T-265 | Q-261112-7d68 | browser_monitor_ui.py: 고정 자료가 아직 진짜 저장소를 읽는다 (N1·N2·M11) | S3 | TODO |  |
-| T-266 | Q-261112-7d68 | 재검수: N3·N4·N5·N7·N1·N2 수정이 정말 닫혔는가 | S1 | TODO |  |
+| T-263 | Q-261112-7d68 | fleet_graph.py: 한도 판정 회귀 N3 + 너무 넓은 걸림말 N4·N5 + run_id 검사 N7 | S2 | DONE |  |
+| T-264 | Q-261112-7d68 | test_fleet_graph.py: N3·N4·N5·N7 회귀 + 변이 구멍 여섯 (M3~M8) | S3 | DONE |  |
+| T-265 | Q-261112-7d68 | browser_monitor_ui.py: 고정 자료가 아직 진짜 저장소를 읽는다 (N1·N2·M11) | S3 | DONE |  |
+| T-266 | Q-261112-7d68 | 재검수: N3·N4·N5·N7·N1·N2 수정이 정말 닫혔는가 | S1 | DONE |  |
+| T-267 | Q-261112-7d68 | claude 어댑터 한도 판정: N3·N4 수정 옮기기 + 판정 한 곳으로 (R22-P1·P2·P3) | S2 | DONE |  |
+| T-268 | Q-261112-7d68 | 시험: 어댑터 한도 판정 세션 갈래·옛 동작 못박기 걷기 (R22-Q1·Q2·Q5, V19) | S3 | DONE |  |
+| T-269 | Q-261112-7d68 | 재검수: R22-P1·P2·P3·Q1·Q2·Q5 가 정말 닫혔는가 | S1 | DONE |  |
+| T-270 | Q-261112-7d68 | test_fleet_graph: Q2 세션 시험 fake 우회 + Q1 디딤 폴더 (R22-R1·R2) | S3 | DONE |  |
+| T-271 | Q-261112-7d68 | 재검수: R22-R1·R2 가 닫혔는가 | S1 | DONE |  |
+| T-272 | Q-261113-a22b | 실행 기록 읽기: FIFO 막힘·메타 상한 (R20-N6·R20-N8 = R22-P4) | S2 | DONE |  |
+| T-273 | Q-261113-a22b | 시험: FIFO·큰 메타 회귀 + 한도 판정 시험 구멍 (R22-P4·R22-S1·R22-S2) | S3 | DONE |  |
+| T-274 | Q-261113-a22b | browser_monitor_ui.py: 이번 라운드 값 고정 자료 + 잘린 제목 펼침 (R22-Q3·R22-Q4) | S3 | DONE |  |
+| T-275 | Q-261113-a22b | 검수: R22-P4·S1·S2·Q3·Q4 수정 | S1 | DONE |  |
 
 ## 4. 이벤트 로그 (최신 50)
 
+- `2026-11-13 01:23` M-R22 [handoff] REV 165: **REV 165. R22 (관리자 M-R22-233844) - DONE.** R21 의 엔진 결함 수정(관리자 세션이 슬롯을 바쁨으로 만들던 것)이 실전에서 통과: 작업자 13회 띄움, 막힘 0. 요청 둘 DONE: Q-261112-7d68(R20 이어받기 - G-052 재개 후 재검수가 새 엔진 claude 어댑터에 N3·N4 미반영(P1·P2) 발견 → G-053·G-054 후속으로 판정을 fleet_rt/harness/claude.py 한 벌(result_limit_signal·limit_text_hit)로 모으고 시험이 전
+- `2026-11-13T01:21:22` M-R22 [graph] REV 164: G-055 finished: T-272(S2 read_regular_bytes·메타 256KiB)·T-273(S3 시험)·T-274(S3 브라우저 Q3·Q4)·T-275(S1 검수 rounds/R22/REVIEW-r22-4.md) DONE. R20-N6·N8·R22-S1·S2·Q3·Q4 닫힘, 변이 20 중 15. 남은 것 큐 2건(R22-N1 step() FIFO, R22-N2·N3·N4 시험 구멍). Q-261113-a22b DONE
+- `2026-11-13T01:21:18` 관리자 [ownership] REV 164: tools/fleet.py -> 관리자
+- `2026-11-13T01:21:18` M-R22 [queue] REV 164: queue +2 시험 구멍 셋(R22-N2·R22-N3·R22-N4, 낮음~정보): 세션 meta.json 256 KiB 상한 시험(_session_meta·run_limit_signal 세션 갈래), read_regular_bytes 의 S_ISREG 검사·fd 닫기를 지키는 시험(/dev/zero 링크 등), browser_monitor_ui.py '이번 라운드' 둘째 줄(관리자 상태)까지 단언. 근거 rounds/R22/REVIEW-r22-4.md (R22-N5 심볼릭 링크 따라감은 회귀 아님, 정보)
+- `2026-11-13T01:21:18` M-R22 [queue] REV 164: queue +1 FIFO 에서 step() 이 아직 막힘(R22-N1, 낮음): fleet_graph.step() 이 run_limit_signal 보다 먼저 fleet.run_report 로 같은 .out 을 read_text 하고(tools/fleet.py run_report), .rc 가 FIFO 면 _run_state 의 rc.read_text 도 막힘. .out·.rc·.err 읽기를 fleet.read_regular_bytes 로 옮기고 FIFO 시험을 step() 단위로. 근거 rounds/R22/REVIEW-r22-4
+- `2026-11-13T01:21:18` M-R22 [queue] REV 164: queue -1 시험 구멍 넷(R22-S1·R22-S2·R22-Q3·R22-Q4, 낮음~정보): (가) test_fleet_graph 의 test_q2_session_branch_context_window_text_is_not_true 를 assertIsNone 으로 (나) claude 어댑터 limit_signal 의 except 갈래를 타는 시험 (다) browser_monitor_ui.py temporary_aimem_root 가 fleet.RUNS 도 갈아끼우고 '이번 라운드' 값까지 단언 (라) 넓은 폭 표 배치에서 잘린 
+- `2026-11-13T01:21:18` M-R22 [queue] REV 164: queue -2 한도 판정 남은 결함(R20-N6·R20-N8 = R22-P4, 정보~낮음): fleet_graph.run_limit_signal 이 .out 을 S_ISREG 검사 없이 열어 FIFO 면 영영 막힘(tools/fleet_graph.py 의 1MiB 읽기), fleet._run_meta 가 meta 를 크기 상한 없이 read_text (tools/fleet.py). 방향은 rounds/R20/REVIEW-r20.md
+- `2026-11-13T01:21:17` M-R22 [request] REV 164: Q-261113-a22b DONE
+- `2026-11-13T01:21:17` 관리자 [task] REV 164: T-275 DONE
+- `2026-11-13T01:21:17` 관리자 [task] REV 164: T-274 DONE
+- `2026-11-13T01:21:17` 관리자 [task] REV 164: T-273 DONE
+- `2026-11-13T01:21:17` 관리자 [task] REV 164: T-272 DONE
+- `2026-11-13T00:36:37` M-R22 [request] REV 164: Q-261113-a22b IN-PROGRESS
+- `2026-11-13T00:36:37` 관리자 [task] REV 164: T-275 TODO S1 검수: R22-P4·S1·S2·Q3·Q4 수정
+- `2026-11-13T00:36:37` 관리자 [task] REV 164: T-274 TODO S3 browser_monitor_ui.py: 이번 라운드 값 고정 자료 + 잘린 제목 펼침 (R22-Q3·R22-Q4)
+- `2026-11-13T00:36:37` 관리자 [task] REV 164: T-273 TODO S3 시험: FIFO·큰 메타 회귀 + 한도 판정 시험 구멍 (R22-P4·R22-S1·R22-S2)
+- `2026-11-13T00:36:37` 관리자 [task] REV 164: T-272 TODO S2 실행 기록 읽기: FIFO 막힘·메타 상한 (R20-N6·R20-N8 = R22-P4)
+- `2026-11-13T00:36:32` 관리자 [ownership] REV 164: rounds/R22/REVIEW-r22-4.md -> S1
+- `2026-11-13T00:36:31` 관리자 [ownership] REV 164: tools/fleet.py -> S2
+- `2026-11-13T00:36:31` M-R22 [request] REV 164: Q-261113-a22b PLANNED 대기 큐 2건 처리: 실행 기록 FIFO·메타 상한(R22-P4) + 시험 구멍 넷(R22-S1·S2·Q3·Q4)
+- `2026-11-13T00:35:09` M-R22 [graph] REV 164: G-054 finished: T-270(S3 Q2 시험 claude 어댑터 패치·Q1 디딤 폴더)·T-271(S1 재검수 rounds/R22/REVIEW-r22-3.md) DONE, R22-R1·R2 닫힘, 전체 discover 940 OK, 변이 3/3. 큐 5건(Q-261112-7d68 의 대상) 모두 처리돼 drop, 새 큐 2건(R22-P4, R22-S1·S2·Q3·Q4). Q-261112-7d68 DONE
+- `2026-11-13T00:35:09` M-R22 [request] REV 164: Q-261112-7d68 DONE
+- `2026-11-13T00:35:09` M-R22 [queue] REV 164: queue +2 한도 판정 남은 결함(R20-N6·R20-N8 = R22-P4, 정보~낮음): fleet_graph.run_limit_signal 이 .out 을 S_ISREG 검사 없이 열어 FIFO 면 영영 막힘(tools/fleet_graph.py 의 1MiB 읽기), fleet._run_meta 가 meta 를 크기 상한 없이 read_text (tools/fleet.py). 방향은 rounds/R20/REVIEW-r20.md
+- `2026-11-13T00:35:04` M-R22 [queue] REV 164: queue +1 시험 구멍 넷(R22-S1·R22-S2·R22-Q3·R22-Q4, 낮음~정보): (가) test_fleet_graph 의 test_q2_session_branch_context_window_text_is_not_true 를 assertIsNone 으로 (나) claude 어댑터 limit_signal 의 except 갈래를 타는 시험 (다) browser_monitor_ui.py temporary_aimem_root 가 fleet.RUNS 도 갈아끼우고 '이번 라운드' 값까지 단언 (라) 넓은 폭 표 배치에서 잘린 
+- `2026-11-13T00:34:57` 관리자 [task] REV 164: T-271 DONE
+- `2026-11-13T00:34:57` 관리자 [task] REV 164: T-270 DONE
+- `2026-11-13T00:34:50` M-R22 [queue] REV 164: queue -1 브라우저 검사가 '진짜 저장소의 그때그때 상태' 에 기대는 자리를 한 번 쓸어내십시오. R17 에 두 건이 이 까닭으로 깨졌습니다(그래프 제목 펼치기 - 끝난 그래프가 접힘 / 프로젝트 칸 볼드 - 최근 실행 20건이 전부 함대 일). 둘 다 임시 저장소 고정 자료로 옮겨 고쳤습니다. tests/browser_monitor_*.py 에서 ROOT 를 그대로 보는 시나리오를 찾아 같은 꼴로 옮기십시오
+- `2026-11-13T00:34:50` M-R22 [queue] REV 164: queue -2 SIGTERM 시험 구멍(재검수 R19-P2, 중간): 재검수가 넣은 변이 셋 - serve() 의 SIGTERM 처리기 지우기 / 처리기 되돌리기 지우기 / finally 의 flush_denied_audit 지우기 - 이 모두 모니터 시험 117건을 초록으로 통과합니다. 자식 프로세스로 서버를 띄워 실제 SIGTERM 을 보내고 access.log 에 'audit-dropped' 가 남는지 보는 시험을 새 파일(tests/test_monitor_shutdown.py)에 두십시오 (rounds/R19/REVIEW-
+- `2026-11-13T00:34:50` M-R22 [queue] REV 164: queue -3 한도 판정의 구조 신호(재검수 R19-P3, 낮음): 지금은 rc != 0 + 보고 글자로 봅니다. 글자 쪽은 'You've hit your weekly limit' 같은 형제 문구를 놓칩니다. claude 하네스는 .aimem/runs/<id>.out JSON 에 is_error·api_error_status=429·api_error=usage_limit_reached·terminal_reason=api_error 를 남기므로 글자보다 그것을 먼저 보십시오. codex/opencode 는 그런 칸이 없어 글자 판정
+- `2026-11-13T00:34:49` M-R22 [queue] REV 164: queue -4 R18 적대적 검수가 남긴 시험 구멍 일곱(R18-A7·R18-A12·R18-S8·R18-G7·R18-C2·R18-B10·R18-B12, 낮음~정보): 변이를 넣어도 시험이 초록인 자리들입니다. rounds/R18/REVIEW-r18.md 의 변이표를 보고 하나씩 메우십시오
+- `2026-11-13T00:34:49` M-R22 [queue] REV 164: queue -5 재검수 R19-P6(낮음): serve() 에서 SIGTERM 처리기를 건 뒤 try: 로 들어가기까지 log_line 여러 줄이 있어, 그 틈에 SIGTERM 이 오면 shutdown 이 아직 안 뜬 httpd 를 건드립니다. 처리기 설치를 try 바로 앞으로 옮기거나 처리기가 플래그만 세우게 하십시오 (rounds/R19/REVIEW-r19.md)
+- `2026-11-13T00:15:52` 관리자 [task] REV 164: T-271 TODO S1 재검수: R22-R1·R2 가 닫혔는가
+- `2026-11-13T00:15:51` 관리자 [task] REV 164: T-270 TODO S3 test_fleet_graph: Q2 세션 시험 fake 우회 + Q1 디딤 폴더 (R22-R1·R2)
+- `2026-11-13T00:15:48` 관리자 [ownership] REV 164: rounds/R22/REVIEW-r22-3.md -> S1
+- `2026-11-13T00:15:48` M-R22 [graph] REV 164: G-053 finished: T-267(S2 어댑터 판정 한 벌)·T-268(S3 시험)·T-269(S1 재검수 rounds/R22/REVIEW-r22-2.md) DONE. P1·P2·P3·Q5·V19 닫힘(변이 16 중 15 잡힘). 남은 것: R1(중간, 전체 discover 에서 test_q2 429 FAIL - fake 강제)·R2(낮음, Q1 디딤 폴더) → G-054 후속
+- `2026-11-13T00:15:48` 관리자 [task] REV 164: T-269 DONE
+- `2026-11-13T00:15:48` 관리자 [task] REV 164: T-268 DONE
+- `2026-11-13T00:15:48` 관리자 [task] REV 164: T-267 DONE
+- `2026-11-12T23:57:29` 관리자 [task] REV 164: T-269 TODO S1 재검수: R22-P1·P2·P3·Q1·Q2·Q5 가 정말 닫혔는가
+- `2026-11-12T23:57:29` 관리자 [task] REV 164: T-268 TODO S3 시험: 어댑터 한도 판정 세션 갈래·옛 동작 못박기 걷기 (R22-Q1·Q2·Q5, V19)
+- `2026-11-12T23:57:29` 관리자 [task] REV 164: T-267 TODO S2 claude 어댑터 한도 판정: N3·N4 수정 옮기기 + 판정 한 곳으로 (R22-P1·P2·P3)
+- `2026-11-12T23:57:17` 관리자 [ownership] REV 164: rounds/R22/REVIEW-r22-2.md -> S1
+- `2026-11-12T23:57:17` 관리자 [ownership] REV 164: tests/test_rt_claude.py -> S3
+- `2026-11-12T23:57:17` 관리자 [ownership] REV 164: tools/fleet_rt/harness/claude.py -> S2
+- `2026-11-12T23:55:21` M-R22 [graph] REV 164: G-052 finished: T-263·T-264·T-265·T-266 모두 DONE (재검수 rounds/R22/REVIEW-r22.md - 옛 runs 경로 N3·N4·N5·N7·N1·N2·M11 닫힘, 변이 28개 중 23 잡힘). 남은 것: P1·P2(새 엔진 claude 어댑터에 N3·N4 미반영, 중간)·P3(판정 두 벌)·Q1·Q2·Q5 → G-053 후속, Q3·Q4·P4 → 큐
+- `2026-11-12T23:55:21` 관리자 [task] REV 164: T-266 DONE
+- `2026-11-12T23:55:21` 관리자 [task] REV 164: T-265 DONE
+- `2026-11-12T23:55:21` 관리자 [task] REV 164: T-264 DONE
+- `2026-11-12T23:55:21` 관리자 [task] REV 164: T-263 DONE
+- `2026-11-12T23:40:00` M-R22 [graph] REV 164: M-R22: G-052 재개 (R21 은 _busy_slots 결함으로 0명). T-266 보고 경로 rounds/R21/REVIEW-r21.md → rounds/R22/REVIEW-r22.md (다른 라운드 폴더 불가침). S2·S3 는 지금 claude/sonnet - 관리자 변경 아님, 그대로 돌림
 - `2026-11-12 23:28` M-R21 [handoff] REV 164: **REV 164. R21 (관리자 M-R21-230339) - BLOCKED, 엔진 v2 결함으로 작업자 0명.** NEW 요청 없음. 이어받은 Q-261112-7d68 의 G-052(R20 후속 4노드)를 재개하려 했으나 fleet_graph._busy_slots 가 관리자 세션(.aimem/sessions/M-R21-*, role manager·slot null)을 '슬롯 모를 running 실행' 으로 세어 모든 슬롯을 바쁨으로 본다 → 관리자가 살아 있는 한 어떤 노드도 못 띄운다(로그: skip T-263/T-265 - 
-- `2026-11-12T23:28:21` M-R21 [graph] REV 163: G-052 R21 재개 실패: 노드 0개 띄움. fleet_graph._busy_slots 가 관리자 세션 M-R21-230339(role manager, slot null)를 '슬롯 모를 running 실행' 으로 보고 모든 슬롯을 바쁨 처리 → T-263·T-265 매 틱 skip (run 590s×2). 엔진 v2 결함, 관리자 범위 밖이라 고치지 않음. G-052 그대로 todo 4.
-- `2026-11-12T23:05:08` M-R21 [round] REV 163: R21 시작: NEW 요청 없음. 이어받은 Q-261112-7d68(IN-PROGRESS) 의 G-052(R20 후속, 4노드 todo) 재개. T-266 보고 경로 rounds/R20/REVIEW-r20-2.md → rounds/R21/REVIEW-r21.md. T-252·T-260 은 T-261·T-262 가 대신 닫아 DONE. S2·S3 는 23:03 에 claude/sonnet 으로 바뀌어 있음(관리자 변경 아님).
-- `2026-11-12T23:05:08` M-R21 [slot] REV 163: slot set S3: 비고
-- `2026-11-12T23:05:08` M-R21 [slot] REV 163: slot set S2: 비고
-- `2026-11-12T23:05:08` M-R21 [task] REV 163: T-260 DONE
-- `2026-11-12T23:05:08` M-R21 [task] REV 163: T-252 DONE
-- `2026-11-12T23:05:00` 관리자 [ownership] REV 163: rounds/R21/REVIEW-r21.md -> S1
-- `2026-11-12T23:03:11` fleet.py [slot] REV 163: slot set S3: 하네스 opencode→claude, 모델 -→sonnet
-- `2026-11-12T23:03:10` fleet.py [slot] REV 163: slot set S2: 하네스 codex→claude, 모델 -→sonnet
 - `2026-11-12 23:00` 클로드 코드 [handoff] REV 163: **REV 163. 함대 엔진 v2 (태석님 지시, 클로드 코드 커밋).** R20 은 11-12 20:13 마감 없이 끊겼다(G-052 4건 todo, 요청 Q-261112-7d68 진행 중, 큐 5건 - 다음 라운드가 이어받는다). 그 뒤 엔진을 바꿨다: (1) 작업자와 관리자를 엔진이 직접 세션으로 띄운다 - `tools/fleet_rt`(하네스 어댑터 claude·codex·opencode·fake + 세션마다 감독 프로세스), 기록은 `.aimem/sessions/<id>/`(사건 흐름 events.jsonl·report.
-- `2026-11-12T19:30:15` 관리자 [task] REV 162: T-262 DONE
-- `2026-11-12T19:30:15` 관리자 [task] REV 162: T-261 DONE
-- `2026-11-12T19:30:03` 관리자 [task] REV 162: T-266 TODO S1 재검수: N3·N4·N5·N7·N1·N2 수정이 정말 닫혔는가
-- `2026-11-12T19:30:03` 관리자 [task] REV 162: T-265 TODO S3 browser_monitor_ui.py: 고정 자료가 아직 진짜 저장소를 읽는다 (N1·N2·M11)
-- `2026-11-12T19:30:03` 관리자 [task] REV 162: T-264 TODO S3 test_fleet_graph.py: N3·N4·N5·N7 회귀 + 변이 구멍 여섯 (M3~M8)
-- `2026-11-12T19:30:03` 관리자 [task] REV 162: T-263 TODO S2 fleet_graph.py: 한도 판정 회귀 N3 + 너무 넓은 걸림말 N4·N5 + run_id 검사 N7
-- `2026-11-12T19:30:02` 관리자 [ownership] REV 162: rounds/R20/REVIEW-r20-2.md -> S1
-- `2026-11-12T19:13:33` 관리자 [task] REV 162: T-262 TODO S1 적대적 검수: R20 의 SIGTERM 종료·한도 구조 신호·고정 자료 브라우저 검사·시험 구멍 넷
-- `2026-11-12T19:13:33` 관리자 [task] REV 162: T-261 TODO S3 test_monitor_shutdown.py: 빨간 시험 둘 고치기 (T-252 이어받기)
-- `2026-11-12T19:13:33` 관리자 [graph] REV 162: R20 G-050 끝: done 8 (T-251 SIGTERM 처리기 자리·T-253 한도 구조 신호 run_limit_signal·T-254 그 회귀시험+R18-G7·T-255 browser_monitor_ui 고정자료·T-256 browser_monitor_tabs 고정자료·T-257 R18-A7/S8·T-258 R18-B10/B12·T-259 R18-C2), failed 1 (T-252 SIGTERM 종료 시험 - 두 시도 모두 보고 없이 끝났고 남긴 파일의 시험 3건 중 2건이 빨강), blocked 1 (T-260 적대적 
-- `2026-11-12T19:13:33` 관리자 [task] REV 162: T-260 BLOCKED
-- `2026-11-12T19:13:33` 관리자 [task] REV 162: T-252 BLOCKED
-- `2026-11-12T19:13:33` 관리자 [task] REV 162: T-259 DONE
-- `2026-11-12T19:13:33` 관리자 [task] REV 162: T-258 DONE
-- `2026-11-12T19:13:33` 관리자 [task] REV 162: T-257 DONE
-- `2026-11-12T19:13:33` 관리자 [task] REV 162: T-256 DONE
-- `2026-11-12T19:13:33` 관리자 [task] REV 162: T-255 DONE
-- `2026-11-12T19:13:33` 관리자 [task] REV 162: T-254 DONE
-- `2026-11-12T19:13:33` 관리자 [task] REV 162: T-253 DONE
-- `2026-11-12T19:13:33` 관리자 [task] REV 162: T-251 DONE
-- `2026-11-12T18:06:30` 관리자 [graph] REV 162: R20 G-050: T-251 의 verify 가 관리자 쪽 결함이었습니다 - serve() 안의 log_line 을 셀 때 except KeyboardInterrupt 블록의 'log_line("내립니다.")' 까지 세어, 작업자가 처리기 설치를 제대로 옮겼는데도(시도 1, rc 0) '아직 log_line 들보다 앞' 으로 빨갰습니다. 러너를 pid 로 멈추고 verify 를 '서버 루프보다 앞의 log_line 만' 으로 고친 뒤(지금 트리에서 rc 0 확인) 이어 돌립니다.
-- `2026-11-12T17:55:06` 관리자 [request] REV 162: Q-261112-7d68 IN-PROGRESS
-- `2026-11-12T17:54:51` 관리자 [task] REV 162: T-260 TODO S1 적대적 검수: R20 의 SIGTERM 종료·한도 구조 신호·고정 자료 브라우저 검사·시험 구멍 넷
-- `2026-11-12T17:54:51` 관리자 [task] REV 162: T-259 TODO S2 test_fleet_ctl.py: 연쇄 한도 로그 정규식의 앵커 부정 사례 (R18-C2)
-- `2026-11-12T17:54:51` 관리자 [task] REV 162: T-258 TODO S3 browser_monitor_usage.py: 퍼센트 반올림(R18-B10)·'N시간 전 기준' 경계(R18-B12)
-- `2026-11-12T17:54:51` 관리자 [task] REV 162: T-257 TODO S3 시험 구멍 둘: 창 전환 때 seen 비우기(R18-A7)·미래 at 의 age(R18-S8)
-- `2026-11-12T17:54:51` 관리자 [task] REV 162: T-256 TODO S3 browser_monitor_tabs.py: 탭·프로젝트 고르개 검사를 고정 자료 저장소로 (큐 1)
-- `2026-11-12T17:54:50` 관리자 [task] REV 162: T-255 TODO S3 browser_monitor_ui.py: 저장소 현재 상태에 기대는 시나리오 넷을 고정 자료로 (큐 1)
-- `2026-11-12T17:54:50` 관리자 [task] REV 162: T-254 TODO S3 test_fleet_graph.py: 구조 신호 한도 판정 + rc!=0 verify 면제 분기 회귀 시험 (R18-G7)
-- `2026-11-12T17:54:50` 관리자 [task] REV 162: T-253 TODO S2 fleet_graph.py: 한도 판정을 보고 글자보다 .out 의 구조 신호로 먼저 (큐 R19-P3)
-- `2026-11-12T17:54:50` 관리자 [task] REV 162: T-252 TODO S3 tests/test_monitor_shutdown.py(새): 진짜 SIGTERM 으로 감사 비우기 실측 (큐 R19-P2)
-- `2026-11-12T17:54:50` 관리자 [task] REV 162: T-251 TODO S2 server.py: SIGTERM 처리기 설치를 try 바로 앞으로 (재검수 R19-P6)
-- `2026-11-12T17:43:27` 관리자 [request] REV 162: Q-261112-7d68 PLANNED
-- `2026-11-12T17:43:25` 관리자 [ownership] REV 162: rounds/R20/REVIEW-r20.md -> S1
-- `2026-11-12T17:43:25` 관리자 [ownership] REV 162: tests/test_monitor_shutdown.py -> S3
-- `2026-11-12T17:43:25` 관리자 [ownership] REV 162: tools/fleet_graph.py -> S2
 - `2026-11-12 17:42` 클로드 코드 [handoff] REV 162: **REV 162 (덧붙임, 클로드 코드 커밋 - R20 도중).** 태석님 지시. 모니터 화면 정리: (1) 상단 바 - 어두운 모드·로그인·로그아웃을 ⚙ 설정 메뉴 하나로(폰·데스크톱 같은 꼴), 720px 이하는 짧은 글자로 2행, 930px 이상 1행(320~1450px 10px 간격 실측, 3행 없음). (2) 데스크톱 - 핸드오프 로그 시각 칸이 잘리던 것, ASSIGNED·NEEDS-FIX 배지 잘림, '자동 새로고침' 간격, 서브태스크 없는 진행 중 요청의 같은 문장 두 번. 함께: R19 종료분(REPORT·REV 
-- `2026-11-12T17:40:03` 관리자 [task] REV 162: T-243 DONE
-- `2026-11-12T17:40:03` 관리자 [task] REV 162: T-238 DONE
 - `2026-11-12 17:32` 관리자 R19 [handoff] REV 162: **REV 162. R19 - 끊긴 R18 을 닫고, 사용 한도 카드와 감사 상한을 끝까지 몰아 적대적 검수·재검수까지.** R18 은 WSL 재시작으로 끊겼었고 G-045 를 이어 돌려 닫았습니다(T-234·T-235 는 작업자가 일을 다 했는데 다른 파일의 검사 자료가 틀려 verify 가 빨갰던 것 - 고친 뒤 관리자가 같은 명령을 직접 돌려 rc 0 확인하고 닫음). **엔진 결함 둘을 실측으로 잡았습니다**: R18 이 넣은 한도 판정이 보고에 '사용 한도' 글자만 있어도 멀쩡한 DONE 을 막았습니다(실제로 T-241·T
 - `2026-11-12 17:16` 클로드 코드 [handoff] REV 161: **REV 161 (클로드 코드, R19 도중 커밋).** 태석님 지시. (1) **대기 큐 결함 번호에 라운드**: 검수 번호(N=결함·M=변이 시험·D=넘어온 결함)는 보고서마다 1부터 다시 세어 라운드끼리 섞였다 → 큐에는 `R17-N5`·`R17-N5·N6` 꼴만, `queue add/edit` 가 맨 `N5` 를 거절. `queue edit --pos`(제자리 고침) 신설. 큐 1~3 을 이 꼴로 고치고 출처 T-224 를 적음. 표준 브리프·AIMEM 4.5 에 규칙(순서 번호 대신 발견 번호로 가리킴). (2) **화면
 - `2026-11-12 15:30` 클로드 코드 [handoff] REV 160: **R18 끊김 (REV 그대로).** 2026-11-12 14:57 WSL 이 업데이트로 재시작되어(15:22 재기동, 커널 6.18.58.1) 관리자 R18·작업자·이어 달리기 감시자가 모두 사라졌다. G-045: T-231·T-232·T-233·T-237 done, T-234(S2)·T-236(S3) 는 실행 1분 안에 lost(거둠), T-235·T-238 todo. 파일·git·DB 손상 없음, 린터 통과. 전체 테스트 641 중 1건 실패 - `test_collect_state_failure_branch_keys_matc
@@ -247,17 +259,13 @@
 - `2026-11-12 08:00` 관리자 [handoff] REV 159: **REV 159. R15 - 대기 큐 7건을 닫고, 그 과정에서 스스로 낸 운영 회귀를 적대적 검수가 잡아 같은 라운드에 고쳤습니다.** 큐 2·3·4·5·6·7·8 DONE(1번 파이어폭스는 9절 1번 승인 대기로 그대로). 그래프 2(새 일 G-035 9 + 후속 G-036 3), T-194~T-205. **가장 큰 것**: 큐 2번(티켓에 주체 묶기)을 쿠키 대조로 구현했더니 CSP sandbox 의 불투명 출처에 SameSite 쿠키가 안 실려 **인증 켠 모드에서 앱의 js·css 가 전부 403** 이 됐습니다(T-20
 - `2026-11-12 06:25` 클로드 코드 [handoff] REV 158: **REV 158 커밋 (R14 결과).** 기록 정리 연동 아카이브를 운영 사본에서 CLI·웹 두 경로로 실측(실행 182·이벤트 574·핸드오프 57·전달 7 이동, 열린 태스크·최신 12 핸드오프·r14 남음, 재실행 중복 없음, 린터 통과). 패널 설명의 이벤트 아카이브 이름을 .jsonl 로 고침(sw v26). 운영 모니터 재시작(R14 서버 코드·이어 달리기 모드 반영). 이어 달리기는 done 으로 종료(요청 0·웹워들 22/22). 운영 --days 0 은 누르지 않음. 남은 것은 큐 8건.
 - `2026-11-12 02:28` 관리자 R14 [handoff] REV 158: **REV 158. R14 - 끝난 것 정리가 딸린 기록까지 데려가게 만들고(적대적 검수 2회), 웹워들 마지막 목표를 닫았습니다(22/22).** 요청 5건 DONE(`7859`+`731b` 연동 아카이브 · `fa37` 진행 표시 · `b56e` 미리보기 실측 · `663d` 는 b56e 로 이어 닫음). 그래프 3(새 일 G-032 10 + 후속 G-033 5 · G-034 2), T-177~T-193. **핵심**: `archive` 가 이제 끝난 작업의 **실행 기록·이벤트·핸드오프·전달 기록·로그 줄**을 함께 옮깁니다(
-- `2026-11-11 22:54` 클로드 코드 [handoff] REV 157: **REV 157 (덧붙임, R14 도중 커밋). 클로드 코드가 운영하며 고친 것.** (1) **이어 달리기 다시 만듦**: 대상을 함대 · 프로젝트(여러 개 체크) · 전체로 고른다(`chain_work`, 격자 체크 칸 + '모두 선택/해제'). 남은 일 = 대상의 열린 요청 + 체크 안 된 목표. **상한 라운드(1~10)는 언제나 지키고**, 닿으면 멈춤 / 새 묶음으로 이어 감(`renew`, 끝날 때까지) / 완전 자율 종주(`autonomous`: 막혀도 한 번 더, 연달아 두 번이면 멈춤). 모두 30 라운드가 안전
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
-| 1 | 브라우저 검사가 '진짜 저장소의 그때그때 상태' 에 기대는 자리를 한 번 쓸어내십시오. R17 에 두 건이 이 까닭으로 깨졌습니다(그래프 제목 펼치기 - 끝난 그래프가 접힘 / 프로젝트 칸 볼드 - 최근 실행 20건이 전부 함대 일). 둘 다 임시 저장소 고정 자료로 옮겨 고쳤습니다. tests/browser_monitor_*.py 에서 ROOT 를 그대로 보는 시나리오를 찾아 같은 꼴로 옮기십시오 | S3 |  |
-| 2 | SIGTERM 시험 구멍(재검수 R19-P2, 중간): 재검수가 넣은 변이 셋 - serve() 의 SIGTERM 처리기 지우기 / 처리기 되돌리기 지우기 / finally 의 flush_denied_audit 지우기 - 이 모두 모니터 시험 117건을 초록으로 통과합니다. 자식 프로세스로 서버를 띄워 실제 SIGTERM 을 보내고 access.log 에 'audit-dropped' 가 남는지 보는 시험을 새 파일(tests/test_monitor_shutdown.py)에 두십시오 (rounds/R19/REVIEW-r19.md) | S3 |  |
-| 3 | 한도 판정의 구조 신호(재검수 R19-P3, 낮음): 지금은 rc != 0 + 보고 글자로 봅니다. 글자 쪽은 'You've hit your weekly limit' 같은 형제 문구를 놓칩니다. claude 하네스는 .aimem/runs/<id>.out JSON 에 is_error·api_error_status=429·api_error=usage_limit_reached·terminal_reason=api_error 를 남기므로 글자보다 그것을 먼저 보십시오. codex/opencode 는 그런 칸이 없어 글자 판정이 남습니다 (rounds/R19/REVIEW-r19.md) | S2 |  |
-| 4 | R18 적대적 검수가 남긴 시험 구멍 일곱(R18-A7·R18-A12·R18-S8·R18-G7·R18-C2·R18-B10·R18-B12, 낮음~정보): 변이를 넣어도 시험이 초록인 자리들입니다. rounds/R18/REVIEW-r18.md 의 변이표를 보고 하나씩 메우십시오 | S3 |  |
-| 5 | 재검수 R19-P6(낮음): serve() 에서 SIGTERM 처리기를 건 뒤 try: 로 들어가기까지 log_line 여러 줄이 있어, 그 틈에 SIGTERM 이 오면 shutdown 이 아직 안 뜬 httpd 를 건드립니다. 처리기 설치를 try 바로 앞으로 옮기거나 처리기가 플래그만 세우게 하십시오 (rounds/R19/REVIEW-r19.md) | S2 |  |
+| 1 | FIFO 에서 step() 이 아직 막힘(R22-N1, 낮음): fleet_graph.step() 이 run_limit_signal 보다 먼저 fleet.run_report 로 같은 .out 을 read_text 하고(tools/fleet.py run_report), .rc 가 FIFO 면 _run_state 의 rc.read_text 도 막힘. .out·.rc·.err 읽기를 fleet.read_regular_bytes 로 옮기고 FIFO 시험을 step() 단위로. 근거 rounds/R22/REVIEW-r22-4.md | S2 |  |
+| 2 | 시험 구멍 셋(R22-N2·R22-N3·R22-N4, 낮음~정보): 세션 meta.json 256 KiB 상한 시험(_session_meta·run_limit_signal 세션 갈래), read_regular_bytes 의 S_ISREG 검사·fd 닫기를 지키는 시험(/dev/zero 링크 등), browser_monitor_ui.py '이번 라운드' 둘째 줄(관리자 상태)까지 단언. 근거 rounds/R22/REVIEW-r22-4.md (R22-N5 심볼릭 링크 따라감은 회귀 아님, 정보) | S3 |  |
 
 ## 6. 파일 소유권
 
@@ -326,6 +334,10 @@
 | `rounds/R20/REVIEW-r20-2.md` | S1 | R20 재검수 |
 | `rounds/R20/REVIEW-r20.md` | S1 | R20 적대적 검수 |
 | `rounds/R21/REVIEW-r21.md` | S1 | R21 T-266 재검수 |
+| `rounds/R22/REVIEW-r22-2.md` | S1 | R22 T-269 재검수 |
+| `rounds/R22/REVIEW-r22-3.md` | S1 | R22 T-271 재검수 |
+| `rounds/R22/REVIEW-r22-4.md` | S1 | R22 T-275 검수 |
+| `rounds/R22/REVIEW-r22.md` | S1 | R22 T-266 재검수 (R21 이 못 띄워 R22 폴더로 옮김) |
 | `skills/**` | 관리자 | **현재 비어 있음** (REV 101 에서 `acp-slot-lifecycle` 제거). 되살아나면 이 행이 그대로 적용된다 |
 | `tests/browser_monitor_app.py` | S3 | R10 T-131 |
 | `tests/browser_monitor_auth.py` | S3 | R10 T-135 |
@@ -344,6 +356,7 @@
 | `tests/test_monitor_claude_usage.py` | S3 | R18 T-231 claude_usage 정리 단위 시험 (새 파일, server.py 를 고친 S2 와 다른 슬롯) |
 | `tests/test_monitor_shutdown.py` | S3 | R20 T-252 SIGTERM 종료 시험 (새 파일, server.py 를 고친 S2 와 다른 슬롯) |
 | `tests/test_monitor_ticket_regress.py` | S3 | R16 T-210 티켓 회귀 시험 (새 파일, server.py 를 고친 S2 와 다른 슬롯) |
+| `tests/test_rt_claude.py` | S3 | R22 T-268 (claude.py 를 고친 S2 와 다른 슬롯) |
 | `tools/aimem_board.py` | S1 | T-006 / T-009 |
 | `tools/aimem_db.py` | S2 | R14 T-177·T-178 끝난 것 정리와 연동한 기록 아카이브 (관리자→S2, 만들기·고치기는 무료 슬롯) |
 | `tools/aimem_lint.py` | S1 | T-005A |
@@ -361,9 +374,10 @@
 | `tools/envcheck/runtime.py` | S2 | 라운드 2. 실행 환경 계층 검사 |
 | `tools/envcheck/sessions.py` | S1 | 라운드 2. 세션·에이전트 계층 검사 |
 | `tools/envcheck/terminal.py` | S3 | 라운드 2. 터미널 규약 계층 검사 |
-| `tools/fleet.py` | 관리자 | 슬롯 시작/종료 도우미 |
+| `tools/fleet.py` | 관리자 | R22 종료로 환원 (T-272 동안 S2) |
 | `tools/fleet_ctl.py` | 관리자 | R19 종료로 환원 (R18 T-237 동안 S2) |
 | `tools/fleet_graph.py` | S2 | R20 T-253 한도 판정 구조 신호 (큐 R19-P3) |
+| `tools/fleet_rt/harness/claude.py` | S2 | R22 T-267 한도 판정 한 곳으로 (재검수 R22-P1·P2·P3) |
 | `tools/fleet_slots.json` | 관리자 | 슬롯별 하네스·모델 정본. `fleet.py slot` 이 쓰고 `reader` 가 읽는다 (`8.0` 모델 항) |
 
 ## 요청
@@ -407,25 +421,13 @@
 | Q-261112-bd33 | R16 마무리 (사용 한도로 끊김) + 재검수 N1 + 그래프 제목 펼치기 검사 | 클로드 코드(태석님 위임) | DONE | 2026-11-12T11:45:55 |
 | Q-261112-b1d2 | 함대 탭에 Claude 사용 한도(5시간·주간) 표시 | 태석 | DONE | 2026-11-12T11:49:37 |
 | Q-261112-c3a1 | 대기 큐 1~3 처리 (R18) | 관리자 (R17 검수가 남긴 큐) | DONE | 2026-11-12T14:25:16 |
-| Q-261112-7d68 | 대기 큐 5건 처리 (R19 뒤 자동) | 함대 이어 달리기 | IN-PROGRESS | 2026-11-12T17:35:20 |
+| Q-261112-7d68 | 대기 큐 5건 처리 (R19 뒤 자동) | 함대 이어 달리기 | DONE | 2026-11-12T17:35:20 |
+| Q-261113-a22b | 대기 큐 2건 처리: 실행 기록 FIFO·메타 상한(R22-P4) + 시험 구멍 넷(R22-S1·S2·Q3·Q4) | 관리자 M-R22 (대기 큐) | DONE | 2026-11-13T00:36:31 |
 
 ## 실행 (최근 30)
 
 | run id | 태스크 | 슬롯 | 하네스 | 모델 | 시도 | 상태 | rc | 시작 | 끝 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| T-243-S3-a1-161709 | T-243 | S3 | opencode |  | 1 | done | 0 | 16:17:09 | 16:20:42 |
-| T-244-S2-a1-163844 | T-244 | S2 | codex |  | 1 | done | 0 | 16:38:44 | 16:43:49 |
-| T-245-S3-a1-164437 | T-245 | S3 | opencode |  | 1 | done | 0 | 16:44:37 | 16:48:25 |
-| T-246-S2-a1-164437 | T-246 | S2 | codex |  | 1 | done | 0 | 16:44:37 | 16:48:31 |
-| T-247-S3-a1-164843 | T-247 | S3 | opencode |  | 1 | done | 0 | 16:48:43 | 17:01:48 |
-| T-248-S1-a1-170153 | T-248 | S1 | claude | opus | 1 | done | 0 | 17:01:53 | 17:12:44 |
-| T-249-S2-a1-171433 | T-249 | S2 | codex |  | 1 | done | 0 | 17:14:33 | 17:23:38 |
-| T-250-S3-a1-172354 | T-250 | S3 | opencode |  | 1 | done | 0 | 17:23:54 | 17:27:48 |
-| T-251-S2-a1-175507 | T-251 | S2 | codex |  | 1 | done | 0 | 17:55:07 | 17:59:12 |
-| T-255-S3-a1-175507 | T-255 | S3 | opencode |  | 1 | done | 0 | 17:55:07 | 18:05:08 |
-| T-251-S2-a2-180002 | T-251 | S2 | codex |  | 2 | done | 0 | 18:00:02 | 18:06:56 |
-| T-253-S2-a1-180711 | T-253 | S2 | codex |  | 1 | done | 0 | 18:07:11 | 18:13:22 |
-| T-255-S3-a2-180713 | T-255 | S3 | opencode |  | 2 | done | 0 | 18:07:13 | 18:51:29 |
 | T-259-S2-a1-181328 | T-259 | S2 | codex |  | 1 | done | 0 | 18:13:28 | 18:15:21 |
 | T-252-S3-a1-185202 | T-252 | S3 | opencode |  | 1 | done | 0 | 18:52:02 | 18:55:19 |
 | T-252-S3-a2-185555 | T-252 | S3 | opencode |  | 2 | done | 0 | 18:55:55 | 18:58:04 |
@@ -443,3 +445,16 @@
 | ADHOC-S2-a1-220212 | ADHOC | S2 | codex | openrouter/deepseek/deepseek-v4.1-flash | 1 | done | 0 | 22:02:12 | 22:02:20 |
 | ADHOC-S3-a1-220213 | ADHOC | S3 | opencode | openrouter/deepseek/deepseek-v4.1-flash | 1 | done | 0 | 22:02:13 | 22:02:26 |
 | ADHOC-S3-a1-220242 | ADHOC | S3 | opencode | openrouter/deepseek/deepseek-v4.1-flash | 1 | killed | -15 | 22:02:42 | 22:03:07 |
+| T-263-S2-a2-234000 | T-263 | S2 | claude | sonnet | 2 | done | 0 | 23:40:00 | 23:40:45 |
+| T-265-S3-a2-234000 | T-265 | S3 | claude | sonnet | 2 | done | 0 | 23:40:00 | 23:41:53 |
+| T-264-S3-a1-234216 | T-264 | S3 | claude | sonnet | 1 | done | 0 | 23:42:16 | 23:42:59 |
+| T-266-S1-a1-234309 | T-266 | S1 | claude | opus | 1 | done | 0 | 23:43:09 | 23:52:32 |
+| T-267-S2-a1-235730 | T-267 | S2 | claude | sonnet | 1 | done | 0 | 23:57:30 | 23:59:42 |
+| T-268-S3-a1-000043 | T-268 | S3 | claude | sonnet | 1 | done | 0 | 00:00:43 | 00:01:28 |
+| T-269-S1-a1-000136 | T-269 | S1 | claude | opus | 1 | done | 0 | 00:01:36 | 00:12:40 |
+| T-270-S3-a1-001552 | T-270 | S3 | claude | sonnet | 1 | done | 0 | 00:15:52 | 00:18:37 |
+| T-271-S1-a1-002059 | T-271 | S1 | claude | opus | 1 | done | 0 | 00:20:59 | 00:34:19 |
+| T-272-S2-a1-003638 | T-272 | S2 | claude | sonnet | 1 | done | 0 | 00:36:38 | 00:37:57 |
+| T-273-S3-a1-003851 | T-273 | S3 | claude | sonnet | 1 | done | 0 | 00:38:51 | 00:41:36 |
+| T-274-S3-a1-004400 | T-274 | S3 | claude | sonnet | 1 | done | 0 | 00:44:00 | 00:45:31 |
+| T-275-S1-a1-004604 | T-275 | S1 | claude | opus | 1 | done | 0 | 00:46:04 | 01:20:51 |

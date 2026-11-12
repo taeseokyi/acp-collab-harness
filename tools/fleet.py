@@ -15,8 +15,10 @@
 """
 import argparse
 import json
+import os
 import pathlib
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -349,12 +351,49 @@ def _rt_sessions():
     return sessions
 
 
-def _session_meta(d):
-    """세션 `meta.json` 을 옛 실행 메타 꼴로 (호출부가 `slot`·`harness`·`pid`·`brief` 를 읽는다)."""
+META_LIMIT = 256 * 1024
+
+
+def read_regular_bytes(path, limit):
+    """일반 파일만 `limit` 바이트 이하일 때 읽어 돌려준다. FIFO·장치·너무 큰 파일·오류는 None.
+
+    FIFO 는 쓰는 쪽이 올 때까지 열기·읽기가 막히므로 O_NONBLOCK 으로 열고 fstat 으로 먼저 거른다.
+    """
     try:
-        m = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     except (OSError, ValueError):
         return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > limit:
+            return None
+        chunks, left = [], limit
+        while left > 0:
+            b = os.read(fd, min(left, 65536))
+            if not b:
+                break
+            chunks.append(b)
+            left -= len(b)
+        return b"".join(chunks)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def _read_json_capped(path, limit=META_LIMIT):
+    raw = read_regular_bytes(path, limit)
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except ValueError:
+        return None
+
+
+def _session_meta(d):
+    """세션 `meta.json` 을 옛 실행 메타 꼴로 (호출부가 `slot`·`harness`·`pid`·`brief` 를 읽는다)."""
+    m = _read_json_capped(d / "meta.json")
     if not isinstance(m, dict):
         return None
     extra = m.get("extra") if isinstance(m.get("extra"), dict) else {}
@@ -370,8 +409,7 @@ def _run_meta(run_id):
     d = _session_dir(run_id)
     if d is not None:
         return _session_meta(d)
-    f = RUNS / f"{run_id}.json"
-    return json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
+    return _read_json_capped(RUNS / f"{run_id}.json")
 
 
 def _run_last_mtime(run_id):
