@@ -588,6 +588,57 @@ class FleetGraphContractTests(unittest.TestCase):
             self.fail("run_limit_signal 이 FIFO .out 에서 막혔다")
         self.assertEqual(box, [None])
 
+    def test_step_does_not_block_on_fifo_rc_out_err(self):
+        """R22-N1: 실행 기록이 FIFO 로 바꿔치기돼 있어도 `step()` 한 틱이 끝까지 돈다 (읽기마다 막히던 자리 셋)."""
+        import threading  # noqa: PLC0415
+        self._write_run("X", "claude")
+        for suf in (".rc", ".out", ".err"):
+            os.mkfifo(self.runs / f"X{suf}")
+        g = self._graph([self._node("T-1", attempts=[self._attempt("X")], verify="true")])
+        self._save_graph(g)
+        t = threading.Thread(target=lambda: fleet_graph.step(g, allow_spawn=False), daemon=True)
+        t.start()
+        t.join(5)
+        if t.is_alive():
+            for suf in (".rc", ".out", ".err"):          # 막힌 스레드를 풀어 준다
+                try:
+                    os.close(os.open(self.runs / f"X{suf}", os.O_WRONLY | os.O_NONBLOCK))
+                except OSError:
+                    pass
+            self.fail("step() 이 FIFO 실행 기록에서 막혔다")
+        att = g["nodes"][0]["attempts"][-1] if g["nodes"][0]["attempts"] else g["nodes"][0].get("stopped_attempts", [{}])[-1]
+        self.assertEqual(att.get("rc"), -1)           # 읽지 못한 종료 코드는 -1 (실패로 본다)
+        self.assertNotEqual(g["nodes"][0]["status"], "running")
+
+    def test_session_meta_over_the_cap_is_ignored(self):
+        """R22-N2: 세션 meta.json 이 상한(256 KiB)을 넘으면 읽지 않는다 - 겉면과 한도 판정 세션 갈래 둘 다."""
+        d = self.tmp / "sessions" / "T-1-S2-a1-000000"
+        d.mkdir(parents=True)
+        pad = "x" * (fleet.META_LIMIT + 1)
+        (d / "meta.json").write_text(json.dumps({"id": d.name, "harness": "claude", "harness_effective": "claude",
+                                                 "pad": pad}), encoding="utf-8")
+        self.assertIsNotNone(fleet._session_dir(d.name))
+        self.assertIsNone(fleet._run_meta(d.name))
+        self.assertIsNone(fleet_graph.run_limit_signal(d.name))
+        (d / "meta.json").write_text(json.dumps({"id": d.name, "harness": "claude", "harness_effective": "claude"}),
+                                     encoding="utf-8")
+        self.assertEqual(fleet._run_meta(d.name)["harness"], "claude")    # 상한 안이면 읽힌다
+
+    def test_read_regular_bytes_refuses_devices_and_closes_its_fd(self):
+        """R22-N3: 장치로 가는 링크(/dev/zero - 끝없이 읽힌다)는 일반 파일이 아니라 거절하고, 매번 fd 를 닫는다."""
+        z = self.tmp / "zero"
+        z.symlink_to("/dev/zero")
+        f = self.tmp / "ok.bin"
+        f.write_bytes(b"abc")
+        fifo = self.tmp / "p"
+        os.mkfifo(fifo)
+        before = len(os.listdir("/proc/self/fd"))
+        for _ in range(200):
+            self.assertIsNone(fleet.read_regular_bytes(z, 1024))
+            self.assertIsNone(fleet.read_regular_bytes(fifo, 1024))
+            self.assertEqual(fleet.read_regular_bytes(f, 1024), b"abc")
+        self.assertEqual(len(os.listdir("/proc/self/fd")), before)
+
     def test_oversized_meta_is_none(self):
         (self.runs / "Y.json").write_bytes(b'{"harness": "claude", "pad": "' + b"x" * (2 * 1024 * 1024) + b'"}')
         self.assertIsNone(fleet._run_meta("Y"))

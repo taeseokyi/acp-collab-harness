@@ -782,7 +782,7 @@ def cmd_wait(args):
         if rc not in (0, None):
             sd = _session_dir(rid)
             err_f = (sd / "stderr.log") if sd is not None else RUNS / f"{rid}.err"
-            err = err_f.read_text(encoding="utf-8", errors="replace")[-1500:] if err_f.exists() else ""
+            err = (read_regular_bytes(err_f, 16 * 1024 * 1024) or b"").decode("utf-8", "replace")[-1500:]   # FIFO 에서 막히지 않게
             print("--- stderr 꼬리:\n" + err)
     _db_sync()
     return 1 if pending else 0

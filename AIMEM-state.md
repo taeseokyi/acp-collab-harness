@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-13T07:02:09 / REV 168
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-13T08:58:12 / REV 168
 
 ## 2. 세션 명부
 
@@ -198,6 +198,9 @@
 
 ## 4. 이벤트 로그 (최신 50)
 
+- `2026-11-13T08:58:12` 클로드 코드 [queue] REV 168: 대기 큐 2건 처리(태석님 지시): R22-N1 - fleet.py wait 의 stderr 읽기도 FIFO 안전하게, step() 단위 FIFO 회귀 검사. R22-N2·N3·N4 - 세션 meta 상한·read_regular_bytes 의 장치 거절과 fd 닫기·'이번 라운드' 둘째 줄 검사. 변이 시험으로 옛 동작을 잡는 것 확인.
+- `2026-11-13T08:58:12` 관리자 [queue] REV 168: queue -1 FIFO 에서 step() 이 아직 막힘(R22-N1, 낮음): fleet_graph.step() 이 run_limit_signal 보다 먼저 fleet.run_report 로 같은 .out 을 read_text 하고(tools/fleet.py run_report), .rc 가 FIFO 면 _run_state 의 rc.read_text 도 막힘. .out·.rc·.err 읽기를 fleet.read_regular_bytes 로 옮기고 FIFO 시험을 step() 단위로. 근거 rounds/R22/REVIEW-r22-4
+- `2026-11-13T08:58:12` 관리자 [queue] REV 168: queue -2 시험 구멍 셋(R22-N2·R22-N3·R22-N4, 낮음~정보): 세션 meta.json 256 KiB 상한 시험(_session_meta·run_limit_signal 세션 갈래), read_regular_bytes 의 S_ISREG 검사·fd 닫기를 지키는 시험(/dev/zero 링크 등), browser_monitor_ui.py '이번 라운드' 둘째 줄(관리자 상태)까지 단언. 근거 rounds/R22/REVIEW-r22-4.md (R22-N5 심볼릭 링크 따라감은 회귀 아님, 정보)
 - `2026-11-13 07:02` 클로드 코드 [handoff] REV 168: **REV 168. 엔진 v2 남은 위험 셋 (태석님 지시, 클로드 코드 커밋).** (1) **`verify` 는 울타리 안에서 돈다**(bubblewrap, `tools/fleet_rt/sandbox.py`): 쓰기는 저장소와 `/tmp` 만, `.git` 읽기 전용, `.env`·`.aimem/tls/` 안 보임, 환경에 API 키·토큰·세션 표식 없음, 자기 pid 네임스페이스, 네트워크는 됨. 시간 초과면 프로세스 그룹째 끊는다. `$HOME` 에 쓰거나 키를 읽는 검사는 엔진에서 실패한다(8.0-8 규칙·브리프에 적음).
 - `2026-11-13 02:38` 클로드 코드 [handoff] REV 167: **REV 167. 엔진 v2 4단계 - 관리자 호출 방식 (태석님 지시, 클로드 코드 커밋). 기본값은 그대로 상주 방식이다.** `fleet.toml` `[manager] mode = "resident" | "calls"`. `calls` 면 관리자를 ① 계획 ② 판정(되풀이) ③ 마감, 짧은 새 세션으로만 띄우고 그 사이 `fleet_graph run` 은 엔진(라운드 진행기 `fleet_ctl.py _rounddrive`)이 돈다. 호출은 보고 마지막 줄 `NEXT: RUN G-… | CLOSE | STOP <까닭>` 로 다
 - `2026-11-13 02:01` 클로드 코드 [handoff] REV 166: **REV 166. 엔진 v2 3단계 - 그래프 실행기 튜닝 (태석님 지시, 클로드 코드 커밋).** (1) 실패의 종류: 시도마다 `fail_kind`(work·infra·limit·timeout). 공급자·전송 장애(infra: 침묵으로 끊김·감독 소멸·응답 없이 오류)는 **시도 횟수를 쓰지 않고** `infra_attempts` 로 옮겨 다시 넣는다. 다시 넣기 전에 공급자가 응답하는지 본다. 3번 이어지면 노드는 `blocked` + `infra`(태스크 잘못이 아님) - 공급자가 돌아오면 `fleet_graph.py un
@@ -245,9 +248,6 @@
 - `2026-11-12T23:57:17` 관리자 [ownership] REV 164: rounds/R22/REVIEW-r22-2.md -> S1
 - `2026-11-12T23:57:17` 관리자 [ownership] REV 164: tests/test_rt_claude.py -> S3
 - `2026-11-12T23:57:17` 관리자 [ownership] REV 164: tools/fleet_rt/harness/claude.py -> S2
-- `2026-11-12T23:55:21` M-R22 [graph] REV 164: G-052 finished: T-263·T-264·T-265·T-266 모두 DONE (재검수 rounds/R22/REVIEW-r22.md - 옛 runs 경로 N3·N4·N5·N7·N1·N2·M11 닫힘, 변이 28개 중 23 잡힘). 남은 것: P1·P2(새 엔진 claude 어댑터에 N3·N4 미반영, 중간)·P3(판정 두 벌)·Q1·Q2·Q5 → G-053 후속, Q3·Q4·P4 → 큐
-- `2026-11-12T23:55:21` 관리자 [task] REV 164: T-266 DONE
-- `2026-11-12T23:55:21` 관리자 [task] REV 164: T-265 DONE
 - `2026-11-12 23:28` M-R21 [handoff] REV 164: **REV 164. R21 (관리자 M-R21-230339) - BLOCKED, 엔진 v2 결함으로 작업자 0명.** NEW 요청 없음. 이어받은 Q-261112-7d68 의 G-052(R20 후속 4노드)를 재개하려 했으나 fleet_graph._busy_slots 가 관리자 세션(.aimem/sessions/M-R21-*, role manager·slot null)을 '슬롯 모를 running 실행' 으로 세어 모든 슬롯을 바쁨으로 본다 → 관리자가 살아 있는 한 어떤 노드도 못 띄운다(로그: skip T-263/T-265 - 
 - `2026-11-12 23:00` 클로드 코드 [handoff] REV 163: **REV 163. 함대 엔진 v2 (태석님 지시, 클로드 코드 커밋).** R20 은 11-12 20:13 마감 없이 끊겼다(G-052 4건 todo, 요청 Q-261112-7d68 진행 중, 큐 5건 - 다음 라운드가 이어받는다). 그 뒤 엔진을 바꿨다: (1) 작업자와 관리자를 엔진이 직접 세션으로 띄운다 - `tools/fleet_rt`(하네스 어댑터 claude·codex·opencode·fake + 세션마다 감독 프로세스), 기록은 `.aimem/sessions/<id>/`(사건 흐름 events.jsonl·report.
 - `2026-11-12 17:42` 클로드 코드 [handoff] REV 162: **REV 162 (덧붙임, 클로드 코드 커밋 - R20 도중).** 태석님 지시. 모니터 화면 정리: (1) 상단 바 - 어두운 모드·로그인·로그아웃을 ⚙ 설정 메뉴 하나로(폰·데스크톱 같은 꼴), 720px 이하는 짧은 글자로 2행, 930px 이상 1행(320~1450px 10px 간격 실측, 3행 없음). (2) 데스크톱 - 핸드오프 로그 시각 칸이 잘리던 것, ASSIGNED·NEEDS-FIX 배지 잘림, '자동 새로고침' 간격, 서브태스크 없는 진행 중 요청의 같은 문장 두 번. 함께: R19 종료분(REPORT·REV 
@@ -261,8 +261,6 @@
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
-| 1 | FIFO 에서 step() 이 아직 막힘(R22-N1, 낮음): fleet_graph.step() 이 run_limit_signal 보다 먼저 fleet.run_report 로 같은 .out 을 read_text 하고(tools/fleet.py run_report), .rc 가 FIFO 면 _run_state 의 rc.read_text 도 막힘. .out·.rc·.err 읽기를 fleet.read_regular_bytes 로 옮기고 FIFO 시험을 step() 단위로. 근거 rounds/R22/REVIEW-r22-4.md | S2 |  |
-| 2 | 시험 구멍 셋(R22-N2·R22-N3·R22-N4, 낮음~정보): 세션 meta.json 256 KiB 상한 시험(_session_meta·run_limit_signal 세션 갈래), read_regular_bytes 의 S_ISREG 검사·fd 닫기를 지키는 시험(/dev/zero 링크 등), browser_monitor_ui.py '이번 라운드' 둘째 줄(관리자 상태)까지 단언. 근거 rounds/R22/REVIEW-r22-4.md (R22-N5 심볼릭 링크 따라감은 회귀 아님, 정보) | S3 |  |
 
 ## 6. 파일 소유권
 

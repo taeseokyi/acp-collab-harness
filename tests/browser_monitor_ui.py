@@ -267,6 +267,13 @@ def changed_ui_scenario(browser, base, checks):
             round_text == FIXED_ROUND_TEXT,
             f"화면={round_text!r}, 기대={FIXED_ROUND_TEXT!r}",
         )
+        status_span = value.locator(".goal-status").first
+        status_text = status_span.inner_text().strip() if status_span.count() else ""
+        checks.ok(
+            "'이번 라운드' 둘째 줄이 고정 자료의 보고 상태다",
+            status_span.count() == 1 and status_span.is_visible() and status_text == FIXED_ROUND_STATUS,
+            f"화면={status_text!r}, 기대={FIXED_ROUND_STATUS!r}",
+        )
 
         page.set_viewport_size({"width": 390, "height": 780})
         page.click("#tab-board")
@@ -425,6 +432,7 @@ def write_fixed_runs(root):
 FIXED_ROUND = {"round": 1, "at": "2026-11-05T09:30:00", "brief": "BRIEF-fixed.md",
                "requests": [], "projects": []}
 FIXED_ROUND_TEXT = "R1 · 2026-11-05 09:30"     # 화면이 고정 자료에서 만들어야 하는 '이번 라운드' 글
+FIXED_ROUND_STATUS = "보고 DONE"                # 둘째 줄 - 고정 자료의 REPORT.md `상태:` 에서 (R22-N4)
 
 
 def write_fixed_round(root):
@@ -432,6 +440,7 @@ def write_fixed_round(root):
     d = root / "rounds" / "R1"
     d.mkdir(parents=True, exist_ok=True)
     (d / "round.json").write_text(json.dumps(FIXED_ROUND, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    (d / "REPORT.md").write_text("# R1 종료 보고\n\n상태: DONE\n", encoding="utf-8")
 
 
 FIXED_TILES = "\n".join('    <div class="tile">{}</div>'.format(i) for i in range(30))
