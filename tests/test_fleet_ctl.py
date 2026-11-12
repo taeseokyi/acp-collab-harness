@@ -53,9 +53,19 @@ class FleetCtlTest(unittest.TestCase):
                 "max_attempts": 2, "status": status, "attempts": list(attempts or [])}
 
     # -------------------------------------------------------------- 모드 파일
-    def test_missing_file_means_running(self):
+    def test_missing_file_shows_running_but_never_spawns(self):
         self.assertEqual(fleet_ctl.mode(), "running")
-        self.assertTrue(fleet_ctl.spawn_allowed()[0])
+        ok, why = fleet_ctl.spawn_allowed()
+        self.assertFalse(ok)
+        self.assertIn("fleet-mode.json", why)
+
+    def test_corrupt_file_never_spawns(self):
+        (self.tmp / "fleet-mode.json").write_text("{not json", encoding="utf-8")
+        self.assertFalse(fleet_ctl.spawn_allowed()[0])
+
+    def test_missing_file_force_env_still_overrides(self):
+        with mock.patch.dict("os.environ", {fleet_ctl.FORCE_ENV: "1"}):
+            self.assertTrue(fleet_ctl.spawn_allowed()[0])
 
     def test_set_mode_round_trip_and_validation(self):
         rec = fleet_ctl.set_mode("paused", "test", "n")
@@ -373,6 +383,25 @@ class ChainTest(unittest.TestCase):
         )
         self.assertTrue(fleet_ctl._round_hit_limit(7))
         self.assertFalse(fleet_ctl._round_hit_limit(8))
+
+    def test_round_hit_limit_ignores_limit_in_the_middle_of_a_line(self):
+        gd = self.repo / ".aimem" / "graph"
+        gd.mkdir(parents=True, exist_ok=True)
+        (gd / "G-920.json").write_text(
+            json.dumps({"id": "G-920", "round": 7, "nodes": []}), encoding="utf-8"
+        )
+        for line in (
+            "2026-11-10T22:40:25 retry-queued T-1 - rate limit 문구\n",
+            "2026-11-10T22:40:25 done T-2 - 한도 표시 카드를 만들었다 (limit card)\n",
+            "2026-11-10T22:40:25 blocked T-3 - NEEDS-FIX: usage limit reached 라는 글이 화면에 보인다\n",
+        ):
+            with self.subTest(line=line):
+                (gd / "G-920.log").write_text(line, encoding="utf-8")
+                self.assertFalse(fleet_ctl._round_hit_limit(7))
+        (gd / "G-920.log").write_text(
+            "2026-11-10T22:40:25 limit T-1 (R-1) - 사용 한도로 끊김\n", encoding="utf-8"
+        )
+        self.assertTrue(fleet_ctl._round_hit_limit(7))
 
     def test_limit_is_added_to_report_stop_reason_only_when_log_says_limit(self):
         gd = self.repo / ".aimem" / "graph"

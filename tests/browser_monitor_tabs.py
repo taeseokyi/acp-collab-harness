@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """모니터의 프로젝트 탭·전역 정리 단추·작업 요청 프로젝트 고르기를 브라우저에서 잽니다."""
 import http.server
+import json
 import pathlib
 import sys
+import tempfile
 import threading
 from contextlib import contextmanager
 
@@ -51,6 +53,34 @@ def monitor_server(root=None):
         httpd.shutdown()
         httpd.server_close()
         thread.join(timeout=3)
+
+
+def write_fixed_repo(root):
+    """임시 저장소에 고정 프로젝트 둘을 씁니다 - 하나는 진행 중, 하나는 끝남."""
+    root = pathlib.Path(root)
+    req_dir = root / ".aimem" / "requests"
+    req_dir.mkdir(parents=True, exist_ok=True)
+    fixed = (
+        ("임시-진행-프로젝트", "IN-PROGRESS", "Q-FIXED-PROGRESS"),
+        ("임시-끝난-프로젝트", "DONE", "Q-FIXED-DONE"),
+    )
+    for name, status, req_id in fixed:
+        pdir = root / "projects" / name
+        pdir.mkdir(parents=True, exist_ok=True)
+        (pdir / "PROGRESS.md").write_text(f"# {name}\n", encoding="utf-8")
+        data = {
+            "id": req_id,
+            "title": f"임시 요청 {status}",
+            "status": status,
+            "created": "2026-11-01T00:00:00",
+            "updated": "2026-11-01T00:00:00",
+            "requester": "tester",
+            "project": name,
+            "subtasks": [],
+        }
+        (req_dir / f"{req_id}.json").write_text(
+            json.dumps(data, ensure_ascii=False), encoding="utf-8"
+        )
 
 
 def tab_texts(page):
@@ -232,9 +262,12 @@ def main():
         with sync_playwright() as pw:
             browser = pw.chromium.launch()
             try:
-                with monitor_server() as base:
-                    tabs_scenario(browser, base, checks)
-                    project_picker_scenario(browser, base, checks)
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    temp_root = pathlib.Path(temp_dir)
+                    write_fixed_repo(temp_root)
+                    with monitor_server(root=temp_root) as base:
+                        tabs_scenario(browser, base, checks)
+                        project_picker_scenario(browser, base, checks)
             finally:
                 browser.close()
     except Exception as exc:

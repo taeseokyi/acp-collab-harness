@@ -419,6 +419,7 @@ _LIMIT_PATTERNS = (
     "hit your 5-hour limit", "5-hour limit reached", "weekly limit reached",
     "usage limit reached", "rate limit exceeded", "rate_limit_error",
     "session limit reached", "reached your usage limit",
+    "hit your weekly limit", "hit your usage limit", "limit reached", "too many requests",
     "한도에 도달", "한도에 걸", "한도를 초과", "한도로 끊", "한도로 끝", "한도에 막",
 )
 
@@ -434,6 +435,42 @@ def report_limit_hit(text):
         return False
     tail = text[-2000:].lower()
     return any(pattern in tail for pattern in _LIMIT_PATTERNS)
+
+
+def run_limit_signal(run_id):
+    """실행 기록의 구조 신호로 사용 한도를 봅니다. 모르면 None.
+
+    claude 하네스만 JSON 을 남깁니다. True/False/None 셋을 돌려줍니다 -
+    None 은 "구조 신호가 없다"(codex·opencode, 깨진 파일)이고 글자 판정으로 넘깁니다.
+    """
+    try:
+        meta = fleet._run_meta(run_id)
+        if not isinstance(meta, dict) or meta.get("harness") != "claude":
+            return None
+        with (fleet.RUNS / f"{run_id}.out").open("rb") as f:
+            raw = f.read(1024 * 1024)
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return None
+        if not data.get("is_error"):
+            return False
+        status = data.get("api_error_status")
+        if status == 429 or str(status) == "429":
+            return True
+        api_error = data.get("api_error")
+        api_error_text = api_error.lower() if isinstance(api_error, str) else ""
+        if "usage_limit" in api_error_text or "rate_limit" in api_error_text:
+            return True
+        if data.get("terminal_reason") == "api_error":
+            for key in ("result", "api_error", "stop_reason"):
+                value = data.get(key)
+                if not isinstance(value, str):
+                    continue
+                if report_limit_hit(value) or "limit" in value.lower():
+                    return True
+        return False
+    except Exception:
+        return None
 
 
 def report_ended_in_tool_call(report):
@@ -827,14 +864,21 @@ def step(g, concurrency=None, allow_spawn=None):
             _log(g, f"BLOCKED {n['id']} - {first[:60]}")
             changed = True
             continue
-        if rc != 0 and report_limit_hit(att["report"]):
+        if rc != 0:
+            sig = run_limit_signal(att["run_id"])
+            limit = report_limit_hit(att["report"]) if sig is None else sig
+        else:
+            sig = None
+            limit = False
+        if limit:
             # rc 를 함께 봅니다: 250건 전수 재검에서 rc 0 의 정상 DONE 보고가 3건 오인되었고,
             # 진짜 한도(rc 1) 1건만 남깁니다. rc != 0 이면 검증을 돌리지 않고 바로 blocked.
             att["limit"] = True
             n["limit"] = True
             att["verify_rc"], att["verify_tail"] = -4, "사용 한도로 끊겼다 - 재시도하지 않는다"
             n["status"] = "blocked"
-            _log(g, f"limit {n['id']} ({att['run_id']}) - 사용 한도로 끊김")
+            source = "구조 신호" if sig is True else "보고 글자"
+            _log(g, f"limit {n['id']} ({att['run_id']}) - 사용 한도로 끊김 ({source})")
             changed = True
             continue
         if rc == 0 and report_ended_in_tool_call(att["report"]):

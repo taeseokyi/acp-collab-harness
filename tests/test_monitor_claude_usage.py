@@ -175,6 +175,27 @@ class ClaudeUsageTest(unittest.TestCase):
         self.assertLessEqual(out["age_seconds"], 1300)
         self.assertIs(type(out["age_seconds"]), int)
 
+    def test_future_at_one_hour_has_zero_age(self):
+        at = (datetime.datetime.now() + datetime.timedelta(hours=1)).isoformat(timespec="seconds")
+        out = self._usage({"at": at, "rate_limits": {"five_hour": {"used_percentage": 10}}})
+        self.assertIsNotNone(out)
+        self.assertEqual(out["age_seconds"], 0)
+        self.assertIs(type(out["age_seconds"]), int)
+
+    def test_future_at_ten_days_has_zero_age(self):
+        at = (datetime.datetime.now() + datetime.timedelta(days=10)).isoformat(timespec="seconds")
+        out = self._usage({"at": at, "rate_limits": {"five_hour": {"used_percentage": 10}}})
+        self.assertIsNotNone(out)
+        self.assertEqual(out["age_seconds"], 0)
+        self.assertIs(type(out["age_seconds"]), int)
+
+    def test_past_at_two_hours_has_about_7200_age(self):
+        at = (datetime.datetime.now() - datetime.timedelta(hours=2)).isoformat(timespec="seconds")
+        out = self._usage({"at": at, "rate_limits": {"five_hour": {"used_percentage": 10}}})
+        self.assertIsNotNone(out)
+        self.assertGreaterEqual(out["age_seconds"], 7200 - 120)
+        self.assertLessEqual(out["age_seconds"], 7200 + 120)
+
     def test_age_seconds_none_without_at(self):
         out = self._usage({"rate_limits": {"five_hour": {"used_percentage": 10}}})
         self.assertIsNone(out["age_seconds"])

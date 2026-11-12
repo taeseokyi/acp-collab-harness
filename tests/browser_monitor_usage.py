@@ -108,6 +108,21 @@ def fleet_scenario(browser, base, checks):
                   five.count() == 1 and re.fullmatch(r"초기화 \d{1,2}:\d{2}", safe_text(five)) is not None,
                   f"text={safe_text(five)!r}")
     finally: ctx.close()
+def rounding_scenario(browser, checks):
+    rows = base_rows()
+    rows["five_hour"]["used_percentage"] = 79.6
+    with monitor_server(root=usage_root(rows)) as base:
+        ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+        page = ctx.new_page()
+        try:
+            page.goto(base + "/", wait_until="load")
+            wait_for(page, "#usage-section")
+            row = page.locator(".usage-row").first
+            pct = safe_text(row.locator(".usage-pct"))
+            checks.ok("퍼센트는 소수 한 자리를 반올림해 80%로 찍는다", pct == "80%", f"pct={pct!r}")
+            cls = row.evaluate("e => e.className.split(/\\s+/).filter(Boolean)")
+            checks.ok("79.6% 행은 아직 usage-ok이다", "usage-ok" in cls, f"classes={cls}")
+        finally: ctx.close()
 def stale_scenario(browser, checks):
     now = dt.datetime.now()
     def read(root):
@@ -119,11 +134,18 @@ def stale_scenario(browser, checks):
                 wait_for(page, "#usage-section")
                 return safe_text(page.locator("#usage-stale"))
             finally: ctx.close()
+    def read_age(seconds):
+        at = (now - dt.timedelta(seconds=seconds)).isoformat(timespec="seconds")
+        return read(usage_root(base_rows(), at=at))
     stale = read(usage_root(base_rows(), at=(now - dt.timedelta(minutes=30)).isoformat(timespec="seconds")))
     fresh = read(usage_root(base_rows(), at=now.isoformat(timespec="seconds")))
     checks.ok("오래된 자료는 'N분 전 기준'을 보이고 지금 자료는 비어 있다",
               stale != "" and "분 전 기준" in stale and fresh == "",
               f"30분 전={stale!r}, 지금={fresh!r}")
+    sixty = read_age(60 * 60 + 5)
+    sixty_one = read_age(61 * 60 + 5)
+    checks.ok("정확히 60분 전 기준은 '60분 전 기준'이다", sixty == "60분 전 기준", f"60분={sixty!r}")
+    checks.ok("61분 전 기준은 '1시간 전 기준'이다", sixty_one == "1시간 전 기준", f"61분={sixty_one!r}")
 def empty_scenario(browser, checks):
     root = pathlib.Path(tempfile.mkdtemp(prefix="r18-usage-empty-"))
     (root / ".aimem").mkdir()
@@ -183,6 +205,7 @@ def main():
                     fleet_scenario(browser, base, checks)
                     narrow_scenario(browser, base, checks)
                     scroll_scenario(browser, base, checks)
+                rounding_scenario(browser, checks)
                 stale_scenario(browser, checks)
                 empty_scenario(browser, checks)
             finally: browser.close()

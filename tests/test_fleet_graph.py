@@ -71,6 +71,14 @@ class FleetGraphContractTests(unittest.TestCase):
     def _attempt(self, run_id="R-1", started=None):
         return {"run_id": run_id, "started": started or self._now()}
 
+    def _write_run(self, run_id, harness=None, out=None, meta=True):
+        if meta:
+            (self.runs / f"{run_id}.json").write_text(
+                json.dumps({"harness": harness}), encoding="utf-8"
+            )
+        if out is not None:
+            (self.runs / f"{run_id}.out").write_text(out, encoding="utf-8")
+
     def _graph(self, nodes, **extra):
         graph = {
             "id": "G-900",
@@ -371,6 +379,99 @@ class FleetGraphContractTests(unittest.TestCase):
         self.assertEqual(node["status"], "todo")
         self.assertFalse(attempt.get("limit"))
         self.assertEqual(attempt["verify_rc"], -1)
+
+    # ---------------------------------------------------------------- (C2) 구조 신호 판정 (T-254)
+    def test_run_limit_signal_claude_api_error_status_429_is_true(self):
+        self._write_run("R-1", "claude", json.dumps(
+            {"is_error": True, "api_error_status": 429, "terminal_reason": "api_error"}))
+        self.assertIs(fleet_graph.run_limit_signal("R-1"), True)
+
+    def test_run_limit_signal_claude_usage_limit_api_error_is_true(self):
+        self._write_run("R-1", "claude", json.dumps(
+            {"is_error": True, "api_error": "usage_limit_reached"}))
+        self.assertIs(fleet_graph.run_limit_signal("R-1"), True)
+
+    def test_run_limit_signal_ignores_limit_words_in_a_done_report(self):
+        # 보고 글자에 "한도" 가 있어도 구조 신호(is_error false)가 아니면 False 여야 한다.
+        self._write_run("R-1", "claude", json.dumps(
+            {"is_error": False, "result": "DONE - 사용 한도 표시 기능을 만들었습니다"}))
+        self.assertIs(fleet_graph.run_limit_signal("R-1"), False)
+
+    def test_run_limit_signal_is_none_for_text_only_harnesses(self):
+        for run_id, harness in (("R-CODEX", "codex"), ("R-OPEN", "opencode")):
+            with self.subTest(harness=harness):
+                self._write_run(run_id, harness, "5-hour limit reached\n상태: DONE")
+                self.assertIsNone(fleet_graph.run_limit_signal(run_id))
+
+    def test_run_limit_signal_broken_records_return_none_without_raising(self):
+        # JSON 이 아닌 글자
+        self._write_run("R-BAD", "claude", "본문은 JSON 이 아니다")
+        self.assertIsNone(fleet_graph.run_limit_signal("R-BAD"))
+        # JSON 이지만 dict 가 아닌 목록
+        self._write_run("R-LIST", "claude", "[1,2,3]")
+        self.assertIsNone(fleet_graph.run_limit_signal("R-LIST"))
+        # .out 파일 자체가 없음
+        self._write_run("R-NOOUT", "claude")
+        self.assertIsNone(fleet_graph.run_limit_signal("R-NOOUT"))
+        # 메타(.json)가 없음
+        self._write_run("R-NOMETA", None,
+                        json.dumps({"is_error": True, "api_error_status": 429}), meta=False)
+        self.assertIsNone(fleet_graph.run_limit_signal("R-NOMETA"))
+
+    def test_step_nonzero_rc_skips_verify_even_when_verify_would_pass(self):
+        # verify="true" 는 반드시 초록이다. 면제가 되면 verify_rc=-1, 안 되면 0 이 된다.
+        attempt = self._attempt()
+        node = self._node(attempts=[attempt], verify="true", max_attempts=2)
+        graph = self._graph([node])
+        with mock.patch.object(fleet, "_run_state", return_value=("done", 1)), \
+             mock.patch.object(fleet, "run_report", return_value="상태: DONE"), \
+             mock.patch.object(fleet_graph, "_verify", return_value=(0, "ok")) as verify_mock:
+            fleet_graph.step(graph, allow_spawn=False)
+        verify_mock.assert_not_called()
+        self.assertEqual(attempt["verify_rc"], -1)
+        self.assertIn("실행 rc != 0", attempt["verify_tail"])
+        self.assertNotEqual(node["status"], "done")
+        self.assertEqual(node["status"], "todo")
+
+    def test_step_nonzero_rc_with_structural_limit_blocks_and_logs_limit(self):
+        self._write_run("R-LIM", "claude", json.dumps(
+            {"is_error": True, "api_error_status": 429, "terminal_reason": "api_error"}))
+        attempt = self._attempt("R-LIM")
+        node = self._node(attempts=[attempt], verify="true", max_attempts=2)
+        graph = self._graph([node])
+        with mock.patch.object(fleet, "_run_state", return_value=("done", 1)), \
+             mock.patch.object(fleet, "run_report", return_value="상태: DONE"), \
+             mock.patch.object(fleet_graph, "_verify") as verify_mock:
+            fleet_graph.step(graph, allow_spawn=False)
+        self.assertEqual(node["status"], "blocked")
+        self.assertIs(node["limit"], True)
+        self.assertIs(attempt["limit"], True)
+        self.assertEqual(attempt["verify_rc"], -4)
+        verify_mock.assert_not_called()
+        log = (self.graphs / "G-900.log").read_text(encoding="utf-8")
+        self.assertIn("limit", log)
+        self.assertIn("R-LIM", log)
+
+    def test_step_nonzero_rc_structural_false_ignores_limit_words_in_report(self):
+        # is_error false 인 claude JSON 은 구조 신호 False - 보고에 한도 글자가 있어도 보통 실패로 간다.
+        self._write_run("R-NOLIM", "claude", json.dumps(
+            {"is_error": False, "result": "상태: DONE"}))
+        attempt = self._attempt("R-NOLIM")
+        node = self._node(attempts=[attempt], verify="true", max_attempts=2)
+        graph = self._graph([node])
+        with mock.patch.object(fleet, "_run_state", return_value=("done", 1)), \
+             mock.patch.object(fleet, "run_report", return_value="상태: DONE\n5-hour limit reached"), \
+             mock.patch.object(fleet_graph, "_verify") as verify_mock:
+            fleet_graph.step(graph, allow_spawn=False)
+        self.assertFalse(node.get("limit"))
+        self.assertFalse(attempt.get("limit"))
+        self.assertEqual(attempt["verify_rc"], -1)
+        self.assertIn("실행 rc != 0", attempt["verify_tail"])
+        self.assertNotEqual(node["status"], "blocked")
+        self.assertEqual(node["status"], "todo")
+        verify_mock.assert_not_called()
+        log = (self.graphs / "G-900.log").read_text(encoding="utf-8")
+        self.assertNotIn("limit", log)
 
     def test_cmd_status_marks_limit_nodes(self):
         node = self._node(status="blocked", attempts=[self._attempt()])

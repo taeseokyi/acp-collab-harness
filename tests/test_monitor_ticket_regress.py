@@ -465,6 +465,31 @@ class MonitorTicketRegression(unittest.TestCase):
         lines = p.read_text(encoding="utf-8").splitlines()
         self.assertTrue(any(line.split("\t")[3] == "gh:park" for line in lines))
 
+    def test_seen_subject_is_written_again_after_the_window_changes(self):
+        cap = server._DENIED_AUDIT_MAX_PER_MIN
+        server._audit_denied(self.root, "github-revoked", "127.0.0.1", "gh:again",
+                             "/app/~***/알파/", "GET", "허용 목록 밖", authenticated=True)
+        self.assertIn(("github-revoked", "gh:again"), server._denied_window_seen)
+
+        for i in range(cap + 20):
+            server._audit_denied(self.root, "github-revoked", "127.0.0.1",
+                                 f"gh:hog{i}", f"/app/~***/w1-{i}/", "GET",
+                                 "허용 목록 밖", authenticated=True)
+        self.assertGreater(server._denied_window_written, cap)
+
+        server._denied_window_start = time.time() - 61
+        for i in range(cap + 20):
+            server._audit_denied(self.root, "github-revoked", "127.0.0.1",
+                                 f"gh:hog2-{i}", f"/app/~***/w2-{i}/", "GET",
+                                 "허용 목록 밖", authenticated=True)
+        self.assertGreater(server._denied_window_written, cap)
+
+        server._audit_denied(self.root, "github-revoked", "127.0.0.1", "gh:again",
+                             "/app/~***/베타/", "GET", "허용 목록 밖", authenticated=True)
+        lines = self.audit_event_lines("github-revoked")
+        self.assertGreaterEqual(
+            sum(1 for line in lines if line.split("\t")[3] == "gh:again"), 2)
+
     def test_evicted_suppression_count_is_reported_next_window(self):
         with server._revoked_lock:
             server._revoked_last.clear()

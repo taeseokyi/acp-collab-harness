@@ -113,11 +113,17 @@ def set_mode(m, by="사람", note=""):
 
 def spawn_allowed():
     """(허용, 이유). `fleet.py spawn` 이 맨 앞에서 부릅니다."""
-    m = mode()
-    if m in SPAWN_MODES:
+    rec = read_mode()
+    m = rec["mode"]
+    # 모드 파일이 없거나 깨졌으면 띄우지 않습니다. '실행' 은 사람이 눌러 파일에 적힌 것만 인정합니다 -
+    # 임시 폴더에서 도는 검사·변이 시험이 기본값(실행)을 타고 진짜 하네스를 띄운 적이 있습니다 (2026-11-12).
+    if m in SPAWN_MODES and not rec.get("default"):
         return True, ""
     if os.environ.get(FORCE_ENV) == "1":
         return True, f"{FORCE_ENV}=1 로 우회 (모드 {m})"
+    if rec.get("default"):
+        return False, ("함대 모드 파일(.aimem/fleet-mode.json)이 없거나 읽히지 않아 작업자를 띄우지 않습니다. "
+                       "사람이 '준비' → '실행' 을 눌러야 합니다")
     return False, (f"함대가 '{MODE_LABEL.get(m, m)}' 상태라 작업자를 띄우지 않습니다 "
                    f"(.aimem/fleet-mode.json). 이어 가려면 사람이 '실행' 을 눌러야 합니다")
 

@@ -3219,15 +3219,6 @@ def serve(host=HOST, port=PORT, root=ROOT, once=False, tls=False, auth=None):
         httpd.ssl_context = ctx
     else:
         httpd = http.server.ThreadingHTTPServer((host, port), handler)
-    # 운영은 `monitorctl.sh` 가 SIGTERM 으로 내립니다. 기본 처리기는 즉사라
-    # `finally` 의 감사 비우기가 돌지 않습니다. 주 스레드가 아니면 signal.signal
-    # 이 ValueError 를 던지므로 조용히 건너뜁니다 (시험은 스레드에서 띄웁니다).
-    sigterm_installed = False
-    try:
-        old_sigterm = signal.signal(signal.SIGTERM, _sigterm_interrupt)
-        sigterm_installed = True
-    except (ValueError, OSError):
-        pass
     scheme = "https" if tls else "http"
     log_line(f"AIMEM 모니터: {scheme}://{host}:{port}/  (저장소 {root})")
     log_line("  GET  /api/state  GET /api/health  POST /api/requests")
@@ -3241,6 +3232,16 @@ def serve(host=HOST, port=PORT, root=ROOT, once=False, tls=False, auth=None):
             log_line("  주의: TLS 없이 인증만 켰습니다. 토큰이 평문으로 흐릅니다 (검증용으로만)")
     elif host not in ("127.0.0.1", "localhost", "::1"):
         log_line(f"  경고: {host} 에 바인드하는데 인증이 꺼져 있습니다. `--tls` 로 띄우십시오.")
+    # 운영은 `monitorctl.sh` 가 SIGTERM 으로 내립니다. 기본 처리기는 즉사라
+    # `finally` 의 감사 비우기가 돌지 않습니다. 주 스레드가 아니면 signal.signal
+    # 이 ValueError 를 던지므로 조용히 건너뜁니다 (시험은 스레드에서 띄웁니다).
+    # 재검수 R19-P6: 처리기와 try 사이에 틈이 없어야 한다
+    sigterm_installed = False
+    try:
+        old_sigterm = signal.signal(signal.SIGTERM, _sigterm_interrupt)
+        sigterm_installed = True
+    except (ValueError, OSError):
+        pass
     try:
         httpd.handle_request() if once else httpd.serve_forever()
     except KeyboardInterrupt:
