@@ -45,8 +45,14 @@ class FleetGraphContractTests(unittest.TestCase):
         for attr, value in (
             ("roster", {"S2": ("d27e93", "codex", "")}),
             ("owned_paths", ["tests/test_fleet_graph.py"]),
+            ("_slot_model", None),           # 운영 DB 의 슬롯 모델을 읽지 않게
         ):
             patcher = mock.patch.object(fleet, attr, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        # 공급자 점검은 네트워크를 탄다 - 검사에서는 늘 막아 둔다
+        for patcher in (mock.patch("fleet_rt.providers.probe", return_value=(True, "검사")),
+                        mock.patch.object(fleet_graph, "_PROBE_CACHE", {})):
             patcher.start()
             self.addCleanup(patcher.stop)
 
@@ -1027,6 +1033,319 @@ class FleetGraphContractTests(unittest.TestCase):
         self.assertIn("percent", fleet_graph.progress(graph))
         self.assertEqual(fleet_graph._busy_slots(graph), set())
 
+
+
+class EngineV2Stage3(unittest.TestCase):
+    """엔진 v2 3단계: 실패의 종류(5.3)·공급자 문지기(5.4)·싼 틱(5.7)·보드 동기화(5.8). 상태는 패치로 꾸민다."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = pathlib.Path(tmp.name)
+        self.graphs, self.runs = self.tmp / "graph", self.tmp / "runs"
+        self.graphs.mkdir()
+        self.runs.mkdir()
+        for target, attr, value in ((fleet_graph, "GRAPHS", self.graphs), (fleet_graph, "_LOGGED_ONCE", set()),
+                                    (fleet_graph, "_PROBE_CACHE", {}), (fleet, "RUNS", self.runs)):
+            p = mock.patch.object(target, attr, value)
+            p.start()
+            self.addCleanup(p.stop)
+        for attr, value in (("roster", {"S1": ("a", "codex", ""), "S2": ("b", "codex", "")}),
+                            ("owned_paths", []), ("_slot_model", None)):
+            p = mock.patch.object(fleet, attr, return_value=value)
+            p.start()
+            self.addCleanup(p.stop)
+        p = mock.patch("fleet_rt.providers.probe", return_value=(True, "검사"))
+        self.probe = p.start()
+        self.addCleanup(p.stop)
+
+    def node(self, nid="T-1", status="running", run="R-1", **kw):
+        n = {"id": nid, "title": nid, "slot": "S2", "task": "t", "deps": [], "write": [], "max_attempts": 2,
+             "status": status, "attempts": ([{"run_id": run, "started": dt.datetime.now().isoformat(timespec="seconds")}]
+                                            if status == "running" else [])}
+        n.update(kw)
+        return n
+
+    def graph(self, nodes):
+        return {"id": "G-900", "request": "t", "created": "2026-11-13T00:00:00", "concurrency": 3, "nodes": nodes}
+
+    def reap(self, g, sinfo, state=("done", 1), report=""):
+        with mock.patch.object(fleet, "_run_state", return_value=state), \
+             mock.patch.object(fleet, "run_report", return_value=report), \
+             mock.patch.object(fleet, "_run_meta", return_value={"provider": "kisti"}), \
+             mock.patch.object(fleet_graph, "_session_end", return_value=sinfo), \
+             mock.patch.object(fleet_graph, "run_limit_signal", return_value=None):
+            fleet_graph.step(g, allow_spawn=False)
+
+    # ---- 5.3 실패의 종류
+    def test_session_fail_kind_table(self):
+        f = fleet_graph.session_fail_kind
+        cases = [(None, False, None),
+                 ({"state": "stalled", "fail_kind": "infra"}, False, "infra"),
+                 ({"state": "failed", "fail_kind": "infra"}, False, "infra"),
+                 ({"state": "lost", "fail_kind": None}, False, "infra"),
+                 ({"state": "killed", "fail_kind": None}, True, "infra"),     # 실행기가 고아를 끊음
+                 ({"state": "killed", "fail_kind": None}, False, None),       # 사람이 끊음 - 보통 실패
+                 ({"state": "timeout", "fail_kind": "timeout"}, False, "timeout"),
+                 ({"state": "failed", "fail_kind": None}, False, None),
+                 ({"state": "failed", "fail_kind": "limit"}, False, None),
+                 ({"state": "done", "fail_kind": None}, False, None)]
+        for sinfo, cut, want in cases:
+            with self.subTest(sinfo=sinfo, cut=cut):
+                self.assertEqual(f(sinfo, cut), want)
+
+    def test_stalled_session_is_infra_and_does_not_consume_an_attempt(self):
+        n = self.node(max_attempts=1)
+        g = self.graph([n])
+        self.reap(g, {"state": "stalled", "fail_kind": "infra", "why": "침묵 240초 넘김"}, ("done", 125))
+        self.assertEqual(n["status"], "todo")
+        self.assertEqual(n["attempts"], [])
+        att = n["infra_attempts"][0]
+        self.assertEqual((att["fail_kind"], att["session_state"], att["provider"], att["rc"]),
+                         ("infra", "stalled", "kisti", 125))
+        self.assertIn("침묵", att["why"])
+        self.assertNotIn("infra", n)
+        saved = json.loads((self.graphs / "G-900.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["nodes"][0]["infra_attempts"][0]["fail_kind"], "infra")
+
+    def test_three_infra_failures_block_with_infra_flag(self):
+        n = self.node(status="todo", max_attempts=5)
+        g = self.graph([n])
+        for k in range(1, fleet_graph.INFRA_RETRY_MAX + 1):
+            n["status"] = "running"
+            n["attempts"].append({"run_id": f"R-{k}", "started": dt.datetime.now().isoformat(timespec="seconds")})
+            self.reap(g, {"state": "failed", "fail_kind": "infra", "why": "재접속"}, ("done", 1))
+        self.assertEqual(n["status"], "blocked")
+        self.assertIs(n["infra"], True)
+        self.assertIs(n["infra_attempts"][-1]["infra"], True)
+        self.assertEqual(len(n["infra_attempts"]), 3)
+        self.assertEqual(n["attempts"], [])
+        log = (self.graphs / "G-900.log").read_text(encoding="utf-8")
+        self.assertIn("INFRA T-1 - 공급자 kisti", log)
+        self.assertIn("unblock G-900 T-1", log)
+        st = fleet_graph._status_node(n)
+        self.assertEqual((st["infra"], st["infra_attempts"], st["note"]), (True, 3, "(공급자 장애)"))
+        # 사람이 풀면 장애 횟수를 비운다
+        with mock.patch.object(fleet, "_run_state", return_value=("done", 1)):
+            ok, msg = fleet_graph.unblock(g, "T-1")
+        self.assertTrue(ok, msg)
+        self.assertEqual((n["status"], fleet_graph._infra_count(n)), ("todo", 0))
+        self.assertNotIn("infra", n)
+
+    def test_supervisor_lost_session_is_infra_but_legacy_lost_is_work(self):
+        n = self.node()
+        self.reap(self.graph([n]), {"state": "lost", "fail_kind": None, "why": "감독 사라짐"}, ("lost", None))
+        self.assertEqual((n["status"], len(n.get("infra_attempts", []))), ("todo", 1))
+        n2 = self.node()
+        self.reap(self.graph([n2]), None, ("lost", None))           # 옛 실행: 감독 판정 없음
+        self.assertEqual((n2["status"], n2["attempts"][0]["fail_kind"]), ("todo", "work"))
+        self.assertNotIn("infra_attempts", n2)
+
+    def test_work_timeout_limit_and_success_kinds(self):
+        n = self.node(max_attempts=1)
+        self.reap(self.graph([n]), {"state": "failed", "fail_kind": None}, ("done", 2), "DONE?\n중간에 실패")
+        self.assertEqual((n["status"], n["attempts"][0]["fail_kind"]), ("failed", "work"))
+        n = self.node(max_attempts=1)
+        self.reap(self.graph([n]), {"state": "timeout", "fail_kind": "timeout"}, ("done", 124))
+        self.assertEqual((n["status"], n["attempts"][0]["fail_kind"]), ("failed", "timeout"))
+        n = self.node(max_attempts=3)
+        self.reap(self.graph([n]), None, ("done", 1), "You've hit your usage limit")
+        self.assertEqual((n["status"], n["attempts"][0]["fail_kind"]), ("blocked", "limit"))
+        n = self.node(max_attempts=3)
+        self.reap(self.graph([n]), {"state": "done", "fail_kind": None}, ("done", 0), "BLOCKED: 키 없음")
+        self.assertEqual((n["status"], n["attempts"][0]["fail_kind"]), ("blocked", "work"))
+        n = self.node()
+        self.reap(self.graph([n]), {"state": "done", "fail_kind": None}, ("done", 0), "DONE")
+        self.assertEqual(n["status"], "done")
+        self.assertIn("fail_kind", n["attempts"][0])
+        self.assertIsNone(n["attempts"][0]["fail_kind"])
+
+    def test_wall_clock_timeout_marks_fail_kind(self):
+        n = self.node(max_attempts=2, timeout_sec=1)
+        n["attempts"][0]["started"] = (dt.datetime.now() - dt.timedelta(seconds=60)).isoformat(timespec="seconds")
+        with mock.patch.object(fleet, "_run_state", return_value=("running", None)), \
+             mock.patch.object(fleet_graph, "_kill_run", return_value=(4242, "killed")):
+            fleet_graph.step(self.graph([n]), allow_spawn=False)
+        self.assertEqual((n["status"], n["attempts"][0]["fail_kind"]), ("todo", "timeout"))
+
+    # ---- 5.4 공급자 문지기
+    def _spawn_tick(self, g, by_prov, cap=1, busy=()):
+        cfg = mock.Mock()
+        cfg.max_concurrent.side_effect = lambda p: cap
+        spawned = []
+
+        def fake_spawn(g_, n, a):
+            n.setdefault("attempts", []).append({"run_id": f"{n['id']}-a{a}", "started": "2026-11-13T00:00:00"})
+            n["status"] = "running"
+            spawned.append(n["id"])
+        with mock.patch.object(fleet_graph, "_live_scan", return_value=(set(busy), dict(by_prov))), \
+             mock.patch.object(fleet_graph, "_rt_cfg", return_value=cfg), \
+             mock.patch.object(fleet_graph, "_node_provider", side_effect=lambda c, n: n.get("prov", "kisti")), \
+             mock.patch.object(fleet_graph, "_spawn_node", side_effect=fake_spawn), \
+             mock.patch.object(fleet, "_run_state", return_value=("running", None)), \
+             mock.patch.object(fleet, "_session_orphaned", return_value=False), \
+             mock.patch.object(fleet_graph, "_check_timeout", return_value=False):
+            fleet_graph.step(g, allow_spawn=True)     # 띄운 노드는 계속 도는 것으로 둔다
+        return spawned
+
+    def test_provider_full_waits_and_logs_once(self):
+        a, b = self.node("T-1", "todo", slot="S1"), self.node("T-2", "todo", slot="S2")
+        g = self.graph([a, b])
+        self.assertEqual(self._spawn_tick(g, {}), ["T-1"])
+        self.assertEqual(b["waiting"], "provider:kisti")
+        self.assertEqual(self._spawn_tick(g, {"kisti": 1}), [])
+        self.assertEqual(self._spawn_tick(g, {"kisti": 1}), [])
+        log = (self.graphs / "G-900.log").read_text(encoding="utf-8")
+        self.assertEqual(log.count("wait T-2 - provider:kisti"), 1)
+        # 자리가 나면 뜨고 대기 표시가 지워진다
+        a["status"] = "done"
+        self.assertEqual(self._spawn_tick(g, {"kisti": 0}), ["T-2"])
+        self.assertNotIn("waiting", b)
+
+    def test_room_two_spawns_both_and_unknown_provider_is_not_gated(self):
+        g = self.graph([self.node("T-1", "todo", slot="S1"), self.node("T-2", "todo", slot="S2")])
+        self.assertEqual(self._spawn_tick(g, {}, cap=2), ["T-1", "T-2"])
+        g = self.graph([self.node("T-1", "todo", slot="S1", prov=None), self.node("T-2", "todo", slot="S2", prov=None)])
+        self.assertEqual(self._spawn_tick(g, {"kisti": 9}), ["T-1", "T-2"])
+
+    def test_dependents_first_then_graph_order(self):
+        g = self.graph([self.node("T-1", "todo", slot="S1"), self.node("T-2", "todo", slot="S2"),
+                        self.node("T-3", "todo", slot="S1", deps=["T-2"])])
+        self.assertEqual(self._spawn_tick(g, {}), ["T-2"])
+        g = self.graph([self.node("T-1", "todo", slot="S1"), self.node("T-2", "todo", slot="S2")])
+        self.assertEqual(self._spawn_tick(g, {}), ["T-1"])                      # 같으면 그래프 순서
+
+    def test_busy_slot_waits_without_per_tick_log(self):
+        a = self.node("T-1", "todo", slot="S2")
+        g = self.graph([a])
+        for _ in range(3):
+            self.assertEqual(self._spawn_tick(g, {}, busy={"S2"}), [])
+        self.assertEqual(a["waiting"], "slot:S2")
+        log = (self.graphs / "G-900.log").read_text(encoding="utf-8")
+        self.assertEqual(log.count("wait T-1 - slot:S2"), 1)
+        self.assertNotIn("skip", log)
+
+    def test_probe_gates_only_nodes_with_infra_attempts_and_is_cached(self):
+        a = self.node("T-1", "todo", slot="S1", infra_attempts=[{"run_id": "R-0", "fail_kind": "infra"}])
+        b = self.node("T-2", "todo", slot="S2", prov="other")
+        g = self.graph([a, b])
+        self.probe.return_value = (False, "시간 초과 (10초)")
+        self.assertEqual(self._spawn_tick(g, {}, cap=3), ["T-2"])
+        self.assertEqual(a["waiting"], "probe:kisti")
+        self.assertEqual(self._spawn_tick(g, {}, cap=3), [])
+        self.assertEqual(self.probe.call_count, 1)                               # 캐시
+        self.probe.return_value = (True, "GET /models 200 (응답함)")
+        with mock.patch.object(fleet_graph, "PROBE_TTL_SEC", 0.0):
+            self.assertEqual(self._spawn_tick(g, {}, cap=3), ["T-1"])
+        self.assertNotIn("waiting", a)
+
+    def test_node_provider_uses_spawn_resolution(self):
+        from fleet_rt import config as rt_config
+        cfg = rt_config.Config(rt_config._copy(rt_config.DEFAULTS))
+        self.assertEqual(fleet_graph._node_provider(cfg, {"slot": "S1"}), "kisti")          # codex 기본 모델
+        self.assertEqual(fleet_graph._node_provider(cfg, {"slot": "S1", "harness": "claude"}), "anthropic")
+        self.assertEqual(fleet_graph._node_provider(cfg, {"slot": "S1", "model": "openrouter/x"}), "openrouter")
+        with mock.patch.object(fleet, "_slot_model", return_value="exaone/k-exaone_v2.5"):
+            self.assertEqual(fleet_graph._node_provider(cfg, {"slot": "S2", "harness": "opencode"}), "exaone")
+        self.assertIsNone(fleet_graph._node_provider(cfg, {"slot": "S9"}))                  # 명부 밖
+        self.assertIsNone(fleet_graph._node_provider(None, {"slot": "S1"}))
+
+    # ---- 5.7 싼 틱
+    def test_live_scan_skips_finished_records(self):
+        for i in range(5):
+            (self.runs / f"OLD-{i}.json").write_text(json.dumps({"slot": "S1", "pid": 999999}), encoding="utf-8")
+            (self.runs / f"OLD-{i}.{'rc' if i % 2 else 'lost'}").write_text("0", encoding="utf-8")
+        (self.runs / "LIVE.json").write_text(json.dumps({"slot": "S2", "pid": os.getpid()}), encoding="utf-8")
+        sroot = self.tmp / "sessions"
+        for i in range(5):
+            d = sroot / f"S-{i}"
+            d.mkdir(parents=True)
+            (d / "meta.json").write_text(json.dumps({"id": d.name, "slot": "S1", "provider": "kisti"}), encoding="utf-8")
+            (d / "end.json").write_text(json.dumps({"state": "done", "rc": 0}), encoding="utf-8")
+        seen = []
+        real = fleet._run_state
+
+        def spy(rid):
+            seen.append(rid)
+            return real(rid)
+        from fleet_rt import sessions as rt_sessions
+        looked = []
+        real_state = rt_sessions.state
+        with mock.patch.object(fleet, "_run_state", side_effect=spy), \
+             mock.patch.object(rt_sessions, "state", side_effect=lambda d, live=None: looked.append(d) or real_state(d, live)):
+            busy, by_prov = fleet_graph._live_scan(self.graph([]))
+        self.assertEqual(seen, ["LIVE"])
+        self.assertEqual(looked, [])                     # 끝난 세션은 다시 보지 않는다
+        self.assertEqual((busy, by_prov), ({"S2"}, {}))
+
+    def test_poll_default_is_two_seconds(self):
+        self.assertEqual(fleet_graph.DEFAULT_POLL_SEC, 2.0)
+        src = (ROOT / "tools" / "fleet_ctl.py").read_text(encoding="utf-8")
+        self.assertIn('"--poll", "2"]', src)
+        self.assertNotIn('"--poll", "15"', src)
+
+    # ---- 5.8 보드 동기화
+    def _db(self, rows):
+        import sqlite3
+        import aimem_db
+        db = self.tmp / "aimem.db"
+        con = sqlite3.connect(db)
+        con.executescript(aimem_db.SCHEMA)
+        con.execute("INSERT INTO meta(key,value) VALUES('rev','3')")
+        con.executemany("INSERT INTO tasks(id,status) VALUES(?,?)", rows)
+        con.commit()
+        con.close()
+        return db
+
+    def _board(self, db):
+        import sqlite3
+        con = sqlite3.connect(db)
+        try:
+            return dict(con.execute("SELECT id,status FROM tasks")), con.execute("SELECT count(*) FROM events").fetchone()[0]
+        finally:
+            con.close()
+
+    def test_board_sync_rules(self):
+        db = self._db([("T-1", "TODO"), ("T-2", "DONE"), ("T-3", "REJECTED"), ("T-4", "REVIEW")])
+        self.assertIs(fleet_graph._board_sync("T-1", "IN-PROGRESS"), True)
+        self.assertIs(fleet_graph._board_sync("T-1", "IN-PROGRESS"), False)        # 같은 값은 다시 안 적는다
+        self.assertIs(fleet_graph._board_sync("T-2", "BLOCKED"), False)
+        self.assertIs(fleet_graph._board_sync("T-3", "REVIEW"), False)
+        self.assertIs(fleet_graph._board_sync("T-404", "REVIEW"), False)            # 행을 만들지 않는다
+        self.assertIs(fleet_graph._board_sync("T-4", "BLOCKED"), True)
+        board, events = self._board(db)
+        self.assertEqual(board, {"T-1": "IN-PROGRESS", "T-2": "DONE", "T-3": "REJECTED", "T-4": "BLOCKED"})
+        self.assertEqual(events, 2)
+
+    def test_board_sync_without_db_is_a_no_op(self):
+        self.assertIsNone(fleet_graph._board_sync("T-1", "REVIEW"))
+        self.assertFalse((self.tmp / "aimem.db").exists())
+
+    def test_step_mirrors_status_changes_and_leaves_todo_alone(self):
+        db = self._db([("T-1", "IN-PROGRESS"), ("T-2", "IN-PROGRESS")])
+        n1, n2 = self.node("T-1", run="R-1"), self.node("T-2", run="R-2", max_attempts=2)
+        g = self.graph([n1, n2])
+        states = {"R-1": ("done", 0), "R-2": ("done", 3)}
+        with mock.patch.object(fleet, "_run_state", side_effect=lambda r: states[r]), \
+             mock.patch.object(fleet, "run_report", return_value="DONE"), \
+             mock.patch.object(fleet_graph, "_session_end", return_value=None):
+            fleet_graph.step(g, allow_spawn=False)
+        self.assertEqual((n1["status"], n2["status"]), ("done", "todo"))
+        board, _ = self._board(db)
+        self.assertEqual(board, {"T-1": "REVIEW", "T-2": "IN-PROGRESS"})            # 재시도 대기는 그대로
+
+    def test_board_sync_failure_never_breaks_step(self):
+        (self.tmp / "aimem.db").write_bytes(b"garbage")
+        n = self.node()
+        with mock.patch.object(fleet, "_run_state", return_value=("done", 0)), \
+             mock.patch.object(fleet, "run_report", return_value="DONE"), \
+             mock.patch.object(fleet_graph, "_session_end", return_value=None):
+            fleet_graph.step(self.graph([n]), allow_spawn=False)
+            n2 = self.node("T-2")
+            fleet_graph.step(self.graph([n2]), allow_spawn=False)
+        self.assertEqual((n["status"], n2["status"]), ("done", "done"))
+        log = (self.graphs / "G-900.log").read_text(encoding="utf-8")
+        self.assertEqual(log.count("보드 동기화 실패"), 1)
 
 
 class ReportEndedInToolCall(unittest.TestCase):

@@ -1697,6 +1697,22 @@ def fleet_action(action, by, root=ROOT, payload=None):
 
 # -- 태스크 그래프 (`tools/fleet_graph.py`) ----------------------------------
 
+def _attempt_log(attempts, infra_attempts):
+    """노드의 시도(+기반 장애로 옮겨진 시도)를 화면용 짧은 목록으로. 이상한 항목은 건너뜁니다."""
+    out = []
+    for a in list(attempts) + list(infra_attempts if isinstance(infra_attempts, list) else []):
+        if not isinstance(a, dict):
+            continue
+        out.append({"run_id": a.get("run_id"), "started": a.get("started"),
+                    "fail_kind": a.get("fail_kind") if isinstance(a.get("fail_kind"), str) else None,
+                    "session_state": a.get("session_state") if isinstance(a.get("session_state"), str) else None,
+                    "why": str(a["why"])[:300] if a.get("why") else None,
+                    "provider": a.get("provider") if isinstance(a.get("provider"), str) else None,
+                    "infra": a.get("fail_kind") == "infra"})
+    out.sort(key=lambda x: str(x.get("run_id") or ""))
+    return out[-20:]
+
+
 def collect_graphs(root=ROOT, errors=None):
     """`.aimem/graph/*.json` 을 읽어 요청 트리 옆에 놓을 요약을 만듭니다.
 
@@ -1749,6 +1765,12 @@ def collect_graphs(root=ROOT, errors=None):
                     "deps": n.get("deps") if isinstance(n.get("deps"), list) else [],
                     "attempts": len(attempts), "max_attempts": n.get("max_attempts"),
                     "last_run": last.get("run_id") if isinstance(last, dict) else None,
+                    "waiting": n.get("waiting") if isinstance(n.get("waiting"), str) else None,
+                    "infra": bool(n.get("infra")),
+                    "infra_attempts": sum(1 for a in (n.get("infra_attempts") if isinstance(n.get("infra_attempts"), list) else [])
+                                          if isinstance(a, dict) and not a.get("cleared")),
+                    # 시도 기록 요약 - 시도 목록 화면용 (infra 로 옮겨진 시도도 시간순으로 함께)
+                    "attempt_log": _attempt_log(attempts, n.get("infra_attempts")),
                 })
         # `Exception` 으로 넓힙니다. 튜플로 열거하면 **열거하지 않은 하나가 새어 나가**
         # 다시 두 엔드포인트를 죽입니다 - `"["` 20만 개짜리 파일의 `RecursionError` 가

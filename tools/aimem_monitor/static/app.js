@@ -208,7 +208,7 @@ function badge(text, cls) {
 const STATUS_LABEL = {
   done: '완료', running: '진행 중', 'in-progress': '진행 중', todo: '할 일', assigned: '배정됨', review: '검토 중',
   blocked: '막힘', failed: '실패', lost: '사라짐', new: '새 요청', planned: '계획됨', rejected: '거절', skipped: '건너뜀',
-  partial: '일부 완료', unknown: '모름',
+  partial: '일부 완료', unknown: '모름', infra: '공급자 장애',
 };
 function statusLabel(raw) {
   const key = String(raw || '').toLowerCase();
@@ -220,7 +220,7 @@ function statusLabel(raw) {
 function statusBadge(value) {
   const raw = show(value);
   const key = raw.toLowerCase();
-  const cls = key === 'lost' ? 'lost' : (STATUS_CLASS[raw] || STATUS_CLASS[raw.toUpperCase()] || (key === 'failed' ? 'failed' : key === 'todo' ? 'todo' : key === 'blocked' ? 'blocked' : 'neutral'));
+  const cls = key === 'lost' ? 'lost' : (STATUS_CLASS[raw] || STATUS_CLASS[raw.toUpperCase()] || (key === 'infra' ? 'blocked' : key === 'failed' ? 'failed' : key === 'todo' ? 'todo' : key === 'blocked' ? 'blocked' : 'neutral'));
   const span = badge(statusLabel(raw), cls);
   span.dataset.status = raw;
   if (statusLabel(raw) !== raw) span.title = raw;
@@ -760,7 +760,7 @@ function openTaskDetail(taskId, data) {
     meta.appendChild(detailMetaItem('작업', plainText(title) || '-'));
     meta.appendChild(detailMetaItem('슬롯', show(b ? b.slot : (sub ? sub.st.slot : (gn ? gn.n.slot : null)))));
     if (b) {
-      meta.appendChild(detailMetaItem('상태', boardStatusBadge(b, data)));
+      meta.appendChild(detailMetaItem('상태', statusBadge(b.status)));
       meta.appendChild(detailMetaItem('출처 태스크', show(b.handoff)));
       meta.appendChild(detailMetaItem('산출물', plainText(b.artifact) || '-'));
     } else {
@@ -772,8 +772,9 @@ function openTaskDetail(taskId, data) {
       if (sub.st.harness) meta.appendChild(detailMetaItem('하네스', show(sub.st.harness)));
     }
     if (gn) {
-      meta.appendChild(detailMetaItem('그래프', show(gn.g.id) + ' · ' + show(gn.n.status)
+      meta.appendChild(detailMetaItem('그래프', show(gn.g.id) + ' · ' + (nodeIsInfra(gn.n) ? statusLabel('infra') : show(gn.n.status))
         + ' · 시도 ' + show(gn.n.attempts) + '/' + show(gn.n.max_attempts)));
+      for (const note of nodeNotes(gn.n)) meta.appendChild(detailMetaItem('메모', note.text));
       if (Array.isArray(gn.n.deps) && gn.n.deps.length) meta.appendChild(detailMetaItem('의존', gn.n.deps.join(', ')));
     }
     body.appendChild(meta);
@@ -797,6 +798,16 @@ function openTaskDetail(taskId, data) {
       section.appendChild(tw);
     }
     body.appendChild(section);
+    const al = gn ? attemptList(gn.n) : null;
+    if (al) {
+      const sec2 = document.createElement('section');
+      sec2.className = 'detail-section';
+      const h4 = document.createElement('h3');
+      h4.textContent = '시도 기록 ' + gn.n.attempt_log.length + '건';
+      sec2.appendChild(h4);
+      sec2.appendChild(al);
+      body.appendChild(sec2);
+    }
   });
 }
 
@@ -1766,6 +1777,12 @@ function renderFleetControl(data) {
   meta.textContent = bits.join(' · ');
   head.appendChild(meta);
   box.appendChild(head);
+  for (const ln of graphWaitSummary((data && Array.isArray(data.graphs)) ? data.graphs : [])) {
+    const p = document.createElement('div');
+    p.className = 'fc-note ' + ln.cls;
+    p.textContent = ln.text;
+    box.appendChild(p);
+  }
 
   const can = f.can || {};
   const row = document.createElement('div');
@@ -2482,26 +2499,12 @@ function resolveBoardRunId(taskId, data) {
   return best ? best.id : null;
 }
 
-// 보드의 실제 상태 (2026-11-12 태석님: 숫자가 안 맞는다). 그래프가 도는 동안 보드 칸은 TODO 로 남는다 -
-// 관리자가 라운드를 닫을 때에야 고친다. 그래서 '미완료 10' 인데 여섯은 이미 끝나 있었다.
-// 보드가 아직 안 닫힌 태스크는 그래프 노드의 상태를 쓴다(요청 트리 탭과 같은 값).
-function boardLive(b, data) {
-  const raw = String(b.status || '').toUpperCase();
-  if (['DONE', 'REJECTED'].includes(raw) || !data) return { status: b.status, fromGraph: false, done: raw === 'DONE', closed: true };
-  const gn = findGraphNode(b.id, data);
-  if (!gn || !gn.n || !gn.n.status) return { status: b.status, fromGraph: false, done: false, closed: false };
-  const ns = String(gn.n.status).toLowerCase();
-  return { status: gn.n.status, fromGraph: true, graph: gn.g.id, done: ns === 'done', closed: ns === 'done' };
-}
-function boardStatusBadge(b, data) {
-  const live = boardLive(b, data);
-  const span = statusBadge(live.status);
-  if (live.fromGraph) span.title = `그래프 ${live.graph} 의 상태입니다. 보드 칸은 아직 ${show(b.status)} - 관리자가 라운드를 닫을 때 고칩니다`;
-  return span;
-}
+// 보드 칸은 엔진이 그래프 노드 상태를 따라 직접 고친다(running→IN-PROGRESS, done→REVIEW, failed·blocked→BLOCKED).
+// DONE·REJECTED 만 관리자의 판정 - 그 둘만 '닫힘'. REVIEW 는 끝났고 관리자 판정을 기다리는 상태다.
+const boardClosed = (b) => ['DONE', 'REJECTED'].includes(String(b.status || '').toUpperCase());
 const BOARD_FILTERS = [
-  { key: 'open', label: '미완료', test: (b, data) => !boardLive(b, data).closed },
-  { key: 'done', label: '완료', test: (b, data) => boardLive(b, data).done },
+  { key: 'open', label: '미완료', test: (b) => !boardClosed(b) },
+  { key: 'done', label: '완료', test: (b) => String(b.status || '').toUpperCase() === 'DONE' },
   { key: 'all', label: '전체', test: () => true },
 ];
 
@@ -2633,7 +2636,7 @@ function renderBoard(data) {
       line.className = 'run-line';
       const verdictOnly = String(run.state || '').toLowerCase() === 'done' && reportStatus(run.report_head);   // 끝난 실행은 보고 판정만 (done · DONE 이 겹쳐 보였다)
       // 상태 칸이 이미 같은 말('진행 중')을 하고 있으면 여기서는 되풀이하지 않는다 - 칩 둘이 나란히 찍혔다 (2026-11-12 태석님)
-      const sameAsStatus = statusLabel(run.state) === statusLabel(boardLive(b, data).status);
+      const sameAsStatus = statusLabel(run.state) === statusLabel(b.status);
       if (!verdictOnly && !sameAsStatus) { line.appendChild(statusBadge(run.state)); line.appendChild(document.createTextNode(' ')); }
       if (reportStatus(run.report_head)) line.appendChild(reportBadge(run.report_head));
       if (line.childNodes.length) last.appendChild(line);
@@ -2646,7 +2649,7 @@ function renderBoard(data) {
       mono(b.id),
       plainText(b.task) || '-',
       show(b.slot),
-      boardStatusBadge(b, data),
+      statusBadge(b.status),
       last,
       plainText(b.artifact) || '-',
     ];
@@ -2752,6 +2755,104 @@ function closedFoldButton(expanded, count, onToggle) {
   return btn;
 }
 
+// ---- 그래프 노드의 새 상태 (공급자 대기·기반 장애, 2026-11-13) ----
+const INFRA_HINT = '태스크 잘못이 아닙니다 - 공급자가 돌아오면 unblock';
+const FAIL_KIND_LABEL = { work: '작업 실패', infra: '공급자 장애', limit: '사용 한도', timeout: '시간 초과' };
+// "provider:kisti" -> {kind, name}. 모르는 꼴이면 null (조용히 안 보여 준다)
+function parseWaiting(raw) {
+  const m = /^(provider|probe|slot):(.+)$/.exec(String(raw || ''));
+  return m ? { kind: m[1], name: m[2] } : null;
+}
+function waitingNote(n) {
+  const w = parseWaiting(n && n.waiting);
+  if (!w) return '';
+  const label = { provider: '공급자 대기', probe: '공급자 응답 대기', slot: '슬롯 대기' }[w.kind];
+  return `${label} (${w.name})`;
+}
+function nodeIsInfra(n) { return !!(n && n.infra && String(n.status || '').toLowerCase() === 'blocked'); }
+function nodeStatusBadge(n) {
+  if (nodeIsInfra(n)) {
+    const b = statusBadge('infra');
+    b.title = INFRA_HINT;
+    return b;
+  }
+  return statusBadge(n.status);
+}
+// 노드 옆 조용한 메모들 (대기 까닭 · 장애 안내 · 장애 재시도 횟수). 없으면 빈 배열
+function nodeNotes(n) {
+  const out = [];
+  const w = String(n.status || 'todo').toLowerCase() === 'todo' ? waitingNote(n) : '';
+  if (w) out.push({ text: w, cls: 'is-waiting' });
+  if (nodeIsInfra(n)) out.push({ text: INFRA_HINT, cls: 'is-infra' });
+  if (n.infra_attempts > 0) out.push({ text: `장애 재시도 ${n.infra_attempts}`, cls: 'is-infra-count' });
+  return out;
+}
+function graphNotes(nodes) {
+  const items = [];
+  for (const n of nodes) for (const note of nodeNotes(n)) items.push([n, note]);
+  if (!items.length) return null;
+  const box = document.createElement('ul');
+  box.className = 'graph-notes';
+  for (const [n, note] of items) {
+    const li = document.createElement('li');
+    li.className = 'graph-note ' + note.cls;
+    li.dataset.node = show(n.id, '');
+    const id = document.createElement('span');
+    id.className = 'mono';
+    id.textContent = show(n.id, '');
+    li.appendChild(id);
+    li.appendChild(document.createTextNode(' ' + note.text));
+    box.appendChild(li);
+  }
+  return box;
+}
+// 도는 그래프들의 한 줄 요약: 공급자별 자리 대기, 공급자 장애로 멈춘 노드
+function graphWaitSummary(graphs) {
+  const byProv = new Map();
+  let infra = 0;
+  for (const g of graphs) {
+    if (graphFinished(g) || graphStale(g)) continue;
+    for (const n of (Array.isArray(g.nodes) ? g.nodes : [])) {
+      if (!n) continue;
+      const w = parseWaiting(n.waiting);
+      if (w && w.kind === 'provider' && String(n.status || 'todo').toLowerCase() === 'todo') byProv.set(w.name, (byProv.get(w.name) || 0) + 1);
+      if (nodeIsInfra(n)) infra += 1;
+    }
+  }
+  const lines = [];
+  for (const [name, k] of byProv) lines.push({ text: `공급자 ${name} 자리 대기 ${k}건`, cls: 'is-waiting' });
+  if (infra) lines.push({ text: `공급자 장애로 멈춘 노드 ${infra}건`, cls: 'is-infra' });
+  return lines;
+}
+function attemptList(n) {
+  const log = Array.isArray(n.attempt_log) ? n.attempt_log : [];
+  if (!log.length) return null;
+  const ol = document.createElement('ol');
+  ol.className = 'attempt-list';
+  for (const a of log) {
+    const li = document.createElement('li');
+    li.className = 'attempt-item';
+    const bits = [];
+    bits.push(FAIL_KIND_LABEL[a.fail_kind] || (a.fail_kind ? String(a.fail_kind) : '성공 또는 진행 중'));
+    if (a.session_state) bits.push(`세션 ${a.session_state}`);
+    if (a.provider) bits.push(a.provider);
+    const head = document.createElement('span');
+    head.className = 'attempt-kind' + (a.fail_kind ? ' is-' + a.fail_kind : '');
+    head.textContent = bits.join(' · ');
+    li.appendChild(mono(a.run_id));
+    li.appendChild(document.createTextNode(' '));
+    li.appendChild(head);
+    if (a.why) {
+      const why = document.createElement('div');
+      why.className = 'attempt-why';
+      why.textContent = plainText(a.why);
+      li.appendChild(why);
+    }
+    ol.appendChild(li);
+  }
+  return ol;
+}
+
 const GRAPH_STALE_SEC = 2 * 3600;
 
 function graphStale(g) {
@@ -2835,7 +2936,7 @@ function graphBlock(g) {
         mono(n.id),
         plainText(n.title) || '-',
         show(n.slot),
-        statusBadge(n.status),
+        nodeStatusBadge(n),
         Array.isArray(n.deps) && n.deps.length ? n.deps.join(', ') : '-',
         show(n.attempts) + '/' + show(n.max_attempts),
         mono(n.last_run),
@@ -2856,6 +2957,8 @@ function graphBlock(g) {
       markUnopenableRows(table, runIds.map((id, i) => id || (openers[i] ? 'task' : null)));
       tw.appendChild(table);
       block.appendChild(tw);
+      const notes = graphNotes(nodes);
+      if (notes) block.appendChild(notes);
     }
   }
   return block;
@@ -3384,7 +3487,7 @@ function renderTabCounts(data) {
   setTabCount('tab-count-projects', unfinished, true);
   // 보드·큐 탭의 숫자 = 그 탭에 남은 일 = 미완료 태스크 + 대기 큐 (전에는 큐만 세어 탭 5 · 미완료 10 으로 어긋나 보였다)
   const queue = Array.isArray(data.queue) ? data.queue.length : 0;
-  const openTasks = (Array.isArray(data.board) ? data.board : []).filter((t) => !boardLive(t, data).closed).length;
+  const openTasks = (Array.isArray(data.board) ? data.board : []).filter((t) => !boardClosed(t)).length;
   setTabCount('tab-count-board', openTasks + queue, true);
   const qc = $('queue-count');
   if (qc) qc.textContent = queue ? String(queue) : '';

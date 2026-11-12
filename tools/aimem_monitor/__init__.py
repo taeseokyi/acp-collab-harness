@@ -59,7 +59,9 @@ STATE_KEYS = {
 #: `reader.collect()` 가 아니라 **서버가 덧붙이는** 최상위 키. `reader` 는 파일만 읽고
 #: 네트워크·외부 도구를 타지 않으므로 여기 둡니다(계층 분리, REV 111).
 SERVER_KEYS = {
-    "graphs": "[{id, request, created, updated, percent, eta_seconds, eta_at, counts, nodes:[...], source}]",
+    "graphs": "[{id, request, created, updated, percent, eta_seconds, eta_at, counts, source, nodes:[{id, title, slot, harness, status, deps, attempts, max_attempts, last_run, "
+              "waiting (provider:<이름>|probe:<이름>|slot:<슬롯>|null), infra (기반 장애로 막힘), infra_attempts (장애로 시도에서 빠진 횟수), "
+              "attempt_log:[{run_id, started, fail_kind (work|infra|limit|timeout|null), session_state, why, provider, infra}]}]}]",
     # 관리자 세션 (요청 Q-261110-549a). `.aimem/sessions/` 에서 `role == "manager"` 인 폴더를 부를 때마다 읽는다
     # (캐시·pending 없음). id = 세션 id(`M-R21-193012`). status = running|done|failed|killed (timeout·stalled·lost 는 failed),
     # session_state = 세션의 원래 상태. last_activity = 마지막 사건 시각. steps = 글·도구 호출 사건 수.

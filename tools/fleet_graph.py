@@ -28,6 +28,14 @@ S4 적대적 검수 두 라운드째 지적(AIMEM 4.5 대기 큐 7·8·9, T-081)
     **노드별 타임아웃**(`timeout_sec` -> `node_timeout_sec` -> 1800초; pid 로만 죽임, `pkill -f` 금지).
   - **보고 첫 줄이 BLOCKED/NEEDS-*/REJECT 면 rc 0 이어도 `done` 이 아니라 `blocked`**
     (`report_block_reason`) - 사람이 풀 일이므로 재시도하지 않습니다.
+
+엔진 v2 3단계(2026-11-13)에서 더한 것 (설계 5.3·5.4·5.7·5.8):
+  - **실패의 종류** `attempt.fail_kind` ∈ None(성공)/work/infra/limit/timeout. infra(침묵·감독 소멸·재접속 오류)는
+    시도로 세지 않고 `infra_attempts` 로 옮겨 다시 넣으며, `INFRA_RETRY_MAX` 번 겹치면 `blocked` + `infra`.
+  - **공급자 문지기**: 공급자 자리(`fleet.toml` 의 `max_concurrent`)가 없으면 띄우지 않고 `waiting` 에 까닭을 적는다.
+    같은 자리를 다투면 뒤에 걸린 노드가 많은 것부터.
+  - **틱 2초**, 한 틱에 /proc 훑기 한 번, 끝난 기록은 다시 보지 않는다.
+  - **보드 동기화**: 태스크 id 인 노드의 상태가 바뀌면 DB `tasks.status` 를 같이 고친다(`_board_sync`).
 """
 import argparse
 import contextlib
@@ -39,6 +47,7 @@ import os
 import pathlib
 import re
 import signal
+import sqlite3
 import statistics
 import subprocess
 import threading
@@ -56,6 +65,12 @@ GRAPHS = ROOT / ".aimem" / "graph"
 TERMINAL = ("done", "failed", "blocked")
 DEFAULT_NODE_TIMEOUT_SEC = 1800
 KILL_GRACE_SEC = 5
+#: 기반 장애(공급자·전송이 죽음)는 시도로 세지 않고 다시 넣는다. 이만큼 겹치면 노드를 막고 사람에게 넘긴다 (설계 5.3).
+INFRA_RETRY_MAX = 3
+#: 공급자 준비 점검 결과를 이만큼 재사용한다 - 죽은 공급자를 틱마다(2초) 두드리지 않게.
+PROBE_TTL_SEC = 30.0
+#: `run` 의 틱 간격(초). 노드 하나가 끝난 뒤 다음이 뜨기까지 평균 절반을 기다린다 (설계 5.7: 예전 15초).
+DEFAULT_POLL_SEC = 2.0
 
 
 def _now():
@@ -317,22 +332,83 @@ def _busy_slots(g):
     실제로 닿아 있었습니다 (S4 적대적 검수 2번, REV 111). `.aimem/runs` 가 정본입니다 -
     그래프 상태만 보면 그래프 밖 실행을 영원히 못 봅니다.
     """
-    busy = set()
-    for rid in fleet._list_runs():
+    return _live_scan(g)[0]
+
+
+def _live_scan(g):
+    """`(바쁜 슬롯 집합, {공급자: 도는 세션 수})` - 스케줄러 한 틱에 한 번.
+
+    예전 `_busy_slots` 는 틱마다 실행 기록 **전부**(`_list_runs` 가 메타를 다 읽고 정렬, 그 뒤 하나씩 상태)를
+    봤습니다. 끝난 세션 500 + 옛 실행 1500 에서 한 틱 0.29초였고 거의 전부가 여기였습니다(2026-11-13 실측).
+    그래서 **돌 수 있는 것만** 봅니다:
+      - 옛 실행: `.rc`·`.lost` 가 없는 `.json` 만 (둘 중 하나가 있으면 `_run_state` 가 결코 running 을 주지 않는다)
+      - 세션: `end.json` 이 없거나, 이 저장소 표식을 단 프로세스가 살아 있는 것(`live_index`)만.
+        `state()` 가 running 을 주려면 둘 중 하나가 꼭 참이다 - 작업자가 end.json 을 미리 써 놓고 계속 도는
+        경우도 그 프로세스가 색인에 있으므로 빠지지 않는다. **슬롯이 비어 보이는 쪽으로는 줄이지 않았다.**
+    공급자 수는 `fleet_rt.providers.running_by_provider` 와 같은 규칙(도는 세션의 meta `provider`, 관리자 포함)이고,
+    같은 훑기에서 같이 센다 - 그 함수는 세션 폴더 전부를 다시 보므로 틱마다 부르면 줄인 것이 도로 는다.
+    관리자 세션은 슬롯이 없어도 '모든 슬롯 바쁨' 으로 치지 않는다 (R21 실측).
+    """
+    busy, by_prov = set(), {}
+
+    def all_slots():
+        busy.update(str(n.get("slot")) for n in g.get("nodes", []) if n.get("slot"))
+
+    runs = pathlib.Path(fleet.RUNS)
+    try:
+        names = set(os.listdir(runs))
+    except OSError:
+        names = set()
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        rid = name[:-5]
+        if f"{rid}.rc" in names or f"{rid}.lost" in names:
+            continue
         try:
             state, _ = fleet._run_state(rid)
+            if state != "running":
+                continue
+            meta = fleet._run_meta(rid) or {}
         except Exception:  # noqa: BLE001 - 기록 하나가 깨져도 스케줄러는 돌아야 한다
             continue
-        if state != "running":
-            continue
-        meta = fleet._run_meta(rid) or {}
+        if meta.get("session"):
+            continue                    # 같은 id 의 세션 폴더가 있다 - 아래에서 센다
         if meta.get("slot"):
             busy.add(meta["slot"])
         else:
             # 돌고 있는데 어느 슬롯인지 모른다(메타가 깨짐·지워짐) - 모든 슬롯을 바쁜 것으로 본다.
             # 살아 있는 작업자 옆에 두 번째를 띄우는 쪽이 기다리는 쪽보다 나쁘다.
-            busy.update(str(n.get("slot")) for n in g.get("nodes", []) if n.get("slot"))
-    return busy
+            all_slots()
+    sroot = fleet._sessions_root()
+    try:
+        sids = os.listdir(sroot)
+    except OSError:
+        return busy, by_prov
+    from fleet_rt import sessions as rt_sessions  # noqa: PLC0415
+    live = rt_sessions.live_index(sroot)
+    for sid in sids:
+        d = sroot / sid
+        try:
+            if sid not in live and (d / "end.json").exists():
+                continue
+            if fleet._session_dir(sid) is None:
+                continue
+            if rt_sessions.state(d, live=live).get("state") != "running":
+                continue
+            meta = rt_sessions.load_meta(d)
+        except Exception:  # noqa: BLE001
+            continue
+        meta = meta if isinstance(meta, dict) else {}
+        if meta.get("provider"):
+            by_prov[meta["provider"]] = by_prov.get(meta["provider"], 0) + 1
+        if meta.get("role") == "manager":
+            continue
+        if meta.get("slot"):
+            busy.add(meta["slot"])
+        else:
+            all_slots()
+    return busy, by_prov
 
 
 def _spawn_node(g, n, attempt_no):
@@ -745,6 +821,202 @@ def _retry_or_fail(g, n, why):
         _log(g, f"FAILED {n['id']} after {len(n['attempts'])} attempts")
 
 
+# ---------------------------------------------------------------- 실패의 종류 (설계 5.3)
+def _session_end(run_id):
+    """새 세션이면 감독의 판정(`fleet_rt.sessions.state`), 옛 실행이면 None. 예외를 내지 않는다."""
+    try:
+        d = fleet._session_dir(run_id)
+        if d is None:
+            return None
+        from fleet_rt import sessions as rt_sessions  # noqa: PLC0415
+        return rt_sessions.state(d)
+    except Exception:  # noqa: BLE001 - 판정을 못 하면 옛 규칙(work)으로 간다
+        return None
+
+
+def session_fail_kind(sinfo, cut_orphan=False):
+    """끝난 세션의 감독 판정 -> `"infra"` / `"timeout"` / None(보고를 읽어 정할 일).
+
+    infra = 일을 못 한 까닭이 작업자가 아니라 공급자·전송·감독에 있다: 침묵으로 끊김(`stalled`), 감독이 정한
+    `fail_kind: infra`(재접속·시간 초과 오류만 있고 모델이 한마디도 못 함, 하네스를 못 띄움, 감독 내부 오류),
+    감독이 사라짐(`lost`), 감독 없이 남은 하네스를 실행기가 끊음(`cut_orphan` 이고 `killed`).
+    그 밖의 `killed`(사람이 끊음)는 옛 `.lost` 와 같이 보통 실패로 둔다. 옛 실행(`sinfo` None)은 늘 None.
+    """
+    if not isinstance(sinfo, dict):
+        return None
+    st, kind = sinfo.get("state"), sinfo.get("fail_kind")
+    if st in ("stalled", "lost") or kind == "infra" or (cut_orphan and st == "killed"):
+        return "infra"
+    if st == "timeout" or kind == "timeout":
+        return "timeout"
+    return None
+
+
+def _infra_count(n):
+    """노드의 **사람이 아직 비우지 않은** 기반 장애 횟수 (`unblock` 이 `cleared` 로 비운다)."""
+    return sum(1 for a in n.get("infra_attempts") or [] if isinstance(a, dict) and not a.get("cleared"))
+
+
+def _infra_requeue(g, n, att, why):
+    """기반 장애로 끝난 시도: 시도로 세지 않고(`attempts` -> `infra_attempts`) 다시 넣거나, 겹쳤으면 막는다.
+
+    `failed` 가 아니라 `blocked` 인 까닭: 태스크에는 잘못이 없다 - 공급자가 살아나면 사람이 `unblock` 으로
+    그대로 이어 가면 된다. 유료 모델로 자동 대체하지 않는다(2026-11-10 결정: 장애는 보고만).
+    """
+    att["fail_kind"] = "infra"
+    att["verify_rc"], att["verify_tail"] = None, f"기반 장애({why}) - 시도로 세지 않는다"
+    try:
+        att["provider"] = (fleet._run_meta(att["run_id"]) or {}).get("provider")
+    except Exception:  # noqa: BLE001
+        pass
+    n.setdefault("infra_attempts", []).append(n["attempts"].pop())
+    k = _infra_count(n)
+    if k >= INFRA_RETRY_MAX:
+        att["infra"] = True
+        n["infra"] = True
+        n["status"] = "blocked"
+        _log(g, f"INFRA {n['id']} - 공급자 {att.get('provider') or '?'} 가 {k}번 연달아 응답하지 않았습니다 ({why}). "
+                f"태스크 잘못이 아닙니다. 사람이 공급자를 확인한 뒤 `fleet_graph.py unblock {g.get('id')} {n['id']}`")
+    else:
+        n["status"] = "todo"
+        _log(g, f"infra-requeue {n['id']} ({att['run_id']}, {why}) - 시도로 세지 않음 ({k}/{INFRA_RETRY_MAX})")
+
+
+# ---------------------------------------------------------------- 공급자 문지기 (설계 3.5·5.4)
+def _rt_cfg(g):
+    """`fleet.toml` (mtime 캐시). 못 읽으면 None - 문지기 없이 옛 규칙(슬롯·concurrency)으로만 띄운다."""
+    try:
+        from fleet_rt import config as rt_config  # noqa: PLC0415
+        return rt_config.load(fleet.ROOT)
+    except Exception as e:  # noqa: BLE001
+        _log_once(g, ("cfg", type(e).__name__), f"warn fleet.toml 을 읽지 못해 공급자 문지기를 끕니다: {e}")
+        return None
+
+
+def _node_provider(cfg, n):
+    """노드가 뜨면 쓸 공급자. `cmd_spawn` 과 같은 고르기(`fleet.spawn_harness_model`). 모르면 None(막지 않음)."""
+    if cfg is None:
+        return None
+    try:
+        h, m = fleet.spawn_harness_model(n.get("slot"), n.get("harness"), n.get("model"))
+        return cfg.provider_of(h, m) if h else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+#: 공급자 -> (monotonic 시각, ok, 한 줄). 프로세스 안에서만 산다.
+_PROBE_CACHE = {}
+
+
+def _probe_cached(cfg, provider):
+    """`fleet_rt.providers.probe` 를 `PROBE_TTL_SEC` 동안 재사용한다. 예외는 '응답 없음' 으로 본다."""
+    hit = _PROBE_CACHE.get(provider)
+    now = time.monotonic()
+    if hit and now - hit[0] < PROBE_TTL_SEC:
+        return hit[1], hit[2]
+    try:
+        from fleet_rt import providers as rt_providers  # noqa: PLC0415
+        ok, line = rt_providers.probe(cfg, provider)
+    except Exception as e:  # noqa: BLE001
+        ok, line = False, f"점검 오류: {type(e).__name__}"
+    _PROBE_CACHE[provider] = (now, bool(ok), str(line))
+    return bool(ok), str(line)
+
+
+def _set_waiting(g, n, why, detail=""):
+    """준비됐는데 못 뜨는 까닭을 노드에 적는다(`provider:<p>`·`probe:<p>`·`slot:<S>`, 풀리면 지움). 바뀌었으면 True.
+
+    로그는 **바뀔 때 한 번** - 틱이 2초라 매 틱 남기면 로그가 그것으로 찬다.
+    """
+    if n.get("waiting") == why:
+        return False
+    if why is None:
+        n.pop("waiting", None)
+        return True
+    n["waiting"] = why
+    _log(g, f"wait {n['id']} - {why}" + (f" ({detail})" if detail else ""))
+    return True
+
+
+def _dependents(g):
+    """노드 id -> 그 노드를 (직접·간접으로) 기다리는 노드 수. 같은 자리를 다툴 때 많은 쪽을 먼저 띄운다."""
+    rev = {}
+    for n in g["nodes"]:
+        for d in n.get("deps") or []:
+            rev.setdefault(d, set()).add(n["id"])
+    out = {}
+    for n in g["nodes"]:
+        seen, stack = set(), list(rev.get(n["id"], ()))
+        while stack:
+            k = stack.pop()
+            if k in seen:
+                continue
+            seen.add(k)
+            stack.extend(rev.get(k, ()))
+        out[n["id"]] = len(seen)
+    return out
+
+
+# ---------------------------------------------------------------- 보드 동기화 (설계 5.8)
+#: 노드 상태 -> 보드 `tasks.status`. `todo`(재시도·중지로 되돌아감)는 보드를 건드리지 않는다.
+#: done 은 DONE 이 아니라 REVIEW - 판정(REVIEW -> DONE)은 관리자가 한다.
+BOARD_STATUS = {"running": "IN-PROGRESS", "done": "REVIEW", "failed": "BLOCKED", "blocked": "BLOCKED"}
+BOARD_ACTOR = "그래프 실행기"
+_TASK_ID_RE = re.compile(r"T-\d+[A-Z]?")
+
+
+def _board_db():
+    """보드 DB 는 실행 기록 옆의 `aimem.db` - `aimem_db.DB` 가 아니라 `fleet.RUNS` 에서 얻는다
+    (임시 폴더로 갈아끼운 검사가 운영 DB 를 고치지 않게)."""
+    return pathlib.Path(fleet.RUNS).parent / "aimem.db"
+
+
+def _board_sync(task_id, status, slot=None, g=None):
+    """보드 `tasks.status` 를 `status` 로. 고쳤으면 True, 안 고쳤으면 False, 못 했으면 None.
+
+    - `DONE`·`REJECTED` 는 덮지 않고, 행을 만들지 않고, DB 파일이 없으면 아무것도 안 한다(새로 만들지 않게 `mode=rw`)
+    - 고쳤으면 `aimem_db.py task set` 처럼 `events` 에 `task` 줄을 하나 남긴다
+    - 스냅샷 `AIMEM-state.md` 는 **다시 만들지 않는다** - 2초 틱마다 추적 파일을 고쳐 쓰게 된다. 낡은 스냅샷은
+      린터가 `STATE_SNAPSHOT_STALE` 로 짚고 관리자가 체크포인트·라운드 마감에 render 한다
+    - 실패해도 실행기를 멈추지 않는다(로그 한 번)
+    """
+    db = _board_db()
+    if not db.is_file():
+        return None
+    try:
+        con = sqlite3.connect(db.as_uri() + "?mode=rw", uri=True, timeout=2)
+        try:
+            with con:
+                now = _now()
+                cur = con.execute("UPDATE tasks SET status=?, updated=? WHERE id=? AND status NOT IN ('DONE','REJECTED') "
+                                  "AND status != ?", (status, now, task_id, status))
+                hit = cur.rowcount > 0
+                if hit:
+                    r = con.execute("SELECT value FROM meta WHERE key='rev'").fetchone()
+                    try:
+                        rev = int(r[0]) if r else None
+                    except (TypeError, ValueError):
+                        rev = None
+                    con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
+                                (now, BOARD_ACTOR, rev, "task", f"{task_id} {status} {slot or ''}".strip()))
+            return hit
+        finally:
+            con.close()
+    except Exception as e:  # noqa: BLE001 - 보드가 잠겨도 그래프는 돈다
+        if g is not None:
+            _log_once(g, ("board", type(e).__name__), f"warn 보드 동기화 실패({task_id} -> {status}): {type(e).__name__}: {e}")
+        return None
+
+
+def _board_sync_changes(g, before):
+    """틱 앞의 노드 상태 `before` 와 지금을 견줘 바뀐 태스크 노드만 보드에 옮긴다."""
+    for n in g.get("nodes") or []:
+        nid, st = str(n.get("id")), n.get("status", "todo")
+        if before.get(nid) == st or st not in BOARD_STATUS or not _TASK_ID_RE.fullmatch(nid):
+            continue
+        _board_sync(nid, BOARD_STATUS[st], n.get("slot"), g)
+
+
 def _check_timeout(g, n, att):
     """아직 running 인 시도가 노드 한도를 넘었으면 죽이고 실패 처리합니다. 처리했으면 True.
 
@@ -766,7 +1038,7 @@ def _check_timeout(g, n, att):
         # 슬롯이 빠지고 다음 틱이 **살아 있는 원래 작업자 옆에** 두 번째 작업자를 띄웁니다.
         # `.lost` 를 만들지 않고(슬롯은 계속 바쁨) 재시도 없는 터미널 `blocked` 로 둡니다.
         reason = _LAST_REFUSAL.get(att["run_id"]) or "안전 검사 거부"
-        att.update({"timeout": True, "kill_outcome": "refused", "kill_reason": reason,
+        att.update({"timeout": True, "kill_outcome": "refused", "kill_reason": reason, "fail_kind": "timeout",
                     "timeout_at": _now(), "timeout_elapsed_s": int(elapsed)})
         n["status"] = "blocked"
         _log(g, f"timeout {n['id']} - 죽이지 못했습니다 (pid {pid if pid is not None else '?'}, {reason}). "
@@ -774,7 +1046,7 @@ def _check_timeout(g, n, att):
         return True
     _mark_lost(att["run_id"])
     att["kill_outcome"] = outcome
-    att.update({"ended": _now(), "rc": 124, "state": "timeout", "timeout": True})
+    att.update({"ended": _now(), "rc": 124, "state": "timeout", "timeout": True, "fail_kind": "timeout"})
     # 끊긴 작업자가 그때까지 적은 말을 남긴다 - 재시도 브리프가 "직전 보고" 로 넘긴다. 전에는 한도로 끊기면 아무것도
     # 안 넘어가, 45분 동안 알아낸 것("탐침 훅을 goto 전에 걸어 죽었다")을 다음 작업자가 처음부터 다시 찾았다 (R13 T-164).
     try:
@@ -837,7 +1109,17 @@ def step(g, concurrency=None, allow_spawn=None):
 
     `validate_graph` 는 여기서 돌리지 않습니다 - 수십 분 도는 루프의 매 틱마다 명부·소유권을
     다시 읽게 됩니다. `cmd_run`/`cmd_step` 이 시작 전에 한 번 돌립니다.
+
+    틱 끝에 상태가 바뀐 태스크 노드를 보드에 옮깁니다(`_board_sync_changes`) - 도중에 예외가 나도 옮깁니다.
     """
+    before = {str(n.get("id")): n.get("status", "todo") for n in g.get("nodes") or []}
+    try:
+        return _step(g, concurrency, allow_spawn)
+    finally:
+        _board_sync_changes(g, before)
+
+
+def _step(g, concurrency=None, allow_spawn=None):
     conc = concurrency or int(g.get("concurrency", 3))
     if allow_spawn is None:
         m = _fleet_mode()
@@ -846,7 +1128,16 @@ def step(g, concurrency=None, allow_spawn=None):
             return all(n.get("status") in TERMINAL for n in g["nodes"])
         allow_spawn = m == "running"
     changed = False
-    # 1) 거두기 (+ 노드별 타임아웃, + 보고 첫 줄 BLOCKED 판정)
+    # 한 틱에 /proc 훑기는 한 번: 여기서 만든 색인을 `fleet_rt.sessions` 가 1초 캐시로 들고 있어
+    # 아래의 `fleet._run_state`·`_session_orphaned` 가 세션마다 다시 훑지 않는다 (그 함수들은 색인을 받지 않는다).
+    if any(n.get("status") == "running" for n in g["nodes"]):
+        try:
+            from fleet_rt import sessions as rt_sessions  # noqa: PLC0415
+            if fleet._sessions_root().is_dir():
+                rt_sessions.live_index(fleet._sessions_root())
+        except Exception:  # noqa: BLE001 - 캐시를 못 데워도 각 조회가 스스로 훑는다
+            pass
+    # 1) 거두기 (+ 노드별 타임아웃, + 보고 첫 줄 BLOCKED 판정, + 실패의 종류)
     for n in g["nodes"]:
         if n.get("status") != "running":
             continue
@@ -858,23 +1149,31 @@ def step(g, concurrency=None, allow_spawn=None):
             continue
         att = n["attempts"][-1]
         state, rc = fleet._run_state(att["run_id"])
+        cut_orphan = False
         if state == "running" and fleet._session_orphaned(att["run_id"]):
             # 감독 프로세스가 죽고 하네스만 남았다 - 지켜보는 이가 없으니 노드 한도까지 기다리지 않고 끊는다.
-            # 끊긴 세션은 lost 로 읽혀 아래의 보통 경로(재시도 규칙)를 탄다. 거부되면 running 인 채 둔다(슬롯 유지).
+            # 끊긴 세션은 기반 장애(infra)로 다시 넣는다. 거부되면 running 인 채 둔다(슬롯 유지).
             _pid, outcome = _kill_run(att["run_id"], with_outcome=True)
             _log(g, f"orphaned {n['id']} ({att['run_id']}) - 감독 없이 남은 작업자를 끊음 ({outcome})")
             if outcome != "refused":
                 state, rc = fleet._run_state(att["run_id"])
+                cut_orphan = True
         if state == "running":
             if _check_timeout(g, n, att):
                 changed = True
             continue
         att["ended"], att["rc"], att["state"] = _now(), rc, state
         att["report"] = fleet.run_report(att["run_id"])[:4000]
+        sinfo = _session_end(att["run_id"])
+        if sinfo is not None:
+            att["session_state"] = sinfo.get("state")
+            if sinfo.get("why"):
+                att["why"] = str(sinfo["why"])[:300]
         block = report_block_reason(att["report"]) if rc == 0 else None
         if block:
             # 사람이 풀어야 할 일 - 재시도해도 같은 벽에 부딪히므로 바로 blocked (AIMEM 8.0-4-3).
             att["report_status"] = block
+            att["fail_kind"] = "work"
             att["verify_rc"], att["verify_tail"] = None, f"검증 생략: 보고 상태 {block}"
             n["status"] = "blocked"
             first = next((l.strip() for l in att["report"].splitlines() if l.strip()), "")
@@ -891,11 +1190,18 @@ def step(g, concurrency=None, allow_spawn=None):
             # rc 를 함께 봅니다: 250건 전수 재검에서 rc 0 의 정상 DONE 보고가 3건 오인되었고,
             # 진짜 한도(rc 1) 1건만 남깁니다. rc != 0 이면 검증을 돌리지 않고 바로 blocked.
             att["limit"] = True
+            att["fail_kind"] = "limit"
             n["limit"] = True
             att["verify_rc"], att["verify_tail"] = -4, "사용 한도로 끊겼다 - 재시도하지 않는다"
             n["status"] = "blocked"
             source = "구조 신호" if sig is True else "보고 글자"
             _log(g, f"limit {n['id']} ({att['run_id']}) - 사용 한도로 끊김 ({source})")
+            changed = True
+            continue
+        kind = session_fail_kind(sinfo, cut_orphan) if (rc != 0 or state != "done") else None
+        if kind == "infra":
+            # 공급자·전송이 죽은 것 - 시도로 세지 않고 다시 넣는다 (설계 5.3). 옛 실행에는 이 판정이 없다.
+            _infra_requeue(g, n, att, (sinfo or {}).get("why") or (sinfo or {}).get("state") or "기반 장애")
             changed = True
             continue
         if rc == 0 and report_ended_in_tool_call(att["report"]):
@@ -913,9 +1219,11 @@ def step(g, concurrency=None, allow_spawn=None):
                 vrc, vtail = -1, "실행 rc != 0"
         att["verify_rc"], att["verify_tail"] = vrc, vtail
         if rc == 0 and vrc == 0:
+            att["fail_kind"] = None
             n["status"] = "done"
             _log(g, f"done {n['id']} ({att['run_id']})")
         else:
+            att["fail_kind"] = "timeout" if kind == "timeout" else "work"
             _retry_or_fail(g, n, f"rc={rc} verify_rc={vrc}")
         changed = True
     # 2) 의존이 실패한 노드는 막힘으로
@@ -926,16 +1234,39 @@ def step(g, concurrency=None, allow_spawn=None):
             n["status"] = "blocked"
             _log(g, f"blocked {n['id']} (의존 실패)")
             changed = True
-    # 3) 띄우기 (fan-out, 동시성 상한, **슬롯 바쁨 검사**) - 함대가 '실행' 일 때만
+    for n in g["nodes"]:
+        if n.get("status", "todo") != "todo" and "waiting" in n:
+            n.pop("waiting")           # 떴거나 끝난 노드의 대기 까닭은 지운다
+            changed = True
+    # 3) 띄우기 (fan-out, 동시성 상한, 슬롯 바쁨, **공급자 자리**) - 함대가 '실행' 일 때만.
+    # 준비된 노드가 없으면 실행 기록을 훑지도 않는다 - 대부분의 틱은 여기서 싸게 끝난다.
     running = sum(1 for n in g["nodes"] if n.get("status") == "running")
-    busy = _busy_slots(g)
-    for n in (_ready(g) if allow_spawn else []):
+    ready = _ready(g) if allow_spawn and running < conc else []
+    if ready:
+        busy, by_prov = _live_scan(g)
+        cfg = _rt_cfg(g)
+        deps_on = _dependents(g)
+        order = {n["id"]: i for i, n in enumerate(g["nodes"])}
+        # 같은 자리를 다투면 뒤에 걸린 노드가 많은 것부터, 같으면 그래프 순서 (설계 5.4)
+        ready.sort(key=lambda n: (-deps_on.get(n["id"], 0), order[n["id"]]))
+    for n in ready:
         if running >= conc:
             break
         slot = n.get("slot")
         if slot in busy:
-            _log(g, f"skip {n['id']} - 슬롯 {slot} 이(가) 이미 바쁩니다")
+            changed |= _set_waiting(g, n, f"slot:{slot}")
             continue
+        prov = _node_provider(cfg, n)
+        if prov and by_prov.get(prov, 0) >= cfg.max_concurrent(prov):
+            changed |= _set_waiting(g, n, f"provider:{prov}",
+                                    f"{by_prov.get(prov, 0)}/{cfg.max_concurrent(prov)} 자리 참")
+            continue
+        if prov and n.get("infra_attempts"):
+            ok, line = _probe_cached(cfg, prov)
+            if not ok:
+                changed |= _set_waiting(g, n, f"probe:{prov}", line)
+                continue
+        _set_waiting(g, n, None)
         # 스폰 직후 저장합니다. 예전에는 한 틱의 끝에서 한 번만 저장해, 뒤 노드가
         # `SystemExit`(명부에 없는 슬롯 등)로 죽으면 **앞에서 띄운 작업자가 그래프에
         # 기록되지 않고 고아로 남았습니다** (S4 적대적 검수 "고아 스폰", REV 111).
@@ -949,6 +1280,8 @@ def step(g, concurrency=None, allow_spawn=None):
             continue
         busy.add(slot)
         running += 1
+        if prov:
+            by_prov[prov] = by_prov.get(prov, 0) + 1
         changed = True
         _save(g)
     if changed:
@@ -1119,13 +1452,22 @@ def unblock(g, node_id):
     if n.get("status") not in ("blocked", "failed"):
         return False, f"{node_id} 는 {n.get('status', 'todo')} 입니다 - blocked/failed 만 풉니다"
     atts = n.get("attempts") or []
-    if not atts:
+    if not atts and not n.get("infra"):
         return False, f"{node_id} 는 의존 노드 때문에 막혔습니다 - 막힌 원인 노드를 푸십시오"
-    last = atts[-1]
-    state, _ = fleet._run_state(last["run_id"])
+    last = atts[-1] if atts else (n.get("infra_attempts") or [{}])[-1]
+    state, _ = fleet._run_state(last["run_id"]) if last.get("run_id") else ("done", None)
     if state == "running":
         return False, f"{node_id} 의 작업자가 아직 살아 있습니다 (run {last['run_id']}) - 끝나거나 사람이 내린 뒤에"
-    if last.get("kill_outcome") == "refused" and "ended" not in last and state == "done":
+    if n.get("infra"):
+        # 기반 장애로 막힌 노드: 사람이 공급자를 확인했다. 장애 횟수를 비우고(기록은 남김) 다시 넣는다.
+        # 시도 횟수는 그대로다 - 기반 장애는 처음부터 시도로 세지 않았다.
+        for a in n.get("infra_attempts") or []:
+            if isinstance(a, dict):
+                a["cleared"] = True
+        n.pop("infra", None)
+        n["status"] = "todo"
+        how = "기반 장애 횟수를 비우고 다음 틱에 다시 띄웁니다(공급자 점검 뒤)"
+    elif last.get("kill_outcome") == "refused" and "ended" not in last and state == "done":
         n["status"] = "running"
         how = f"끝난 실행 {last['run_id']} 을 다음 틱이 거둡니다"
     else:
@@ -1167,6 +1509,15 @@ def _status_node(n):
     if n.get("limit"):
         node["limit"] = True
         node["note"] = "(사용 한도)"
+    if n.get("attempts"):
+        node["fail_kind"] = n["attempts"][-1].get("fail_kind")
+    if n.get("infra_attempts"):
+        node["infra_attempts"] = len(n["infra_attempts"])
+    if n.get("infra"):
+        node["infra"] = True
+        node["note"] = "(공급자 장애)"
+    if n.get("waiting"):
+        node["waiting"] = n["waiting"]
     return node
 
 
@@ -1207,7 +1558,7 @@ def main():
     r = sub.add_parser("run")
     r.add_argument("id")
     r.add_argument("--timeout", type=int, default=3600)
-    r.add_argument("--poll", type=int, default=10)
+    r.add_argument("--poll", type=float, default=DEFAULT_POLL_SEC)
     r.add_argument("--concurrency", type=int)
     sub.add_parser("list")
     u = sub.add_parser("unblock", help="사람이 확인한 blocked/failed 노드를 다시 굴림")

@@ -480,8 +480,9 @@ def _run_state(run_id):
     if (RUNS / f"{run_id}.lost").exists():
         return "lost", None
     if rc.exists():
+        raw = read_regular_bytes(rc, 64)          # FIFO .rc 에서 막히지 않게 (R22-N1)
         try:
-            return "done", int(rc.read_text().strip() or "-1")
+            return "done", int((raw or b"").decode("ascii", "replace").strip() or "-1")
         except ValueError:
             return "done", -1
     meta = _run_meta(run_id) or {}
@@ -505,7 +506,7 @@ def run_report(run_id):
         return (_rt_sessions().report(d) or "").strip()
     meta = _run_meta(run_id) or {}
     out_f = RUNS / f"{run_id}.out"
-    out = out_f.read_text(encoding="utf-8", errors="replace") if out_f.exists() else ""
+    out = (read_regular_bytes(out_f, 16 * 1024 * 1024) or b"").decode("utf-8", "replace")   # FIFO .out 에서 막히지 않게 (R22-N1)
     h = meta.get("harness")
     if h == "claude":
         try:
@@ -524,7 +525,7 @@ def run_report(run_id):
     err_f = RUNS / f"{run_id}.err"
     if not err_f.exists():
         return ""
-    err = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", err_f.read_text(encoding="utf-8", errors="replace"))
+    err = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", (read_regular_bytes(err_f, 16 * 1024 * 1024) or b"").decode("utf-8", "replace"))
     kept = [l for l in err.splitlines()
             if l.strip() and not re.match(r"^\s*(←|✗|!|\||\+|-|@|\$|>|codex$|tokens used|Reading additional)", l)]
     tail = "\n".join(kept[-25:]).strip()
@@ -597,6 +598,16 @@ def _slot_model(slot):
     return None
 
 
+def spawn_harness_model(slot, harness=None, model=None):
+    """`cmd_spawn` 이 고르는 (하네스, 모델) - 인자(노드 덮어쓰기)가 우선, 없으면 명부의 하네스와 슬롯 모델.
+
+    그래프 실행기의 공급자 문지기가 띄우기 **전에** 같은 답을 내야 해서 한 곳에 둔다(따로 고르면 문지기가
+    엉뚱한 공급자 자리를 센다). 읽기만 한다. 슬롯이 명부에 없으면 하네스는 None.
+    """
+    h = harness or (roster().get(slot) or (None, None, None))[1] or None
+    return h, (model or _slot_model(slot))
+
+
 def cmd_spawn(args):
     """작업자 1명을 백그라운드로 띄웁니다. 즉시 돌아오고 run id 를 찍습니다.
 
@@ -614,7 +625,7 @@ def cmd_spawn(args):
     if args.slot not in r:
         sys.exit(_roster_miss(args.slot))
     token, harness_in_roster, _ = r[args.slot]
-    harness = args.harness or harness_in_roster
+    harness = spawn_harness_model(args.slot, args.harness)[0]
     if harness not in HARNESSES:
         sys.exit(f"하네스가 올바르지 않습니다: {harness!r}")
     rev = read_rev()
@@ -655,7 +666,7 @@ def cmd_spawn(args):
            "셸 변수 대입이나 다른 접두사를 앞에 붙이면 승인 요구로 막힌다. py_compile 이 만드는 __pycache__ 는 쓰기로 치지 않는다."]
           if harness == "claude" else []),
         "", task.strip(), ""])
-    model = args.model or _slot_model(args.slot)   # 슬롯 모델(DB slots) - 하네스 불문, 없으면 하네스 기본
+    model = spawn_harness_model(args.slot, harness, args.model)[1]   # 슬롯 모델(DB slots) - 하네스 불문, 없으면 하네스 기본
     extra = {"date": datetime.date.today().isoformat(), "rev": rev}
     # 프로젝트·라운드는 식별자에 붙이지 않고 기록에 따로 적는다 - 화면이 실행을 프로젝트별로 구분해 보인다.
     try:

@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/a
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 165** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-13 01:23 KST
+- **REV: 166** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-13 02:01 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **the `role=manager` session the engine starts for a round** (harness claude,
@@ -153,6 +153,10 @@ refuse it. The harness column is `fleet.py spawn`'s default; the model is a copy
 python3 tools/aimem_db.py task list
 python3 tools/aimem_db.py task set --id T-069 --slot S1 --status DONE  # Manager only
 ```
+
+The graph runner moves a task's status with its node - `IN-PROGRESS` when the node starts, `REVIEW` when it
+finishes, `BLOCKED` when it fails - as the Manager's hand, not a second writer. `DONE` and `REJECTED` are the
+Manager's verdict; the runner never sets or overwrites them.
 
 Status values: `TODO` / `ASSIGNED` / `IN-PROGRESS` / `REVIEW` / `DONE` / `BLOCKED`. Finished rows stay in the DB
 (filter by `status`); after 14 days `aimem_db.py archive` moves them to `.aimem/archive/board-<YYYY-MM>.md` (`8.0`).

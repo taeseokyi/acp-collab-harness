@@ -651,7 +651,7 @@ def resume(by="사람"):
                 fh.write(f"\n# {_now()} fleet_ctl resume ({by})\n")
                 fh.flush()
                 subprocess.Popen([sys.executable, str(HERE / "fleet_graph.py"), "run", gi["id"],
-                                  "--timeout", "3600", "--poll", "15"],
+                                  "--timeout", "3600", "--poll", "2"],
                                  cwd=str(fleet.ROOT), stdout=fh, stderr=subprocess.STDOUT,
                                  stdin=subprocess.DEVNULL, start_new_session=True, env=_service_env())
             started.append(gi["id"])
@@ -745,6 +745,14 @@ def _rev_lint_checks():
         checks.append(_check("REV 일치 (DB = AIMEM.md)", db_rev is not None and int(db_rev) == md_rev, f"DB {db_rev} / md {md_rev}"))
     except Exception as e:  # noqa: BLE001
         checks.append(_check("REV 일치 (DB = AIMEM.md)", False, f"{type(e).__name__}: {e}"))
+    # 스냅샷(`AIMEM-state.md`)은 DB 에서 만든 생성물이다. 슬롯 변경·엔진의 보드 반영처럼 DB 만 바뀐 뒤에는 낡아
+    # 린터가 막는다 - 준비는 띄울 수 있는 상태로 만드는 일이니 여기서 다시 만든다 (R21 준비가 이것으로 한 번 실패).
+    try:
+        import contextlib, io  # noqa: PLC0415, E401
+        with contextlib.redirect_stdout(io.StringIO()):
+            aimem_db.render()
+    except Exception:  # noqa: BLE001 - 못 만들면 아래 린터가 까닭을 말한다
+        pass
     lint = subprocess.run([sys.executable, str(HERE / "aimem_lint.py"), str(fleet.ROOT / "AIMEM.md")],
                           capture_output=True, text=True, cwd=str(fleet.ROOT))
     lint_lines = (lint.stdout or lint.stderr or "").strip().splitlines()
