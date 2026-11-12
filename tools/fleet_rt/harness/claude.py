@@ -103,6 +103,10 @@ class ClaudeHarness:
         argv = ["claude", "-p", "--model", _normalize_model(spec.model),
                 "--output-format", "stream-json", "--verbose",
                 "--permission-mode", "acceptEdits", "--allowedTools", spec.tools or WORKER_TOOLS]
+        denied = (spec.extra or {}).get("disallowed_tools")
+        if denied:
+            # 허용 목록이 실수로 넓어져도 이것들은 막는다 (관리자 `manager.MANAGER_DENIED`) - `claude --help` 의 철자
+            argv += ["--disallowedTools", str(denied)]
         if spec.settings_path:
             argv += ["--settings", spec.settings_path]
         return argv

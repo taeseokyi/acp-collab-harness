@@ -4,9 +4,11 @@ import io
 import json
 import os
 import pathlib
+import http.server
+import socket
 import tempfile
+import threading
 import unittest
-import urllib.error
 from unittest import mock
 
 from fleet_rt import config, providers, sessions
@@ -133,64 +135,138 @@ class GateTest(unittest.TestCase):
 
 
 
+class _Srv:
+    """127.0.0.1 위의 작은 HTTP 서버 - 받은 (경로, Authorization) 를 적는다. 바깥 네트워크에는 나가지 않는다."""
+
+    def __init__(self, code=200, location=None):
+        got = self.got = []
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                got.append((self.path, self.headers.get("Authorization")))
+                self.send_response(code)
+                if location:
+                    self.send_header("Location", location)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+
+        self.srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        self.url = f"http://127.0.0.1:{self.srv.server_address[1]}/v1"
+        self.t = threading.Thread(target=self.srv.serve_forever, daemon=True)
+        self.t.start()
+
+    def close(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+
+
+def _cfg(base_url, probe="models"):
+    p = {"base_url": base_url, "env_key": "KISTI_API_KEY", "models": ["kistillm"]}
+    if probe:
+        p["probe"] = probe
+    return config.Config({"providers": {"kisti": p, "anthropic": {"models": ["opus"]}},
+                          "harness": {"claude": {"providers": ["anthropic"]}}})
+
+
 class ProbeTest(unittest.TestCase):
+    """준비 점검은 키를 **보내지 않는다** (2026-11-12 검수 `probe_repro.py`): `base_url` 은 작업자도 고치는 `fleet.toml`
+    에서 오므로, 키를 실어 보내면 그 주소 주인이 키를 받는다. 응답 = 아무 HTTP 응답(401·3xx 포함)."""
+
     def setUp(self):
-        self.cfg = config.load(REPO)
         self.env = {"KISTI_API_KEY": SECRET}
 
-    def _resp(self, code=200):
-        r = mock.MagicMock()
-        r.status = code
-        r.getcode.return_value = code
-        r.__enter__.return_value = r
-        return r
+    def serve(self, **kw):
+        s = _Srv(**kw)
+        self.addCleanup(s.close)
+        return s
 
-    def test_ok_sends_bearer(self):
-        with mock.patch("urllib.request.urlopen", return_value=self._resp()) as u:
-            ok, detail = providers.probe(self.cfg, "kisti", self.env)
-        self.assertTrue(ok)
-        req = u.call_args[0][0]
-        self.assertEqual(req.full_url, "https://aida.kisti.re.kr:10430/v1/models")
-        self.assertEqual(req.get_header("Authorization"), f"Bearer {SECRET}")
+    def test_never_sends_the_key_even_to_a_planted_base_url(self):
+        s = self.serve()
+        ok, detail = providers.probe(_cfg(s.url), "kisti", self.env)
+        self.assertTrue(ok, detail)
+        self.assertEqual(s.got, [("/v1/models", None)])        # 요청은 갔지만 Authorization 은 없다
         self.assertNotIn(SECRET, detail)
 
-    def test_missing_key(self):
-        with mock.patch("urllib.request.urlopen") as u:
-            ok, detail = providers.probe(self.cfg, "kisti", {})
+    def test_any_http_answer_counts_including_401(self):
+        for code in (401, 403, 404, 500):
+            s = self.serve(code=code)
+            ok, detail = providers.probe(_cfg(s.url), "kisti")
+            self.assertTrue(ok, (code, detail))
+            self.assertIn(str(code), detail)
+
+    def test_redirect_is_not_followed(self):
+        target = self.serve()
+        s = self.serve(code=302, location=target.url + "/models")
+        ok, detail = providers.probe(_cfg(s.url), "kisti", self.env)
+        self.assertTrue(ok, detail)                              # 3xx 도 '응답함'
+        self.assertIn("302", detail)
+        self.assertEqual(target.got, [])                         # 넘겨준 곳에는 가지 않는다
+
+    def test_connection_refused_and_timeout_fail(self):
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()                                             # 아무도 듣지 않는 자리
+        ok, detail = providers.probe(_cfg(f"http://127.0.0.1:{port}/v1"), "kisti", self.env, timeout=2)
+        self.assertFalse(ok)
+        self.assertIn("연결 실패", detail)
+        mute = socket.socket()                                   # 연결은 받지만 답하지 않는 자리
+        mute.bind(("127.0.0.1", 0))
+        mute.listen(1)
+        self.addCleanup(mute.close)
+        ok, detail = providers.probe(_cfg(f"http://127.0.0.1:{mute.getsockname()[1]}/v1"), "kisti", self.env, timeout=0.5)
+        self.assertFalse(ok)
+        self.assertIn("시간 초과", detail)
+
+    def test_not_an_http_url(self):
+        ok, detail = providers.probe(_cfg("file:///etc/passwd"), "kisti")
+        self.assertFalse(ok)
+        self.assertIn("http", detail)
+
+    def test_key_presence_is_a_separate_name_only_check(self):
+        cfg = _cfg("http://127.0.0.1:9/v1")
+        self.assertEqual(providers.key_present(cfg, "kisti", self.env), (True, "KISTI_API_KEY 있음"))
+        ok, detail = providers.key_present(cfg, "kisti", {})
         self.assertFalse(ok)
         self.assertIn("KISTI_API_KEY", detail)
-        self.assertIn("환경변수 없음", detail)
-        u.assert_not_called()
-
-    def test_timeout(self):
-        for exc in (TimeoutError("t"), urllib.error.URLError(TimeoutError("t"))):
-            with mock.patch("urllib.request.urlopen", side_effect=exc):
-                ok, detail = providers.probe(self.cfg, "kisti", self.env)
-            self.assertFalse(ok)
-            self.assertIn("시간 초과", detail)
-            self.assertNotIn(SECRET, detail)
-
-    def test_http_401(self):
-        err = urllib.error.HTTPError("u", 401, "Unauthorized", {}, io.BytesIO(SECRET.encode()))
-        with mock.patch("urllib.request.urlopen", side_effect=err):
-            ok, detail = providers.probe(self.cfg, "kisti", self.env)
-        self.assertFalse(ok)
-        self.assertIn("401", detail)
-        self.assertNotIn(SECRET, detail)
-
-    def test_connection_refused_has_no_key(self):
-        with mock.patch("urllib.request.urlopen", side_effect=urllib.error.URLError(ConnectionRefusedError(SECRET))):
-            ok, detail = providers.probe(self.cfg, "kisti", self.env)
-        self.assertFalse(ok)
-        self.assertNotIn(SECRET, detail)
+        self.assertEqual(providers.key_present(cfg, "anthropic", {}), (True, "키 없이 씀"))
+        self.assertFalse(providers.key_present(cfg, "zzz", {})[0])
 
     def test_no_probe_configured(self):
-        with mock.patch("urllib.request.urlopen") as u:
-            self.assertEqual(providers.probe(self.cfg, "anthropic", {}), (True, "점검 없음"))
+        with mock.patch("urllib.request.OpenerDirector.open") as u:
+            self.assertEqual(providers.probe(_cfg("http://127.0.0.1:9/v1", probe=None), "kisti", {}), (True, "점검 없음"))
+            self.assertEqual(providers.probe(config.load(REPO), "anthropic", {}), (True, "점검 없음"))
         u.assert_not_called()
 
     def test_unknown_provider(self):
-        self.assertFalse(providers.probe(self.cfg, "zzz", {})[0])
+        self.assertFalse(providers.probe(config.load(REPO), "zzz", {})[0])
+
+
+class SessionKeyName(unittest.TestCase):
+    """세션은 `.env` 에서 자기 공급자의 키 **하나만** 받는다 (2026-11-12 검수 - 작업자가 `.env` 에 더한 줄이 관리자를 조종)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = pathlib.Path(self.tmp.name)
+
+    def toml(self, text):
+        (self.root / "fleet.toml").write_text(text, encoding="utf-8")
+
+    def test_rules(self):
+        from fleet_rt import env as rt_env
+        self.toml('[providers.kisti]\nenv_key = "KISTI_API_KEY"\n[providers.anthropic]\nmodels = ["opus"]\n'
+                  '[providers.bad]\nenv_key = "BASH_ENV"\n[providers.bad2]\nenv_key = "LD_PRELOAD"\n'
+                  '[providers.bad3]\nenv_key = "ANTHROPIC_BASE_URL"\n[providers.low]\nenv_key = "kisti_api_key"\n')
+        self.assertEqual(rt_env.session_key_name(self.root, "kisti"), "KISTI_API_KEY")
+        for p in ("anthropic", "bad", "bad2", "bad3", "low", "nope", None, ""):
+            self.assertIsNone(rt_env.session_key_name(self.root, p), p)
+        self.assertIsNone(rt_env.session_key_name(None, "kisti"))
+        self.toml("[providers\n")                                    # 깨진 설정 - 아무것도 넘기지 않는다
+        self.assertIsNone(rt_env.session_key_name(self.root, "kisti"))
 
 
 if __name__ == "__main__":

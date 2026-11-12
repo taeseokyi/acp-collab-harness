@@ -19,7 +19,8 @@ import aimem_board
 import aimem_db
 import aimem_lint as lint
 from aimem_lint import (
-    MANAGER_SESSION_KEY,
+    MANAGER_SESSION_FORM,
+    MANAGER_SESSION_RE,
     MAX_TOTAL_LINES,
     Violation,
     lint_file,
@@ -36,7 +37,7 @@ VALID_DOC = """# AIMEM.md - 공유 작업 메모리
 
 - **REV: 1** (개정 번호)
 - 최종 갱신: 2026-08-25
-- 관리자(단독 쓰기 권한): **클로** `agent:claude:acp:`
+- 관리자(단독 쓰기 권한): 엔진이 띄운 관리자 세션 `M-R<N>-<HHMMSS>`
 
 ---
 
@@ -70,7 +71,7 @@ VALID_DOC = """# AIMEM.md - 공유 작업 메모리
 """
 
 # 관리자 선언이 없는 최소 픽스처 - 새 STATE_* 검사는 게이팅 때문에 발화하지 않는다.
-NO_DECL_DOC = VALID_DOC.replace("- 관리자(단독 쓰기 권한): **클로** `agent:claude:acp:`\n", "")
+NO_DECL_DOC = VALID_DOC.replace("- 관리자(단독 쓰기 권한): 엔진이 띄운 관리자 세션 `M-R<N>-<HHMMSS>`\n", "")
 
 TABLE = "| 슬롯 | 확인토큰 |\n| ---- | -------- |\n| S1   | `abc123` |\n"
 
@@ -194,8 +195,8 @@ BOARD_FIXTURE = """# AIMEM.md - 공유 작업 메모리
 
 | 슬롯 | 확인토큰 | 하네스 | 역할 | 세션키 | 비고 |
 | ---- | -------- | ------ | ---- | ------ | ---- |
-| S1   | `abc123` | claude | 린터 | agent:claude:acp:key-s1 | - |
-| S2   | `def456` | claude | 테스트 | agent:claude:acp:key-s2 | - |
+| S1   | `abc123` | claude | 린터 | sess-key-s1 | - |
+| S2   | `def456` | claude | 테스트 | sess-key-s2 | - |
 
 ---
 
@@ -231,7 +232,7 @@ BOARD_FIXTURE = """# AIMEM.md - 공유 작업 메모리
 | `AIMEM.md` | 관리자    |
 | `src/a.py` | S1        |
 | (그 외)    | 미배정    |
-""" % MANAGER_SESSION_KEY
+""" % MANAGER_SESSION_FORM
 
 
 class TestBoardSmoke(unittest.TestCase):
@@ -246,7 +247,7 @@ class TestBoardSmoke(unittest.TestCase):
         ("board-add", ["board-add", "T-9", "새 작업", "S1", "TODO", "-", "-"]),
         ("queue-add", ["queue-add", "새 대기", "S2", "-", "메모"]),
         ("queue-pop", ["queue-pop"]),
-        ("roster-set", ["roster-set", "S1", "--session-key", "agent:claude:acp:key-new"]),
+        ("roster-set", ["roster-set", "S1", "--session-key", "sess-key-new"]),
         ("owner-add", ["owner-add", "docs/x.md", "S1", "메모"]),
         ("archive-rollover", ["archive-rollover", "--keep", "1"]),
     ]
@@ -398,19 +399,19 @@ class TestBoardBehavior(unittest.TestCase):
     # ---- roster-set: 한 슬롯의 세션키 칸만 ----
     def test_roster_set_changes_only_target_row(self):
         rc, _out, after = self._run(
-            ["roster-set", "S1", "--session-key", "agent:claude:acp:key-new"]
+            ["roster-set", "S1", "--session-key", "sess-key-new"]
         )
         self.assertEqual(rc, 0)
         rows = _rowmaps(after, _ROSTER2)
         s1 = _find_row(rows, "슬롯", "S1")
         s2 = _find_row(rows, "슬롯", "S2")
-        self.assertEqual(s1["세션키"], "agent:claude:acp:key-new")
+        self.assertEqual(s1["세션키"], "sess-key-new")
         # S1 의 다른 칸 불변
         self.assertEqual(s1["역할"], "린터")
         self.assertEqual(s1["하네스"], "claude")
         self.assertEqual(s1["확인토큰"], "abc123")
         # S2 행은 통째로 불변
-        self.assertEqual(s2["세션키"], "agent:claude:acp:key-s2")
+        self.assertEqual(s2["세션키"], "sess-key-s2")
         self.assertEqual(s2["역할"], "테스트")
         removed, added = _line_diff(BOARD_FIXTURE, after)
         self.assertEqual(len(removed), 1)
@@ -525,15 +526,18 @@ class TestSizeConstantsMatchSpec(unittest.TestCase):
     def test_total_lines_limit_is_800(self):
         self.assertEqual(MAX_TOTAL_LINES, 800)
 
-    def test_manager_session_key_is_pinned(self):
-        self.assertEqual(MANAGER_SESSION_KEY, "agent:claude:acp:")
+    def test_manager_session_form_is_pinned(self):
+        self.assertEqual(MANAGER_SESSION_FORM, "M-R<N>-<HHMMSS>")
+        self.assertTrue(MANAGER_SESSION_RE.fullmatch("M-R21-193012"))
+        for bad in ("M-R21-1930", "M-RX-193012", "agent:claude:acp:x"):
+            self.assertFalse(MANAGER_SESSION_RE.fullmatch(bad), bad)
 
 
 class TestManagerKeyMismatch(unittest.TestCase):
-    DECL_LINE = "- 관리자(단독 쓰기 권한): **클로** `%s`\n" % MANAGER_SESSION_KEY
+    DECL_LINE = "- 관리자(단독 쓰기 권한): 엔진이 띄운 관리자 세션 `%s`\n" % MANAGER_SESSION_FORM
 
     def test_mismatch_fires_when_key_swapped(self):
-        text = VALID_DOC.replace(MANAGER_SESSION_KEY, "agent:coding:discord:channel:9999999999")
+        text = VALID_DOC.replace(MANAGER_SESSION_FORM, "some-other-session-id-9999")
         self.assertEqual(codes(lint_text(text)), ["MANAGER_KEY_MISMATCH"])
 
     def test_no_mismatch_with_pinned_key(self):
@@ -596,7 +600,7 @@ class TestStateTableInAimem(unittest.TestCase):
 
     def test_gated_by_manager_declaration(self):
         text = self._with_table_in("## 2. 세션 명부").replace(
-            "- 관리자(단독 쓰기 권한): **클로** `agent:claude:acp:`\n", "")
+            "- 관리자(단독 쓰기 권한): 엔진이 띄운 관리자 세션 `M-R<N>-<HHMMSS>`\n", "")
         self.assertEqual(lint_text(text), [])
 
 
@@ -809,7 +813,7 @@ class TestRemovedNames(unittest.TestCase):
 
     def test_retained_public_api_present(self):
         for name in ("find_section", "extract_table", "lint_text", "lint_file", "lint_repo",
-                     "MAX_TOTAL_LINES", "MANAGER_SESSION_KEY"):
+                     "MAX_TOTAL_LINES", "MANAGER_SESSION_FORM"):
             self.assertTrue(hasattr(lint, name), name)
 
     def test_lint_source_has_no_live_outbox_references(self):
@@ -881,15 +885,15 @@ if __name__ == "__main__":
 
 class TestEnglishManagerDeclaration(unittest.TestCase):
     """REV 128: AIMEM.md 가 영어다. `Manager (sole write authority)` 선언도 한국어 선언과 같은 검사를 켠다."""
-    EN_DOC = VALID_DOC.replace("- 관리자(단독 쓰기 권한): **클로** `agent:claude:acp:`\n",
-                               "- Manager (sole write authority): **a Claude ACP session** `agent:claude:acp:`\n")
+    EN_DOC = VALID_DOC.replace("- 관리자(단독 쓰기 권한): 엔진이 띄운 관리자 세션 `M-R<N>-<HHMMSS>`\n",
+                               "- Manager (sole write authority): the engine-launched manager session `M-R<N>-<HHMMSS>`\n")
 
     def test_english_declaration_passes_with_pinned_key(self):
         self.assertNotEqual(self.EN_DOC, VALID_DOC)
         self.assertEqual(lint_text(self.EN_DOC), [])
 
     def test_english_declaration_gates_key_mismatch(self):
-        swapped = self.EN_DOC.replace(MANAGER_SESSION_KEY, "agent:coding:discord:channel:9999999999")
+        swapped = self.EN_DOC.replace(MANAGER_SESSION_FORM, "some-other-session-id-9999")
         self.assertEqual(codes(lint_text(swapped)), ["MANAGER_KEY_MISMATCH"])
 
 

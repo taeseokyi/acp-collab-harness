@@ -1,9 +1,10 @@
 """슬롯 관리 API 계약 (2026-11-10, 태석님 지시 "슬롯 하네스 추가·삭제 + 모델 지정").
 
-`server.slot_action` 은 DB(`aimem_db`)를 고치고, 모델은 openclaw 설정 목록에서만 받는다.
+`server.slot_action` 은 DB(`aimem_db`)를 고치고, 모델은 `fleet.toml` 에 설정된 목록에서만 받는다.
 """
 import contextlib
 import io
+import json
 import pathlib
 import sys
 import tempfile
@@ -29,7 +30,7 @@ class SlotActionTest(unittest.TestCase):
         self.root = pathlib.Path(self.tmp.name).resolve()
         (self.root / ".aimem" / "requests").mkdir(parents=True)
         for target, attr, value in ((aimem_db, "ROOT", self.root), (aimem_db, "DB", self.root / ".aimem" / "aimem.db"),
-                                    (server, "ROOT", self.root), (server, "openclaw_models", lambda *a, **k: MODELS),
+                                    (server, "ROOT", self.root), (server, "fleet_models", lambda *a, **k: MODELS),
                                     (server, "_slot_running", lambda slot, root: None)):
             p = mock.patch.object(target, attr, value)
             p.start()
@@ -71,7 +72,7 @@ class SlotActionTest(unittest.TestCase):
     def test_model_must_be_configured_and_fit_harness(self):
         code, body = server.slot_action("add", None, {"harness": "claude", "model": "openai/gpt-9"}, "웹", self.root)
         self.assertEqual(code, 400)
-        self.assertIn("설정된 모델이 아닙니다", body["error"])
+        self.assertIn("fleet.toml 에 설정된 모델이 아닙니다", body["error"])
         code, body = server.slot_action("add", None, {"harness": "codex", "model": "anthropic/claude-opus-5-5"}, "웹", self.root)
         self.assertEqual(code, 400)
         self.assertIn("받을 수 없습니다", body["error"])
@@ -93,24 +94,38 @@ class SlotActionTest(unittest.TestCase):
             self.assertEqual(server.slot_action("set", "S1", {"role": "바꿈"}, "웹", self.root)[0], 400)   # 역할은 웹에서 못 바꾼다
             self.assertEqual(server.slot_action("set", "S1", {"model": "sonnet"}, "웹", self.root)[0], 200)  # 모델은 도는 중에도
 
-    def test_models_for_harness_mapping(self):
-        self.assertEqual(server._models_for_harness("anthropic/claude-opus-5-5"), ["claude"])
-        self.assertEqual(server._models_for_harness("kisti/kistillm"), ["codex", "opencode"])
-        self.assertEqual(server._models_for_harness("exaone/k-exaone_v2.5"), ["codex", "opencode"])
+    def test_claude_ids_and_aliases_pass_without_the_list(self):
+        for m in ("opus", "sonnet", "haiku", "claude-opus-5-5", "anthropic/claude-opus-5-5"):
+            self.assertEqual(server._model_allowed(m, "claude", self.root), (True, ""), m)
+        self.assertFalse(server._model_allowed("opus", "codex", self.root)[0])   # 별칭 예외는 claude 하네스만
 
 
-class OpenclawConfigModelsTest(unittest.TestCase):
-    def test_reads_providers_and_default(self):
-        import json as _json, tempfile as _tf
-        with _tf.TemporaryDirectory() as d:
-            p = pathlib.Path(d) / "openclaw.json"
-            p.write_text(_json.dumps({"models": {"providers": {"exaone": {"baseUrl": "x", "apiKey": "SECRET", "models": [{"id": "k-exaone_v2.5", "name": "EXAONE"}]},
-                                                                  "kisti": {"models": [{"id": "kistillm"}]}}},
-                                      "agents": {"defaults": {"model": {"primary": "exaone/k-exaone_v2.5"}}}}), encoding="utf-8")
-            out = server._models_from_openclaw_config(p)
-        self.assertEqual(out["exaone/k-exaone_v2.5"], {"name": "EXAONE", "default": True})
-        self.assertEqual(out["kisti/kistillm"], {"name": "kistillm"})
-        self.assertNotIn("SECRET", _json.dumps(out))
+class FleetTomlModelsTest(unittest.TestCase):
+    """`/api/models` 의 원천 - 임시 저장소의 `fleet.toml` (비밀 키는 읽지 않는다)."""
+
+    def test_reads_providers_per_harness(self):
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "fleet.toml").write_text(
+                '[providers.kisti]\nenv_key = "KISTI_API_KEY"\nmodels = ["kistillm"]\n'
+                '[providers.anthropic]\nmodels = ["opus", "sonnet"]\n'
+                '[harness.claude]\nproviders = ["anthropic"]\n'
+                '[harness.codex]\nproviders = ["kisti"]\n[harness.opencode]\nproviders = ["kisti"]\n', encoding="utf-8")
+            out = server.fleet_models(pathlib.Path(d))
+        self.assertTrue(out["ok"])
+        by = {m["key"]: m for m in out["models"]}
+        self.assertEqual(sorted(by), ["kisti/kistillm", "opus", "sonnet"])
+        self.assertEqual(by["kisti/kistillm"]["harnesses"], ["codex", "opencode"])
+        self.assertEqual(by["opus"]["harnesses"], ["claude"])
+        self.assertEqual(out["models"][0]["provider"], "anthropic")     # anthropic 이 앞
+        self.assertNotIn("openclaw", json.dumps(out))
+
+    def test_broken_file_degrades_to_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "fleet.toml").write_text("[providers\n", encoding="utf-8")
+            out = server.fleet_models(pathlib.Path(d))
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["models"], [])
+        self.assertIn("ConfigError", out["error"])
 
 
 class FleetModelNormalizeTest(unittest.TestCase):
@@ -120,35 +135,7 @@ class FleetModelNormalizeTest(unittest.TestCase):
         self.assertEqual(fleet.normalize_model("claude", "opus"), "opus")
         self.assertEqual(fleet.normalize_model("opencode", "exaone/k-exaone_v2.5"), "exaone/k-exaone_v2.5")
         self.assertIsNone(fleet.normalize_model("codex", None))
-        argv, _ = fleet._worker_argv("codex", "kisti/kistillm", "/tmp/b.md")
-        self.assertIn("-m", argv)
-        self.assertEqual(argv[argv.index("-m") + 1], "kistillm")
-        self.assertIn("model_provider=kisti", argv)
-        argv, _ = fleet._worker_argv("claude", "anthropic/claude-opus-5-5", "/tmp/b.md")
-        self.assertEqual(argv[argv.index("--model") + 1], "claude-opus-5-5")
-
-    def test_codex_worker_keeps_the_write_sandbox_but_may_use_the_network(self):
-        """2026-11-11 태석님: 코덱스 작업자에게 브라우저·소켓 허용. 닫혀 있으면 TCP 서버도 Chromium 도 못 띄운다 (R8~R10)."""
-        import fleet
-        argv, stdin = fleet._worker_argv("codex", "kisti/kistillm", "/tmp/b.md")
-        self.assertEqual(argv[argv.index("--sandbox") + 1], "workspace-write")       # 쓰기 제한은 그대로
-        self.assertIn("sandbox_workspace_write.network_access=true", argv)
-        self.assertEqual(argv[argv.index("sandbox_workspace_write.network_access=true") - 1], "-c")
-        self.assertNotIn("danger-full-access", " ".join(argv))
-        self.assertEqual(stdin, "/tmp/b.md")
-
-    def test_opencode_instruction_carries_slot_token_and_rev(self):
-        """R10 T-129·T-131 1차: 파일 경로만 넘기자 작업자가 "지시 메시지에 슬롯·토큰·REV 가 없다" 며 읽지도 않고 끝냈다."""
-        import fleet
-        argv, stdin = fleet._worker_argv("opencode", "exaone/k-exaone_v2.5", "/tmp/b.md",
-                                         ident="[AIMEM 작업자 지시] 슬롯 S3 · 확인토큰 abc123 · AIMEM REV 153.")
-        self.assertIsNone(stdin)
-        msg = argv[-1]
-        for want in ("슬롯 S3", "확인토큰 abc123", "REV 153", "/tmp/b.md"):
-            self.assertIn(want, msg)
-        self.assertLess(msg.index("슬롯 S3"), msg.index("/tmp/b.md"))                  # 신원이 경로보다 앞
-        argv, _ = fleet._worker_argv("opencode", None, "/tmp/b.md")                    # 머리말이 없어도 전처럼 돈다
-        self.assertIn("/tmp/b.md", argv[-1])
+        # 하네스별 명령 꼴은 어댑터 검사(tests/test_rt_codex.py · test_rt_opencode.py · test_rt_claude.py)가 본다
 
 
 if __name__ == "__main__":

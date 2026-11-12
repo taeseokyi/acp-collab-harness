@@ -34,10 +34,10 @@ const DEMO_STATE = {
     goal: { text: '함대 모니터링 웹 UI 를 만든다', status: '진행 중' },
   },
   slots: [
-    { slot: 'S1', harness: 'claude', role: '린터 / 보드 CLI', note: 'CLI 작업자', model: 'opus[1m]', model_source: 'openclaw.json agents.entries.claude.model' },
-    { slot: 'S2', harness: 'codex', role: '계약 테스트', note: '테스트 작성자', model: 'gpt-5-codex', model_source: 'openclaw.json agents.entries.codex.model' },
-    { slot: 'S3', harness: 'opencode', role: '커밋 훅 / 검수', note: 'CLI 작업자', model: 'kistillm', model_source: 'openclaw.json agents.entries.opencode.model' },
-    { slot: '관리자', harness: 'claude', role: '합류점 / 서버', note: 'server.py 소유', model: 'opus[1m]', model_source: 'openclaw.json agents.entries.claude.model' },
+    { slot: 'S1', harness: 'claude', role: '린터 / 보드 CLI', note: 'CLI 작업자', model: 'opus[1m]', model_source: 'fleet.toml harness.claude.default_model' },
+    { slot: 'S2', harness: 'codex', role: '계약 테스트', note: '테스트 작성자', model: 'gpt-5-codex', model_source: 'fleet.toml harness.codex.default_model' },
+    { slot: 'S3', harness: 'opencode', role: '커밋 훅 / 검수', note: 'CLI 작업자', model: 'kistillm', model_source: 'fleet.toml harness.opencode.default_model' },
+    { slot: '관리자', harness: 'claude', role: '합류점 / 서버', note: 'server.py 소유', model: 'opus[1m]', model_source: 'fleet.toml harness.claude.default_model' },
   ],
   board: [
     { id: 'T-036', task: '데이터 계층', slot: 'S1', status: 'REVIEW', handoff: '-', artifact: '`reader.py`' },
@@ -831,8 +831,7 @@ function openManagerList(sessions) {
   openPanel('관리자 세션 ' + sessions.length + '개', (body) => {
     const rows = sessions.map((s) => [
       show(s.label),
-      s.status === 'running' ? badge('실행 중', 'running')
-        : badge(s.status === 'done' ? '끝남' : show(s.status), s.status === 'failed' ? 'blocked' : 'neutral'),
+      mgrStateBadge(s.session_state, s.status),
       fmtDateTime(s.started),
       fmtDateTime(s.updated),
       (s.record_kb === null || s.record_kb === undefined) ? '-'
@@ -1009,6 +1008,7 @@ function renderDetail(detail) {
   addDetailSection(body, '보고 본문', detail.report);
   addDetailSection(body, '지시 본문', detail.brief, false, true);
   addDetailSection(body, 'stderr', detail.stderr_tail, true, true);
+  addDetailSection(body, '사건 (events.jsonl)', detail.events, true, true);
 }
 
 async function serverErrorReason(res) {
@@ -1144,7 +1144,8 @@ function renderMeta(data) {
   box.appendChild(metaItem('최종 갱신', show(aimem.updated)));
 
   const fl = data.fleet || {};
-  const lr = fl.last_round || null;
+  const mg0 = fl.manager || null;
+  const lr = (mg0 && mg0.round) ? { round: mg0.round, at: mg0.at, report_status: null, state: mg0.state } : (fl.last_round || null);
   const roundWrap = document.createElement('div');
   roundWrap.className = 'goal-value';
   const roundText = document.createElement('span');
@@ -1155,7 +1156,7 @@ function renderMeta(data) {
   const roundStatus = document.createElement('span');
   roundStatus.className = 'goal-status';
   roundStatus.textContent = lr && lr.report_status ? '보고 ' + lr.report_status
-                                                   : (fl.label || show(fl.mode, '-'));
+                          : (lr && lr.state && MGR_STATE_TEXT[lr.state] ? '관리자 ' + MGR_STATE_TEXT[lr.state] : (fl.label || show(fl.mode, '-')));
   roundWrap.appendChild(roundStatus);
   const roundItem = metaItem('이번 라운드', roundWrap);
   roundItem.classList.add('meta-goal');
@@ -1163,6 +1164,42 @@ function renderMeta(data) {
 
   const brandRev = $('brand-rev');
   if (brandRev) brandRev.textContent = aimem.rev ? 'REV ' + aimem.rev : '';
+}
+
+// ---- 관리자 세션 (.aimem/sessions/M-R<N>-…) - 상태 낱말은 서버가 준 것 그대로 (설계 5.6)
+const MGR_STATE_TEXT = {
+  running: '실행 중', launching: '띄우는 중', done: '끝남', failed: '실패', killed: '중단',
+  timeout: '시간 초과', stalled: '침묵으로 끊김', lost: '끊김(감독 사라짐)',
+};
+function mgrStateBadge(sessionState, status) {
+  const key = sessionState || status || 'unknown';
+  const cls = key === 'running' || key === 'launching' ? 'running' : (key === 'done' ? 'done'
+    : (['failed', 'timeout', 'stalled', 'lost'].includes(key) || status === 'failed' ? 'blocked' : 'neutral'));
+  const b = badge(MGR_STATE_TEXT[key] || show(key), cls);
+  b.dataset.status = key;
+  return b;
+}
+function agoText(iso) {
+  const t = Date.parse(String(iso || ''));
+  return Number.isFinite(t) ? fmtElapsed((Date.now() - t) / 1000) + ' 전' : null;
+}
+// 실행 표·슬롯 카드의 "마지막 사건 N초 전 · <last_event>" (세션 실행만 값이 있다)
+function lastEventText(r) {
+  if (!r || r.state !== 'running' || !r.last_event_at) return '';
+  const ago = agoText(r.last_event_at);
+  return ago ? `마지막 사건 ${ago}` + (r.last_event ? ' · ' + r.last_event : '') : '';
+}
+// 감독이 끊은 세션은 stalled/timeout 을 자기 낱말로 (옛 상태 어휘는 done/rc 로 접혀 있다)
+const SESSION_END_TEXT = { stalled: '침묵으로 끊김', timeout: '시간 초과' };
+function runStatusBadge(r) {
+  const ss = r && r.session_state;
+  if (ss && SESSION_END_TEXT[ss]) {
+    const b = badge(SESSION_END_TEXT[ss], 'blocked');
+    b.dataset.status = ss;
+    b.title = ss === 'stalled' ? '마지막 사건 뒤 침묵이 제한을 넘겨 감독이 끊음' : '벽시계 제한을 넘겨 감독이 끊음';
+    return b;
+  }
+  return statusBadge(r.state);
 }
 
 const MODE_BADGE = { running: 'running', paused: 'partial', stopped: 'blocked', ready: 'done' };
@@ -1218,7 +1255,7 @@ function fleetMsgText(m) {
     return `완전 중지 - 작업자 ${k}개 종료` + ((b.halted_graphs || []).length ? `, 그래프 ${b.halted_graphs.join(', ')} 정리` : '') + '. ' + (b.note || '');
   }
   if (m.act === 'run') return '실행 - ' + ((b.resumed_graphs || []).length ? `그래프 ${b.resumed_graphs.join(', ')} 이어 돌림. ` : '') + (b.note || '');
-  if (m.act === 'round') return `라운드 R${b.round} 실행 - 클로에게 전달했습니다 (${b.brief}). 관리자 세션이 뜨면 위에 나타납니다`;
+  if (m.act === 'round') return `라운드 R${b.round} 실행 - 관리자 세션을 띄웠습니다 (${b.brief}). 위 관리자 카드에 나타납니다`;
   return name + ' 완료';
 }
 
@@ -1777,7 +1814,7 @@ function renderFleetControl(data) {
     const fresh = reqs.filter((q) => String(q.status || '').toUpperCase() === 'NEW');
     const txt = document.createElement('span');
     // 라운드가 도는 중에는 '지금 도는 라운드' 를 먼저 보인다 - 다음 번호만 보여 R7 이 도는데 R8 로 읽혔다 (2026-11-10 R7 실측)
-    const curRound = (md === 'running' && !f.idle && f.relay && f.relay.round) ? f.relay : null;
+    const curRound = (md === 'running' && !f.idle && f.manager && f.manager.round && ['launching', 'running'].includes(f.manager.state)) ? f.manager : null;
     if (curRound) {
       const now = document.createElement('div');
       now.className = 'fc-hint-now';
@@ -1787,7 +1824,7 @@ function renderFleetControl(data) {
       // 라운드가 끝났다 - 다음 요청은 '라운드 실행' 한 번이면 된다 (준비 점검은 그 안에서 돈다)
       const now = document.createElement('div');
       now.className = 'fc-hint-now';
-      now.textContent = (f.relay && f.relay.round ? `R${f.relay.round} 은 끝났습니다` : '도는 라운드가 없습니다')
+      now.textContent = (f.manager && f.manager.round ? `R${f.manager.round} 은 끝났습니다` : '도는 라운드가 없습니다')
         + " - 새 요청은 '라운드 실행' 을 누르면 됩니다";
       hint.appendChild(now);
     }
@@ -1820,12 +1857,18 @@ function renderFleetControl(data) {
   }
   box.appendChild(hint);
 
-  const relay = f.relay;
-  if (relay && relay.state && relay.state !== 'spawned') {
+  const mg = f.manager;
+  if (mg && mg.round) {
     const r = document.createElement('div');
     r.className = 'fc-hint';
-    const last = Array.isArray(relay.log) && relay.log.length ? relay.log[relay.log.length - 1] : '';
-    r.textContent = `R${relay.round} 전달: ${relay.state}${relay.nudged ? ' (재촉 1회)' : ''} - ${last}`;
+    if (mg.state === 'launching') {
+      r.textContent = `R${mg.round} 관리자를 띄우는 중입니다`;
+    } else if (mg.state === 'running') {
+      const ago = agoText(mg.last_event_at);
+      r.textContent = `관리자 R${mg.round} 실행 중` + (ago ? ` · 마지막 사건 ${ago}` : ' · 아직 사건 없음');
+    } else {
+      r.textContent = `R${mg.round} 관리자: ${MGR_STATE_TEXT[mg.state] || show(mg.state)}` + (mg.ended ? ` (${fmtDateTime(mg.ended)})` : '');
+    }
     box.appendChild(r);
   }
 
@@ -1958,18 +2001,30 @@ async function openManagerDetail(cur, all = false) {
   const st = Date.parse(String(s.started || ''));
   const la = Date.parse(String(d.last_activity || ''));
   const isRun = s.status === 'running';
-  meta.appendChild(detailMetaItem('상태', isRun ? '실행 중' : show(s.status)));
+  meta.appendChild(detailMetaItem('상태', MGR_STATE_TEXT[s.session_state] || (isRun ? '실행 중' : show(s.status)) + (s.orphaned ? ' (감독 없이 도는 중)' : '')));
   meta.appendChild(detailMetaItem('시작', fmtDateTime(s.started)));
   meta.appendChild(detailMetaItem(isRun ? '경과' : '소요', Number.isFinite(st) ? fmtElapsed(((isRun ? Date.now() : (Number.isFinite(la) ? la : Date.now())) - st) / 1000) : '-'));
   meta.appendChild(detailMetaItem('마지막 활동', Number.isFinite(la) ? fmtDateTime(d.last_activity) + ` (${fmtElapsed((Date.now() - la) / 1000)} 전)` : '-'));
   meta.appendChild(detailMetaItem('단계', show(d.steps_total)));
-  meta.appendChild(detailMetaItem('대화 기록', d.record_kb != null ? (d.record_kb >= 1024 ? (d.record_kb / 1024).toFixed(1) + 'MB' : d.record_kb + 'KB') : '-'));
+  meta.appendChild(detailMetaItem('사건 기록', d.record_kb != null ? (d.record_kb >= 1024 ? (d.record_kb / 1024).toFixed(1) + 'MB' : d.record_kb + 'KB') : '-'));
   body.appendChild(meta);
 
-  if (d.relay) {
-    const r = d.relay;
-    detailRows(body, `라운드 R${r.round} 전달 (${show(r.state)}${r.nudged ? ', 재촉 1회' : ''})`,
-      [{ head: '브리프', body: show(r.brief) }].concat((r.log || []).map((l) => ({ body: l }))));
+  if (d.round) {
+    const r = d.round;
+    const rows = [{ head: '브리프', body: show(r.brief) }];
+    if (r.at) rows.push({ head: '띄운 때', body: fmtDateTime(r.at) });
+    if ((r.requests || []).length) rows.push({ head: '요청', body: r.requests.join(', ') });
+    if ((r.projects || []).length) rows.push({ head: '프로젝트', body: r.projects.join(', ') });
+    detailRows(body, `라운드 R${r.round} 기록 (rounds/R${r.round}/round.json)`, rows);
+  }
+  if (d.report) {
+    const rsec = document.createElement('section');
+    rsec.className = 'detail-section';
+    const rh = document.createElement('h3');
+    rh.textContent = '마지막 보고';
+    rsec.appendChild(rh);
+    rsec.appendChild(renderMarkdown(d.report));
+    body.appendChild(rsec);
   }
   const steps = (d.steps || []).slice().reverse();
   const stepSec = detailRows(body, (all ? `전체 단계 ${steps.length}개` : `최근 단계 ${steps.length}개`) + ` (최신이 위, 전체 ${show(d.steps_total)}) - 명령 출력은 싣지 않습니다`,
@@ -2003,28 +2058,19 @@ function renderManager(data) {
   head.appendChild(title);
 
   const cur = sessions.find((s) => s.status === 'running') || sessions[0];
-  // 끝난 관리자 세션은 게이트웨이 목록에서 사라진다 - 그러면 `sessions[0]` 은 한참 전 라운드(R6)다.
-  // 라운드가 끝났고(idle) 가장 최근에 띄운 라운드가 목록의 맨 앞과 다르면, 전달 기록과 보고 파일로 그 라운드를 보인다 (REV 155).
-  const fl = data.fleet || {};
-  const lr = fl.last_round;
-  if (fl.idle && lr && lr.state === 'spawned' && !(cur && cur.status === 'running') && !(cur && cur.label === lr.label)) {
-    const st = lr.report_status;
-    head.appendChild(badge(st ? '끝남 · ' + st : '끝남', st === 'DONE' ? 'done' : (st ? 'blocked' : 'neutral')));
-    const label = document.createElement('span');
-    label.className = 'manager-label';
-    label.textContent = show(lr.label || ('관리자 R' + lr.round));
-    head.appendChild(label);
+  const mg = (data.fleet || {}).manager;
+  // 엔진이 관리자를 띄우는 중인데 세션 폴더가 아직 안 보이는 짧은 틈
+  if (mg && mg.state === 'launching' && !(cur && cur.status === 'running')) {
+    head.appendChild(mgrStateBadge('launching'));
+    const l = document.createElement('span');
+    l.className = 'manager-label';
+    l.textContent = show(mg.label || ('관리자 R' + mg.round));
+    head.appendChild(l);
     box.appendChild(head);
-    const what = document.createElement('div');
-    what.className = 'manager-what';
-    what.textContent = (lr.report ? `종료 보고 ${lr.report}` : `R${lr.round} 종료 보고가 아직 없습니다`)
-      + ` · 띄운 때 ${fmtDateTime(lr.at)} · 실행 중인 관리자 없음`;
-    box.appendChild(what);
-    return;
-  }
-  if (m.pending && !sessions.length) {
-    head.appendChild(badge('조회 중', 'pending'));
-    box.appendChild(head);
+    const w = document.createElement('div');
+    w.className = 'manager-what';
+    w.textContent = `R${mg.round} 관리자를 띄우는 중입니다`;
+    box.appendChild(w);
     return;
   }
   if (!cur) {
@@ -2037,7 +2083,7 @@ function renderManager(data) {
     return;
   }
   const isRun = cur.status === 'running';
-  head.appendChild(isRun ? badge('실행 중', 'running') : badge(cur.status === 'done' ? '끝남' : show(cur.status), cur.status === 'failed' ? 'blocked' : 'neutral'));
+  head.appendChild(mgrStateBadge(cur.session_state, cur.status));
   const label = document.createElement('span');
   label.className = 'manager-label';
   label.textContent = show(cur.label);
@@ -2053,12 +2099,8 @@ function renderManager(data) {
 
   const what = document.createElement('div');
   what.className = 'manager-what';
-  const relay = (data.fleet || {}).relay;
-  if (!isRun && relay && ['launching', 'relaying'].includes(relay.state)) {
-    what.textContent = `라운드 R${relay.round} 전달 중 - 클로가 관리자를 띄우는 중입니다` + (relay.nudged ? ' (재촉 1회)' : '');
-  } else {
-    what.textContent = isRun ? managerActivity(data) : '실행 중인 관리자 없음 - 함대는 다음 라운드 대기(정지) 상태입니다';
-  }
+  what.textContent = isRun ? managerActivity(data)
+    : '실행 중인 관리자 없음' + ((data.fleet || {}).idle ? ' - 라운드가 끝났습니다' : ' - 함대는 다음 라운드 대기(정지) 상태입니다');
   box.appendChild(what);
 
   if (isRun) {
@@ -2067,13 +2109,14 @@ function renderManager(data) {
     const la = Date.parse(String(cur.last_activity || ''));
     const idle = Number.isFinite(la) ? (Date.now() - la) / 1000 : null;
     const parts = [];
-    if (idle !== null) parts.push('마지막 활동 ' + fmtElapsed(idle) + ' 전');
+    if (idle !== null) parts.push('마지막 사건 ' + fmtElapsed(idle) + ' 전');
+    if (cur.orphaned) parts.push('감독 없이 도는 중');
     if (cur.steps) parts.push(`${cur.steps}단계`);
     if (cur.last_step) parts.push('최근: ' + cur.last_step);
     act.textContent = parts.join(' · ');
     if (idle !== null && idle > MANAGER_IDLE_WARN_SEC) {
       act.classList.add('is-warn');
-      act.title = '관리자 기록이 오래 바뀌지 않았습니다. 긴 작업자 대기(fleet_graph run)일 수도, 멈춘 것일 수도 있습니다 - 상세 보기로 확인';
+      act.title = '관리자 사건이 오래 없었습니다. 긴 작업자 대기(fleet_graph run)일 수도, 멈춘 것일 수도 있습니다 - 상세 보기로 확인';
     }
     box.appendChild(act);
   }
@@ -2088,13 +2131,13 @@ function renderManager(data) {
     parts.push((isRun ? '경과 ' : '소요 ') + fmtElapsed((end - st) / 1000));
   }
   if (cur.record_kb !== null && cur.record_kb !== undefined) {
-    parts.push('대화 기록 ' + (cur.record_kb >= 1024 ? (cur.record_kb / 1024).toFixed(1) + 'MB' : cur.record_kb + 'KB'));
+    parts.push('사건 기록 ' + (cur.record_kb >= 1024 ? (cur.record_kb / 1024).toFixed(1) + 'MB' : cur.record_kb + 'KB'));
   }
   const others = sessions.length - 1;
   if (others > 0) parts.push(`지난 세션 ${others}개`);
-  if (m.error) parts.push('갱신 실패(지난 값)');
+  if (m.error) parts.push('세션 조회 실패');
   meta.textContent = parts.join(' · ');
-  meta.title = sessions.map((s) => `${s.label} - ${s.status} - ${fmtDateTime(s.started)}`).join('\n');
+  meta.title = sessions.map((s) => `${s.label} - ${MGR_STATE_TEXT[s.session_state] || s.status} - ${fmtDateTime(s.started)}`).join('\n');
   if (sessions.length > 1) {
     meta.appendChild(document.createTextNode(' · '));
     meta.appendChild(linkButton('세션 목록', () => openManagerList(sessions)));
@@ -2102,7 +2145,7 @@ function renderManager(data) {
   box.appendChild(meta);
 }
 
-// ---- 슬롯 관리 (2026-11-10, 태석님 지시) - 추가/변경/삭제, 모델은 openclaw 설정 목록에서
+// ---- 슬롯 관리 (2026-11-10, 태석님 지시) - 추가/변경/삭제, 모델은 fleet.toml 목록에서
 async function loadModels(force = false) {
   if (state.models && !force) return state.models;
   if (DEMO) { state.models = { ok: true, models: [] }; return state.models; }
@@ -2130,6 +2173,7 @@ function modelOptions(models, harness, current) {
   const list = (models && Array.isArray(models.models) ? models.models : []).filter((m) => !m.harnesses || m.harnesses.includes(harness));
   if (harness === 'claude') {
     for (const alias of ['opus', 'sonnet', 'haiku']) {
+      if (list.some((m) => m.key === alias)) continue;   // fleet.toml 이 이미 준 별칭은 아래 목록에서
       const o = document.createElement('option'); o.value = alias; o.textContent = `${alias} (Claude CLI 별칭)`; sel.appendChild(o);
     }
   }
@@ -2171,7 +2215,7 @@ function openSlotForm(existing, runId, isRunning) {
     const modelWrap = document.createElement('div'); modelWrap.className = 'slot-model-wrap';
     const modelNote = document.createElement('div'); modelNote.className = 'hint'; modelNote.textContent = '모델 목록을 읽는 중…';
     modelWrap.appendChild(modelNote);
-    field('모델 (openclaw 설정)', modelWrap);
+    field('모델 (fleet.toml)', modelWrap);
     // 역할·비고는 라운드 관리자가 정한다(8.0-1) - 여기서는 보여만 준다
     if (!isNew) {
       const roleRo = document.createElement('div'); roleRo.className = 'slot-ro'; roleRo.textContent = show(existing.role, '-'); field('역할 (관리자 지정)', roleRo);
@@ -2209,7 +2253,7 @@ function openSlotForm(existing, runId, isRunning) {
       modelSel = modelOptions(models, harnessSel.value, cur);
       modelWrap.appendChild(modelSel);
       if (models && models.ok === false) { const e = document.createElement('div'); e.className = 'hint is-error'; e.textContent = '모델 목록 실패: ' + show(models.error, ''); modelWrap.appendChild(e); }
-      const src = document.createElement('div'); src.className = 'hint'; src.textContent = '출처: openclaw models list (설정된 모델). claude 는 Anthropic 모델만, codex/opencode 는 그 밖.'; modelWrap.appendChild(src);
+      const src = document.createElement('div'); src.className = 'hint'; src.textContent = '출처: fleet.toml 의 공급자·모델. 하네스마다 받을 수 있는 공급자가 정해져 있습니다 (claude 는 Anthropic).'; modelWrap.appendChild(src);
     };
     harnessSel.addEventListener('change', () => rebuildModels(state.models, false));   // 하네스가 바뀌면 모델은 다시 고른다
     loadModels().then(rebuildModels);
@@ -2291,6 +2335,14 @@ function renderSlots(data) {
       sub.textContent = show(r.label) + ' · ' + fmtElapsed(r.elapsed_sec);
       sub.title = show(r.label, '');
       now.appendChild(sub);
+      const liveLine = lastEventText(r);
+      if (liveLine) {
+        const le = document.createElement('span');
+        le.className = 'sub slot-last-event';
+        le.textContent = liveLine;
+        le.title = liveLine;
+        now.appendChild(le);
+      }
     }
     return [mono(s.slot), now, show(s.harness), modelCell, show(s.role), plainText(s.note) || '-'];
   });
@@ -2369,10 +2421,17 @@ function renderRuns(data) {
     rid.className = 'sub mono';
     rid.textContent = show(r.id);
     what.append(lab, rid);
-    what.title = `${show(r.label, '')}\n${show(r.id, '')}`;
+    const liveLine = lastEventText(r);
+    if (liveLine) {
+      const le = document.createElement('span');
+      le.className = 'sub run-last-event';
+      le.textContent = liveLine;
+      what.appendChild(le);
+    }
+    what.title = `${show(r.label, '')}\n${show(r.id, '')}` + (liveLine ? '\n' + liveLine : '');
     return [
-      mono(r.slot),
-      statusBadge(r.state),
+      r.role === 'manager' ? '관리자' : mono(r.slot),
+      runStatusBadge(r),
       reportBadge(r.report_head),
       proj,
       what,
@@ -2469,7 +2528,7 @@ function openArchivePanel() {
       ['작업자 실행 기록', '함대 탭 작업자 실행 상태에서 사라지고 archive/runs-<월>/ 로 옮겨집니다'],
       ['이벤트', '보드·큐 탭의 이벤트 목록에서 사라지고 archive/events-<월>.jsonl 로 옮겨집니다'],
       ['핸드오프 (최신 12건 제외)', 'archive/handoff-<월>.md 로 옮겨집니다 - 최신 12건은 무엇이든 남습니다'],
-      ['전달 기록', '그 라운드의 그래프가 모두 정리되면 archive/relay-<월>/ 로 함께 옮겨집니다'],
+      ['옛 전달 기록 (.aimem/relay, 이전 체제)', '남아 있으면 그 라운드의 그래프가 모두 정리될 때 archive/relay-<월>/ 로 함께 옮겨집니다'],
       ['오래된 로그 줄', 'monitor.log·fleet-mode.log 의 기준 시각보다 오래된 줄만. 접속 기록(access.log)은 건드리지 않습니다'],
     ]) {
       const li = document.createElement('li');
@@ -2504,7 +2563,7 @@ function openArchivePanel() {
       if (counts) {
         const line = document.createElement('p');
         line.className = 'hint';
-        line.textContent = `실행 기록 ${counts.runs || 0}건 · 이벤트 ${counts.events || 0}건 · 핸드오프 ${counts.handoff || 0}건 · 전달 ${counts.relay || 0}개 · 로그 ${counts.log_lines || 0}줄`;
+        line.textContent = `실행 기록 ${counts.runs || 0}건 · 이벤트 ${counts.events || 0}건 · 핸드오프 ${counts.handoff || 0}건 ${counts.relay ? ` · 옛 전달 ${counts.relay}개` : ''} · 로그 ${counts.log_lines || 0}줄`;
         out.appendChild(line);
       }
       const list = (title, items, fmt) => {

@@ -52,7 +52,6 @@ DEFAULT_STATE = REPO_ROOT / ".aimem" / "envcheck-state.json"
 # `runtime.wsl_dns_first_lookup` 은 재현되면 OK 로 돌아오는 항목이라 여기
 # 넣지 않는다 - 구조적 불가와 "아직 재현 안 됨"은 다르다.
 STRUCTURAL_UNKNOWN = frozenset({
-    "sessions.acp.can_create_sessions",
     "terminal.pan_run.recovery_reachability",
 })
 

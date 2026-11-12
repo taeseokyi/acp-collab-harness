@@ -5,9 +5,13 @@
 """
 import os
 import pathlib
+import re
 import stat
 
 ENV_FILE = ".env"
+#: 세션에 `.env` 에서 넘겨줄 수 있는 이름의 꼴 - API 키 이름뿐이다. `BASH_ENV`·`LD_PRELOAD`·`ANTHROPIC_BASE_URL` 같은
+#: 실행을 바꾸는 변수는 이 꼴이 아니라 `fleet.toml` 의 `env_key` 에 적혀도 넘어가지 않는다.
+SESSION_KEY_RE = re.compile(r"\A[A-Z][A-Z0-9_]*_API_KEY\Z")
 
 
 def load_env(root):
@@ -20,12 +24,30 @@ def load_env(root):
         if not ln or ln.startswith("#") or "=" not in ln:
             continue
         k, v = ln.split("=", 1)
-        k, v = k.strip(), v.strip()
+        k, v = k.strip().removeprefix("export ").strip(), v.strip()   # 셸에서 source 하던 꼴(`export K=v`)도 받는다
         if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
             v = v[1:-1]
         if k and v:
             out[k] = v
     return out
+
+
+def session_key_name(root, provider):
+    """세션이 `.env` 에서 받을 **단 하나의** 변수 이름 - 그 세션 공급자의 `env_key`. 없거나 꼴이 아니면 None.
+
+    전에는 `.env` 의 모든 변수를 모든 세션에 넣었다 (2026-11-12 검수): 작업자가 `.env` 에 한 줄 더하면
+    (`ANTHROPIC_BASE_URL=…`, `BASH_ENV=…`) 다음 관리자 세션의 실행이 바뀌었다. 공급자를 못 정하면 아무것도
+    넣지 않는다 - 하네스가 키 없음 오류를 스스로 낸다.
+    """
+    if not root or not provider:
+        return None
+    try:
+        from . import config  # noqa: PLC0415 - 키 파일만 읽는 호출(모니터)은 설정을 들이지 않는다
+        p = config.load(root).provider(str(provider))
+    except Exception:  # noqa: BLE001 - 설정이 깨졌으면 넘겨주지 않는다
+        return None
+    name = (p or {}).get("env_key") if isinstance(p, dict) else None
+    return name if isinstance(name, str) and SESSION_KEY_RE.match(name) else None
 
 
 def env_problem(root):

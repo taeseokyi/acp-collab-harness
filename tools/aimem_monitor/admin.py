@@ -75,7 +75,7 @@ def github_list(root):
     server.load_monitor_env(root)
     print("GitHub 로그인: " + ("켜짐 (웹 흐름)" if server.github_enabled() else
                               "켜짐 (기기 흐름 - 화면의 코드를 github.com/login/device 에)" if server.github_device_enabled() else
-                              "꺼짐 (GITHUB_CLIENT_ID 를 .aimem/tls/monitor.env 에. 시크릿까지 넣으면 웹 흐름)"))
+                              "꺼짐 (GITHUB_CLIENT_ID 를 저장소 루트 .env 에. 시크릿까지 넣으면 웹 흐름)"))
     print("허용 계정: " + (", ".join(allowed) if allowed else "(없음 - 아무도 GitHub 로 들어올 수 없음)"))
     return 0
 
@@ -265,10 +265,10 @@ def status(root):
                  f"{tok} ({oct(tok.stat().st_mode & 0o777)})" if tok.exists() else "없음"))
     env = _p(root, server.MONITOR_ENV_FILE)
     env_ok = env.exists() and not (env.stat().st_mode & 0o077)
-    keys = sorted(server._parse_env(env.read_text(encoding="utf-8")).keys()) if env_ok else []
-    rows.append(("설정 파일 monitor.env", env_ok,
+    keys = sorted(server._fleet_rt("env").load_env(root).keys()) if env_ok else []
+    rows.append(("설정 파일 .env", env_ok,
                  (f"키 {', '.join(keys) or '없음'}" if env_ok else
-                  ("권한이 600 이 아님" if env.exists() else "없음 (선택 - KISTI 키는 ~/.openclaw/.env 에서도 읽음)"))))
+                  ("권한이 600 이 아님 (chmod 600 .env)" if env.exists() else "없음 (.env.example 을 복사해 만드십시오)"))))
     server.load_monitor_env(root)
     rows.append(("KISTI_API_KEY", bool(os.environ.get(server.KISTI_API_KEY_ENV)), "있음" if os.environ.get(server.KISTI_API_KEY_ENV) else "없음"))
     allowed = server.github_allowed_logins(root)
@@ -289,7 +289,7 @@ def status(root):
     key = _p(root, KEY_FILE)
     rows.append(("TLS 개인키 권한", key.exists() and not (key.stat().st_mode & 0o077),
                  oct(key.stat().st_mode & 0o777) if key.exists() else "없음"))
-    optional = ("GitHub 로그인", "설정 파일 monitor.env")
+    optional = ("GitHub 로그인", "설정 파일 .env")
     for name, ok, detail in rows:
         mark = "✓" if ok else ("-" if name in optional else "✗")
         print(f"  {mark} {name:<22} {detail}")

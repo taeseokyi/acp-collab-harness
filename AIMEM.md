@@ -4,17 +4,15 @@ The single source of truth for every AI session that works in `/home/tsyi/work/a
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 162** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-12 17:32 KST
+- **REV: 163** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-12 23:00 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
-- Manager (sole write authority): **a Claude ACP session** (harness claude, model Opus 5.5 = `opus[1m]`),
-  identified by its session-key prefix `agent:claude:acp:` (pinned in the linter). Clo (OpenClaw agent `coding`)
-  opens it on Taeseok's request with `sessions_spawn(runtime:"acp", agentId:"claude", mode:"run",
-  context:"isolated", label:"Manager R<n>", task:<brief>)` and relays the result verbatim. A persistent session
-  is opened only by Taeseok in `#sss-fleet` with `/acp spawn claude --thread auto`. The former Manager, Clo
-  (`agent:coding:discord:channel:1541705515908988989`), has not been the Manager since 2026-11-09 16:00 and does
-  not write this file
+- Manager (sole write authority): **the `role=manager` session the engine starts for a round** (harness claude,
+  model Opus), identified by its session id `M-R<N>-<HHMMSS>` (form pinned in the linter). `tools/fleet_ctl.py
+  round` (the web "라운드 실행" button) starts it with the round brief on stdin; its record is
+  `.aimem/sessions/M-R<N>-…/`. At most one Manager session runs at a time (the engine refuses a second). Nothing
+  else is the Manager: no relay agent, no chat session, no file that says so
 - This file keeps **rules and pointers, not history.** Who decided what, and when, is in `events(kind=rev)` and
   `.aimem/archive/`. The uncompressed REV 129 text is `.aimem/archive/AIMEM-rev129-full.md`
 
@@ -90,17 +88,16 @@ Passing work on: fill in "what the next owner must know" - without it the Manage
 Taking work over: you know only what you did yourself; other slots' work arrives in the brief, and if it is missing
 ask with `BLOCKED`. In a long context the early part may be summarized - re-read files rather than trust memory.
 
-### 0.5 Instruction Routing - One Channel
+### 0.5 Instruction Routing
 
-**Taeseok issues commands for this folder only in Discord `#sss-fleet`** (guild `1467406994640998463`, channel
-`1541705515908988989`; renaming does not change the ID). The criterion is the **session key**, not the delivery
-surface. This table is the only basis for judgment:
+**Taeseok issues commands for this folder through the fleet's own surfaces:** the web monitor (request form,
+fleet controls) and `tools/fleet_ctl.py`, or in a harness session he is working in himself. No chat channel and no
+relay agent carries commands. This table is the only basis for judgment:
 
 | Who | Where | What |
 | --- | ----- | ---- |
-| Taeseok | `#sss-fleet` | The original of every command |
-| Manager (Claude ACP, `agent:claude:acp:<uuid>`) | ACP child session opened by Clo | Writes `AIMEM.md`, runs workers (`fleet.py spawn/wait`), verifies, commits after approval |
-| Gureum (`main`) / Clo (`coding`) / Octi (`review`) | Their Discord channels | **Relays of Taeseok.** What they relay counts as Taeseok's command. Clo opens the Manager session and returns its result verbatim; on Taeseok's instruction Clo also changes slot harness/model via `fleet.py slot add\|set …` - no other judgment, writes or worker contact |
+| Taeseok | Web monitor / `fleet_ctl.py` / his own session | The original of every command |
+| Manager (`M-R<N>-<HHMMSS>`) | Session started by the engine (`fleet_ctl.py round`) | Writes `AIMEM.md`, runs workers (`fleet.py spawn/wait`), verifies. Does not commit |
 | Workers (S1~) | Harness CLI processes from `fleet.py spawn` | Accept only briefs with the header (slot / token / REV). Anything else: read, analyze, report - never write |
 
 The Manager instructs slots only from its own session; traces of another session in this folder are recorded in
@@ -218,7 +215,8 @@ Binding on every session; only the Manager adds items.
 - **Protocol here, state in the DB.** When a section refers to `Section 6` or `Section 3`, it means that DB table;
   the rule is unchanged, only its storage moved. `AIMEM-state.md` is generated, never edited
 - This folder is a **git repository**: accidental overwrites are recoverable. Commit and push are hard limits
-  (`0.2`) - the Manager commits only after Taeseok's approval; workers leave files and report
+  (`0.2`) - commits are made only on Taeseok's instruction, from his own session; the Manager and workers
+  leave files and report
 - **Nothing technical stops a worker from writing** - compliance is voluntary (`Section 7`). Two slots never edit
   one file at the same time; `Section 6` is the only basis
 - One instruction channel (`0.5`). Workers are one-shot CLI processes; the brief is the instruction and the final
@@ -297,15 +295,18 @@ Case narratives: `retired-sections-2026-11.md` `[REV 129 내림] 7절`; six olde
 Taeseok delegated spawning, retrying and harness choice to the Manager. Approvals are collected in `Section 9`
 and raised together, not one by one.
 
-### 8.0 Top-Level Rule - Claude ACP Manager + Harness CLI Workers
+### 8.0 Top-Level Rule - Engine-Started Manager + Harness CLI Workers
 
 **This section wins over the rest of Section 8.** Why: a Manager turn once took 191 s for 8 s of worker work, and
 only claude carried a commercial model - so the Manager became an Opus session and workers became CLIs launched
 directly, in parallel (`[REV 129 내림] 8.0`).
 
-- **Manager:** a Claude ACP session (`agents.entries.claude`, `subagents.model = "opus[1m]"`). Opened any way other
-  than Taeseok's `/acp spawn … --thread auto`, it is blank every turn, so **this file is its memory** - it starts
-  with `fleet.py status` and Sections `1`, `3`, `4.5` plus `handoff list`, not with the worker's `0.1`
+- **Manager:** a `claude -p` session (Opus) that the engine starts per round, the same way it starts workers
+  (`tools/fleet_rt`: one supervisor process per session, event stream in `.aimem/sessions/<id>/events.jsonl`). It
+  runs with a tool allow-list (fleet tools, tests, read-only shell) and a deny-list (commit, push, delete,
+  install) - a guardrail against accidents, not a security boundary. It is blank
+  every round, so **this file is its memory** - it starts with `fleet.py status` and Sections `1`, `3`, `4.5` plus
+  `handoff list`, not with the worker's `0.1`
 - **Workers:** one-shot CLI processes launched by the Manager:
 
   ```
@@ -315,11 +316,14 @@ directly, in parallel (`[REV 129 내림] 8.0`).
 
   `spawn` prepends the header (slot, token, REV, write paths, hard limits, report format) and checks `--write`
   against `Section 6`. codex runs `codex exec --sandbox workspace-write`, opencode `opencode run`, claude
-  `claude -p` with auto-accepted edits and a read/verify Bash allow-list. Records: `.aimem/runs/<id>.*` (ignored)
-- **Models:** the `slots` table in the DB is the source of truth (harness, model, role, remark); `fleet_slots.json`
-  mirrors it. S1 claude opus (judgment), S4 claude sonnet (speed), S2/S3 kistillm through codex and opencode (cost). Only
-  OpenClaw-configured models (`openclaw models list` ∪ `openclaw.json` providers) may be chosen; `fleet.normalize_model`
-  converts the openclaw key to the harness form. Harness and model are Taeseok's decision (`8.0-8` control table)
+  `claude -p` with auto-accepted edits and a read/verify Bash allow-list. Records: `.aimem/sessions/<id>/`
+  (ignored; runs from before REV 163 stay in `.aimem/runs/<id>.*`). A session silent longer than its provider's
+  limit is ended as `stalled`
+- **Models:** the `slots` table in the DB is the source of truth (harness, model, role, remark). S1 claude opus
+  (judgment), S4 claude sonnet (speed), S2/S3 kistillm through codex and opencode (cost). Only providers and models
+  listed in `fleet.toml` may be chosen (keys live in the repo `.env`, never in a file under git);
+  `fleet.normalize_model` converts the slot's `provider/model` to the harness form. Harness and model are Taeseok's
+  decision (`8.0-8` control table)
 - **One brief in, one report out.** Continuing is a new `spawn` whose brief states the previous result. Workers do
   not talk to each other
 - **Parallel by default:** several `spawn`s in one turn, one `wait`; the reviewer launches alongside the next task;
@@ -330,7 +334,7 @@ directly, in parallel (`[REV 129 내림] 8.0`).
 - **Check ("high-five") report format:** exactly one line, nothing before or after:
   `하이파이브 S<n> OK | REV <N> | 토큰 <t> | 시각 <KST HH:MM> | cwd <pwd> | 모델 <own model or unknown>`
 - **Delegation files** name "the Manager session written in the AIMEM.md header"; their exception list is
-  unchanged. `sessions_spawn(runtime:"acp")` opens only the Manager session; workers never go through the gateway
+  unchanged. The engine is the only thing that opens a Manager session
 - **Ownership binds the Manager too:** never edit a file a worker is writing; keep Manager work on disjoint files or
   wait. **A graph node's `verify` is scoped to its own deliverables** - the full suite runs only at round close
 - **Archiving finished work:** `DONE` tasks, closed requests and finished graphs move after 14 days with
@@ -349,14 +353,14 @@ directly, in parallel (`[REV 129 내림] 8.0`).
 
 #### 8.0-2 Decision and Execution Are Separate
 
-Ideas, plans, design and progress are the Manager's; relays (Gureum, Clo, Octi) are not consulted; split judgment
+Ideas, plans, design and progress are the Manager's; split judgment
 goes to Taeseok. Slots receive only fixed-scope execution - "what and why" is finished before a brief is written.
 A slot asked for a design decision has a defective brief; `BLOCKED` is the right answer.
 
 #### 8.0-3 Parallel Dispatch
 
 Issue independent `spawn`s in one turn and collect with one `wait`; dependent tasks wait for their predecessor;
-never two slots on one file. Concurrency cap: 2~5 (`8.1`) - CLI processes are independent of OpenClaw's limits.
+never two slots on one file. Concurrency cap: 2~5 (`8.1`).
 **kistillm is not serialized**: concurrent S2/S3 runs showed `queued:0`; the delay is prompt re-reading
 (50~60k tokens per turn), so lowering concurrency gains nothing and the only lever is **prompt length** - short
 briefs, narrow write scope.
@@ -420,7 +424,7 @@ may be cut, write progress to the handoff log and report `PARTIAL` - what is not
 Workers read almost nothing: the `0.1` check plus the brief. Their context clears with the process (codex runs
 `--ephemeral`), so the brief carries only what the task needs - length is kistillm's re-reading time. The Manager
 starts blank every round and uses this file plus the handoff log as memory; it may read a lot (header, `1`, `3`,
-`4.5`, `6`, `8`). Finished one-shot sessions are collected by Clo with `sessions.delete`.
+`4.5`, `6`, `8`). Finished sessions leave only their folder; `aimem_db.py archive` moves old ones.
 
 #### 8.0-8 Manager Round Routine and Control
 
@@ -498,7 +502,7 @@ used and **the round's tasks are the `NEW` requests**; with nothing to do the Ma
 
 | Target | Changed by | Path | How the Manager learns |
 | ------ | ---------- | ---- | ---------------------- |
-| Slot harness and model | Taeseok | web Fleet tab / Clo via `aimem_db.py slot` | auto NEW request from `슬롯 관리(웹)`, readiness check, `events(kind=slot)` |
+| Slot harness and model | Taeseok | web Fleet tab / `aimem_db.py slot` | auto NEW request from `슬롯 관리(웹)`, readiness check, `events(kind=slot)` |
 | Slot role, remark, assignment | Manager only | `aimem_db.py slot set`, graphs | (the web refuses with 400) |
 | Request creation, editing while NEW | Taeseok | request form | start step 3 / checkpoint (e) |
 | Request splitting and status | Manager | `aimem_db.py request set`, graphs | - |

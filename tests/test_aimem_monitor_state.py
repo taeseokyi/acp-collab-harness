@@ -246,7 +246,7 @@ class DbIsCanonical(_Base):
         self.seed()
         s = reader.collect(self.root)
         self.assertEqual(s["slots"][0]["model"], "엉터리")
-        self.assertIn("aimem.db", s["slots"][0]["model_source"])
+        self.assertEqual(s["slots"][0]["model_source"], "슬롯 설정")
 
     def test_8a_without_db_model_harness_config_is_used(self):
         self.seed()
@@ -257,18 +257,21 @@ class DbIsCanonical(_Base):
         s = reader.collect(self.root)
         self.assertEqual(s["slots"][0]["model"], reader.harness_model("claude")[0])
 
-    def test_8b_fleet_slots_json_beats_harness_default_when_db_has_no_model(self):
+    def test_8b_fleet_toml_default_model_when_db_has_no_model(self):
+        """DB 에 모델이 없으면 `fleet.toml` 의 `harness.<이름>.default_model` (미러 파일 `fleet_slots.json` 은 더는 읽지 않는다)."""
         self.seed()
         con = sqlite3.connect(self.db)
         with con:
             con.execute("UPDATE slots SET model=NULL")
         con.close()
         (self.root / "tools").mkdir()
-        (self.root / "tools" / "fleet_slots.json").write_text(
-            '{"SDB": {"model": "slot-json-model"}}', encoding="utf-8")
+        (self.root / "tools" / "fleet_slots.json").write_text('{"SDB": {"model": "slot-json-model"}}', encoding="utf-8")
+        (self.root / "fleet.toml").write_text(
+            '[providers.anthropic]\nmodels = ["opus"]\n[harness.claude]\nproviders = ["anthropic"]\ndefault_model = "opus"\n',
+            encoding="utf-8")
         s = reader.collect(self.root)
-        self.assertEqual(s["slots"][0]["model"], "slot-json-model")
-        self.assertEqual(s["slots"][0]["model_source"], reader.SLOT_MODEL_SOURCE)
+        self.assertEqual(s["slots"][0]["model"], "opus")
+        self.assertEqual(s["slots"][0]["model_source"], "fleet.toml 기본")
 
 
 class MarkdownFallback(_Base):

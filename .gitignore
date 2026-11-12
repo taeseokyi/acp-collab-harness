@@ -57,3 +57,8 @@ projects/웹워들/**/__pycache__/
 
 # 함대 설정·비밀 키 (API 키). **절대 커밋하지 않습니다.** 꼴은 .env.example
 .env
+
+# 엔진 v2 운영 상태 (이어 달리기 감시자·라운드 띄우기 잠금) - 재생성 가능
+.aimem/fleet-chain.watch.json
+.aimem/fleet-chain.log
+.aimem/fleet-launch.lock

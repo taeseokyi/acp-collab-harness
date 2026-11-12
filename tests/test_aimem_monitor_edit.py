@@ -95,21 +95,13 @@ class RequestEditTest(unittest.TestCase):
             self.assertIsNone(server._REQ_EDIT_RE.match(p + "/edit"), p)
 
 
-class ManagerStatusCacheTest(unittest.TestCase):
-    def test_cleared_timestamp_with_value_does_not_crash(self):
-        """함대 제어가 `_mgr_cache['at']` 만 비운 상태에서 /api/state 가 TypeError 로 죽던 것 (2026-11-10)."""
-        with server._mgr_lock:
-            saved = dict(server._mgr_cache)
-            server._mgr_cache.update({"at": None, "value": {"ok": True, "sessions": [], "error": None},
-                                      "refreshing": True})
-        try:
-            out = server.manager_status(server.ROOT)
-            self.assertTrue(out["pending"])
-            self.assertIsNone(out["age_sec"])
-        finally:
-            with server._mgr_lock:
-                server._mgr_cache.clear()
-                server._mgr_cache.update(saved)
+class ManagerStatusShapeTest(unittest.TestCase):
+    def test_status_is_a_folder_read_without_pending(self):
+        """관리자 목록은 세션 폴더를 바로 읽는다 - 'pending'·캐시 나이가 없다 (설계 5.6)."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            out = server.manager_status(d)
+        self.assertEqual(out, {"ok": True, "sessions": [], "error": None})
 
 
 if __name__ == "__main__":

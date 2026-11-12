@@ -45,6 +45,8 @@ DETAIL_KEYS = (
     "id", "found", "slot", "harness", "model", "label", "status", "rc", "elapsed_s",
     "started", "ended", "brief", "report", "stderr_tail", "paths", "errors",
 )
+#: 서버가 `reader.run_events()` 로 덧붙이는 키 - reader.run_detail 자체는 16개, `/api/runs/<id>` 는 17개
+SERVER_DETAIL_KEYS = DETAIL_KEYS + ("events",)
 PATH_KEYS = {"dir", "out", "err", "rc", "brief"}
 VALID_ID_RE = re.compile(r"^[0-9]{8}-[0-9]{6}-S[0-9]+(-[0-9]+)?$")
 
@@ -104,9 +106,11 @@ def snapshot_runs(runs_dir):
     )
 
 
-def detail_shape_ok(test, detail):
+def detail_shape_ok(test, detail, served=False):
     test.assertIsInstance(detail, dict)
-    test.assertEqual(set(detail), set(DETAIL_KEYS))
+    test.assertEqual(set(detail), set(SERVER_DETAIL_KEYS if served else DETAIL_KEYS))
+    if served:
+        test.assertIsInstance(detail["events"], str)    # 세션 실행의 사건 보기 (옛 실행은 빈 문자열)
 
     test.assertIsInstance(detail["id"], str)
     test.assertIsInstance(detail["found"], bool)
@@ -387,7 +391,7 @@ class TestServerContract(unittest.TestCase):
         ctype = headers.get("Content-Type", "").split(";")[0].strip()
         self.assertEqual(ctype, "application/json")
         body = json.loads(raw.decode("utf-8"))
-        detail_shape_ok(self, body)
+        detail_shape_ok(self, body, served=True)
         self.assertTrue(body["found"])
         self.assertEqual(body["id"], RUN_ID)
         self.assertEqual(body["rc"], 0)

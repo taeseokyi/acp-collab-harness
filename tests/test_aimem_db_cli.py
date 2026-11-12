@@ -203,12 +203,16 @@ if __name__ == "__main__":
 
 
 class SlotCommandTest(AimemDbCliTest):
-    """`aimem_db.py slot add|set|remove|list` (2026-11-10, 태석님 지시) - DB 정본 + fleet_slots.json 거울."""
+    """`aimem_db.py slot add|set|remove|list` (2026-11-10, 태석님 지시) - DB 가 슬롯 모델의 유일한 정본이다(거울 파일 `tools/fleet_slots.json` 은 더는 쓰지 않는다)."""
 
     def _json(self):
-        return json.loads((self.root / "tools" / "fleet_slots.json").read_text(encoding="utf-8"))
+        """DB 슬롯 행으로 만든 {슬롯: {harness, model?}} - 예전 거울 파일 꼴."""
+        out = {}
+        for r in aimem_db.slot_list():
+            out[r["slot"]] = {"harness": r["harness"], **({"model": r["model"]} if r["model"] else {})}
+        return out
 
-    def test_add_set_remove_roundtrip_and_mirror(self):
+    def test_add_set_remove_roundtrip_and_no_mirror_file(self):
         r = aimem_db.slot_add(None, "claude", "anthropic/claude-opus-5-5", "판단형", "", actor="t")
         self.assertEqual(r["slot"], "S1")
         self.assertEqual(len(r["token"]), 6)
@@ -224,6 +228,7 @@ class SlotCommandTest(AimemDbCliTest):
         res = aimem_db.slot_remove("S2", actor="t")
         self.assertEqual([s["slot"] for s in aimem_db.slot_list()], ["S1"])
         self.assertNotIn("S2", self._json())
+        self.assertFalse((self.root / "tools" / "fleet_slots.json").exists())   # 거울 파일을 만들지 않는다
         with aimem_db.connect() as con:
             kinds = [r["kind"] for r in con.execute("SELECT kind FROM events")]
         self.assertEqual(kinds.count("slot"), 5)   # add, add, set, set, remove

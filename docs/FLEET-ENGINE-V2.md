@@ -224,7 +224,7 @@ idle_timeout_sec = 600
 - 슬롯 명부의 정본은 지금처럼 DB `slots`. `fleet_slots.json` 거울은 없앤다
 - 모니터의 모델 목록(`/api/models`)은 `fleet.toml` 의 공급자·모델에서 만든다
 - 하네스 자체 설정 파일은 하네스의 것이라 그대로 둔다. 다만 `prepare` 가 "슬롯이 가리키는 공급자·모델이 그 하네스 설정에 있는가" 를 점검한다(codex 는 `model_providers.<p>` 와 `model_catalog_json`, opencode 는 `provider.<p>.models`)
-- 비밀 키는 `fleet.toml` 에 적지 않는다. 환경변수 이름(`env_key`)만 적고, 값은 `~/.config/ai-fleet/env`(권한 600)에서 읽는다
+- 비밀 키는 `fleet.toml` 에 적지 않는다. 환경변수 이름(`env_key`)만 적고, 값은 저장소 루트 `.env`(권한 600, git 제외)에서 읽는다 (2026-11-12 태석님 지시로 `~/.config/ai-fleet/env` 안을 대체). 세션은 `.env` 에서 자기 공급자의 `env_key`(꼴 `*_API_KEY`) 하나만 받고, 준비 점검은 키를 보내지 않고 응답 여부만 본다
 
 ---
 

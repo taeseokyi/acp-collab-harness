@@ -18,7 +18,7 @@
     GET  /api/requests/<id> -> 요청 하나의 전문 (목록은 600자로 잘림)
     GET  /api/projects/<이름>/files, /file?path= -> 프로젝트 결과물 목록·본문 (텍스트, 가림 적용)
     GET  /app/<이름>/<경로> -> `app.json` 이 선언한 앱 폴더의 정적 파일 (인증 뒤, /app/ CSP)
-    GET  /api/managers/<id8> -> 관리자 세션 상세 (최근 단계·라운드 전달·이벤트·그래프, 도구 출력 제외)
+    GET  /api/managers/<세션 id> -> 관리자 세션 상세 (최근 단계·마지막 보고·라운드 기록·이벤트·그래프, 도구 출력 제외)
     POST /api/requests/<id>/edit -> NEW·미분담 요청의 제목·본문 수정 (Q-261110-549a)
     POST /api/fleet/<동작> -> 함대 제어 prepare|run|pause|stop|round (tools/fleet_ctl.py)
     GET  /login            -> static/login.html (인증 면제)
@@ -608,8 +608,7 @@ class LoginGuard:
 
 # -- 설정 파일 / 감사 로그 (접근 제어 보강, 2026-11-10) -------------------------
 
-MONITOR_ENV_FILE = ".aimem/tls/monitor.env"      # 0600. KISTI_API_KEY / GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET(없으면 기기 흐름)
-OPENCLAW_ENV_FILE = pathlib.Path.home() / ".openclaw" / ".env"
+MONITOR_ENV_FILE = ".env"                  # 저장소 루트의 .env (0600) - 함대 비밀 키가 사는 한 곳 (`fleet_rt.env`)
 AUDIT_LOG = ".aimem/access.log"                   # git 제외. 로그인·쓰기 동작만 (폴링은 적지 않음)
 #: CSP 출처에 넣어도 되는 **추가** 호스트 이름 (쉼표로 나눔). 바깥 주소가 이름(도메인)이면
 #: `.aimem/monitor.env` 에 `AIMEM_MONITOR_PUBLIC_HOSTS=aimem.example.org` 처럼 적습니다.
@@ -652,48 +651,36 @@ _denied_evicted_skipped = 0
 _denied_window_seen = set()
 
 
-def _parse_env(text):
-    out = {}
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        k = k.strip().removeprefix("export ").strip()
-        v = v.strip()
-        if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
-            v = v[1:-1]
-        out[k] = v
-    return out
+def _fleet_rt(name):
+    """`fleet_rt.<name>` - 모니터 패키지와 같은 `tools/` 의 것을 씁니다 (임시 저장소를 띄우는 검사도 같은 코드)."""
+    tools_dir = str(pathlib.Path(__file__).resolve().parent.parent)
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    import importlib  # noqa: PLC0415
+    return importlib.import_module(f"fleet_rt.{name}")
 
 
-def load_monitor_env(root=ROOT, openclaw_env=OPENCLAW_ENV_FILE):
-    """비밀값을 **셸 환경이 아니라 파일에서** 읽습니다. 이미 환경에 있으면 덮지 않습니다.
+def load_monitor_env(root=ROOT):
+    """비밀값을 **셸 환경이 아니라 `<root>/.env` 한 곳에서** 읽습니다. 이미 환경에 있으면 덮지 않습니다.
 
     서버를 다시 띄울 때마다 `KISTI_API_KEY` 가 빠져 KISTI 카드가 오류를 내던 것(2026-11-10 실측)과,
-    GitHub 비밀을 셸 히스토리에 남기지 않으려는 것이 이유입니다. 그룹·기타가 읽을 수 있는 파일은
-    **읽지 않습니다**(비밀 파일 권한 검사). 돌려주는 값: [(키, 출처)] - 값은 돌려주지 않습니다.
+    GitHub 비밀을 셸 히스토리에 남기지 않으려는 것이 이유입니다. 읽는 규칙은 엔진과 같은 `fleet_rt.env` 입니다 -
+    그룹·기타가 읽을 수 있는 파일은 **읽지 않습니다**(비밀 파일 권한 검사). 모니터가 쓰는 키(`_ENV_KEYS`)만 환경에 넣습니다.
+    돌려주는 값: [(키, 출처)] - 값은 돌려주지 않습니다.
     """
+    env = _fleet_rt("env")
+    path = pathlib.Path(root) / env.ENV_FILE
+    problem = env.env_problem(root)
+    if problem:
+        if path.exists():
+            log_line(f"  경고: {path} 를 읽지 않습니다 - {problem}")
+        return []
     loaded = []
-    sources = [(pathlib.Path(root) / MONITOR_ENV_FILE, _ENV_KEYS)]
-    if openclaw_env is not None:
-        sources.append((pathlib.Path(openclaw_env), (KISTI_API_KEY_ENV,)))   # 오픈클로 쪽은 KISTI 키만
-    for path, keys in sources:
-        try:
-            st = path.stat()
-        except OSError:
-            continue
-        if st.st_mode & 0o077:
-            log_line(f"  경고: {path} 권한이 {oct(st.st_mode & 0o777)} 라 읽지 않습니다 (chmod 600)")
-            continue
-        try:
-            env = _parse_env(path.read_text(encoding="utf-8"))
-        except OSError:
-            continue
-        for k in keys:
-            if env.get(k) and not os.environ.get(k):
-                os.environ[k] = env[k]
-                loaded.append((k, str(path)))
+    values = env.load_env(root)
+    for k in _ENV_KEYS:
+        if values.get(k) and not os.environ.get(k):
+            os.environ[k] = values[k]
+            loaded.append((k, str(path)))
     return loaded
 
 
@@ -892,7 +879,7 @@ def _empty_state(root, errors):
     state = _blank_keys(root)
     state.update({"graphs": collect_graphs(root, errors),
                   "managers": manager_status(root), "errors": errors, "projects": list_projects(root)})
-    state["fleet"] = fleet_state(root, state["managers"])
+    state["fleet"] = fleet_state(root)
     state["claude_usage"] = _safe_claude_usage(root)
     return scrub_public(state, root)
 
@@ -1151,7 +1138,7 @@ def collect_state(root=ROOT):
     state["graphs"] = collect_graphs(root, state["errors"])
     state["projects"] = list_projects(root, state.get("requests") if isinstance(state.get("requests"), list) else None)
     state["managers"] = manager_status(root)
-    state["fleet"] = fleet_state(root, state["managers"])
+    state["fleet"] = fleet_state(root)
     state["claude_usage"] = _safe_claude_usage(root)
     return scrub_public(state, root)
 
@@ -1177,7 +1164,7 @@ def _detail_masker(root):
 
 
 def run_detail(run_id, root=ROOT):
-    """`reader.run_detail()` 로 넘기고, 없거나 깨져도 **키 16개**는 채워 돌려줍니다.
+    """`reader.run_detail()` 로 넘기고, 없거나 깨져도 **키 17개**는 채워 돌려줍니다.
 
     `reader` 는 S1 소유라 서버가 먼저 떠 있을 수 있습니다(`_reader` 와 같은 이유).
 
@@ -1205,6 +1192,11 @@ def run_detail(run_id, root=ROOT):
         return mask_deep(blank, mask)
     out = dict(blank)
     out.update({k: v for k, v in d.items() if k in RUN_DETAIL_KEYS})
+    try:   # 세션 실행의 사건 보기 (옛 실행·읽기 실패는 빈 문자열). reader 가 비밀을 가려 주고 아래 mask 가 한 번 더 가린다
+        ev = getattr(_reader(), "run_events", None)
+        out["events"] = ev(run_id, root) if callable(ev) else ""
+    except Exception:  # noqa: BLE001
+        out["events"] = ""
     return mask_deep(out, mask)
 
 
@@ -1224,108 +1216,71 @@ def _no_redirect_opener():
     return urllib.request.build_opener(_NoRedirect)
 
 
-# -- 관리자 세션 (`fleet.py children` 의 관리자 행) -----------------------------
+# -- 관리자 세션 (`.aimem/sessions/M-R<N>-<HHMMSS>/`) ---------------------------
 #
-# 관리자는 S1~S4 와 별개인 Opus ACP 세션이라 `runs` 에 나오지 않습니다. 관리자가
-# 계획·검증 중이면 작업자가 0개라 화면이 멈춘 것처럼 보였습니다 (요청 Q-261110-549a).
-# `openclaw sessions` 는 한 번에 4초 걸리므로 **배경 갱신 + 캐시** 입니다.
+# 관리자는 `role == "manager"` 인 세션 폴더입니다 (설계 3.3). 작업자(S1~S4)와 별개라 계획·검증 중에는
+# 작업자가 0개이므로, 화면이 멈춘 것처럼 보이지 않게 따로 카드를 둡니다. 자료는 **폴더 읽기**라 배경 갱신·
+# 캐시·'조회 중' 이 없습니다 (설계 5.6) - 부를 때마다 읽습니다 (끝난 세션의 단계 수만 파일 크기·mtime 으로 메모).
 
-MANAGER_CACHE_SEC = 30
-MANAGER_TIMEOUT_SEC = 25
 MANAGER_MAX = 6
-ACPX_SESSIONS = pathlib.Path.home() / ".openclaw" / "acpx" / "sessions"
-_mgr_lock = threading.Lock()
-_mgr_cache = {"at": None, "value": None, "refreshing": False}
-
-
-def _ms_iso(ms):
-    try:
-        return datetime.datetime.fromtimestamp(int(ms) / 1000).isoformat(timespec="seconds")
-    except (TypeError, ValueError, OverflowError, OSError):
-        return None
-
-
-def _fetch_managers():
-    """`openclaw sessions --agent claude` 에서 ACP 관리자 세션만 골라 요약합니다. 키 원문은 내보내지 않습니다."""
-    import subprocess
-    res = subprocess.run(["openclaw", "sessions", "--agent", "claude", "--json"],
-                         capture_output=True, text=True, timeout=MANAGER_TIMEOUT_SEC)
-    if res.returncode != 0:
-        raise RuntimeError((res.stderr or res.stdout or "").strip()[:160] or f"rc {res.returncode}")
-    payload = json.loads(res.stdout)
-    sessions = payload.get("sessions", []) if isinstance(payload, dict) else payload
-    out = []
-    for s in sessions:
-        if not isinstance(s, dict) or ":acp:" not in str(s.get("key", "")):
-            continue
-        sid = str(s.get("key", "")).rsplit(":", 1)[-1]
-        status = str(s.get("status") or "unknown")[:20]
-        rec = _manager_record(sid[:8])
-        info = {"record_kb": None, "last_activity": None, "steps": None, "last_step": None}
-        if rec is not None:
-            try:
-                st = rec.stat()
-                info["record_kb"] = st.st_size // 1024
-                info["last_activity"] = datetime.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")
-            except OSError:
-                pass
-            if status == "running":            # 끝난 세션의 1MB 기록을 30초마다 다시 읽지 않는다
-                steps = _manager_steps(rec)
-                if steps is not None:
-                    info["steps"] = len(steps)
-                    info["last_step"] = _step_line(steps[-1]) if steps else None
-        out.append({
-            "label": str(s.get("label") or "(라벨 없음)")[:80],
-            "status": status,
-            "started": _ms_iso(s.get("sessionStartedAt")),
-            "updated": _ms_iso(s.get("updatedAt")),
-            "id": sid[:8],
-            **info,
-        })
-    out.sort(key=lambda m: m.get("started") or "", reverse=True)
-    return out[:MANAGER_MAX]
-
-
-_MGR_ID_RE = re.compile(r"\A[0-9a-f]{8}\Z")
-_REQ_MGR_RE = re.compile(r"\A/api/managers/([0-9a-f]{8})\Z")
 MANAGER_STEPS_MAX = 40
+MANAGER_REPORT_MAX = 200_000
+#: 관리자 세션 id. **파일 시스템에 닿기 전에** 이 꼴만 받습니다(경로 탈출 방어) - 작업자 id(`T-…`)도 거절.
+_MGR_ID_RE = re.compile(r"\AM-R[0-9]+-[0-9]{6}(?:-[0-9]+)?\Z", re.ASCII)
+_REQ_MGR_RE = re.compile(r"\A/api/managers/(M-R[0-9]+-[0-9]{6}(?:-[0-9]+)?)\Z", re.ASCII)
+#: 세션 상태 -> 화면 어휘 (`app.js` renderManager 가 running/done/failed/killed 만 가른다)
+_MGR_STATUS = {"running": "running", "done": "done", "failed": "failed", "timeout": "failed",
+               "stalled": "failed", "lost": "failed", "killed": "killed"}
+_mgr_steps_memo = {}
 
 
-def _manager_record(id8):
-    """관리자 세션 기록 파일(`~/.openclaw/acpx/sessions/*<uuid>*.json`). id8 은 uuid 앞 8자(16진)."""
-    if not _MGR_ID_RE.match(id8 or ""):
+def _mgr_sessions_dir(root):
+    return pathlib.Path(root) / ".aimem" / "sessions"
+
+
+def _mgr_dir(root, sid):
+    """관리자 세션 폴더. id 꼴이 틀리거나 폴더가 없거나 심볼릭 링크이거나 `role` 이 관리자가 아니면 None."""
+    if not isinstance(sid, str) or not _MGR_ID_RE.fullmatch(sid):
         return None
+    d = _mgr_sessions_dir(root) / sid
     try:
-        hits = [f for f in ACPX_SESSIONS.glob(f"*%3A{id8}*.json") if f.is_file() and not f.is_symlink()]
+        if d.is_symlink() or not d.is_dir():
+            return None
     except OSError:
         return None
-    return max(hits, key=lambda f: f.stat().st_mtime) if hits else None
-
-
-def _manager_steps(path):
-    """기록의 마지막 에이전트 턴에서 단계 목록 [{kind, text}] - **도구 결과(출력)는 싣지 않습니다.**"""
-    try:
-        if path.stat().st_size > 64 * 1024 * 1024:
-            return None
-        d = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, ValueError):
+    # 화면이 읽는 파일(meta·events·end·report) 가운데 링크가 하나라도 있으면 그 폴더를 통째로 보이지 않는다 -
+    # 실행 상세와 같은 판정(`reader.session_symlinks`). 링크를 따라가면 저장소 밖 파일이 인증된 화면에 실렸다.
+    if _reader().session_symlinks(d):
         return None
-    steps = []
-    for m in (d.get("messages") or []):
-        agent = m.get("Agent") if isinstance(m, dict) else None
-        if not isinstance(agent, dict):
-            continue
-        for item in agent.get("content") or []:
-            if not isinstance(item, dict):
-                continue
-            if "Text" in item and isinstance(item["Text"], str) and item["Text"].strip():
-                steps.append({"kind": "text", "text": item["Text"].strip()})
-            elif isinstance(item.get("ToolUse"), dict):
-                tu = item["ToolUse"]
-                inp = tu.get("input") if isinstance(tu.get("input"), dict) else {}
-                cmd = inp.get("command") or inp.get("file_path") or inp.get("path") or tu.get("name") or ""
-                steps.append({"kind": "tool", "text": str(cmd), "desc": str(inp.get("description") or "")})
-    return steps
+    meta = _fleet_rt("sessions").load_meta(d)
+    if not isinstance(meta, dict) or meta.get("role") != "manager":
+        return None
+    return d
+
+
+def _step_from_event(at, ev):
+    """사건 -> 화면 단계 `{kind, text, desc, at}`. 글·도구 호출만, 그 밖(usage·end·raw·error)은 None.
+    도구 **출력**은 사건에 없고(호출만 기록), 있어도 싣지 않습니다."""
+    if ev.kind == "text":
+        t = str(ev.text or "").strip()
+        return {"kind": "text", "text": t, "desc": "", "at": at} if t else None
+    if ev.kind == "tool":
+        data = ev.data if isinstance(ev.data, dict) else {}
+        inp = data.get("input") if isinstance(data.get("input"), dict) else {}
+        return {"kind": "tool", "text": str(ev.text or data.get("name") or ""),
+                "desc": str(inp.get("description") or ""), "at": at}
+    return None
+
+
+def _manager_steps(d, n=None):
+    """세션의 단계 목록(오래된 것이 앞). `n` 이 있으면 끝의 n 개 사건에서만."""
+    rt = _fleet_rt("sessions")
+    out = []
+    for at, ev in rt.tail(d, n if n else 10 ** 9):
+        st = _step_from_event(at, ev)
+        if st:
+            out.append(st)
+    return out
 
 
 def _step_line(step):
@@ -1334,61 +1289,112 @@ def _step_line(step):
     return ("▸ " if step.get("kind") == "tool" else "") + s[:160]
 
 
-def manager_detail(id8, root=ROOT, all_steps=False):
-    """관리자 세션 하나의 상세: 요약 + 최근 단계 + 라운드 전달 기록 + 라운드 중 이벤트·그래프. (코드, 본문)"""
-    if not _MGR_ID_RE.match(id8 or ""):
+def _steps_summary(d):
+    """(단계 수, 마지막 단계 한 줄). 파일 크기·mtime 이 같으면 다시 세지 않습니다."""
+    try:
+        st = (d / "events.jsonl").stat()
+    except OSError:
+        return 0, None
+    key = (str(d), st.st_size, st.st_mtime_ns)
+    hit = _mgr_steps_memo.get(key)
+    if hit is None:
+        steps = _manager_steps(d)
+        hit = (len(steps), _step_line(steps[-1]) if steps else None)
+        if len(_mgr_steps_memo) > 64:
+            _mgr_steps_memo.clear()
+        _mgr_steps_memo[key] = hit
+    return hit
+
+
+def _manager_row(d, live=None):
+    rt = _fleet_rt("sessions")
+    meta = rt.load_meta(d) or {}
+    stt = rt.state(d, live=live)
+    sstate = stt.get("state") or "lost"
+    try:
+        size = (d / "events.jsonl").stat().st_size
+    except OSError:
+        size = 0
+    n, last = _steps_summary(d)
+    rnd = meta.get("round")
+    redact = _reader()._redact
+    return {
+        "label": redact(str(meta.get("label") or d.name)[:80]),
+        "status": _MGR_STATUS.get(sstate, "failed"),
+        "started": meta.get("started"),
+        "updated": stt.get("ended") or stt.get("last_event_at") or meta.get("started"),
+        "id": d.name,
+        "record_kb": size // 1024,
+        "last_activity": stt.get("last_event_at"),
+        "steps": n,
+        "last_step": redact(last) if isinstance(last, str) else last,
+        "round": rnd if isinstance(rnd, int) and not isinstance(rnd, bool) else None,
+        "session_state": sstate,
+        "orphaned": bool(stt.get("orphaned")),
+    }
+
+
+def manager_status(root=ROOT):
+    """관리자 세션 목록 (최신이 앞, `MANAGER_MAX` 개). 폴더를 바로 읽습니다 - `pending` 이 없습니다."""
+    out = {"ok": True, "sessions": [], "error": None}
+    try:
+        rt = _fleet_rt("sessions")
+        base = _mgr_sessions_dir(root)
+        names = [p.name for p in base.iterdir() if _MGR_ID_RE.fullmatch(p.name)] if base.is_dir() else []
+        found = []
+        for name in names:
+            d = _mgr_dir(root, name)
+            if d is not None:
+                found.append(((rt.load_meta(d) or {}).get("started") or "", name, d))
+        found.sort(reverse=True)
+        live = rt.live_index(base) if found else None
+        out["sessions"] = [_manager_row(d, live) for _, _, d in found[:MANAGER_MAX]]
+    except Exception as e:  # noqa: BLE001 - 관리자 카드를 못 만들어도 화면은 떠야 한다
+        out.update({"ok": False, "sessions": [], "error": f"{type(e).__name__}: {str(e)[:120]}"})
+    return out
+
+
+def _round_record(root, n):
+    """`rounds/R<N>/round.json` -> {round, at, brief, requests, projects, state}. 없거나 깨지면 None."""
+    if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+        return None
+    f = pathlib.Path(root) / "rounds" / f"R{n}" / "round.json"
+    try:
+        if f.is_symlink() or not f.is_file():
+            return None
+        d = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(d, dict):
+        return None
+    return {"round": n, "at": d.get("at"), "brief": d.get("brief"), "state": d.get("state"),
+            "requests": [str(x)[:40] for x in (d.get("requests") or [])[:50]] if isinstance(d.get("requests"), list) else [],
+            "projects": [str(x)[:60] for x in (d.get("projects") or [])[:50]] if isinstance(d.get("projects"), list) else []}
+
+
+def manager_detail(sid, root=ROOT, all_steps=False):
+    """관리자 세션 하나의 상세: 요약 + 최근 단계 + 마지막 보고 + 라운드 기록 + 세션 시간대의 이벤트·그래프. (코드, 본문)"""
+    if not isinstance(sid, str) or not _MGR_ID_RE.fullmatch(sid):
         return 400, {"ok": False, "error": "잘못된 관리자 id 입니다"}
-    with _mgr_lock:
-        cached = dict(_mgr_cache["value"] or {})
-    sess = next((s for s in cached.get("sessions") or [] if s.get("id") == id8), None)
-    rec = _manager_record(id8)
-    if sess is None and rec is None:
-        return 404, {"ok": False, "error": f"그런 관리자 세션이 없습니다: {id8}"}
-    out = {"ok": True, "id": id8, "session": sess, "steps": [], "steps_total": 0, "relay": None,
-           "events": [], "graphs": []}
-    if rec is not None:
-        steps = _manager_steps(rec) or []
-        out["steps_total"] = len(steps)
-        # 단계 본문은 자르지 않는다(상세는 전문, 2026-11-10). 기본은 최근 MANAGER_STEPS_MAX 개, `?all=1` 이면 전부.
-        shown = steps if all_steps else steps[-MANAGER_STEPS_MAX:]
-        out["steps"] = [{"kind": s["kind"], "text": s["text"], "desc": s.get("desc", "")} for s in shown]
-        try:
-            st = rec.stat()
-            out["record_kb"] = st.st_size // 1024
-            out["last_activity"] = datetime.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")
-        except OSError:
-            pass
-        if sess is None:
-            # 세션 목록 캐시에 없으면(서버 막 시작·지운 세션) 기록 파일의 시작 시각으로 대신합니다
-            try:
-                d = json.loads(rec.read_text(encoding="utf-8", errors="replace"))
-                raw = str(d.get("agent_started_at") or d.get("created_at") or "")
-                started_utc = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
-                sess = {"label": d.get("title") or d.get("name"), "status": "closed" if d.get("closed") else "?",
-                        "started": started_utc.astimezone().replace(tzinfo=None).isoformat(timespec="seconds"),
-                        "id": id8}
-                out["session"] = sess
-            except (OSError, ValueError, TypeError):
-                pass
-    label = (sess or {}).get("label") or ""
-    m = re.search(r"\bR(\d+)\b", label)
-    relay_f = pathlib.Path(root) / ".aimem" / "relay" / f"r{m.group(1)}.json" if m else None
-    if relay_f is not None and relay_f.is_file():
-        try:
-            out["relay"] = json.loads(relay_f.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            pass
-    started = (sess or {}).get("started")
+    d = _mgr_dir(root, sid)
+    if d is None:
+        return 404, {"ok": False, "error": f"그런 관리자 세션이 없습니다: {sid}"}
+    sess = _manager_row(d)
+    steps = _manager_steps(d)
+    shown = steps if all_steps else steps[-MANAGER_STEPS_MAX:]
+    # 단계 본문은 자르지 않는다(상세는 전문, 2026-11-10). 기본은 최근 MANAGER_STEPS_MAX 개, `?all=1` 이면 전부.
+    out = {"ok": True, "id": sid, "session": sess, "steps": shown, "steps_total": len(steps),
+           "record_kb": sess["record_kb"], "last_activity": sess["last_activity"],
+           "report": (_fleet_rt("sessions").report(d) or "")[:MANAGER_REPORT_MAX],
+           "round": _round_record(root, sess.get("round")), "events": [], "graphs": []}
+    started = sess.get("started")
     if started:
+        until = "9999"
+        if sess["status"] != "running":
+            until = str(sess.get("updated") or sess.get("last_activity") or "9999")   # 끝난 세션은 끝난 시각까지만
         try:
-            tools_dir = str(pathlib.Path(root) / "tools")
-            if tools_dir not in sys.path:
-                sys.path.insert(0, tools_dir)
-            import aimem_db  # noqa: PLC0415
-            until = "9999"
-            if (sess or {}).get("status") != "running" and out.get("last_activity"):
-                until = out["last_activity"]          # 끝난 세션은 그 세션이 끝난 시각까지만
-            with aimem_db.connect() as con:
+            db = _aimem_db(root)
+            with db.connect() as con:
                 rows = con.execute("SELECT at, actor, rev, kind, body FROM events WHERE at >= ? AND at <= ? "
                                    "ORDER BY seq DESC" + ("" if all_steps else " LIMIT 30"), (started, until)).fetchall()
             out["events"] = [{"at": r["at"], "actor": r["actor"], "rev": r["rev"], "kind": r["kind"],
@@ -1397,50 +1403,15 @@ def manager_detail(id8, root=ROOT, all_steps=False):
             pass
         try:
             for g in collect_graphs(root, []):
-                if started[:19] <= str(g.get("created") or "") <= (out.get("last_activity") if (sess or {}).get("status") != "running" and out.get("last_activity") else "9999"):
+                if str(started)[:19] <= str(g.get("created") or "") <= until:
                     out["graphs"].append({"id": g.get("id"), "request": g.get("request"), "percent": g.get("percent"),
                                           "counts": g.get("counts")})
         except Exception:  # noqa: BLE001
             pass
-    return 200, mask_deep(out, _detail_masker(root))
-
-
-def _refresh_managers():
-    try:
-        value = {"ok": True, "sessions": _fetch_managers(), "error": None}
-    except Exception as e:  # noqa: BLE001 - 배경 스레드
-        value = {"ok": False, "sessions": [], "error": f"{type(e).__name__}: {str(e)[:120]}"}
-    with _mgr_lock:
-        old = _mgr_cache["value"]
-        if not value["ok"] and old and old.get("sessions"):
-            value["sessions"] = old["sessions"]   # 실패해도 지난 목록은 남긴다 (stale 로 표시)
-        _mgr_cache.update({"at": datetime.datetime.now(), "value": value, "refreshing": False})
-
-
-def manager_status(root=ROOT):
-    """캐시를 즉시 돌려주고, 낡았으면 배경 갱신 하나를 띄웁니다. 실제 저장소가 아니면(테스트) 부르지 않습니다."""
-    if pathlib.Path(root).resolve() != ROOT:
-        return {"ok": True, "sessions": [], "pending": False, "age_sec": None, "error": None}
-    now = datetime.datetime.now()
-    with _mgr_lock:
-        at, val = _mgr_cache["at"], _mgr_cache["value"]
-        fresh = val is not None and at is not None and (now - at).total_seconds() < MANAGER_CACHE_SEC
-        start = not fresh and not _mgr_cache["refreshing"]
-        if start:
-            _mgr_cache["refreshing"] = True
-    if start:
-        threading.Thread(target=_refresh_managers, daemon=True, name="manager-refresh").start()
-    if val is None:
-        return {"ok": True, "sessions": [], "pending": True, "age_sec": None, "error": None}
-    age = int((now - at).total_seconds()) if at else None
-    if age is not None and age > MANAGER_CACHE_SEC * 4:
-        # 아무도 화면을 안 보는 동안은 갱신이 돌지 않는다 - 몇 시간 묵은 목록을 "지금" 처럼 내주면 끝난 관리자가
-        # '실행 중' 으로 보인다(R8 이 끝난 뒤 R9 도중에 그렇게 보였다). 너무 낡았으면 비우고 '조회 중' 으로 답한다.
-        return {"ok": True, "sessions": [], "pending": True, "age_sec": age, "error": None}
-    out = dict(val)
-    # `at` 은 함대 제어 직후 강제 갱신을 위해 None 으로 비워질 수 있습니다 (값은 남김) - 그때는 갱신 중
-    out.update({"pending": at is None, "age_sec": age})
-    return out
+    # 단계·보고·DB 이벤트에도 실행 상세와 같은 가림(`reader._redact`)을 먹인다 - 관리자도 키를 찍을 수 있다.
+    # 값 일치 가림(`.env` 의 모든 값)은 응답을 보낼 때 `_scrub_secrets` 가 한 번 더 한다.
+    mask, redact = _detail_masker(root), _reader()._redact
+    return 200, mask_deep(out, lambda v: mask(redact(v)) if isinstance(v, str) else v)
 
 
 # -- 함대 제어 (`tools/fleet_ctl.py`) -----------------------------------------
@@ -1452,8 +1423,8 @@ FLEET_ACTIONS = ("prepare", "run", "pause", "stop", "round")
 _REQ_FLEET_RE = re.compile(r"\A/api/fleet/(prepare|run|pause|stop|round|chain)\Z")
 
 # -- 슬롯 관리 (2026-11-10, 태석님 지시 "슬롯 하네스 추가·삭제, 모델 지정") ----------------------------
-# 정본은 `.aimem/aimem.db` slots - `tools/aimem_db.py slot *` 과 같은 함수를 부른다. 모델은 **OpenClaw 가 설정한
-# 모델 목록**(`openclaw models list --json`)에서 고른다. 쓰기는 인증 뒤에서만, 감사 로그에 남긴다.
+# 정본은 `.aimem/aimem.db` slots - `tools/aimem_db.py slot *` 과 같은 함수를 부른다. 모델은 **`fleet.toml` 에 설정된
+# 모델 목록**(`fleet_rt.config`)에서 고른다. 쓰기는 인증 뒤에서만, 감사 로그에 남긴다.
 _REQ_SLOT_RE = re.compile(r"\A/api/slots/(S\d{1,3})/(set|remove)\Z")
 
 
@@ -1497,11 +1468,6 @@ def archive_action(payload, by, root=ROOT):
     return 200, {"ok": True, "dry_run": False, "plan": summary, "moved": out,
                  "moved_counts": moved_counts}
 SLOT_HARNESSES = ("claude", "codex", "opencode")
-MODELS_CACHE_SEC = 60
-_models_cache = {"at": None, "value": None}
-_models_lock = threading.Lock()
-
-
 def _aimem_db(root):
     tools_dir = str(pathlib.Path(root) / "tools")
     if tools_dir not in sys.path:
@@ -1510,80 +1476,29 @@ def _aimem_db(root):
     return aimem_db
 
 
-def _models_for_harness(key):
-    """openclaw 모델 키를 어느 하네스가 받을 수 있나. claude CLI 는 Anthropic 모델만, codex/opencode 는 그 밖(kistillm·EXAONE·…)."""
-    prov = key.split("/", 1)[0].lower()
-    if prov in ("anthropic", "claude-cli"):
-        return ["claude"]
-    return ["codex", "opencode"]
+def fleet_models(root=ROOT):
+    """슬롯 편집의 모델 목록 = `fleet.toml` 의 `[harness.*].providers` x `[providers.*].models` (`fleet_rt.config`).
 
-
-OPENCLAW_CONFIG = pathlib.Path.home() / ".openclaw" / "openclaw.json"
-
-
-def _models_from_openclaw_config(path=None):
-    """`~/.openclaw/openclaw.json` 의 `models.providers.<p>.models[]` → {key: {name}}. 비밀(baseUrl·apiKey)은 읽지 않는다.
-    `openclaw models list` 는 인증이 안 붙은 공급자(EXAONE 등)를 '설정됨' 으로 안 보여 주는데, 그게 기본 모델이다(2026-11-10 실측)."""
-    out = {}
+    파일이 없으면 내장 기본값입니다. 읽는 비용이 mtime 캐시 안이라 따로 캐시하지 않습니다.
+    claude 모델은 공급자 접두 없는 별칭(`opus`), 나머지는 `공급자/모델`. `harnesses` 는 그 모델을 받을 수 있는 하네스들.
+    꼴이 깨졌으면 빈 목록 + error 로 낮춥니다(화면은 떠야 합니다).
+    """
+    out = {"ok": False, "models": [], "error": None, "source": "fleet.toml [providers.*] models + [harness.*] providers",
+           "fetched": datetime.datetime.now().isoformat(timespec="seconds")}
     try:
-        cfg = json.loads((path or OPENCLAW_CONFIG).read_text(encoding="utf-8"))
-        for prov, v in ((cfg.get("models") or {}).get("providers") or {}).items():
-            for m in (v or {}).get("models") or []:
-                mid = m.get("id") if isinstance(m, dict) else m
-                if mid:
-                    out[f"{prov}/{mid}"] = {"name": (m.get("name") if isinstance(m, dict) else None) or str(mid)}
-        prim = (((cfg.get("agents") or {}).get("defaults") or {}).get("model") or {}).get("primary")
-        if isinstance(prim, str) and prim:
-            out.setdefault(prim, {"name": prim})["default"] = True
-    except (OSError, ValueError, AttributeError):
-        pass
-    return out
-
-
-def openclaw_models(now=None, cache_sec=MODELS_CACHE_SEC):
-    """OpenClaw 가 설정한 모델 = `openclaw models list --json` ∪ `openclaw.json` providers. 60초 캐시.
-    둘 다 실패하면 빈 목록 + error 로 낮춘다(화면은 떠야 한다)."""
-    now = now or datetime.datetime.now()
-    with _models_lock:
-        at, val = _models_cache["at"], _models_cache["value"]
-        if val is not None and at is not None and (now - at).total_seconds() < cache_sec:
-            return val
-    exe = shutil.which("openclaw")
-    out = {"ok": False, "models": [], "error": None, "source": "openclaw models list --json + ~/.openclaw/openclaw.json providers",
-           "fetched": now.isoformat(timespec="seconds")}
+        cfg = _fleet_rt("config").load(root)
+    except Exception as e:  # noqa: BLE001 - ConfigError 포함
+        out["error"] = f"{type(e).__name__}: {str(e)[:160]}"
+        return out
     by_key = {}
-    if not exe:
-        out["error"] = "openclaw 가 PATH 에 없습니다"
-    else:
-        try:
-            r = subprocess.run([exe, "models", "list", "--json"], capture_output=True, text=True, timeout=20)
-            data = json.loads(r.stdout or "{}")
-            items = data.get("models") if isinstance(data, dict) else data
-            for m in items or []:
-                if not isinstance(m, dict) or not m.get("key"):
-                    continue
-                key = str(m["key"])
-                tags = [str(t) for t in (m.get("tags") or []) if isinstance(t, str)]
-                by_key[key] = {"key": key, "name": str(m.get("name") or key), "provider": key.split("/", 1)[0],
-                               "aliases": [t[6:] for t in tags if t.startswith("alias:")],
-                               "context": m.get("contextWindow"), "harnesses": _models_for_harness(key), "from": ["list"]}
-            out["ok"] = True
-        except (OSError, subprocess.TimeoutExpired, ValueError) as e:
-            out["error"] = f"{type(e).__name__}: {str(e)[:120]}"
-    cfg = _models_from_openclaw_config()
-    for key, info in cfg.items():
-        if key in by_key:
-            by_key[key]["from"].append("config")
-        else:
-            by_key[key] = {"key": key, "name": info["name"], "provider": key.split("/", 1)[0], "aliases": [], "context": None,
-                           "harnesses": _models_for_harness(key), "from": ["config"]}
-        if info.get("default"):
-            by_key[key]["default"] = True
-    if cfg:
-        out["ok"] = True
-    out["models"] = sorted(by_key.values(), key=lambda m: (0 if m["provider"] in ("anthropic", "claude-cli") else 1, m["key"]))
-    with _models_lock:
-        _models_cache["at"], _models_cache["value"] = now, out
+    for h in cfg.harnesses():
+        for m in cfg.models_for(h):
+            e = by_key.setdefault(m["key"], {"key": m["key"], "name": m["name"], "provider": m["provider"], "aliases": [],
+                                             "context": None, "harnesses": [], "from": ["fleet.toml"]})
+            if h not in e["harnesses"]:
+                e["harnesses"].append(h)
+    out["ok"] = True
+    out["models"] = sorted(by_key.values(), key=lambda m: (0 if m["provider"] == "anthropic" else 1, m["key"]))
     return out
 
 
@@ -1612,18 +1527,21 @@ def _slot_payload_fields(payload):
     return pick("slot", 6), pick("harness", 16), pick("model", 120), pick("role", 200), pick("note", 1000)
 
 
-def _model_allowed(model, harness):
-    """빈 값(하네스 기본)·claude 별칭은 통과. 그 밖은 openclaw 설정 목록에 있어야 하고 그 하네스가 받을 수 있어야 한다."""
+def _model_allowed(model, harness, root=ROOT):
+    """빈 값(하네스 기본)은 통과. claude 는 별칭·모델 id(`claude-…`, `anthropic/…`)도 통과.
+    그 밖은 `fleet.toml` 이 그 하네스에 허용한 모델 목록에 있어야 한다."""
     if not model:
         return True, ""
-    if harness == "claude" and model in ("opus", "sonnet", "haiku"):
-        return True, ""
-    ms = openclaw_models()
+    if harness == "claude":
+        low = model.lower()
+        if low in ("opus", "sonnet", "haiku", "fable") or low.startswith(("claude-", "anthropic/", "claude-cli/")):
+            return True, ""
+    ms = fleet_models(root)
     hit = next((m for m in ms["models"] if m["key"] == model), None)
     if hit is None:
         if not ms["ok"]:
             return False, f"모델 목록을 읽지 못해 확인할 수 없습니다: {ms['error']}"
-        return False, f"openclaw 에 설정된 모델이 아닙니다: {model}"
+        return False, f"fleet.toml 에 설정된 모델이 아닙니다: {model}"
     if harness not in hit["harnesses"]:
         return False, f"{model} 은(는) {harness} 하네스가 받을 수 없습니다 (가능: {', '.join(hit['harnesses'])})"
     return True, ""
@@ -1673,7 +1591,7 @@ def slot_action(action, slot, payload, by, root=ROOT):
         if action == "add":
             if not harness or harness not in SLOT_HARNESSES:
                 return 400, {"ok": False, "error": f"하네스는 {'/'.join(SLOT_HARNESSES)} 중 하나"}
-            ok, why = _model_allowed(model, harness)
+            ok, why = _model_allowed(model, harness, root)
             if not ok:
                 return 400, {"ok": False, "error": why}
             stamp = datetime.datetime.now().strftime("%m-%d %H:%M")
@@ -1693,7 +1611,7 @@ def slot_action(action, slot, payload, by, root=ROOT):
                 return 409, {"ok": False, "error": f"{slot} 에 작업자가 돌고 있습니다 ({running}) - 하네스는 끝난 뒤 바꾸십시오"}
             clear = payload.get("model") == ""   # 빈 문자열 = 하네스 기본으로
             if not clear:
-                ok, why = _model_allowed(model, new_harness)
+                ok, why = _model_allowed(model, new_harness, root)
                 if not ok:
                     return 400, {"ok": False, "error": why}
             row, changes = db.slot_set(slot, harness, None if clear else model, None, None, by, clear_model=clear)
@@ -1722,16 +1640,13 @@ def _fleet_ctl(root):
     return fleet_ctl
 
 
-def fleet_state(root=ROOT, managers=None):
+def fleet_state(root=ROOT):
+    """`fleet_ctl.public_state()` 를 그대로 싣습니다. 관리자가 도는지는 `fleet_ctl` 이 세션 폴더에서 스스로 판정합니다
+    (`manager` 키: {round, label, session, state, by, at, ended, brief, workspace, last_event_at} 또는 None)."""
     if pathlib.Path(root).resolve() != ROOT:
         return {"mode": "running", "label": "실행", "default": True, "can": {a: False for a in FLEET_ACTIONS}}
     try:
-        sessions = (managers or {}).get("sessions") or []
-        # 관리자 목록을 아직 못 읽었으면(`pending`·오류) "있다" 로 본다 - 모르는 채로 '라운드 끝' 이라 하면
-        # 서버를 다시 띄운 직후 도는 라운드 위에 '라운드 실행' 이 켜진다 (REV 153)
-        unknown = bool((managers or {}).get("pending")) or (managers or {}).get("ok") is False
-        return _fleet_ctl(root).public_state([s.get("label") for s in sessions],
-                                             unknown or any(s.get("status") == "running" for s in sessions))
+        return _fleet_ctl(root).public_state()
     except Exception as e:  # noqa: BLE001 - 제어 상태를 못 읽어도 화면은 떠야 한다
         return {"mode": None, "error": f"{type(e).__name__}: {str(e)[:120]}", "can": {a: False for a in FLEET_ACTIONS}}
 
@@ -1775,8 +1690,6 @@ def fleet_action(action, by, root=ROOT, payload=None):
                "round": lambda: ctl.launch_round(by)}[action]()
     except Exception as e:  # noqa: BLE001
         return 500, {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
-    with _mgr_lock:
-        _mgr_cache["at"] = None   # 관리자 목록을 다음 폴링에 새로 읽게
     if action == "prepare":
         return 200, out            # 점검 실패도 결과(checks)를 보여 줘야 하므로 200
     return (200 if out.get("ok") else 409), out
@@ -2518,7 +2431,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         HSTS 는 포트가 아니라 **호스트 전체**에 걸립니다. 인증서를 신뢰 저장소에 넣고
         `https://localhost:18799` 로 한 번 들어오면 브라우저가 1년 동안 `http://localhost:<아무 포트>`
-        를 https 로 바꿔, 같은 PC 의 다른 로컬 http 서비스(오픈클로 웹 등)가 깨질 수 있습니다.
+        를 https 로 바꿔, 같은 PC 의 다른 로컬 http 서비스(다른 웹 앱 등)가 깨질 수 있습니다.
         IP 주소는 브라우저가 어차피 HSTS 를 적용하지 않으므로 같이 뺍니다.
         """
         if not self.tls:
@@ -2685,11 +2598,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return True
 
     def _secrets(self):
-        """응답에서 반드시 가려야 할 **값**들. 비어 있는 것은 거릅니다."""
+        """응답에서 반드시 가려야 할 **값**들. 비어 있거나 8자보다 짧은 것은 거릅니다 (짧은 값은 본문을 엉뚱하게 뭉갠다).
+
+        `.env` 의 **모든** 값을 넣는다 - 전에는 접근 토큰·KISTI 키·GitHub 비밀만이라 다른 공급자 키가 작업자 기록을
+        타고 인증된 화면에 나갔다 (2026-11-12 검수). 값은 어디에도 적지 않는다.
+        """
         vals = [self.access_token,
                 os.environ.get(KISTI_API_KEY_ENV),
                 os.environ.get(GITHUB_CLIENT_SECRET_ENV)]
-        return [v for v in vals if isinstance(v, str) and len(v) >= 8]
+        try:
+            vals.extend(_fleet_rt("env").load_env(self.root).values())
+        except Exception:  # noqa: BLE001 - 키 파일을 못 읽어도 응답은 나간다 (위의 값들은 그대로 가린다)
+            pass
+        # 긴 값부터 - 한 값이 다른 값의 앞부분이면 짧은 것을 먼저 지울 때 긴 것의 꼬리가 남는다
+        return sorted({v for v in vals if isinstance(v, str) and len(v) >= 8}, key=len, reverse=True)
 
     def _scrub_secrets(self, text):
         """직렬화된 응답 본문에서 비밀 **값**을 지웁니다.
@@ -2753,7 +2675,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/state":
             return self._json(200, collect_state(self.root))
         if path == "/api/models":
-            return self._json(200, openclaw_models())
+            return self._json(200, fleet_models(self.root))
         if path == "/api/health":
             state = collect_state(self.root)
             return self._json(200, {"ok": not state.get("errors"),

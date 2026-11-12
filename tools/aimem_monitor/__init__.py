@@ -5,11 +5,11 @@
 감사 로그 `.aimem/access.log` 에 남김):
   - `.aimem/requests/<id>.json` 생성(POST) 과 **NEW 요청**의 제목·본문 수정(POST, 2026-11-10 승인)
   - 함대 제어 `tools/fleet_ctl.py` 호출(준비/실행/일시 중지/중지/라운드 실행 - `.aimem/fleet-mode.json`,
-    `.aimem/relay/`)
+    `rounds/R<N>/round.json`, 관리자 세션 `.aimem/sessions/M-R<N>-…/`)
   - 로그인 세션 쿠키 발급(파일 쓰기 없음, hmac 서명)
   - **슬롯 관리**(2026-11-10 태석님 지시): `POST /api/slots`(추가) / `/api/slots/<S>/set` / `/api/slots/<S>/remove` →
-    `aimem_db.slot_*` (DB `slots` 정본 + `tools/fleet_slots.json` 거울). 모델은 `GET /api/models`(OpenClaw 가 설정한
-    모델 = `openclaw models list` ∪ `openclaw.json` providers)에서만 고른다. 도는 작업자가 있는 슬롯은 삭제·하네스 변경 거절
+    `aimem_db.slot_*` (DB `slots` 정본). 모델은 `GET /api/models`(`fleet.toml` 에 설정된
+    공급자·모델, `fleet_rt.config`)에서만 고른다. 도는 작업자가 있는 슬롯은 삭제·하네스 변경 거절
 
 계층:
   reader.py   파일 -> 딕셔너리 (AIMEM.md 파싱 / `.aimem/runs` 스캔 / ETA 추정)   [S1]
@@ -45,7 +45,9 @@ STATE_KEYS = {
     "queue": "[{order, task, slots, handoff, note}]  - 대기 큐",
     "log": "[{when, text}]  - 핸드오프 로그, 최신 먼저",
     "runs": "[{id, slot, harness, model, label, rev, write, started, state, rc, elapsed_sec, report_head, "
-            "task, project, round}]  - project/round 는 식별자에 붙이지 않고 따로 (없으면 null)",
+            "task, project, round, session_state, fail_kind, last_event_at, last_event, provider, role}]  - project/round 는 "
+            "식별자에 붙이지 않고 따로 (없으면 null). 뒤 여섯 개는 세션 실행만(옛 실행은 null): session_state = running|done|failed|"
+            "killed|timeout|stalled|lost, last_event = 마지막 tool/text 사건 한 줄",
     "eta": "{by_harness:{<h>:{median_sec, samples, source}}, overall:{median_sec, samples}}",
     "requests": "[{" + ", ".join(REQUEST_ROW_KEYS := (
                     "id", "created", "updated", "requester", "project", "title", "detail", "detail_truncated", "detail_len",
@@ -58,12 +60,13 @@ STATE_KEYS = {
 #: 네트워크·외부 도구를 타지 않으므로 여기 둡니다(계층 분리, REV 111).
 SERVER_KEYS = {
     "graphs": "[{id, request, created, updated, percent, eta_seconds, eta_at, counts, nodes:[...], source}]",
-    # 관리자 ACP 세션 (요청 Q-261110-549a, 2026-11-10). `openclaw sessions` 배경 갱신 30초 캐시.
-    # 세션 키 원문은 싣지 않고 uuid 앞 8자(id)만 싣습니다.
-    "managers": "{ok, pending, age_sec, error, sessions:[{label, status, started, updated, id, record_kb, "
-                "last_activity, steps, last_step}]}",
+    # 관리자 세션 (요청 Q-261110-549a). `.aimem/sessions/` 에서 `role == "manager"` 인 폴더를 부를 때마다 읽는다
+    # (캐시·pending 없음). id = 세션 id(`M-R21-193012`). status = running|done|failed|killed (timeout·stalled·lost 는 failed),
+    # session_state = 세션의 원래 상태. last_activity = 마지막 사건 시각. steps = 글·도구 호출 사건 수.
+    "managers": "{ok, error, sessions:[{label, status, started, updated, id, record_kb, "
+                "last_activity, steps, last_step, round, session_state, orphaned}]}",
     # 함대 제어 상태 (`tools/fleet_ctl.public_state`, 2026-11-10). can = 지금 누를 수 있는 동작
-    "fleet": "{mode, label, at, by, note, default, running_runs, graphs, brief, prepare, relay, "
+    "fleet": "{mode, label, at, by, note, default, running_runs, graphs, brief, prepare, manager:{round, label, session, state (launching|running|done|failed|killed|timeout|stalled|lost), by, at, ended, brief, workspace, last_event_at} | null, "
              "can:{prepare, run, pause, stop, round}, idle, last_round:{round, label, at, state, report_status, report}, chain:{on, all, fleet, projects, label, max_rounds (한 묶음의 상한), renew (닿으면 새 묶음으로), autonomous, strikes, cycles, total_rounds, stopped_kind (done|cap|safety|stuck|report|error|off|wait), stopped_at, stopped_round, stopped_left, rounds_done, goals_done, open_requests, stopped_why, last}}",   # idle = '실행' 인데 도는 것이 없다(라운드 끝)
     # 프로젝트 목록 (2026-11-10) - `projects/` 아래 폴더 + 요청이 가리키는 이름. exists = 폴더가 이미 있나
     # percent = 목표 대비(`PROGRESS.md` 의 `## 목표` 체크리스트, basis "goals") - 목표가 없으면 요청들의 평균(basis "requests").
@@ -105,20 +108,23 @@ REQUEST_FAIL_MAX = 20
 REQUEST_DETAIL_MAX = 600
 
 #: `reader.run_detail(run_id)` 의 최상위 키 (REV 111, 요청 8d8d "상세 조회 UI").
+#: `events` = 세션 실행의 사건 보기(`reader.run_events`, 줄마다 `HH:MM:SS  [tool] Bash: ls`) - 옛 실행은 빈 문자열.
 #: **서버·프런트·테스트가 이 튜플 하나를 본다** - 세 군데서 따로 적으면 어긋납니다.
 RUN_DETAIL_KEYS = ("id", "found", "slot", "harness", "model", "label", "status", "rc",
                    "elapsed_s", "started", "ended", "brief", "report", "stderr_tail",
-                   "paths", "errors")
+                   "paths", "errors", "events")
 
 #: run id 꼴. 경로 탈출(`../`)과 절대경로를 여기서 한 번에 막습니다.
 #: run id 꼴 **두 가지**를 받습니다.
 #:  - 새 체계(태석님 2026-11-09 18:15, `fleet.py:405`): `<태스크>-<슬롯>-a<시도>-<HHMMSS>`
 #:    예 `T-053-S3-a3-181328` / 태스크 없는 임시 실행은 `ADHOC-S3-a1-181328`
 #:  - 옛 체계: `20261109-172618-S3`. **`.aimem/runs/` 에 그대로 남아 있으므로 계속 받습니다**
+#:  - 관리자 세션 `M-R21-193012` (`fleet_rt` 세션 id, 같은 id 가 이미 있으면 `-2`). 실행 표에 나오므로 상세도 받습니다
 #: `$` 가 아니라 `\Z` 입니다 - `$` 는 끝의 줄바꿈 앞에서도 맞아서 `"<id>\n"` 이 통과합니다.
 #: `reader.run_detail()` 은 `fullmatch` 로 거르므로 둘이 어긋납니다.
 RUN_ID_RE = (r"(?:[0-9]{8}-[0-9]{6}-S[0-9]+"
-             r"|(?:T-[0-9]+[A-Z]?|ADHOC)-S[0-9]+-a[0-9]+-[0-9]{6})(-[0-9]+)?\Z")
+             r"|(?:T-[0-9]+[A-Z]?|ADHOC)-S[0-9]+-a[0-9]+-[0-9]{6}"
+             r"|M-R[0-9]+-[0-9]{6})(-[0-9]+)?\Z")
 
 KISTI_API_KEY_ENV = "KISTI_API_KEY"
 

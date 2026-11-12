@@ -24,18 +24,23 @@ class CurrentRoundAndProject(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def test_current_round_is_latest_launched_and_skips_failed(self):
-        self.assertIsNone(fleet.current_round())
-        relay = self.root / ".aimem" / "relay"
-        relay.mkdir()
-        for name, body in (("r7.json", {"state": "spawned"}), ("r8.json", {"state": "relaying"}),
-                           ("r9.json", {"state": "failed"}), ("r12-instruction.md", None), ("rx.json", {"state": "spawned"})):
-            (relay / name).write_text(json.dumps(body) if body is not None else "x", encoding="utf-8")
-        (relay / "r10.json").write_text("{깨진", encoding="utf-8")
-        self.assertEqual(fleet.current_round(), 8)
+    def test_current_round_is_the_running_manager_round(self):
+        import fleet_ctl
+        # 도는 관리자 세션이 없으면 라운드도 없다 (함대 모드 파일이 없을 때)
+        with mock.patch.object(fleet_ctl, "mode", return_value="running"), \
+                mock.patch.object(fleet_ctl, "active_round", return_value=8, create=True):
+            self.assertEqual(fleet.current_round(), 8)
+        with mock.patch.object(fleet_ctl, "mode", return_value="running"), \
+                mock.patch.object(fleet_ctl, "active_round", return_value=None, create=True):
+            self.assertIsNone(fleet.current_round())
         # 함대가 '실행' 이 아니면 도는 라운드가 없다 - 끝난 뒤 손으로 띄운 실행에 지난 번호를 붙이지 않는다
-        (self.root / ".aimem" / "fleet-mode.json").write_text(json.dumps({"mode": "ready"}), encoding="utf-8")
-        self.assertIsNone(fleet.current_round())
+        with mock.patch.object(fleet_ctl, "mode", return_value="ready"), \
+                mock.patch.object(fleet_ctl, "active_round", return_value=8, create=True):
+            self.assertIsNone(fleet.current_round())
+        # active_round 가 아직 없는 fleet_ctl 이어도 죽지 않는다
+        with mock.patch.object(fleet_ctl, "mode", return_value="running"), \
+                mock.patch.object(fleet_ctl, "active_round", None, create=True):
+            self.assertIsNone(fleet.current_round())
 
     def test_task_project_follows_task_to_request(self):
         reqs = self.root / ".aimem" / "requests"

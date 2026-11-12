@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """작업자 운영 도우미 (관리자 전용).
 
-`AIMEM.md` `8.0` 의 **ACP 일회성 자식** 체제(2026-11-09, claude/codex/opencode)를
-전제합니다. 판단은 사람이 하고, 이 도구는 옮겨 적는 일과 대조만 합니다.
+작업자와 관리자는 엔진이 `fleet_rt` 로 띄우는 세션입니다(`.aimem/sessions/<id>/`, 하네스 claude/codex/opencode).
+판단은 사람이 하고, 이 도구는 옮겨 적는 일과 대조만 합니다.
 
   python3 tools/fleet.py status              # REV / 슬롯 / 열린 태스크 / 미커밋
   python3 tools/fleet.py brief --slot S1 ... # 브리프 머리말 + 쓰기 경로 6절 대조
   python3 tools/fleet.py close               # 거두기 전 점검
-  python3 tools/fleet.py children            # ACP 자식 세션 + 실행 모델(하네스 설정 기준)
+  python3 tools/fleet.py spawn / runs / wait / report / reap / slot
 
 2026-09-22 (REV 91) 에 `open` / `prepare` 를 폐기했습니다. 둘 다 상주 슬롯을
-여는 절차(`8.5`)의 도우미였고, 지금은 관리자가 일회성 자식을 직접 띄웁니다.
-2026-11-09 (REV 107) 부터 자식은 ACP 하네스이고 `brief` 가 스폰 호출문을 같이 찍습니다.
+여는 절차(`8.5`)의 도우미였고, 지금은 일회성 세션을 엔진이 띄웁니다.
+2026-11-12 (엔진 v2) 에 외부 세션 도구 의존을 걷어내 `children` 명령을 없앴습니다(`runs` 가 같은 일을 합니다).
 """
 import argparse
 import json
@@ -149,27 +149,31 @@ def cmd_close(args):
     if dirty:
         problems.append("미커밋이 있습니다. 커밋해야 작업자의 git 앵커가 살아납니다:\n    "
                         + "\n    ".join(dirty.splitlines()))
-    # 거두지 않은 ACP 일회성 자식이 남아 있는지 (`8.0`. 정상이면 턴 끝에 사라집니다).
-    # 조회에 실패하면 조용히 넘어갑니다 -
-    # 게이트웨이가 안 떠 있어도 나머지 점검은 쓸모가 있습니다.
+    # 끝나지 않은 세션이 남았는지 (`running`·감독 없이 하네스만 남은 고아). 일회성 세션이라 정상이면 턴 끝에 모두 끝나 있다.
+    # 런타임을 못 읽어도 나머지 점검은 쓸모가 있으므로 조용히 넘어간다.
     try:
-        res = sh("openclaw", "gateway", "call", "sessions.list", "--json")
-    except OSError:
-        res = None  # openclaw 바이너리가 PATH 에 없는 환경(cron 등)
-    if res is not None and res.returncode == 0:
-        try:
-            payload = json.loads(res.stdout)
-        except ValueError:
-            payload = None
-        sessions = payload.get("sessions", []) if isinstance(payload, dict) else []
-        if not isinstance(sessions, list):
-            sessions = []
-        left = [s.get("key", "") for s in sessions
-                if isinstance(s, dict) and ":acp:" in s.get("key", "")]
-        for key in left:
-            problems.append(f"ACP 세션이 남아 있습니다: {key}\n    "
-                            f"openclaw gateway call sessions.delete "
-                            f"--params '{{\"key\":\"{key}\"}}' --timeout 60000 --json")
+        rt = _rt_sessions()
+        sroot = _sessions_root()
+        running = []
+        for rid in _list_runs():
+            d = _session_dir(rid)
+            if d is None:
+                continue
+            if rt.state(d).get("state") == "running":
+                if args.slot and (_session_meta(d) or {}).get("slot") != args.slot:
+                    continue
+                running.append(rid)
+        for rid in running:
+            problems.append(f"실행 중인 세션이 남아 있습니다: {rid}\n    "
+                            f"끝나길 기다리거나(`python3 tools/fleet.py wait {rid}`) 끊으십시오 - "
+                            f"python3 tools/fleet.py reap  (감독이 사라진 것만 거둡니다)")
+        for o in rt.find_orphans(sroot) or []:
+            if o.get("session") in running:
+                continue
+            problems.append(f"고아 프로세스가 있습니다 (pid {o.get('pid')}, 세션 {o.get('session')}: {o.get('why')})\n    "
+                            f"python3 tools/fleet.py reap")
+    except Exception:  # noqa: BLE001
+        pass
     if not problems:
         print("종료 준비 완료. 걸리는 것 없습니다.")
         return 0
@@ -180,84 +184,26 @@ def cmd_close(args):
 
 
 HARNESSES = ("claude", "codex", "opencode")
-# 슬롯별 기본 모델 (태석님 2026-11-09 17:45). claude 하네스는 슬롯마다 다른 모델을 쓴다:
-# S1 = opus(=claude-opus-5-5, 판단 비중 큰 일), S4 = sonnet(=claude-sonnet-5-5, 속도용 병렬 작업자).
-# codex·opencode 는 하네스 설정(kistillm)을 그대로 쓴다. `spawn --model` 이 이 표보다 우선한다.
-SLOTS_FILE = ROOT / "tools" / "fleet_slots.json"   # 슬롯별 모델 정본. `fleet.py slot add/set` 이 쓴다 (클로 가능)
-
-
-def _load_slot_models():
+# 슬롯별 모델의 정본은 DB `slots.model` 하나다 (`aimem_db.py slot add/set`). 없으면 `fleet.toml` 의 하네스 기본 모델.
+# `spawn --model` 이 이 값보다 우선한다.
+def harness_default_model(harness):
+    """`fleet.toml` 의 그 하네스 기본 모델. 모르면 None."""
     try:
-        d = json.loads(SLOTS_FILE.read_text(encoding="utf-8"))
-        return {k: v.get("model") for k, v in d.items() if isinstance(v, dict) and v.get("model")}
-    except (OSError, ValueError):
-        return {"S1": "opus", "S4": "sonnet"}
-
-
-SLOT_DEFAULT_MODEL = _load_slot_models()
-SLOT_MODEL_LABEL = {"opus": "anthropic/claude-opus-5-5", "sonnet": "anthropic/claude-sonnet-5-5", "haiku": "anthropic/claude-haiku-5-5"}
+        from fleet_rt import config as rt_config  # noqa: PLC0415
+        return (rt_config.load(ROOT).harness(harness) or {}).get("default_model")
+    except Exception:  # noqa: BLE001 - 표시용이다
+        return None
 
 
 def harness_model(harness):
-    """하네스가 실제로 쓰는 모델을 **하네스 설정**에서 읽습니다 (`8.0` 정본).
+    """슬롯이 모델을 안 정했을 때 하네스가 쓰는 모델과 그 출처 `(표시, 출처)`.
 
-    `sessions_list` 의 `model` 은 OpenClaw 기본 모델이 찍힌 표기라 ACP 자식에서는
-    실행 모델이 아닙니다. 그래서 여기서는 그 값을 아예 읽지 않습니다.
+    하네스 자체 설정 파일(`~/.codex`, `~/.config/opencode`)은 읽지 않는다 - 엔진이 모델을 `--model` 로 직접 넘긴다.
     """
-    home = pathlib.Path.home()
-    try:
-        if harness == "claude":
-            # 작업자 Claude 는 `fleet.py spawn` 이 `claude -p --model sonnet` 으로 띄운다(= claude-sonnet-5-5).
-            # openclaw.json 의 agents.entries.claude.model 은 **관리자 ACP 세션**(opus) 용이라 여기서 읽지 않는다
-            # (11-09 태석님 지적: S4 를 sonnet 으로 배정했는데 opus 로 표시됨).
-            per_slot = ", ".join(f"{k}={SLOT_MODEL_LABEL.get(v, v)}" for k, v in SLOT_DEFAULT_MODEL.items())
-            return (per_slot, "fleet.py SLOT_DEFAULT_MODEL (관리자 ACP 세션은 openclaw.json entries.claude = opus)")
-        if harness == "codex":
-            import tomllib
-            cfg = tomllib.loads((home / ".codex" / "config.toml").read_text(encoding="utf-8"))
-            m = cfg.get("model")
-            p = cfg.get("model_provider")
-            return (f"{p}/{m}" if p and m else m or "(하네스 기본)", "~/.codex/config.toml")
-        if harness == "opencode":
-            text = (home / ".config" / "opencode" / "opencode.jsonc").read_text(encoding="utf-8")
-            mm = re.search(r'^\s*"model"\s*:\s*"([^"]+)"', text, re.M)
-            return (mm.group(1) if mm else "(하네스 기본)", "~/.config/opencode/opencode.jsonc")
-    except (OSError, ValueError) as e:
-        return ("(읽기 실패)", str(e)[:60])
+    m = harness_default_model(harness)
+    if m:
+        return (f"{m} (fleet.toml)", "fleet.toml 기본")
     return ("(알 수 없는 하네스)", "-")
-
-
-def cmd_children(args):
-    """ACP 자식 세션을 하네스 · 실행 모델 · 상태로 보여 줍니다. 읽기 전용입니다."""
-    try:
-        res = sh("openclaw", "sessions", "--all-agents", "--limit", "all", "--json")
-    except OSError:
-        sys.exit("openclaw 바이너리를 찾지 못했습니다")
-    if res.returncode != 0:
-        sys.exit("세션 조회 실패: " + (res.stderr or res.stdout).strip()[:200])
-    try:
-        payload = json.loads(res.stdout)
-    except ValueError:
-        sys.exit("세션 조회 결과가 JSON 이 아닙니다")
-    sessions = payload.get("sessions", []) if isinstance(payload, dict) else payload
-    kids = [s for s in sessions if isinstance(s, dict) and ":acp:" in s.get("key", "")]
-    models = {h: harness_model(h) for h in HARNESSES}
-    print("실행 모델 정본 = 하네스 설정 (sessions_list.model 은 표기일 뿐, 읽지 않음):")
-    for h in HARNESSES:
-        m, src = models[h]
-        print(f"  {h:<9} {m:<28} <- {src}")
-    print()
-    if not kids:
-        print("ACP 자식 세션 없음")
-        return 0
-    print(f"ACP 자식 세션 {len(kids)}건:")
-    for s in kids:
-        h = s.get("agentId") or s.get("key", "").split(":")[1]
-        m = models.get(h, ("?", ""))[0]
-        if h == "claude":
-            m = "(관리자 세션) opus[1m]"
-        print(f"  {s.get('label') or '(라벨 없음)':<18} {h:<9} {m:<28} {s.get('status') or '?':<8} {s.get('key')}")
-    return 0
 
 
 def owned_paths(slot):
@@ -318,16 +264,16 @@ def path_allowed(path, pats):
 
 
 def cmd_brief(args):
-    """지시문을 만듭니다. 보내기 전에 슬롯/토큰/REV/쓰기경로를 6절과 대조합니다."""
+    """지시 머리말을 만듭니다(손으로 쓰는 지시용; `spawn` 은 같은 머리말을 스스로 붙입니다). 보내기 전에 슬롯/토큰/REV/쓰기경로를 6절과 대조합니다."""
     slot = args.slot
     r = roster()
     if slot not in r:
         sys.exit(_roster_miss(slot))
     token, harness, _key = r[slot]
-    # 세션키는 요구하지 않습니다. 일회성 자식은 매번 새 세션이고 명부의 세션키 칸은
+    # 세션키는 요구하지 않습니다. 작업자는 매번 새 세션이고 명부의 세션키 칸은
     # 비어 있는 것이 정상입니다 (`8.0`). 대조에 쓰는 것은 슬롯 ID / 확인토큰 / REV 입니다.
     if harness not in ("claude", "codex", "opencode"):
-        sys.exit(f"{slot} 의 하네스 칸이 ACP 하네스가 아닙니다: {harness!r} (2절을 고치십시오)")
+        sys.exit(f"{slot} 의 하네스 칸이 알려진 하네스가 아닙니다: {harness!r} (`aimem_db.py slot set` 으로 고치십시오)")
     rev = read_rev()
     pats = owned_paths(slot)
 
@@ -339,8 +285,6 @@ def cmd_brief(args):
         print(f"  {slot} 소유: {', '.join(pats) or '(없음)'}", file=sys.stderr)
         return 2
 
-    print(f"# 스폰: sessions_spawn(runtime:\"acp\", agentId:\"{harness}\", mode:\"run\", "
-          f"context:\"isolated\", label:\"{slot} ...\", task:<아래 본문>)")
     print(f"슬롯 {slot} / 확인토큰 {token} / 하네스 {harness} / AIMEM REV {rev}")
     if args.task:
         print(f"쓰기는 {', '.join(args.write)} 에만 하십시오." if args.write else "")
@@ -354,36 +298,19 @@ def cmd_brief(args):
 
 
 # ---------------------------------------------------------------------------
-# REV 109: 작업자를 관리자가 **하네스 CLI 로 직접** 띄웁니다 (게이트웨이 스폰 아님).
-# 관리자(Claude ACP 세션)는 `spawn` 으로 여러 작업자를 한 번에 내보내고 `wait` 로 거둡니다.
+# REV 109: 작업자를 관리자가 **하네스 CLI 로 직접** 띄웁니다.
+# 관리자 세션은 `spawn` 으로 여러 작업자를 한 번에 내보내고 `wait` 로 거둡니다.
 # 기록은 `.aimem/runs/<id>.*` (brief.md / out / err / rc / json). 재생성 가능하므로 .gitignore.
 # 원칙(태석님 2026-11-09 17:30): 작업자는 단위 업무마다 백지에서 시작하고 끝나면 컨텍스트를 비운다 -
 # CLI 일회성 프로세스라 메모리는 저절로 비워지고, codex 는 --ephemeral 로 세션 파일도 남기지 않는다.
 # 관리자만 예외다(컨텍스트 유지).
 # ---------------------------------------------------------------------------
 RUNS = ROOT / ".aimem" / "runs"
-_CLAUDE_NESTED_ENV = ("CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID",
-                      "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN",
-                      "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH")
-# 작업자 Claude 에 허용하는 도구. 편집은 자동 승인(acceptEdits), 셸은 읽기·검증 명령만.
-# commit/push/rm/설치는 AIMEM 0.2 하드리밋이라 목록에 없습니다 - 필요하면 NEEDS-APPROVAL 로 올립니다.
-_CLAUDE_WORKER_TOOLS = ",".join([
-    "Read", "Edit", "Write", "Glob", "Grep",
-    # Claude Code 권한 규칙의 접두사 문법은 `Bash(cmd:*)` (콜론) 이다. 공백 별표는 글자 그대로 비교되어
-    # 아무것도 허용하지 않는다 (11-09 T-036 S1 이 python3 을 한 번도 못 돌린 원인).
-    "Bash(python3:*)", "Bash(python:*)", "Bash(pytest:*)",
-    # 환경변수 접두사가 붙은 호출은 별도 규칙이 필요하다 (`PYTHONPATH=tools python3 ...` 가 11-09 두 번 막힘)
-    "Bash(PYTHONPATH=tools python3:*)", "Bash(PYTHONPATH=tools python:*)", "Bash(PYTHONPATH=. python3:*)",
-    "Bash(PYTHONPYCACHEPREFIX=/tmp/pyc python3:*)", "Bash(node:*)", "Bash(npm test:*)",
-    "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(grep:*)",
-    "Bash(sed -n:*)", "Bash(pwd)", "Bash(mkdir:*)", "Bash(diff:*)", "Bash(git status:*)",
-    "Bash(git diff:*)", "Bash(git log:*)", "Bash(curl:*)", "Bash(cd:*)", "Bash(echo:*)",
-    "Bash(timeout:*)", "Bash(sleep:*)", "Bash(ss:*)", "Bash(kill:*)",
-])
+# 하네스별 명령·허용 도구·환경은 어댑터(`fleet_rt/harness/*.py`)에 있다.
 
 
 def normalize_model(harness, model):
-    """슬롯에 적힌 모델(openclaw 키 `provider/model` 또는 claude 별칭)을 하네스가 받는 꼴로.
+    """슬롯에 적힌 모델(`fleet.toml` 의 `공급자/모델` 또는 claude 별칭)을 하네스가 받는 꼴로.
     claude CLI 는 `claude-opus-5-5`(id) 또는 `opus`(별칭) - `anthropic/` 접두는 뗀다. opencode 는 `provider/model` 그대로.
     codex 는 호출부에서 `-m model -c model_provider=provider` 로 쪼갠다."""
     if not model:
@@ -395,45 +322,6 @@ def normalize_model(harness, model):
         if m.startswith("claude-cli/"):
             m = m[len("claude-cli/"):]
     return m
-
-
-def _worker_argv(harness, model, brief_path, ident=""):
-    """하네스별 비대화식 실행 명령. **브리프 본문은 argv 에 넣지 않습니다** - stdin 이나 파일 경로로 넘깁니다.
-    (11-09 R-002/N3: 브리프에 든 `aimem_monitor` 글자가 작업자 argv 에 있어 `pkill -f aimem_monitor` 로
-    작업자가 자기 자신을 죽였다. 경로만 넘기면 그런 자기 참조가 없다.)
-    돌려주는 값은 (argv, stdin_path) 이고 stdin_path 가 None 이 아니면 그 파일을 표준입력으로 붙입니다."""
-    brief_path = str(brief_path)
-    model = normalize_model(harness, model)
-    if harness == "codex":
-        # 샌드박스는 workspace-write 그대로 두고 **네트워크만 엽니다** (2026-11-11 태석님 지시). 닫혀 있으면 codex 의
-        # seccomp 가 소켓 호출을 막아 TCP 서버를 못 띄우고(`PermissionError`) Chromium 도 뜨지 않습니다
-        # (`sandbox_host_linux.cc` FATAL) - S2 가 브라우저 검증 스크립트를 돌려 보지 못해 눈 감고 고쳤습니다 (R8~R10).
-        # 쓰기는 여전히 작업 폴더·/tmp 로 묶여 있습니다.
-        argv = ["codex", "exec", "--skip-git-repo-check", "--ephemeral", "-C", str(ROOT), "--sandbox", "workspace-write",
-                "-c", "sandbox_workspace_write.network_access=true"]
-        if model:
-            # openclaw 키 `kisti/kistillm` → codex 는 모델과 공급자를 따로 받는다 (config.toml 의 model_provider 이름과 같다)
-            prov, _, mid = model.rpartition("/")
-            argv += ["-m", mid]
-            if prov:
-                argv += ["-c", f"model_provider={prov}"]
-        return argv + ["-"], brief_path  # `-` = 프롬프트를 stdin 에서 읽는다
-    if harness == "opencode":
-        argv = ["opencode", "run"]
-        if model:
-            argv += ["-m", model]
-        rel = str(pathlib.Path(brief_path).resolve().relative_to(ROOT)) if str(brief_path).startswith(str(ROOT)) else brief_path
-        # 슬롯·토큰·REV 를 **지시 메시지 자체에** 싣습니다 (2026-11-11). 전에는 파일 경로만 넘겨, 작업자가 파일을 읽기도 전에
-        # "지시 메시지에 슬롯 ID·토큰·REV 가 없다 - 규약상 시작하지 않는다" 며 빈손으로 끝났습니다 (R10 T-129·T-131 1차).
-        # codex·claude 는 브리프 전문이 stdin 으로 가므로 머리말이 이미 메시지 안에 있습니다.
-        head = (ident.strip() + " ") if ident and ident.strip() else ""
-        return argv + [f"{head}다음 파일이 이 지시의 전문이다. 읽고 그 안의 지시를 그대로 수행하라(파일 자체는 수정하지 말라): {rel}"], None
-    if harness == "claude":
-        # 관리자가 Claude 세션이므로 작업자 Claude 는 중첩 표식을 지우고 띄웁니다. 프롬프트는 stdin.
-        return ["env"] + [f"-u{k}" for k in _CLAUDE_NESTED_ENV] + [
-            "claude", "-p", "--model", model or "sonnet", "--output-format", "json",
-            "--permission-mode", "acceptEdits", "--allowedTools", _CLAUDE_WORKER_TOOLS], brief_path
-    sys.exit(f"알 수 없는 하네스: {harness}")
 
 
 # ---------------------------------------------------------------------------
@@ -610,34 +498,19 @@ PROJECT_NAME_RE = r"\A[0-9A-Za-z가-힣][0-9A-Za-z가-힣_-]{0,39}\Z"
 
 
 def current_round():
-    """지금 도는(가장 최근에 띄운) 라운드 번호. 모르면 None.
+    """지금 도는 라운드 번호(실행 중인 관리자 세션의 라운드). 모르면 None.
 
-    `fleet_ctl` 이 라운드를 띄울 때 `.aimem/relay/r<N>.json` 을 남깁니다. 식별자에는 라운드를 붙이지 않고
-    (2026-11-10 태석님), 실행 기록·그래프에 **따로** 적어 화면이 구분해 보이게 합니다.
+    라운드는 함대가 '실행' 일 때만 돈다 - 끝난 뒤(준비·중지) 손으로 띄운 실행에 지난 라운드 번호를 붙이지 않는다 (REV 145).
+    식별자에는 라운드를 붙이지 않고(2026-11-10 태석님), 실행 기록·그래프에 **따로** 적어 화면이 구분해 보이게 한다.
     """
-    best = None
     try:
-        # 라운드는 함대가 '실행' 일 때만 돈다. 끝난 뒤(준비·중지) 손으로 띄운 실행에 지난 라운드 번호를 붙이지 않는다 (REV 145)
         import fleet_ctl  # noqa: PLC0415 - 순환 import 를 피해 호출 시점에
         if fleet_ctl.mode() != "running":
             return None
-    except Exception:  # noqa: BLE001 - 모드를 못 읽으면 예전처럼 전달 기록만 본다
-        pass
-    try:
-        files = list((pathlib.Path(RUNS).parent / "relay").glob("r*.json"))
-    except OSError:
+        active = getattr(fleet_ctl, "active_round", None)
+        return active() if active else None
+    except Exception:  # noqa: BLE001 - 표시용 정보다. 모르면 비운다
         return None
-    for f in files:
-        m = re.fullmatch(r"r(\d+)", f.stem)
-        if not m:
-            continue
-        try:
-            if json.loads(f.read_text(encoding="utf-8")).get("state") == "failed":
-                continue
-        except (OSError, ValueError, AttributeError):
-            continue
-        best = max(best or 0, int(m.group(1)))
-    return best
 
 
 def task_project(task_id):
@@ -677,13 +550,13 @@ SPAWN_TIMEOUT_SLACK_SEC = 120     # 감독의 벽시계 제한을 그래프 한�
 
 
 def _slot_model(slot):
-    """슬롯에 적힌 모델. 정본은 DB `slots.model`, DB 를 못 읽을 때만 거울 파일을 본다."""
+    """슬롯에 적힌 모델. 정본은 DB `slots.model`, 없으면 None (호출부가 하네스 기본으로 내려간다)."""
     st = db_state()
     if st:
         for row in st.get("slots") or []:
             if row.get("slot") == slot:
                 return row.get("model") or None
-    return _load_slot_models().get(slot)
+    return None
 
 
 def cmd_spawn(args):
@@ -870,7 +743,7 @@ def cmd_slot(args):
     import aimem_db
     ns = argparse.Namespace(action=args.action, slot=args.slot, harness=args.harness, model=args.model,
                             default_model=False, role=args.role, note=None, force=getattr(args, "force", False),
-                            actor="클로드/클로(태석님 지시)")
+                            actor="fleet.py")
     return aimem_db.cmd_slot(ns)
 
 
@@ -920,7 +793,6 @@ def main():
     p = argparse.ArgumentParser(description="작업자 운영 도우미 (관리자 전용)")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status", help="AIMEM REV / 슬롯 / 열린 태스크 / 미커밋 한눈에")
-    sub.add_parser("children", help="ACP 자식 세션 + 실행 모델(하네스 설정 기준) + 상태")
     c = sub.add_parser("close", help="거두기 전 점검 - 정리할 것을 짚어 줍니다")
     c.add_argument("--slot", help="특정 슬롯만 점검")
     b = sub.add_parser("brief", help="브리프 머리말 - 슬롯/토큰/REV 자동, 쓰기 경로를 6절과 대조")
@@ -947,16 +819,16 @@ def main():
     rp = sub.add_parser("report", help="끝난 작업자의 보고 본문만 출력")
     rp.add_argument("id")
     sub.add_parser("reap", help="보고 없이 사라진(lost) 실행을 거둔다 - 경과 시간 고정")
-    sl = sub.add_parser("slot", help="슬롯 추가/변경/목록 - 2절 명부 + tools/fleet_slots.json (클로 실행)")
+    sl = sub.add_parser("slot", help="슬롯 추가/변경/삭제/목록 (DB 정본, aimem_db.py 에 위임)")
     sl.add_argument("action", choices=["add", "set", "remove", "list"])
     sl.add_argument("--slot")
     sl.add_argument("--harness", choices=HARNESSES)
-    sl.add_argument("--model", help="claude: opus|sonnet|haiku (CLI 별칭). codex/opencode: 하네스 모델 id")
+    sl.add_argument("--model", help="`fleet.toml` 의 공급자/모델 (예 kisti/kistillm) 또는 claude 별칭(opus|sonnet|haiku)")
     sl.add_argument("--role", help="역할 칸 문구")
     sl.add_argument("--force", action="store_true", help="remove: 미완 태스크가 있어도 삭제")
     a = p.parse_args()
     return {"status": cmd_status, "close": cmd_close, "brief": cmd_brief,
-            "children": cmd_children, "spawn": cmd_spawn, "runs": cmd_runs,
+            "spawn": cmd_spawn, "runs": cmd_runs,
             "wait": cmd_wait, "report": cmd_report, "slot": cmd_slot, "reap": cmd_reap}[a.cmd](a) or 0
 
 

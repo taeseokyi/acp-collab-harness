@@ -33,12 +33,14 @@ VALID_STATUSES = {"TODO", "ASSIGNED", "IN-PROGRESS", "REVIEW", "DONE", "BLOCKED"
 # **검사 가능한 형태로 번역**한 것이다 - 근거와 한계는 outbox [T-021] 에 적었다.
 #
 # 관리자 세션키를 린터 소스(보호 아티팩트, S1 소유)에 못박는다. 공격자가 쓰기 가능한
-# AIMEM.md 안의 관리자 선언을 다른 세션키로 바꿔치기하면(F1) 여기 값과 어긋나 잡힌다.
+# AIMEM.md 안의 관리자 선언을 다른 식별로 바꿔치기하면(F1) 여기 값과 어긋나 잡힌다.
 # 신뢰의 뿌리를 쓰기 가능한 파일에서 코드로 옮기는 것이 요점. 관리자 키가 정당하게
 # 바뀌면 이 상수도 함께 고쳐야 한다(6.1 자기구속과 같은 성격).
-# REV 109: 관리자는 Claude ACP 세션(하네스 claude). 세션키는 `agent:claude:acp:<uuid>` 로 나므로
-# 못박는 것은 그 접두사다. 서문 관리자 선언에 이 접두사가 없으면 뿌리가 바뀐 것으로 본다.
-MANAGER_SESSION_KEY = "agent:claude:acp:"
+# 엔진 v2(2026-11-12): 관리자는 엔진이 띄운 `role=manager` 세션이고 id 가 `M-R<N>-<HHMMSS>` 꼴이다.
+# 못박는 것은 그 꼴을 적은 글자 `MANAGER_SESSION_FORM` 이다. 서문 관리자 선언 옆에 이 글자가 없으면 뿌리가 바뀐 것으로 본다.
+# `MANAGER_SESSION_RE` 는 실제 세션 id 를 알아보는 용도(엔진·모니터가 같은 꼴을 쓴다).
+MANAGER_SESSION_FORM = "M-R<N>-<HHMMSS>"
+MANAGER_SESSION_RE = re.compile(r"M-R\d+-\d{6}")
 # AIMEM.md 가 영어로 바뀌어도(REV 128) 같은 선언을 알아보도록 두 표기를 받는다.
 MANAGER_DECL_RE = re.compile(r"관리자\(단독 쓰기 권한\)|Manager \(sole write authority\)")
 
@@ -244,13 +246,13 @@ def lint_text(text: str, notes: Optional[List[str]] = None) -> List[Violation]:
     manager_decl_line = _manager_decl_line(lines, fenced)
     if manager_decl_line is not None:
         preamble = "\n".join(lines[i] for i in range(first_head) if not fenced[i])
-        # F1: 관리자 선언이 있는데 못박은 세션키가 서문에 없으면 뿌리가 바꿔치기된 것.
-        if MANAGER_SESSION_KEY not in preamble:
+        # F1: 관리자 선언이 있는데 못박은 세션 id 꼴이 서문에 없으면 뿌리가 바꿔치기된 것.
+        if MANAGER_SESSION_FORM not in preamble:
             violations.append(
                 Violation(
                     "MANAGER_KEY_MISMATCH",
                     manager_decl_line,
-                    "관리자 선언은 있으나 린터에 못박은 관리자 세션키가 서문에 없음 - 관리자 세션키 바꿔치기 가능성",
+                    "관리자 선언은 있으나 린터에 못박은 관리자 세션 id 꼴이 서문에 없음 - 관리자 식별 바꿔치기 가능성",
                 )
             )
         _check_state_sections(lines, fenced, violations)

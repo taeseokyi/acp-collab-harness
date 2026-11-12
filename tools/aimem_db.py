@@ -434,21 +434,16 @@ def migrate(verbose=True):
             con.execute("INSERT INTO meta(key,value) VALUES('rev',?)", (rev_m.group(1),))
         con.execute("INSERT INTO meta(key,value) VALUES('migrated_at',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (now,))
         # 2절 명부: 슬롯|토큰|하네스|역할|세션키|비고
-        slots_json = {}
-        try:
-            slots_json = json.loads((ROOT / "tools" / "fleet_slots.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            pass
         n_slots = 0
         for cells in _table_rows(text, r"^## 2\. 세션 명부"):
             if len(cells) < 4 or not re.fullmatch(r"S\d+", cells[0]):
                 continue
             slot, token, harness, role = cells[0], _strip_code(cells[1]), cells[2], cells[3]
             note = cells[5] if len(cells) > 5 else ""
-            model = (slots_json.get(slot) or {}).get("model")
+            # 모델은 DB `slots.model` 이 유일한 정본이다 - 마크다운 표엔 칸이 없으니 새 슬롯은 비워 두고, 이미 있는 값은 덮지 않는다.
             con.execute("""INSERT INTO slots(slot,token,harness,model,role,note,updated) VALUES(?,?,?,?,?,?,?)
-                ON CONFLICT(slot) DO UPDATE SET token=excluded.token,harness=excluded.harness,model=excluded.model,
-                role=excluded.role,note=excluded.note,updated=excluded.updated""", (slot, token, harness, model, role, note, now))
+                ON CONFLICT(slot) DO UPDATE SET token=excluded.token,harness=excluded.harness,
+                role=excluded.role,note=excluded.note,updated=excluded.updated""", (slot, token, harness, None, role, note, now))
             n_slots += 1
         # 6절 소유권: 경로|소유|비고
         n_own = 0
@@ -1674,23 +1669,6 @@ SLOT_RE = re.compile(r"S\d{1,3}\Z")
 SLOT_ROLE_UNASSIGNED = "(미배정 - 관리자가 다음 라운드에 정함)"
 
 
-def _slots_json_path():
-    return ROOT / "tools" / "fleet_slots.json"
-
-
-def _sync_slots_json(con):
-    """`tools/fleet_slots.json` 은 DB 의 **거울**이다 - `fleet.py spawn`/`reader` 가 파일로 읽는 자리라 같이 맞춘다."""
-    out = {}
-    for r in con.execute("SELECT slot,harness,model FROM slots ORDER BY slot"):
-        d = {"harness": r["harness"]}
-        if r["model"]:
-            d["model"] = r["model"]
-        out[r["slot"]] = d
-    p = _slots_json_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(out, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-
-
 def _slot_event(con, actor, body):
     con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)", (_now(), actor, rev(con), "slot", body))
 
@@ -1729,7 +1707,6 @@ def slot_add(slot=None, harness=None, model=None, role="", note="", actor="관�
         con.execute("INSERT INTO slots(slot,token,harness,model,role,note,updated) VALUES(?,?,?,?,?,?,?)",
                     (slot, token, harness, model or None, role or "", note or "", _now()))
         _slot_event(con, actor, f"slot add {slot} {harness} 모델 {model or '(하네스 기본)'}" + (f" - {role}" if role else ""))
-        _sync_slots_json(con)
         con.commit()
         return dict(con.execute("SELECT * FROM slots WHERE slot=?", (slot,)).fetchone())
 
@@ -1755,7 +1732,6 @@ def slot_set(slot, harness=None, model=None, role=None, note=None, actor="관리
         if changes:
             con.execute("UPDATE slots SET updated=? WHERE slot=?", (_now(), slot))
             _slot_event(con, actor, f"slot set {slot}: " + ", ".join(changes))
-            _sync_slots_json(con)
             con.commit()
         return dict(con.execute("SELECT * FROM slots WHERE slot=?", (slot,)).fetchone()), changes
 
@@ -1778,7 +1754,6 @@ def slot_remove(slot, actor="관리자", force=False):
         n_own = con.execute("DELETE FROM ownership WHERE owner=?", (slot,)).rowcount
         con.execute("DELETE FROM slots WHERE slot=?", (slot,))
         _slot_event(con, actor, f"slot remove {slot} ({cur['harness']}, 모델 {cur['model'] or '-'}, 소유권 {n_own}행 내림" + (f", 미완 태스크 {len(open_tasks)}건 강제" if open_tasks else "") + ")")
-        _sync_slots_json(con)
         con.commit()
         return {"slot": slot, "ownership_removed": n_own, "open_tasks": open_tasks}
 
@@ -1817,9 +1792,9 @@ def main():
     q.add_argument("--detail"); q.add_argument("--requester"); q.add_argument("--status", choices=["NEW","PLANNED","IN-PROGRESS","DONE","REJECTED"]); q.add_argument("--actor", default="관리자")
     q.add_argument("--project", help="결과물이 쌓일 프로젝트 `projects/<이름>/` (빈 문자열 = 함대 자체의 일). 요청 파일에 적힌다")
     o = sub.add_parser("ownership"); o.add_argument("action", choices=["set", "list"]); o.add_argument("--path"); o.add_argument("--owner"); o.add_argument("--note"); o.add_argument("--actor", default="관리자")
-    sl = sub.add_parser("slot", help="슬롯 추가/변경/삭제/목록 - DB 정본 + tools/fleet_slots.json 거울 (웹 함대 현황에서도 됨)")
+    sl = sub.add_parser("slot", help="슬롯 추가/변경/삭제/목록 - DB 정본 (웹 함대 현황에서도 됨)")
     sl.add_argument("action", choices=["add", "set", "remove", "list"]); sl.add_argument("--slot"); sl.add_argument("--harness", choices=HARNESSES)
-    sl.add_argument("--model", help="openclaw 모델 키(예 anthropic/claude-opus-5-5, kisti/kistillm) 또는 claude 별칭(opus/sonnet/haiku)")
+    sl.add_argument("--model", help="`fleet.toml` 의 공급자/모델 (예 kisti/kistillm, openrouter/deepseek/deepseek-v4.1-flash) 또는 claude 별칭(opus/sonnet/haiku)")
     sl.add_argument("--default-model", action="store_true", help="set: 모델을 하네스 기본으로 되돌린다"); sl.add_argument("--role"); sl.add_argument("--note")
     sl.add_argument("--force", action="store_true", help="remove: 미완 태스크가 있어도 삭제"); sl.add_argument("--actor", default="관리자")
     r = sub.add_parser("archive", help="DONE 이 된 지 N일 지난 태스크를 .aimem/archive/board-<YYYY-MM>.md 로 옮긴다 (8.0)")

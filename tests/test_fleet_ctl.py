@@ -16,6 +16,8 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "tests"))
+import _fleet_env  # noqa: F401,E402 - 진짜 하네스 금지 (관리자도 세션으로 뜬다)
 
 import fleet  # noqa: E402
 import fleet_ctl  # noqa: E402
@@ -200,7 +202,7 @@ class FleetCtlTest(unittest.TestCase):
             self.assertEqual((b["round"], b["standard"]), (13, True))
 
     def test_rounds_recorded_in_handoff_log_count_as_used(self):
-        # 세션도 전달 기록도 없을 때(게이트웨이 정지 등) 이미 돈 라운드의 브리프를 다시 고르면 안 된다.
+        # 라운드 기록 폴더도 관리자 세션도 없는 옛 라운드(R6 이전)의 브리프를 다시 고르면 안 된다.
         import sqlite3
         con = sqlite3.connect(self.tmp / "aimem.db")
         with con:
@@ -215,7 +217,7 @@ class FleetCtlTest(unittest.TestCase):
         briefs.mkdir(parents=True)
         (briefs / "manager-round6-2026-11-10.md").write_text("x", encoding="utf-8")
         (briefs / fleet_ctl.STANDARD_BRIEF).write_text("x", encoding="utf-8")
-        with mock.patch.object(fleet, "ROOT", repo), mock.patch.object(fleet_ctl, "_manager_sessions", return_value=[]):
+        with mock.patch.object(fleet, "ROOT", repo), mock.patch.object(fleet_ctl, "manager_sessions", return_value=[]):
             b = fleet_ctl.latest_brief()
             self.assertEqual((b["round"], b["standard"]), (7, True))
             self.assertEqual(fleet_ctl.public_state()["brief"]["round"], 7)
@@ -650,34 +652,19 @@ class ChainTest(unittest.TestCase):
         code, out = server.fleet_action("chain", "웹(test)", self.repo, {"on": True, "project": "알파"})   # 운영 저장소가 아니면 거절
         self.assertEqual(code, 409)
 
-    def test_last_round_summary_comes_from_the_relay_record_and_report(self):
-        """끝난 관리자 세션은 게이트웨이 목록에서 사라져 화면이 R6 을 최근 관리자로 보였다 (R7~R11)."""
-        with mock.patch.object(fleet_ctl, "_manager_sessions", return_value=[]):
-            self.assertIsNone(fleet_ctl.public_state()["last_round"])
-            (self.repo / ".aimem" / "relay").mkdir()
-            (self.repo / ".aimem" / "relay" / "r11.json").write_text(json.dumps(
-                {"round": 11, "label": "관리자 R11 (Opus) 2026-11-11", "at": "2026-11-11T15:38:08", "state": "spawned"}), encoding="utf-8")
-            lr = fleet_ctl.public_state()["last_round"]
-            self.assertEqual((lr["round"], lr["label"], lr["report_status"], lr["report"]), (11, "관리자 R11 (Opus) 2026-11-11", None, None))
-            self.report(11, "DONE")
-            lr = fleet_ctl.public_state()["last_round"]
-            self.assertEqual((lr["report_status"], lr["report"]), ("DONE", "rounds/R11/REPORT.md"))
-
-    def test_an_hours_old_manager_list_is_not_served_as_current(self):
-        """아무도 화면을 안 보면 갱신이 안 돈다 - 묵은 목록을 그대로 내주면 끝난 관리자가 '실행 중' 으로 보였다 (R9 실측)."""
-        import datetime
-        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
-        from aimem_monitor import server
-        old_list = {"ok": True, "sessions": [{"label": "관리자 R8", "status": "running"}], "error": None}
-        with mock.patch.object(server, "_refresh_managers"), \
-             mock.patch.dict(server._mgr_cache, {"at": datetime.datetime.now() - datetime.timedelta(hours=2), "value": old_list, "refreshing": False}):
-            out = server.manager_status(server.ROOT)
-            self.assertEqual((out["sessions"], out["pending"]), ([], True))
-            self.assertGreater(out["age_sec"], 7000)
-        with mock.patch.object(server, "_refresh_managers"), \
-             mock.patch.dict(server._mgr_cache, {"at": datetime.datetime.now() - datetime.timedelta(seconds=50), "value": old_list, "refreshing": False}):
-            out = server.manager_status(server.ROOT)                       # 조금 낡은 것은 그대로 보이고 배경에서 갱신한다
-            self.assertEqual((len(out["sessions"]), out["pending"]), (1, False))
+    def test_last_round_summary_comes_from_the_round_record_and_report(self):
+        """끝난 관리자의 라운드도 요약이 나온다 - 라운드 기록(`round.json`)과 보고 파일에서 읽는다 (R7~R11 의 교훈)."""
+        self.assertIsNone(fleet_ctl.public_state()["last_round"])
+        fleet_ctl._write_round_record(11, dt.datetime(2026, 11, 11, 15, 38, 8), "manager-round-standard.md")
+        st = fleet_ctl.public_state()
+        lr = st["last_round"]
+        self.assertEqual((lr["round"], lr["at"], lr["report_status"], lr["report"]), (11, "2026-11-11T15:38:08", None, None))
+        self.assertIsNone(st["manager"])                      # 관리자 세션 칸이 없는 옛 라운드 - 관리자 정보 없음
+        self.assertNotIn("relay", st)
+        self.report(11, "DONE")
+        lr = fleet_ctl.public_state()["last_round"]
+        self.assertEqual((lr["report_status"], lr["report"]), ("DONE", "rounds/R11/REPORT.md"))
+        self.assertIn(11, fleet_ctl._used_rounds())           # 기록 폴더가 있는 라운드는 쓰인 번호다
 
     def test_a_launch_that_fails_switches_the_chain_off(self):
         self.progress(1, 5)
@@ -716,23 +703,26 @@ class CanStopTest(unittest.TestCase):
         repo = self.tmp / "repo"
         (repo / ".aimem" / "briefs").mkdir(parents=True)
         (repo / ".aimem" / "briefs" / fleet_ctl.STANDARD_BRIEF).write_text("x", encoding="utf-8")
-        with mock.patch.object(fleet, "ROOT", repo), mock.patch.object(fleet_ctl, "_manager_sessions", return_value=[]):
+        with mock.patch.object(fleet, "ROOT", repo):
             fleet_ctl.set_mode("running", "test")                       # 라운드가 끝난 뒤의 상태
             st = fleet_ctl.public_state()
             self.assertTrue(st["idle"])
             self.assertEqual((st["can"]["round"], st["can"]["prepare"], st["can"]["run"]), (True, True, False))
             self.assertTrue(fleet_ctl.round_over())
-            # 관리자가 아직 살아 있으면 끝난 것이 아니다
+            # 관리자가 아직 살아 있으면 끝난 것이 아니다 (옛 호출: 모니터가 넘겨준 값도 받는다)
             st = fleet_ctl.public_state(manager_running_now=True)
             self.assertEqual((st["idle"], st["can"]["round"], st["can"]["prepare"]), (False, False, False))
-            # 전달 중(세션이 아직 안 보이는 구간)에도 끝난 것이 아니다 - 두 번 띄우지 않게
-            (self.tmp / "relay").mkdir()
-            (self.tmp / "relay" / "r9.json").write_text(json.dumps({"round": 9, "state": "relaying"}), encoding="utf-8")
+            # 띄우는 중(라운드 기록에 관리자 id 는 있는데 세션 폴더가 아직 없다)에도 끝난 것이 아니다 - 두 번 띄우지 않게
+            fleet_ctl._write_round_record(9, dt.datetime.now(), "x", session="M-R9-120000")
             st = fleet_ctl.public_state()
-            self.assertEqual((st["idle"], st["can"]["round"]), (False, False))
+            self.assertEqual((st["idle"], st["can"]["round"], st["manager"]["state"]), (False, False, "launching"))
             self.assertFalse(fleet_ctl.round_over())
-            (self.tmp / "relay" / "r9.json").write_text(json.dumps({"round": 9, "state": "spawned"}), encoding="utf-8")
-            self.assertTrue(fleet_ctl.public_state()["idle"])
+            # 한참 지나도 폴더가 안 생겼으면 띄우던 쪽이 죽은 것 - '라운드 실행' 이 영영 꺼지지 않게 lost 로 본다
+            fleet_ctl._write_round_record(9, dt.datetime.now() - dt.timedelta(minutes=5), "x", session="M-R9-120000")
+            st = fleet_ctl.public_state()
+            self.assertEqual((st["idle"], st["manager"]["state"]), (True, "lost"))
+            fleet_ctl._mark_round_record_failed(9)
+            self.assertEqual(fleet_ctl.public_state()["manager"]["state"], "failed")
             # 준비 상태에서 이을 것이 없으면 '실행' 은 모드를 바꾸지 않는다 (바꾸면 '라운드 실행' 이 꺼진다)
             fleet_ctl.set_mode("ready", "test")
             st = fleet_ctl.public_state()

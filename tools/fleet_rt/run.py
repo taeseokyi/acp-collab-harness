@@ -29,7 +29,7 @@ import time
 
 from . import harness, sessions
 from .base import ENV_ROLE, ENV_ROOT, ENV_SESSION, SessionSpec, read_event_lines
-from .env import load_env
+from .env import load_env, session_key_name
 
 #: spawn 이 meta.json 에 pid 를 채우기를 기다리는 시간.
 META_WAIT_SEC = 10.0
@@ -77,10 +77,13 @@ class Supervisor:
         m = self.meta
         unset = set(m.get("env_unset") or ())
         env = dict(os.environ)
-        if m.get("env_root"):
-            for k, v in load_env(m["env_root"]).items():
-                if not env.get(k):
-                    env[k] = v
+        # `.env` 에서는 이 세션 공급자의 키 **하나만** 받는다 (`env.session_key_name`). 이름은 spawn 이 meta 의
+        # `env_file_names` 에 적어 두었고, 여기서는 meta 의 이름을 믿지 않고 같은 규칙으로 다시 정한다.
+        key = session_key_name(m.get("env_root"), m.get("provider"))
+        if key and not env.get(key):
+            v = load_env(m["env_root"]).get(key)
+            if v:
+                env[key] = v
         for k in unset:
             env.pop(k, None)
         # 표식은 폴더에서 뽑는다 - 감독 자신의 표식(spawn 이 넣음)과 같고, 끊기·고아 청소가 같은 규칙으로 알아본다.

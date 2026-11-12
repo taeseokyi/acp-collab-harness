@@ -111,15 +111,23 @@ class TestRun(Base):
     def test_success(self):
         envroot = BASE / f"envroot{_N[0]}"
         envroot.mkdir()
-        (envroot / ".env").write_text("FAKE_SECRET_KEY=sekrit-value\n", encoding="utf-8")
+        # `.env` 에서는 그 세션 공급자의 키 하나만 넘어간다 - 나머지(다른 키·실행을 바꾸는 변수)는 넘어가지 않는다
+        (envroot / ".env").write_text("FAKE_SECRET_API_KEY=sekrit-value\nOTHER_API_KEY=other-value\n"
+                                      "BASH_ENV=/tmp/x\nFAKE_STEER_URL=http://evil\n", encoding="utf-8")
         os.chmod(envroot / ".env", 0o600)
+        (envroot / "fleet.toml").write_text('[providers.fk]\nenv_key = "FAKE_SECRET_API_KEY"\nmodels = ["x"]\n'
+                                            '[providers.other]\nenv_key = "OTHER_API_KEY"\nmodels = ["y"]\n', encoding="utf-8")
         spec = SessionSpec(id="ok-1", role="reviewer", harness="fake", brief_path="", cwd=str(self.work),
-                           write_paths=["out.txt"], task_id="T-1", label="성공")
+                           write_paths=["out.txt"], task_id="T-1", label="성공", provider="fk")
         brief = "\n".join(["FAKE: emit 안녕", "FAKE: tool Bash ls tools", "FAKE: env AIFLEET_SESSION",
-                           "FAKE: env AIFLEET_ROLE", "FAKE: env AIFLEET_SESSIONS_ROOT", "FAKE: env FAKE_SECRET_KEY",
+                           "FAKE: env AIFLEET_ROLE", "FAKE: env AIFLEET_SESSIONS_ROOT", "FAKE: env FAKE_SECRET_API_KEY",
+                           "FAKE: env OTHER_API_KEY", "FAKE: env BASH_ENV", "FAKE: env FAKE_STEER_URL",
                            "FAKE: write out.txt 결과", "FAKE: usage 10 5 0.25", "FAKE: usage 1 2",
                            "FAKE: stderr 경고 한 줄", "FAKE: report DONE\\n다 했다"])
-        d = sessions.spawn(spec, brief, self.root, db_path=self.db, env_root=envroot)
+        with mock.patch.dict(os.environ):
+            for k in ("FAKE_SECRET_API_KEY", "OTHER_API_KEY", "BASH_ENV", "FAKE_STEER_URL"):
+                os.environ.pop(k, None)
+            d = sessions.spawn(spec, brief, self.root, db_path=self.db, env_root=envroot)
         self.assertEqual(sessions.state(d)["state"], "running")
         st = self.wait_end(d)
         self.assertEqual((st["state"], st["rc"], st["fail_kind"]), ("done", 0, None))
@@ -134,10 +142,13 @@ class TestRun(Base):
         self.assertIn("AIFLEET_SESSION=ok-1", texts)
         self.assertIn("AIFLEET_ROLE=reviewer", texts)
         self.assertIn(f"AIFLEET_SESSIONS_ROOT={os.path.abspath(self.root)}", texts)
-        self.assertIn("FAKE_SECRET_KEY=sekrit-value", texts)          # .env 값이 하네스에 닿는다
+        self.assertIn("FAKE_SECRET_API_KEY=sekrit-value", texts)      # 공급자 키는 하네스에 닿는다
+        for name in ("OTHER_API_KEY", "BASH_ENV", "FAKE_STEER_URL"):   # 나머지 `.env` 줄은 닿지 않는다
+            self.assertIn(f"{name}=", texts)
         meta_text = (d / "meta.json").read_text(encoding="utf-8")
         self.assertNotIn("sekrit-value", meta_text)                     # 값은 meta 에 안 적힌다
         meta = json.loads(meta_text)
+        self.assertEqual(meta["env_file_names"], ["FAKE_SECRET_API_KEY"])   # 넘긴 이름은 보인다
         self.assertEqual(meta["pgid"], meta["supervisor_pid"])
         self.assertIsInstance(meta["proc_start"], int)
         self.assertEqual(meta["brief_path"], str(d / "brief.md"))

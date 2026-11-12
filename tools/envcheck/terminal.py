@@ -6,8 +6,7 @@
 Result = (name, status, evidence)
   status: "OK" | "CHANGED" | "UNKNOWN"
 
-근거는 검사 대상 그 자체(`~/.local/bin/pan-run`), OpenClaw 런타임(`dist/**`,
-`openclaw.json`), 실제 실행 결과에서만 가져온다. 우리 저장소의 기록은
+근거는 검사 대상 그 자체(`~/.local/bin/pan-run`)와 실제 실행 결과에서만 가져온다. 우리 저장소의 기록은
 "무엇을 검사할지" 정하는 데만 쓰고 판정 근거로는 쓰지 않는다.
 """
 
@@ -40,11 +39,6 @@ RECORDED_EXIT_CODES = {
 
 # 우리 기록이 주장하는 tmux 팬 배치. 위와 같은 이유로 판정 근거가 아니다.
 RECORDED_PANES = (0, 1, 2)
-
-DIST_DIR = Path(
-    "/home/tsyi/.local/share/pnpm/global/5/node_modules/openclaw/dist"
-)
-EXEC_RUNTIME_GLOB = "bash-tools.exec-runtime-*.js"
 
 # 누적 로그는 기본적으로 남기지 않는다. `ENVCHECK_PIPELINE_LOG` 가 설정된
 # 경우에만 그 경로에 append 한다.
@@ -188,15 +182,14 @@ def _check_recovery_reachability(script: Path) -> Result:
     best = exec_sec + attempts * probe_sec          # 락 무경합
     worst = lock_sec + exec_sec + attempts * probe_sec  # 락 최대 대기
 
-    # 호출자 쪽 상한을 런타임에서 관측할 수 있는가
-    caller_note = _openclaw_exec_timeout_note()
+    # 호출자 쪽 상한(하네스가 셸 호출에 두는 제한)은 이 프로세스 밖의 값이라 관측하지 않는다
 
     evidence = (
         "복구 경로는 실행 타임아웃 만료 후에만 진입한다: {} ; "
         "재시도 {} ; 유휴 프로브 {}초 {} ; "
         "기본값 PAN_RUN_TIMEOUT={}초 {} / PAN_RUN_LOCK_TIMEOUT={}초 {} ; "
         "=> 복구가 끝나려면 호출자가 pan-run 을 최소 {}초(락 무경합) "
-        "~ {}초(락 최대 대기) 동안 죽이지 않아야 한다. | 호출자 상한: {}"
+        "~ {}초(락 최대 대기) 동안 죽이지 않아야 한다. | 호출자 상한: 관측 불가"
     ).format(
         _cite(lines, gate),
         _cite(lines, attempts_i),
@@ -208,37 +201,11 @@ def _check_recovery_reachability(script: Path) -> Result:
         _cite(lines, lock_i),
         best,
         worst,
-        caller_note,
     )
 
     # 호출자의 실제 상한은 프로세스 안에서 관측할 수 없다. 조건만 확정하고
     # 판정은 UNKNOWN 으로 둔다 - 억지 판정을 하지 않는 것이 이 검사의 값어치다.
     return (name, UNKNOWN, evidence)
-
-
-def _openclaw_exec_timeout_note() -> str:
-    """OpenClaw exec 경로가 기본 타임아웃을 두는지 dist 에서 확인한다."""
-    if not DIST_DIR.is_dir():
-        return "dist 없음 - 확인 불가"
-    hits = sorted(DIST_DIR.glob(EXEC_RUNTIME_GLOB))
-    if not hits:
-        return "exec 런타임 번들을 찾지 못함 - 확인 불가"
-    target = hits[0]
-    lines = _read_lines(target)
-    for i, line in enumerate(lines):
-        if "function resolveExecTimeoutMs" in line:
-            body = " ".join(lines[i : i + 4])
-            no_default = "return;" in body or "return ;" in body
-            return (
-                "{}:{} resolveExecTimeoutMs - timeoutSec 미지정 시 "
-                "{} (해당 경로에서는 호출자 상한 없음: {})"
-            ).format(
-                target.name,
-                i + 1,
-                "undefined 반환" if no_default else "기본값 적용",
-                no_default,
-            )
-    return "{} 에서 resolveExecTimeoutMs 를 찾지 못함".format(target.name)
 
 
 # ── 항목 ③ tmux 팬 배치와 제목 ──────────────────────────────────────────

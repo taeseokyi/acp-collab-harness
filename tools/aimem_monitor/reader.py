@@ -114,55 +114,20 @@ def _parse_log(lines: list[str], root: pathlib.Path | None = None) -> list[dict]
 
 # --------------------------------------------------------------- 하네스 모델
 
-def harness_model(harness: str) -> tuple[str, str]:
-    """`tools/fleet.py` `harness_model()` 과 같은 자리를 읽는다."""
-    home = pathlib.Path.home()
-    try:
-        if harness == "claude":
-            # 슬롯별 모델의 정본은 `tools/fleet_slots.json` 이고 `slot_model()` 이 먼저 읽는다.
-            # 여기 값은 **그 파일에 슬롯 항목이 없을 때의 마지막 기본값**일 뿐이다.
-            # openclaw.json entries.claude 는 관리자 ACP 세션용(opus)이라 작업자 모델로 읽지 않는다.
-            return ("anthropic/claude-sonnet-5-5",
-                    "fleet.py spawn 기본 --model sonnet (관리자는 openclaw.json entries.claude = opus)")
-        if harness == "codex":
-            import tomllib
-            cfg = tomllib.loads((home / ".codex" / "config.toml").read_text(encoding="utf-8"))
-            m, p = cfg.get("model"), cfg.get("model_provider")
-            return (f"{p}/{m}" if p and m else m or "(하네스 기본)", "~/.codex/config.toml")
-        if harness == "opencode":
-            text = (home / ".config" / "opencode" / "opencode.jsonc").read_text(encoding="utf-8")
-            mm = re.search(r'^\s*"model"\s*:\s*"([^"]+)"', text, re.M)
-            return (mm.group(1) if mm else "(하네스 기본)", "~/.config/opencode/opencode.jsonc")
-    except Exception as e:  # 읽기 실패는 절대 터뜨리지 않는다 (OSError/ValueError/TOMLDecodeError ...)
-        return ("(읽기 실패)", str(e)[:60])
-    return ("(알 수 없는 하네스)", "-")
+def harness_model(harness: str, root: pathlib.Path | None = None) -> tuple[str, str]:
+    """슬롯이 모델을 안 정했을 때 하네스가 쓰는 모델 `(모델, 출처)`. 출처는 `fleet.toml` 의 `harness.<이름>.default_model`.
 
-
-SLOT_MODEL_SOURCE = "tools/fleet_slots.json (슬롯별 기본 모델)"
-
-
-def _load_slot_models(root: pathlib.Path, errors: list) -> dict:
-    """`tools/fleet_slots.json` -> {슬롯: 모델}. `fleet.py` `SLOT_DEFAULT_MODEL` 과 같은 파일이다.
-
-    없으면 빈 딕셔너리(슬롯마다 `harness_model()` 로 떨어진다). 깨졌으면 `errors` 에 한 줄 남긴다.
+    슬롯별 모델의 정본은 DB `slots.model` 이고 호출부가 그것을 먼저 본다. 하네스 자체 설정 파일은 읽지 않는다.
     """
-    p = root / "tools" / "fleet_slots.json"
     try:
-        if not p.is_file():
-            return {}
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
-        errors.append(f"tools/fleet_slots.json 을(를) 읽지 못했습니다: {str(e)[:60]}")
-        return {}
-    if not isinstance(data, dict):
-        errors.append("tools/fleet_slots.json 이(가) 객체가 아닙니다")
-        return {}
-    out = {}
-    for slot, v in data.items():
-        m = v.get("model") if isinstance(v, dict) else None
-        if isinstance(m, str) and m.strip():
-            out[slot] = m.strip()
-    return out
+        from fleet_rt import config as rt_config  # noqa: PLC0415 - 서버가 tools/ 를 경로에 둔다
+        base = pathlib.Path(root) if root else pathlib.Path(__file__).resolve().parents[2]
+        m = (rt_config.load(base).harness(harness) or {}).get("default_model")
+    except Exception as e:  # 읽기 실패는 절대 터뜨리지 않는다 (ConfigError 포함)
+        return ("(읽기 실패)", str(e)[:60])
+    if m:
+        return (str(m), "fleet.toml 기본")
+    return ("(알 수 없는 하네스)", "-")
 
 
 # --------------------------------------------------------------- runs
@@ -642,7 +607,6 @@ def collect(root: pathlib.Path | None = None) -> dict:
     if db and db.get("rev") is not None:
         aimem["rev"] = db["rev"]
 
-    slot_models = _load_slot_models(root, errors)
     if db is not None:
         slot_rows = [[_s(r.get("slot")), _s(r.get("token")), _s(r.get("harness")),
                       _s(r.get("role")), "", _s(r.get("note")), _s(r.get("model"))] for r in db.get("slots") or []]
@@ -652,11 +616,9 @@ def collect(root: pathlib.Path | None = None) -> dict:
     for c in slot_rows:
         harness = c[2]
         if len(c) > 6 and c[6]:   # DB `slots.model` 이 정본 (웹/CLI `slot set`, 2026-11-10)
-            model, src = c[6], "aimem.db slots.model (슬롯 지정 모델)"
-        elif c[0] in slot_models:  # 슬롯별 거울 파일이 하네스 하나당 모델 하나보다 우선 (claude 에 S1 opus / S4 sonnet)
-            model, src = slot_models[c[0]], SLOT_MODEL_SOURCE
+            model, src = c[6], "슬롯 설정"
         else:
-            model, src = harness_model(harness)
+            model, src = harness_model(harness, root)
         slots.append({"slot": c[0], "token": c[1].strip("`"), "harness": harness,
                       "role": c[3], "note": c[5], "model": model, "model_source": src})
 
@@ -747,7 +709,9 @@ _SECRET_RE = re.compile(
     r"|(?P<bearer_n>Bearer\s+)[A-Za-z0-9._\-]{8,}"
     r"|(?P<gh>gh[pousr]_[A-Za-z0-9]{20,})"
     r"|(?P<sk>sk-[A-Za-z0-9_\-]{12,})"
-    r"|(?P<env_n>(?:KISTI_API_KEY|GITHUB_CLIENT_SECRET|ANTHROPIC_API_KEY|OPENAI_API_KEY)\s*[=:]\s*)\S+"
+    # 이름 목록이 아니라 꼴로 - 새 공급자 키(`OPENROUTER_API_KEY` 등)가 생길 때마다 빠지지 않게 (2026-11-12 검수).
+    # 이름은 대문자만 본다(`(?-i:`) - 소문자 낱말 `token:` 까지 가리면 본문이 엉뚱하게 뭉개진다.
+    r"|(?P<env_n>(?-i:\b[A-Z0-9_]*(?:API_KEY|TOKEN|SECRET)[A-Z0-9_]*)[\"']?\s*[=:]\s*)\S+"
     r"|(?P<tok_n>확인토큰:\s*)[0-9a-f]{6}",
     re.IGNORECASE,
 )
@@ -760,6 +724,31 @@ def _redact_sub(m: re.Match) -> str:
 
 def _redact(text: str) -> str:
     return _SECRET_RE.sub(_redact_sub, text) if text else text
+
+
+#: 세션 폴더에서 화면이 읽는 파일 - 하나라도 링크면 그 파일을 읽지 않는다 (실행 상세·관리자 상세가 같이 쓴다)
+SESSION_FILES = ("meta.json", "events.jsonl", "end.json", "report.md")
+
+
+def session_symlinks(sdir: pathlib.Path, names=SESSION_FILES) -> list:
+    """세션 폴더 안의 `names` 가운데 심볼릭 링크이거나 실제 위치가 폴더 밖인 것의 이름들. 못 보면 그 이름도 넣는다.
+
+    작업자는 세션 폴더에 쓸 수 있다 - `report.md` 를 저장소 밖 파일로 잇는 링크를 심으면 인증된 화면이 그 파일을
+    보였다 (2026-11-12 검수). 읽기 전에 부른다.
+    """
+    bad = []
+    try:
+        base = pathlib.Path(sdir).resolve()
+    except (OSError, RuntimeError):
+        return list(names)
+    for n in names:
+        p = pathlib.Path(sdir) / n
+        try:
+            if p.is_symlink() or (p.exists() and p.resolve().parent != base):
+                bad.append(n)
+        except (OSError, RuntimeError):
+            bad.append(n)
+    return bad
 
 
 def _safe_run_file(p: pathlib.Path, rdir: pathlib.Path, errors: list) -> bool:
@@ -824,7 +813,8 @@ def run_events(run_id: str, root: pathlib.Path | None = None) -> str:
         root = pathlib.Path(root) if root else pathlib.Path(__file__).resolve().parent.parent.parent
         sdir = root / ".aimem" / "sessions" / run_id
         rt = _rt_sessions()
-        if rt is None or sdir.is_symlink() or not (sdir / "meta.json").is_file():
+        if rt is None or sdir.is_symlink() or not (sdir / "meta.json").is_file() \
+                or session_symlinks(sdir, ("meta.json", "events.jsonl")):
             return ""
         return _redact(render_events(rt, sdir))
     except Exception:  # noqa: BLE001
@@ -840,6 +830,10 @@ def _fill_session_detail(d: dict, run_id: str, sdir: pathlib.Path) -> None:
     rt = _rt_sessions()
     if rt is None:
         errors.append("fleet_rt 를 불러올 수 없어 세션을 읽지 못했습니다")
+        return
+    linked = session_symlinks(sdir)
+    if "meta.json" in linked or "end.json" in linked:
+        errors.append("meta.json·end.json 가 심볼릭 링크라 세션을 읽지 않았습니다")
         return
     meta = rt.load_meta(sdir)
     if not isinstance(meta, dict):
@@ -858,7 +852,7 @@ def _fill_session_detail(d: dict, run_id: str, sdir: pathlib.Path) -> None:
     if _str(meta.get("model")):
         d["model"] = meta["model"]
     elif harness in ("claude", "codex", "opencode"):
-        d["model"] = harness_model(harness)[0]
+        d["model"] = harness_model(harness, sdir.parents[2] if len(sdir.parents) > 2 else None)[0]
     st = rt.state(sdir)
     status, rc = _session_display(st.get("state") or "lost", st.get("rc"))
     d["status"], d["rc"] = status, rc
@@ -881,9 +875,8 @@ def _fill_session_detail(d: dict, run_id: str, sdir: pathlib.Path) -> None:
     if d["paths"]["err"] and _safe_run_file(sdir / "stderr.log", sdir, errors):
         d["stderr_tail"] = _redact(_ANSI.sub("", _read(sdir / "stderr.log", errors)).strip())
     try:
-        rp = (sdir / "report.md")
-        if rp.is_symlink():
-            errors.append("report.md 는 심볼릭 링크라 읽지 않았습니다")
+        if "report.md" in linked or "events.jsonl" in linked:     # 보고가 없으면 사건 기록에서 뽑으므로 둘 다 본다
+            errors.append("report.md·events.jsonl 가 심볼릭 링크라 보고를 읽지 않았습니다")
         else:
             d["report"] = _redact((rt.report(sdir) or "").strip())
     except Exception as e:  # noqa: BLE001
@@ -939,7 +932,7 @@ def _fill_detail(d: dict, run_id: str, root) -> None:
     if _str(meta.get("model")):
         d["model"] = meta["model"]
     elif harness in ("claude", "codex", "opencode"):
-        d["model"] = harness_model(harness)[0]
+        d["model"] = harness_model(harness, root)[0]
 
     # 상태 / rc / 시각 - `_collect_runs` 와 같은 규칙
     status, rc, end = ("unknown" if d["found"] else ""), None, None

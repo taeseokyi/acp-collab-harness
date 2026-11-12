@@ -55,6 +55,33 @@ class CommandTest(unittest.TestCase):
                                            extra={"harness_session_id": "abc-123"}))
         self.assertEqual(c.argv[-2:], ["--session-id", "abc-123"])
 
+    def test_disallowed_tools_backstop(self):
+        """관리자 명세의 거부 목록이 `--disallowedTools` 로 붙는다 (`claude --help` 의 철자). 없으면 붙지 않는다."""
+        from fleet_rt import manager as rt_manager
+        spec = rt_manager.spec("M-R3-000000", 3, REPO)
+        for c in (claude_h.ADAPTER.command(spec), claude_h.ADAPTER.resume_command(spec, "abc", "/x/m.md")):
+            i = c.argv.index("--disallowedTools")
+            self.assertEqual(c.argv[i + 1], rt_manager.MANAGER_DENIED)
+        self.assertNotIn("--disallowedTools", claude_h.ADAPTER.command(_spec()).argv)
+
+    def test_manager_tool_list_is_a_guardrail(self):
+        from fleet_rt import manager as rt_manager
+        tools = rt_manager.MANAGER_TOOLS.split(",")
+        for gone in ("Bash(kill:*)", "Bash(node:*)", "Bash(timeout:*)", "Bash(cd:*)", "Bash(python3 projects/:*)",
+                     "Bash(tools/aimem_monitor/monitorctl.sh:*)", "Bash(bash tools/aimem_monitor/monitorctl.sh:*)"):
+            self.assertNotIn(gone, tools)
+        self.assertFalse([t for t in tools if "monitorctl" in t or "kill" in t])
+        for kept in ("Bash(python3 tools/fleet.py:*)", "Bash(python3 tools/fleet_graph.py:*)", "Bash(python3 -m unittest:*)",
+                     "Bash(PYTHONPATH=tools python3 -m unittest:*)", "Bash(python3 tests/:*)",
+                     "Bash(PYTHONPATH=tools python3 tests/:*)", "Bash(python3 tools/fleet_ctl.py status:*)",
+                     "Bash(python3 tools/fleet_ctl.py chain status:*)", "Read", "Bash(git status:*)"):
+            self.assertIn(kept, tools)
+        denied = rt_manager.MANAGER_DENIED.split(",")
+        for d in ("Bash(git commit:*)", "Bash(git push:*)", "Bash(rm:*)", "Bash(sudo:*)"):
+            self.assertIn(d, denied)
+        self.assertFalse(set(denied) & set(tools))
+        self.assertIn("보안 경계가 아니다", rt_manager.__doc__)
+
     def test_resume(self):
         c = claude_h.ADAPTER.resume_command(_spec(role="manager", model="opus",
                                                   extra={"harness_session_id": "zzz"}), "abc", "/x/msg.md")

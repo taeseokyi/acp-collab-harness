@@ -48,6 +48,7 @@ import sys
 import time
 
 from . import harness
+from .env import session_key_name
 from .base import (ENV_ROLE, ENV_ROOT, ENV_SESSION, END_STATES, SESSION_COLUMNS, SESSIONS_DDL, Event,
                    SessionSpec, read_event_lines)
 
@@ -389,6 +390,8 @@ def spawn(spec: SessionSpec, brief_text, sessions_root, *, db_path=None, env_roo
         "env_unset": list(cmd.env_unset), "env_set_names": sorted(cmd.env_set),   # 값은 적지 않는다
         "db_path": str(db_path) if db_path else None,
         "env_root": str(env_root) if env_root else None,
+        # `.env` 에서 넘겨줄 변수 이름 (값은 적지 않는다) - 공급자 키 하나뿐이다 (`env.session_key_name`)
+        "env_file_names": [n for n in [session_key_name(env_root, spec.provider)] if n],
         "sessions_root": str(root), "started": _now(),
         "supervisor_pid": None, "pgid": None, "proc_start": None})
     write_json_atomic(d / "meta.json", meta)
@@ -497,7 +500,8 @@ def state(session_dir_, live=None):
             age = time.time() - datetime.datetime.fromisoformat(str(meta.get("started"))).timestamp()
         except (TypeError, ValueError):
             age = None
-        if age is not None and age < SPAWN_WINDOW_SEC:
+        # 시작 시각이 앞날이면(음수) 창 안이 아니다 - 그렇게 적어 둔 폴더 하나가 '띄우는 중' 으로 영영 남아 모든 라운드를 막았다
+        if age is not None and 0 <= age < SPAWN_WINDOW_SEC:
             return busy("띄우는 중", False)
     if _session_alive_pids(d, live):
         return busy("meta.json 이 없거나 깨졌는데 이 세션 프로세스가 살아 있음" if meta is None

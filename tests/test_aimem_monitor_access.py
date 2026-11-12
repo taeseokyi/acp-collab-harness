@@ -1,6 +1,6 @@
 """접근 제어 보강과 HTTPS 전환 부작용 (2026-11-10, 클로드 코드).
 
-- 비밀 설정 파일(`monitor.env`)을 읽되 권한이 넓으면 거절, 셸 환경을 덮지 않음
+- 비밀 설정 파일(저장소 루트 `.env`)을 읽되 권한이 넓으면 거절, 셸 환경을 덮지 않음
 - 감사 로그: 줄 형식, 심볼릭 링크 거절, 토큰을 적지 않음
 - `authinfo.who`, `subject_label`
 - 관리 명령: 토큰 교체(0600·값 변경), GitHub 허용·삭제, 잘못된 계정 거절
@@ -54,9 +54,9 @@ class EnvFileTest(unittest.TestCase):
 
     def test_reads_private_file_without_overriding_env(self):
         _write(self.root, server.MONITOR_ENV_FILE,
-               '# 주석\nexport GITHUB_CLIENT_ID="abc"\nGITHUB_CLIENT_SECRET=s3\nKISTI_API_KEY=k1\nOTHER=x\n')
+               '# 주석\nGITHUB_CLIENT_ID="abc"\nGITHUB_CLIENT_SECRET=s3\nKISTI_API_KEY=k1\nOTHER=x\n')
         os.environ["KISTI_API_KEY"] = "from-shell"
-        loaded = dict(server.load_monitor_env(self.root, openclaw_env=None))
+        loaded = dict(server.load_monitor_env(self.root))
         self.assertEqual(os.environ["GITHUB_CLIENT_ID"], "abc")
         self.assertEqual(os.environ["GITHUB_CLIENT_SECRET"], "s3")
         self.assertEqual(os.environ["KISTI_API_KEY"], "from-shell")    # 셸이 이긴다
@@ -66,15 +66,17 @@ class EnvFileTest(unittest.TestCase):
     def test_world_readable_file_is_ignored(self):
         _write(self.root, server.MONITOR_ENV_FILE, "GITHUB_CLIENT_ID=abc\n", 0o644)
         with contextlib.redirect_stderr(io.StringIO()) as err:
-            server.load_monitor_env(self.root, openclaw_env=None)
+            server.load_monitor_env(self.root)
         self.assertNotIn("GITHUB_CLIENT_ID", os.environ)
         self.assertIn("chmod 600", err.getvalue())
 
-    def test_openclaw_env_gives_only_kisti_key(self):
-        oc = _write(self.root, "oc.env", "KISTI_API_KEY=k2\nGITHUB_CLIENT_ID=nope\n")
-        server.load_monitor_env(self.root, openclaw_env=oc)
-        self.assertEqual(os.environ.get("KISTI_API_KEY"), "k2")
+    def test_no_other_env_files_are_read(self):
+        """`.aimem/tls/monitor.env` 와 `~/.openclaw/.env` 는 더는 읽지 않는다 - `.env` 한 곳뿐."""
+        _write(self.root, ".aimem/tls/monitor.env", "KISTI_API_KEY=old\nGITHUB_CLIENT_ID=old\n")
+        self.assertEqual(server.load_monitor_env(self.root), [])
+        self.assertNotIn("KISTI_API_KEY", os.environ)
         self.assertNotIn("GITHUB_CLIENT_ID", os.environ)
+        self.assertFalse(hasattr(server, "OPENCLAW_ENV_FILE"))
 
 
 class AuditTest(unittest.TestCase):
@@ -240,65 +242,6 @@ class HstsTest(unittest.TestCase):
         self.assertFalse(self.want("aimem.example.org", tls=False))
 
 
-class ManagerDetailTest(unittest.TestCase):
-    """관리자 상세: 단계는 말·명령만(출력 X), id 검증, 경로 가림, 끝난 세션 이벤트 범위."""
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.acpx = pathlib.Path(self.tmp.name) / "acpx"
-        self.acpx.mkdir()
-        p = mock.patch.object(server, "ACPX_SESSIONS", self.acpx)
-        p.start()
-        self.addCleanup(p.stop)
-        rec = {"agent_started_at": "2026-11-10T00:00:00Z", "title": "관리자 R9", "closed": True, "messages": [
-            {"User": {"content": [{"Text": "브리프"}]}},
-            {"Agent": {"content": [
-                {"Text": "먼저 상태를 읽겠습니다."},
-                {"ToolUse": {"name": "x", "input": {"command": f"cat {server.ROOT}/AIMEM.md", "description": "읽기"}}},
-                {"ToolResult": {"content": "SECRET-OUTPUT-SHOULD-NOT-APPEAR"}},
-                {"Text": "상태: DONE"}]}}]}
-        (self.acpx / "agent%3Aclaude%3Aacp%3Aabcdef12-0000%3Aoneshot%3Ax.json").write_text(
-            json.dumps(rec, ensure_ascii=False), encoding="utf-8")
-
-    def test_steps_exclude_tool_output_and_mask_paths(self):
-        code, body = server.manager_detail("abcdef12")
-        self.assertEqual(code, 200)
-        self.assertEqual(body["steps_total"], 3)
-        self.assertEqual([s["kind"] for s in body["steps"]], ["text", "tool", "text"])
-        dumped = json.dumps(body, ensure_ascii=False)
-        self.assertNotIn("SECRET-OUTPUT-SHOULD-NOT-APPEAR", dumped)
-        self.assertNotIn(str(server.ROOT), dumped)                    # 저장소 절대경로 가림
-        self.assertEqual(body["session"]["label"], "관리자 R9")
-
-    def test_steps_are_not_truncated_and_all_returns_everything(self):
-        rec = json.loads(next(self.acpx.glob("*.json")).read_text(encoding="utf-8"))
-        long = "표 " * 1500   # 3000자 - 예전 상한 1200 을 넘긴다
-        rec["messages"][1]["Agent"]["content"].append({"Text": long})
-        for i in range(60):   # MANAGER_STEPS_MAX(40) 을 넘긴다
-            rec["messages"][1]["Agent"]["content"].append({"Text": f"단계 {i}"})
-        next(self.acpx.glob("*.json")).write_text(json.dumps(rec, ensure_ascii=False), encoding="utf-8")
-        code, body = server.manager_detail("abcdef12")
-        self.assertEqual(code, 200)
-        self.assertEqual(body["steps_total"], 64)
-        self.assertEqual(len(body["steps"]), server.MANAGER_STEPS_MAX)
-        code, body = server.manager_detail("abcdef12", all_steps=True)
-        self.assertEqual(len(body["steps"]), 64)
-        self.assertIn(long.strip(), [s["text"] for s in body["steps"]])   # 본문이 잘리지 않는다
-
-    def test_bad_and_missing_ids(self):
-        self.assertEqual(server.manager_detail("../etc/pa")[0], 400)
-        self.assertEqual(server.manager_detail("ABCDEF12")[0], 400)
-        self.assertEqual(server.manager_detail("00000000")[0], 404)
-        self.assertIsNone(server._REQ_MGR_RE.match("/api/managers/abcdef12/x"))
-        self.assertTrue(server._REQ_MGR_RE.match("/api/managers/abcdef12"))
-
-    def test_step_line_prefers_description(self):
-        self.assertEqual(server._step_line({"kind": "tool", "text": "ls -la", "desc": "목록"}), "▸ 목록")
-        self.assertEqual(server._step_line({"kind": "text", "text": "a\n  b"}), "a b")
-
-
-@unittest.skipUnless(shutil.which("openssl"), "openssl 없음")
 class PlainHttpOnTlsPortTest(unittest.TestCase):
     """실제 TLS 서버: 평문 HTTP 는 https 로 301, TLS 는 그대로 동작."""
 

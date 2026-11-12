@@ -2,13 +2,13 @@
 
 린터(`aimem_lint.py`)와 역할이 다르다. 린터는 **우리 문장을 우리 검사기로** 재므로
 반대편이 없다 - 우리가 둘 다 쓰면 언제나 통과한다. envcheck 의 검사 대상은
-OpenClaw 런타임(`dist`/`docs`), `~/.local/bin/pan-run`, tmux, conda 처럼
+하네스 CLI(claude/codex/opencode), `fleet.toml`·`.env`, `~/.local/bin/pan-run`, tmux 처럼
 **우리가 쓰지 않은 것**이다. 그래서 "우리 기록이 틀렸다"고 말해 줄 수 있다.
 
 계층은 셋이고 각각 다른 슬롯이 소유한다(`AIMEM.md` `6절`):
 
-    sessions.py   S1   세션·에이전트 계층 (ACP 스폰 가능 여부, nested 레인)
-    runtime.py    S2   실행 환경 계층 (파이썬 환경, WSL DNS, 작업자 쓰기 게이트)
+    sessions.py   S1   세션·하네스 계층 (하네스 CLI 점검, fleet.toml·.env, 슬롯 공급자)
+    runtime.py    S2   실행 환경 계층 (파이썬 환경, WSL DNS)
     terminal.py   S3   터미널 규약 계층 (pan-run 종료코드·복구 도달성, 팬 배치)
 
 **공통 계약 - 이 인터페이스는 관리자가 못박고 슬롯이 협의하지 않는다:**

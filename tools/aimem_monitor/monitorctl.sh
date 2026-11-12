@@ -7,7 +7,7 @@
 #   https : --tls --host 0.0.0.0 --port 18799  - HTTPS + 인증(토큰/GitHub). 외부 공개·평소 사용
 #   local : --host 127.0.0.1 --port 18799      - http, 인증 없음. 개발 확인용 (공개 경로에 두지 말 것)
 #
-# 비밀값은 셸이 아니라 파일에서 읽습니다 - .aimem/tls/monitor.env (0600), KISTI 키는 ~/.openclaw/.env 도.
+# 비밀값은 셸이 아니라 저장소 루트 `.env` (0600) 에서 읽습니다.
 # pid 는 .aimem/monitor.pid, 로그는 .aimem/monitor.log. 끌 때는 **pid 로만** 죽입니다 (pkill -f 금지, AIMEM 8.0-5).
 set -euo pipefail
 # 출력이 `| head -1` 같은 파이프로 가다가 닫혀도 **동작은 끝까지** 합니다 (REV 147). 예전엔 stop 의 첫 줄 뒤에
