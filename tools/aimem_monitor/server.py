@@ -133,6 +133,19 @@ _LOG_SAFE = {c: f"\\x{c:02x}" for c in list(range(0x20)) + [0x7f]}
 #: 로그를 읽을 수 있는 쪽이 그대로 다시 쓸 수 있습니다 (R11 검수 A 결함 2).
 _TICKET_LOG_RE = re.compile(r"/app/(?:~|%7[Ee])[^/\s]+")
 
+
+def log_line(text):
+    """서버가 직접 찍는 글의 **모든 줄** 앞에 ISO 초 단위 시각을 붙입니다.
+
+    아카이브(`aimem_db.py`)는 ISO 시각으로 시작하는 줄만 옮깁니다. 여러 줄짜리
+    글도 줄마다 머리가 있어야 줄 단위로 가져갈 수 있습니다.
+    """
+    stamp = datetime.datetime.now().isoformat(timespec="seconds")
+    for line in str(text).splitlines():
+        line = _TICKET_LOG_RE.sub("/app/~***", line).translate(_LOG_SAFE)
+        sys.stderr.write(f"{stamp} {line}\n")
+
+
 _TOKEN_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 #: subject 에 `.` 이 들어가면 쿠키 파싱이 어긋납니다. 들어올 수 있는 값은
 #: `token` 과 `gh:<login>` 뿐이고 GitHub 로그인에는 점이 없습니다 - 그래도 못박습니다.
@@ -211,36 +224,99 @@ def sign_session(token, subject, exp_epoch):
 
 
 _APP_TICKET_FALLBACK_KEY = secrets.token_bytes(32)
+APP_TICKET_NO_SUBJECT = "-"
+APP_TICKET_INVALID_ERROR = "실행 티켓이 만료됐습니다. 모니터에서 '실행' 을 다시 누르십시오."
 
 
-def app_ticket(name, exp, key):
-    """`<만료 epoch>.<hmac 32자>`. `key` 는 bytes."""
+def _app_ticket_canon(subject):
+    """`gh:` 주체는 **로그인을 소문자로** 내린 꼴이 표준. 그 밖은 그대로. None/빈값은 `-`."""
+    if not isinstance(subject, str) or not subject:
+        return APP_TICKET_NO_SUBJECT
+    if subject.startswith(SESSION_SUBJECT_GITHUB_PREFIX):
+        return SESSION_SUBJECT_GITHUB_PREFIX + subject[len(SESSION_SUBJECT_GITHUB_PREFIX):].lower()
+    return subject
+
+
+def app_ticket_tag(subject, key):
+    """URL 에 실을 되돌릴 수 없는 태그. `hmac(key, "app.sub.v1." + 표준꼴).hexdigest()[:12]`."""
+    if not isinstance(key, bytes):
+        raise TypeError("key 는 bytes 입니다")
+    payload = "app.sub.v1." + _app_ticket_canon(subject)
+    return hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()[:12]
+
+
+def app_ticket(name, exp, key, subject):
+    """`<만료 epoch>.<태그 12자리>.<hmac 32자>`. `key` 는 bytes."""
     exp = int(exp)
-    mac = hmac.new(key, f"app.v1.{exp}.{name}".encode("utf-8"), hashlib.sha256).hexdigest()[:32]
-    return f"{exp}.{mac}"
+    subject = _app_ticket_canon(subject)
+    if not _SUBJECT_RE.match(subject):
+        raise ValueError(f"subject 꼴이 아닙니다: {subject!r}")
+    payload = f"app.v1.{exp}.{subject}.{name}"
+    mac = hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
+    return f"{exp}.{app_ticket_tag(subject, key)}.{mac}"
 
 
-def app_ticket_ok(ticket, name, key, now=None):
+def _app_ticket_parts(ticket):
+    """`(exp, tag, mac)` 또는 None. 가운데 칸은 12자리 16진 태그입니다."""
+    if not isinstance(ticket, str) or not ticket or len(ticket) > 160:
+        return None
+    parts = ticket.split(".", 2)
+    if len(parts) != 3:
+        return None
+    exp_s, tag, mac = parts
+    if not re.fullmatch(r"\d{1,12}", exp_s):
+        return None
+    if not re.fullmatch(r"[0-9a-f]{12}", tag):
+        return None
+    if not re.fullmatch(r"[0-9a-f]{32}", mac):
+        return None
+    return int(exp_s), tag, mac
+
+
+def app_ticket_ok(ticket, name, key, subject, now=None):
     """티켓이 그 프로젝트에 대해 아직 유효한가. 참/거짓만 돌려주고 예외를 던지지 않습니다."""
     if not isinstance(ticket, str) or not isinstance(name, str) or not isinstance(key, bytes):
         return False
-    if not ticket or len(ticket) > 80:
+    if not _PROJECT_RE.match(name):
         return False
-    parts = ticket.split(".")
-    if len(parts) != 2:
+    parts = _app_ticket_parts(ticket)
+    if not parts:
         return False
-    exp_s, mac = parts
-    if not re.fullmatch(r"\d{1,12}", exp_s) or not re.fullmatch(r"[0-9a-f]{32}", mac):
+    exp, tag, mac = parts
+    want_tag = app_ticket_tag(subject, key)
+    if not hmac.compare_digest(want_tag.encode("ascii"), tag.encode("ascii")):
         return False
-    exp = int(exp_s)
     if exp < int(time.time() if now is None else now):
         return False
     # 발급은 TTL 안쪽에서만 합니다. 서명이 맞아도 그보다 먼 `exp` 는
     # 이 서버가 발급한 것일 수 없습니다 (키가 샜을 때 영구 티켓을 막는 심층 방어).
     if exp > int(time.time() if now is None else now) + PROJECT_APP_TICKET_TTL_SEC + 60:
         return False
-    want = hmac.new(key, f"app.v1.{exp}.{name}".encode("utf-8"), hashlib.sha256).hexdigest()[:32]
+    subject = _app_ticket_canon(subject)
+    payload = f"app.v1.{exp}.{subject}.{name}"
+    want = hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
     return hmac.compare_digest(want.encode("ascii"), mac.encode("ascii"))
+
+
+def app_ticket_resolve(ticket, key, candidates):
+    """티켓의 태그와 맞는 주체를 후보 가운데서 찾는다. 없으면 None.
+
+    허용 목록에 계정을 다시 넣으면 TTL(12시간) 안의 옛 티켓이 다시 듭니다.
+    이것은 **의도한 동작**입니다 - 다시 넣는 행위 자체가 명시적 재허가이고, TTL 이 12시간으로 짧으며,
+    즉시 끊으려면 접근 토큰을 갈면 모든 티켓이 한 번에 죽습니다(`_app_ticket_key`).
+    """
+    if not isinstance(ticket, str) or not isinstance(key, bytes):
+        return None
+    parts = _app_ticket_parts(ticket)
+    if not parts:
+        return None
+    tag = parts[1]
+    for candidate in candidates or ():
+        if not isinstance(candidate, str):
+            continue
+        if hmac.compare_digest(app_ticket_tag(candidate, key).encode("ascii"), tag.encode("ascii")):
+            return candidate
+    return None
 
 
 def _app_ticket_key(request):
@@ -562,6 +638,11 @@ def _app_host_allowed(name):
 _ENV_KEYS = (KISTI_API_KEY_ENV, GITHUB_CLIENT_ID_ENV, GITHUB_CLIENT_SECRET_ENV, MONITOR_PUBLIC_HOSTS_ENV)
 _audit_lock = threading.Lock()
 
+_REVOKED_AUDIT_MIN_SEC = 60
+_REVOKED_AUDIT_MAX = 256
+_revoked_last = collections.OrderedDict()
+_revoked_lock = threading.Lock()
+
 
 def _parse_env(text):
     out = {}
@@ -595,7 +676,7 @@ def load_monitor_env(root=ROOT, openclaw_env=OPENCLAW_ENV_FILE):
         except OSError:
             continue
         if st.st_mode & 0o077:
-            print(f"  경고: {path} 권한이 {oct(st.st_mode & 0o777)} 라 읽지 않습니다 (chmod 600)", file=sys.stderr)
+            log_line(f"  경고: {path} 권한이 {oct(st.st_mode & 0o777)} 라 읽지 않습니다 (chmod 600)")
             continue
         try:
             env = _parse_env(path.read_text(encoding="utf-8"))
@@ -621,6 +702,40 @@ def audit(root, event, ip="-", subject=None, detail=""):
                 fh.write(line + "\n")
     except OSError:
         pass
+
+
+def _audit_denied(root, event, ip, subject, path, method="GET", reason=""):
+    """거절 한 건을 감사에 남긴다.
+
+    억제 키는 `(event, subject, path, method)` - **ip 는 넣지 않는다**(D3).
+    억제된 동안의 건수를 세어 다음에 남길 때 detail 에 `생략 N건` 으로 싣는다.
+    """
+    now = time.time()
+    safe_path = _TICKET_LOG_RE.sub("/app/~***", str(path))
+    safe_method = str(method or "GET")
+    key = (event, subject if subject is not None else "-", safe_path, safe_method)
+    with _revoked_lock:
+        rec = _revoked_last.get(key)
+        if rec is not None and now - rec[0] < _REVOKED_AUDIT_MIN_SEC:
+            _revoked_last[key] = (rec[0], rec[1] + 1)
+            _revoked_last.move_to_end(key)
+            return
+        skipped = rec[1] if rec is not None else 0
+        _revoked_last[key] = (now, 0)
+        _revoked_last.move_to_end(key)
+        while len(_revoked_last) > _REVOKED_AUDIT_MAX:
+            _revoked_last.popitem(last=False)
+    detail = f"{safe_method} {safe_path}"
+    if skipped:
+        detail += f" 생략 {skipped}건"
+    if reason:
+        detail += f" {reason}"
+    audit(root, event, ip, subject, detail)
+
+
+def _audit_revoked(root, ip, subject, path="-", method="GET"):
+    """허용 목록 밖 GitHub 주체를 일정 간격으로 한 번만 기록한다."""
+    _audit_denied(root, "github-revoked", ip, subject, path, method, "허용 목록 밖")
 
 
 def subject_label(subject):
@@ -1996,7 +2111,8 @@ def app_csp(origin=""):
 
 
 _REQ_PROJECT_RE = re.compile(r"\A/api/projects/([^/]{1,400})/(files|file)\Z")
-_APP_RE = re.compile(r"\A/app/(?:~(?P<ticket>[^/]{1,80})/)?(?P<name>[^/]{1,400})(?P<slash>/(?P<rel>.*))?\Z", re.S)
+_APP_RE = re.compile(
+    r"\A/app/(?:~(?P<ticket>[^/]{1,160})/)?(?P<name>[^/~][^/]{0,399})(?P<slash>/(?P<rel>.*))?\Z", re.S)
 
 
 def create_request(payload, root=ROOT):
@@ -2184,7 +2300,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         # 제어문자를 `\xNN` 으로 바꿉니다 - 요청 경로의 ESC 가 그대로 찍히면 로그를 보는
         # 터미널이 조종당합니다 (S4 검수 7번. 표준 구현의 치환을 덮어쓰면서 잃었던 것입니다).
-        line = "%s %s" % (self.log_date_time_string(), fmt % args)
+        line = "%s %s" % (datetime.datetime.now().isoformat(timespec="seconds"), fmt % args)
         line = _TICKET_LOG_RE.sub("/app/~***", line)      # 티켓은 가립니다 (R11 검수 A 결함 2)
         sys.stderr.write(line.translate(_LOG_SAFE) + "\n")
 
@@ -2279,9 +2395,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # 바이트 비교 (S4 검수 4번. `Bearer é` 가 `TypeError` 로 연결을 끊었습니다)
             if hmac.compare_digest(given.encode("utf-8", "replace"), tok.encode("ascii")):
                 return SESSION_SUBJECT_TOKEN
+            _audit_denied(self.root, "token-bad", self._client_ip(), None,
+                          self._path() or self.path, self.command, "토큰 불일치")
             return None
+        raw_cookie = self.headers.get("Cookie")
         sess = verify_session(tok, self._cookie(SESSION_COOKIE))
         if not sess:
+            if raw_cookie is not None:
+                _audit_denied(self.root, "session-bad", self._client_ip(), None,
+                              self._path() or self.path, self.command, "서명·만료")
             return None
         subject = sess["subject"]
         # **GitHub 주체는 요청마다 허용 목록을 다시 봅니다.** 목록은 로그인 때만 보던 것이라,
@@ -2290,6 +2412,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if subject.startswith(SESSION_SUBJECT_GITHUB_PREFIX):
             login = subject[len(SESSION_SUBJECT_GITHUB_PREFIX):].lower()
             if login not in github_allowed_logins(self.root):
+                _audit_revoked(self.root, self._client_ip(), subject,
+                               self._path() or self.path, self.command)
                 return None
         return subject
 
@@ -2500,21 +2624,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if ticket is None:
                 # 서명은 **이 요청이 인증됐음을 이 자리에서 확인한 뒤에만** 합니다 (심층 방어, R11 검수 A 결함 1).
                 # 게이트가 이미 봤다고 가정하지 않습니다.
-                if self.require_auth and not self._subject():
+                subject = self._subject() if self.require_auth else None
+                if self.require_auth and subject is None:
                     return self._redirect("/login")
                 if not _PROJECT_RE.match(app_name):
                     return self._json(404, {"ok": False, "error": "프로젝트 이름이 올바르지 않습니다"})
                 exp = int(time.time()) + PROJECT_APP_TICKET_TTL_SEC
-                ticket = app_ticket(app_name, exp, _app_ticket_key(self))
+                ticket = app_ticket(app_name, exp, _app_ticket_key(self), subject)
                 location = (PROJECT_APP_URL_PREFIX + PROJECT_APP_TICKET_PREFIX + ticket + "/"
                             + urllib.parse.quote(app_name, safe="") + "/")
                 rel = am.group("rel") or ""
                 if rel:
                     location += rel
                 return self._redirect(location)
-            if not app_ticket_ok(ticket, app_name, _app_ticket_key(self)):
-                return self._json(403, {"ok": False,
-                                        "error": "실행 티켓이 만료됐습니다. 모니터에서 '실행' 을 다시 누르십시오."})
+            parts = _app_ticket_parts(ticket)
+            if not parts:
+                _audit_denied(self.root, "app-ticket-bad", self._client_ip(), None,
+                              raw_path, self.command, "형식")
+                return self._json(403, {"ok": False, "error": APP_TICKET_INVALID_ERROR})
+            key = _app_ticket_key(self)
+            candidates = [SESSION_SUBJECT_TOKEN, APP_TICKET_NO_SUBJECT]
+            candidates += ["gh:" + login for login in github_allowed_logins(self.root)]
+            ticket_subject = app_ticket_resolve(ticket, key, candidates)
+            if ticket_subject is None:
+                _audit_denied(self.root, "app-ticket-bad", self._client_ip(), None,
+                              raw_path, self.command, "주체 못 찾음(회수 또는 위조)")
+                return self._json(403, {"ok": False, "error": APP_TICKET_INVALID_ERROR})
+            if not app_ticket_ok(ticket, app_name, key, ticket_subject):
+                _audit_denied(self.root, "app-ticket-bad", self._client_ip(), ticket_subject,
+                              raw_path, self.command, "서명·만료")
+                return self._json(403, {"ok": False, "error": APP_TICKET_INVALID_ERROR})
+            if self.require_auth and ticket_subject == APP_TICKET_NO_SUBJECT:
+                _audit_denied(self.root, "app-ticket-bad", self._client_ip(), ticket_subject,
+                              raw_path, self.command, "무주체")
+                return self._json(403, {"ok": False, "error": APP_TICKET_INVALID_ERROR})
+            credential_subject = self._subject()
+            if credential_subject is not None and (
+                    _app_ticket_canon(credential_subject) != _app_ticket_canon(ticket_subject)):
+                _audit_denied(self.root, "app-ticket-bad", self._client_ip(), credential_subject,
+                              raw_path, self.command, "주체 불일치")
+                return self._json(403, {"ok": False, "error": APP_TICKET_INVALID_ERROR})
             rel = urllib.parse.unquote(am.group("rel") or "").split("?", 1)[0]
             code, data, ctype = project_app_file(app_name, rel, self.root)
             if code == 200:
@@ -2880,7 +3029,7 @@ def serve(host=HOST, port=PORT, root=ROOT, once=False, tls=False, auth=None):
     """
     require_auth = bool(tls) if auth is None else bool(auth)
     for k, src in load_monitor_env(root):
-        print(f"  {k} 를 {src} 에서 읽었습니다", file=sys.stderr)
+        log_line(f"  {k} 를 {src} 에서 읽었습니다")
     token, created = (None, False)
     if require_auth:
         token, created = ensure_access_token(root)
@@ -2897,22 +3046,22 @@ def serve(host=HOST, port=PORT, root=ROOT, once=False, tls=False, auth=None):
     else:
         httpd = http.server.ThreadingHTTPServer((host, port), handler)
     scheme = "https" if tls else "http"
-    print(f"AIMEM 모니터: {scheme}://{host}:{port}/  (저장소 {root})", file=sys.stderr)
-    print("  GET  /api/state  GET /api/health  POST /api/requests", file=sys.stderr)
+    log_line(f"AIMEM 모니터: {scheme}://{host}:{port}/  (저장소 {root})")
+    log_line("  GET  /api/state  GET /api/health  POST /api/requests")
     if require_auth:
-        print(f"  인증 켬 - /login 에서 토큰을 넣거나 `Authorization: Bearer <토큰>`", file=sys.stderr)
-        print(f"  토큰 파일: {pathlib.Path(root) / TOKEN_FILE} (0600)", file=sys.stderr)
+        log_line(f"  인증 켬 - /login 에서 토큰을 넣거나 `Authorization: Bearer <토큰>`")
+        log_line(f"  토큰 파일: {pathlib.Path(root) / TOKEN_FILE} (0600)")
         if created:
             # **새로 만들었을 때만 한 번** 찍습니다. 매번 찍으면 로그가 토큰 저장소가 됩니다.
-            print(f"  새 접근 토큰을 만들었습니다: {token}", file=sys.stderr)
+            log_line(f"  새 접근 토큰을 만들었습니다: {token}")
         if not tls:
-            print("  주의: TLS 없이 인증만 켰습니다. 토큰이 평문으로 흐릅니다 (검증용으로만)", file=sys.stderr)
+            log_line("  주의: TLS 없이 인증만 켰습니다. 토큰이 평문으로 흐릅니다 (검증용으로만)")
     elif host not in ("127.0.0.1", "localhost", "::1"):
-        print(f"  경고: {host} 에 바인드하는데 인증이 꺼져 있습니다. `--tls` 로 띄우십시오.", file=sys.stderr)
+        log_line(f"  경고: {host} 에 바인드하는데 인증이 꺼져 있습니다. `--tls` 로 띄우십시오.")
     try:
         httpd.handle_request() if once else httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\n내립니다.", file=sys.stderr)
+        log_line("\n내립니다.")
     finally:
         httpd.server_close()
     return 0

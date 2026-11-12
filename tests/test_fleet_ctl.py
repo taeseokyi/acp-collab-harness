@@ -272,6 +272,44 @@ class ChainTest(unittest.TestCase):
         d.mkdir(parents=True, exist_ok=True)
         (d / "REPORT.md").write_text(f"# R{n} 종료 보고\n\n**상태: {status}** - 무엇\n", encoding="utf-8")
 
+    def queue(self, *tasks):
+        import sqlite3
+        con = sqlite3.connect(self.repo / ".aimem" / "aimem.db")
+        con.execute("CREATE TABLE IF NOT EXISTS queue(pos INTEGER PRIMARY KEY, task TEXT, slot_hint TEXT, inherited TEXT, note TEXT)")
+        con.execute("DELETE FROM queue")
+        con.executemany("INSERT INTO queue(pos, task) VALUES(?, ?)", list(enumerate(tasks, 1)))
+        con.commit(); con.close()
+
+    def test_queue_is_remaining_fleet_work(self):
+        """큐에 일이 남았으면 '끝났습니다' 가 아니다 (2026-11-12 태석님: "큐에 8건은 왜 남았어?")."""
+        self.progress(2, 2)
+        self.queue("하나", "둘")
+        self.assertEqual(fleet_ctl.chain_work(all_=True)["queue"], 2)
+        self.assertEqual(fleet_ctl.chain_work(fleet_on=True)["queue"], 2)
+        self.assertEqual(fleet_ctl.chain_work(projects=["알파"])["queue"], 0)       # 프로젝트만 고르면 큐는 세지 않는다
+        self.assertTrue(fleet_ctl.chain_set(True, all_=True, max_rounds=3)["ok"])
+        self.report(7, "DONE")
+        self.queue("둘")                                                            # 라운드가 하나를 끝냈다
+        d = fleet_ctl.chain_decide(7)
+        self.assertEqual((d["action"], d["queue"]), ("launch", 1))
+        self.assertIn("큐 1건", d["why"])
+        st = fleet_ctl.chain_state(); st["queue_left"] = 1; fleet_ctl._chain_write(st)
+        self.report(8, "DONE")
+        d = fleet_ctl.chain_decide(8)                                               # 큐가 줄지 않았다
+        self.assertEqual((d["action"], d["kind"]), ("stop", "stuck"))
+        self.queue()
+        d = fleet_ctl.chain_decide(8)
+        self.assertEqual((d["action"], d["kind"]), ("stop", "done"))
+
+    def test_queue_request_lists_the_items(self):
+        self.queue("로그에 시각 찍기", "검사 고치기")
+        ok, res = fleet_ctl._chain_queue_request(7)
+        self.assertTrue(ok, res)
+        rec = [json.loads(f.read_text(encoding="utf-8")) for f in (self.repo / ".aimem" / "requests").glob("*.json")]
+        self.assertEqual(len(rec), 1)
+        self.assertIn("큐 2번: 검사 고치기", rec[0]["detail"])
+        self.assertFalse(rec[0].get("project"))
+
     def test_goal_parser_agrees_with_the_monitor(self):
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
         from aimem_monitor import server

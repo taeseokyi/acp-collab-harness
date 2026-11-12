@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 const HREF = "https://monitor.example/app/x/";
 const listeners = [];
@@ -31,6 +32,13 @@ function fakeParent() {
   };
   globalThis.parent = fp;
   return { sent, origins, fp };
+}
+
+function sendToParentForTests() {
+  const source = readFileSync(new URL("../web/js/storage.js", import.meta.url), "utf8")
+    .replace(/^export\s+/gm, "")
+    .replace("let parentMode = false;", "let parentMode = true;");
+  return new Function(`${source}\nreturn sendToParent;`)();
 }
 
 const reply = (data, source = globalThis.parent) => {
@@ -158,4 +166,41 @@ test("스냅숏이 안 오면 put 을 하나도 안 보낸다", async () => {
   S.saveSettings({ hardMode: true, dark: false, colorblind: false });
   assert.deepEqual(sent, [{ aimem: "store.v1", op: "ready" }]);
   assert.equal(S.loadStats().played, 1);
+});
+
+test("거절되는 키는 부모에게 아무것도 보내지 않는다", () => {
+  stubGlobals();
+  const { sent } = fakeParent();
+  const send = sendToParentForTests();
+  for (const key of ["../other", ".hidden", "x".repeat(65), ""]) {
+    send("put", key, "v");
+  }
+  assert.deepEqual(sent, []);
+});
+
+test("경계 키는 부모에게 그대로 보낸다", () => {
+  stubGlobals();
+  const { sent } = fakeParent();
+  const send = sendToParentForTests();
+  const keys = ["a", "A0._-", "k".repeat(64)];
+  for (const key of keys) send("put", key, "v");
+  assert.deepEqual(sent.map((m) => m.key), keys);
+});
+
+test("8,192자 값은 가고 8,193자는 가지 않는다", () => {
+  stubGlobals();
+  const { sent } = fakeParent();
+  const send = sendToParentForTests();
+  send("put", "a", "x".repeat(8192));
+  assert.equal(sent.length, 1);
+  send("put", "a", "x".repeat(8193));
+  assert.equal(sent.length, 1);
+});
+
+test("null 값 지우기는 길이 검사에 걸리지 않고 그대로 간다", () => {
+  stubGlobals();
+  const { sent } = fakeParent();
+  const send = sendToParentForTests();
+  send("put", "a", null);
+  assert.deepEqual(sent, [{ aimem: "store.v1", op: "put", key: "a", value: null }]);
 });

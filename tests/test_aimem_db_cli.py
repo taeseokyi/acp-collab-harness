@@ -329,6 +329,35 @@ class MigrateEnglishHandoffTest(AimemDbCliTest):
         self.assertEqual((row["at"], row["rev"]), ("2026-11-10 19:00", 5))
 
 
+    # 결함 10: 본문에 `**REV N` 이 없는 항목도 rev 가 비지 않고, 파일 차례(최신 먼저)가 유지된다.
+    ENTRIES = [  # 최신 먼저 (`handoff_entries` 와 같은 차례)
+        "- `2026-11-01 12:00` 관리자: **REV 101. 셋째 항목.**",
+        "- `2026-11-01 11:00` 관리자: 둘째 항목 - 본문에 레브 글자가 없다.",
+        "- `2026-11-01 10:00` 관리자: **REV 100. 첫째 항목.**",
+    ]
+
+    def _imported(self):
+        with aimem_db.connect() as con:
+            n = aimem_db._import_handoff_entries(con, self.ENTRIES)
+            rows = con.execute("SELECT seq, rev, body FROM events ORDER BY seq").fetchall()
+            rendered = [r["body"] for r in aimem_db._handoff_rows(con)]
+            return n, rows, rendered
+
+    def test_import_never_stores_null_rev(self):
+        """고치기 전 코드는 REV 없는 항목의 rev 를 None 으로 넣었다 - 그러면 이 단언이 빨개진다."""
+        n, rows, _ = self._imported()
+        self.assertEqual(n, 3)
+        self.assertNotIn(None, [r["rev"] for r in rows])
+        self.assertEqual([r["rev"] for r in rows], sorted(r["rev"] for r in rows))
+
+    def test_render_order_matches_file_order_when_rev_is_missing(self):
+        """고치기 전에는 rev None 이 정렬키 -1 로 가라앉아 '둘째'가 맨 아래로 갔다 - 이 차례 단언이 빨개진다."""
+        _, _, rendered = self._imported()
+        self.assertEqual(rendered[0], self.ENTRIES[0])
+        self.assertEqual(rendered[1], self.ENTRIES[1])
+        self.assertEqual(rendered[2], self.ENTRIES[2])
+
+
 class HandoffLogTest(AimemDbCliTest):
     """REV 132: 핸드오프의 정본은 DB events 하나. .aimem/handoff.md 는 최신 12건 생성물, 밀려난 항목은 아카이브로 내보낸다."""
 
@@ -770,15 +799,35 @@ class ArchiveAttachedRecordsTest(AimemDbCliTest):
         aimem_db.archive_apply(plan, actor="t")
         self.assertEqual(log.read_text(encoding="utf-8"), "2026-01-01T00:00:00 old\n")
 
-    def test_run_json_moved_last_so_plan_rediscovers_after_failure(self):
-        """결함 4/X1: `.json` 을 맨 마지막에 옮기므로 셋째 replace 가 죽어도 다음 계획이 그 실행을 찾는다."""
+    def test_rc_moved_last_so_plan_rediscovers_after_failure(self):
+        """결함 4/X1 -> N1: 이동 차례는 `.json` 이 아니라 `.rc` 가 맨 마지막이다. 그래서 어느 replace 가
+        죽어도 `.rc` 없는 `.json` 이 남지 않고, 다음 계획이나 고아 줍기가 그 실행을 받아 간다.
+        (고치기 전 차례 - brief, out, rc - 로 돌아가면 첫 단언이 빨개진다.)"""
         self._task("T-900", "DONE")
         self._run("run-900", "T-900")
         d = self.root / ".aimem" / "runs"
-        plan = aimem_db.archive_plan(0)
-        self.assertEqual([r["id"] for r in plan["runs"]], ["run-900"])
         real_replace = pathlib.Path.replace
         calls = []
+
+        def spy_replace(self_path, target):
+            calls.append(self_path.name)
+            return real_replace(self_path, target)
+
+        plan = aimem_db.archive_plan(0)
+        self.assertEqual([r["id"] for r in plan["runs"]], ["run-900"])
+        with mock.patch("pathlib.Path.replace", spy_replace):
+            aimem_db.archive_apply(plan, actor="t")
+        self.assertEqual(calls, ["run-900.brief.md", "run-900.json", "run-900.out", "run-900.rc"])
+        self.assertEqual(list(d.iterdir()), [])
+        dest = self.root / ".aimem" / "archive" / "runs-2026-01"
+        for ext in ("json", "rc", "out", "brief.md"):
+            self.assertTrue((dest / f"run-900.{ext}").exists(), ext)
+
+        # 셋째 replace(out)에서 죽인다: `.json` 은 이미 옮겨졌고 `.rc` 는 남아 있으므로
+        # `.rc` 없는 `.json` 이 남는 일이 없다. 다음 계획이 남은 조각을 줍는다.
+        self._task("T-901", "DONE")
+        self._run("run-901", "T-901")
+        calls.clear()
 
         def flaky_replace(self_path, target):
             calls.append(self_path.name)
@@ -788,16 +837,13 @@ class ArchiveAttachedRecordsTest(AimemDbCliTest):
 
         with mock.patch("pathlib.Path.replace", flaky_replace):
             with self.assertRaises(OSError):
-                aimem_db.archive_apply(plan, actor="t")
-        self.assertEqual(calls[:3], ["run-900.brief.md", "run-900.out", "run-900.rc"])
-        self.assertFalse((d / "run-900.brief.md").exists())
-        self.assertFalse((d / "run-900.out").exists())
-        self.assertTrue((d / "run-900.rc").exists())
-        self.assertTrue((d / "run-900.json").exists())
-        dest = self.root / ".aimem" / "archive" / "runs-2026-01"
-        self.assertTrue((dest / "run-900.brief.md").exists())
-        self.assertTrue((dest / "run-900.out").exists())
-        self.assertEqual([r["id"] for r in aimem_db.archive_plan(0)["runs"]], ["run-900"])
+                aimem_db.archive_apply(aimem_db.archive_plan(0), actor="t")
+        self.assertEqual(calls[:3], ["run-901.brief.md", "run-901.json", "run-901.out"])
+        self.assertFalse((d / "run-901.json").exists())
+        self.assertTrue((d / "run-901.rc").exists())
+        self.assertEqual([r["id"] for r in aimem_db.archive_plan(0)["runs"]], ["run-901"])
+        aimem_db.archive_apply(aimem_db.archive_plan(0), actor="t")
+        self.assertEqual(list(d.iterdir()), [])
 
     def test_orphan_rc_and_out_are_reclaimed(self):
         """결함 4/X2: `.json` 없는 고아 `.rc/.out` 도 계획이 주워 간다."""
@@ -816,6 +862,79 @@ class ArchiveAttachedRecordsTest(AimemDbCliTest):
         dest = self.root / ".aimem" / "archive" / "runs-2000-01"
         self.assertTrue((dest / "run-777.out").exists())
         self.assertTrue((dest / "run-777.rc").exists())
+
+    def _fail_archiving_run_at(self, k):
+        """k 번째 `Path.replace` 에서 죽인 뒤 다시 돌려 `runs/` 가 비는지 본다 (N1)."""
+        self._task("T-900", "DONE")
+        self._run("run-900", "T-900")
+        d = self.root / ".aimem" / "runs"
+        real_replace = pathlib.Path.replace
+        calls = []
+
+        def flaky_replace(self_path, target):
+            calls.append(self_path.name)
+            if len(calls) == k:
+                raise OSError(f"replace {k} 실패")
+            return real_replace(self_path, target)
+
+        with mock.patch("pathlib.Path.replace", flaky_replace):
+            with self.assertRaises(OSError):
+                aimem_db.archive_apply(aimem_db.archive_plan(0), actor="t")
+        expected = ["run-900.brief.md", "run-900.json", "run-900.out", "run-900.rc"]
+        self.assertEqual(calls[:k], expected[:k], f"k={k}: 옛 차례(json 마지막)면 여기서 빨개진다")
+        # 고친 뒤에는 `.rc` 가 맨 마지막이라 `.rc` 없는 `.json` 이 남지 않는다.
+        if (d / "run-900.json").exists():
+            self.assertTrue((d / "run-900.rc").exists(), f"k={k}: .rc 없는 .json 이 남았다")
+        self.assertEqual([r["id"] for r in aimem_db.archive_plan(0)["runs"]], ["run-900"], f"k={k}")
+        aimem_db.archive_apply(aimem_db.archive_plan(0), actor="t")
+        self.assertEqual(list(d.iterdir()), [], f"k={k}: 다시 돌린 뒤에도 runs/ 가 비지 않았다")
+
+    def test_failure_at_first_replace_is_recovered_by_next_plan(self):
+        """N1 k=1(brief): 아직 아무것도 옮기지 않았고 `.json`+`.rc` 가 남아 다음 계획이 줍는다."""
+        self._fail_archiving_run_at(1)
+
+    def test_failure_at_second_replace_is_recovered_by_next_plan(self):
+        """N1 k=2(json): brief 만 옮겨졌고 `.json`+`.rc` 가 남아 다음 계획이 줍는다."""
+        self._fail_archiving_run_at(2)
+
+    def test_failure_at_third_replace_is_recovered_by_next_plan(self):
+        """N1 k=3(out): `.json` 은 옮겨졌고 `.rc` 고아가 남아 다음 계획이 줍는다."""
+        self._fail_archiving_run_at(3)
+
+    def test_failure_at_fourth_replace_is_recovered_by_next_plan(self):
+        """N1 k=4(rc): `.rc` 고아가 남아 다음 계획이 줍는다."""
+        self._fail_archiving_run_at(4)
+
+    def test_log_lines_appended_between_read_and_cut_survive(self):
+        """N2: 로그를 읽은 뒤 자르기 전에 다른 프로세스가 `O_APPEND` 로 덧붙인 줄은 원본에 남아야 한다.
+        (고치기 전 코드는 `kept` 에 없는 그 줄을 truncate 로 지워 버린다 - 마지막 단언이 빨개진다.)"""
+        fleet = self.root / ".aimem" / "fleet-mode.log"
+        fleet.write_text("2026-01-01T00:00:00 old1\n2026-01-02T00:00:00 old2\n", encoding="utf-8")
+        appended = "2999-01-01T00:00:00 끼어든 줄\n"
+        real_iso = aimem_db._iso
+        inserted = []
+
+        def appending_iso(value):
+            if not inserted:
+                inserted.append(value)
+                fd = os.open(fleet, os.O_WRONLY | os.O_APPEND)
+                try:
+                    os.write(fd, appended.encode("utf-8"))
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+            return real_iso(value)
+
+        plan = aimem_db.archive_plan(0)
+        self.assertEqual([x["lines"] for x in plan["logs"] if x["file"] == "fleet-mode.log"], [2])
+        with mock.patch.object(aimem_db, "_iso", appending_iso):
+            aimem_db.archive_apply(plan, actor="t")
+        self.assertEqual(fleet.read_text(encoding="utf-8"), appended)
+        arch = self.root / ".aimem" / "archive" / "logs-2026-01" / "fleet-mode.log"
+        text = arch.read_text(encoding="utf-8")
+        self.assertIn("old1", text)
+        self.assertIn("old2", text)
+        self.assertNotIn("끼어든 줄", text)
 
     def test_task_reopened_after_plan_is_not_deleted(self):
         """결함 9/X7: 계획 뒤 다시 열린 태스크 행은 apply 가 내리지 않는다."""

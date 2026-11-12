@@ -10,13 +10,13 @@
 | 단어 목록 | `test_words.py` | `python3 -m unittest discover -s projects/웹워들/tests` | `OK` |
 | 브라우저 - 핵심 한 판 | `browser_core.py` | `python3 projects/웹워들/tests/browser_core.py` | rc 0, `통과 67 / 전체 67` |
 | 브라우저 - 레이아웃 | `browser_layout.py` | `python3 projects/웹워들/tests/browser_layout.py` | rc 0, `통과 18 / 전체 18` |
-| 브라우저 - 통계·공유·설정·접근성·도움말 | `browser_ui.py` | `python3 projects/웹워들/tests/browser_ui.py` | rc 0, `통과 155 / 전체 155` |
+| 브라우저 - 통계·공유·설정·접근성·도움말 | `browser_ui.py` | `python3 projects/웹워들/tests/browser_ui.py` | rc 0, `통과 156 / 전체 156` |
 
-2026-11-11 (T-125) 에 다섯 벌 모두 초록이었습니다: core 67/67 (두 번 돌려 두 번 다), layout 18/18, ui 155/155,
-모두 rc 0. 로직 `ℹ pass 25`·`fail 0`, 단어 목록 `Ran 6 tests`·`OK`.
+2026-11-11 (T-125) 에 다섯 벌 모두 초록이었습니다: core 67/67 (두 번 돌려 두 번 다), layout 18/18, ui 156/156,
+모두 rc 0. 2026-11-12 (R15 T-200) 에 ui 가 156/156 으로 하나 늘었습니다. 로직 `ℹ pass 25`·`fail 0`, 단어 목록 `Ran 6 tests`·`OK`.
 
 검사 수는 시나리오가 중간에 죽으면 줄어듭니다(남은 검사가 기록되지 않음). **수가 위와 다르면 rc 0 이어도
-의심하십시오.** `browser_ui.py` 의 155 가운데 52 는 대비 측정이고, 서로 다른 글자색·배경색 쌍은 13 개뿐입니다
+의심하십시오.** `browser_ui.py` 의 156 가운데 52 는 대비 측정이고, 서로 다른 글자색·배경색 쌍은 13 개뿐입니다
 (아래 '알고 쓸 약점').
 
 - `node --test` 에는 **파일**을 주십시오. `node --test projects/웹워들/tests/` 처럼 폴더를 주면

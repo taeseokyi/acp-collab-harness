@@ -1,13 +1,17 @@
 """`/app/<프로젝트>/` 실행 경로의 뒷단 시험. 소켓은 열지 않고 함수를 직접 부릅니다."""
 import contextlib
 import email.message
+import http.client
+import http.server
 import io
 import json
 import pathlib
 import sys
 import tempfile
+import threading
 import time
 import unittest
+import urllib.parse
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
 
@@ -226,43 +230,81 @@ class ProjectAppTests(unittest.TestCase):
         status, headers, _ = self.route("/app/알파/", auth=True)
         self.assertEqual((status[-1], dict(headers).get("Location")), (302, "/login"))
 
-    def test_ticket_path_passes_auth_gate_without_session(self):
+    def test_placeholder_ticket_is_rejected_when_auth_is_on(self):
         self.app()
-        ticket = server.app_ticket("알파", int(time.time()) + 60, server._APP_TICKET_FALLBACK_KEY)
-        status, headers, body = self.route(
+        ticket = server.app_ticket("알파", int(time.time()) + 60, server._APP_TICKET_FALLBACK_KEY, None)
+        status, _, body = self.route(
             f"/app/~{ticket}/%EC%95%8C%ED%8C%8C/", auth=True)
+        self.assertEqual(status[-1], 403)
+        self.assertIn("실행 티켓이 만료됐습니다", json.loads(body)["error"])
+
+        status, _, body = self.route(
+            f"/app/~{ticket}/%EC%95%8C%ED%8C%8C/", auth=False)
         self.assertEqual((status[-1], body), (200, b"<!doctype html>"))
 
-        expired = server.app_ticket("알파", int(time.time()) - 1, server._APP_TICKET_FALLBACK_KEY)
-        status, headers, body = self.route(
-            f"/app/~{expired}/%EC%95%8C%ED%8C%8C/", auth=True)
+        expired = server.app_ticket("알파", int(time.time()) - 1, server._APP_TICKET_FALLBACK_KEY, None)
+        status, _, body = self.route(
+            f"/app/~{expired}/%EC%95%8C%ED%8C%8C/", auth=False)
         self.assertEqual(status[-1], 403)
         self.assertIn("실행 티켓이 만료됐습니다", json.loads(body)["error"])
 
     def test_app_ticket_roundtrip(self):
         key = b"0123456789abcdef0123456789abcdef"
         exp = int(time.time()) + 60
-        ticket = server.app_ticket("알파", exp, key)
-        self.assertTrue(server.app_ticket_ok(ticket, "알파", key))
+        ticket = server.app_ticket("알파", exp, key, "gh:kim")
+        self.assertTrue(server.app_ticket_ok(ticket, "알파", key, "gh:kim"))
+        self.assertEqual(server.app_ticket_resolve(ticket, key, ["gh:kim"]), "gh:kim")
+        self.assertIsNone(server.app_ticket_resolve(ticket, key, ["gh:lee"]))
+
+    def test_ticket_subject_is_bound_to_the_signer(self):
+        key = b"0123456789abcdef0123456789abcdef"
+        now = int(time.time())
+        ticket = server.app_ticket("알파", now + 60, key, "gh:kim")
+        self.assertRegex(ticket, r"\A\d{1,12}\.[0-9a-f]{12}\.[0-9a-f]{32}\Z")
+        self.assertNotIn("gh:kim", ticket)
+        self.assertIn(server.app_ticket_tag("gh:kim", key), ticket)
+        self.assertTrue(server.app_ticket_ok(ticket, "알파", key, "gh:kim", now=now))
+        self.assertTrue(server.app_ticket_ok(ticket, "알파", key, "gh:KiM", now=now))
+        self.assertEqual(server.app_ticket_resolve(ticket, key, ["gh:KiM"]), "gh:KiM")
+        self.assertFalse(server.app_ticket_ok(ticket, "알파", key, "gh:lee", now=now))
+
+    def test_none_and_empty_subject_share_the_placeholder(self):
+        key = b"0123456789abcdef0123456789abcdef"
+        now = int(time.time())
+        for subject in (None, ""):
+            with self.subTest(subject=subject):
+                ticket = server.app_ticket("알파", now + 60, key, subject)
+                exp_s, tag, mac = ticket.split(".", 2)
+                self.assertRegex(exp_s, r"\A\d{1,12}\Z")
+                self.assertRegex(tag, r"\A[0-9a-f]{12}\Z")
+                self.assertEqual(tag, server.app_ticket_tag(subject, key))
+                self.assertRegex(mac, r"\A[0-9a-f]{32}\Z")
+                self.assertNotIn("None", ticket)
+                self.assertTrue(server.app_ticket_ok(ticket, "알파", key, "-", now=now))
+                self.assertTrue(server.app_ticket_ok(ticket, "알파", key, None, now=now))
+                self.assertTrue(server.app_ticket_ok(ticket, "알파", key, "", now=now))
+                self.assertFalse(server.app_ticket_ok(ticket, "알파", key, "gh:kim", now=now))
 
     def test_expired_ticket_is_rejected(self):
         key = b"0123456789abcdef0123456789abcdef"
-        ticket = server.app_ticket("알파", int(time.time()) - 1, key)
-        self.assertFalse(server.app_ticket_ok(ticket, "알파", key))
+        ticket = server.app_ticket("알파", int(time.time()) - 1, key, "gh:kim")
+        self.assertFalse(server.app_ticket_ok(ticket, "알파", key, "gh:kim"))
 
     def test_tampered_or_other_project_ticket_is_rejected(self):
         key = b"0123456789abcdef0123456789abcdef"
-        ticket = server.app_ticket("알파", int(time.time()) + 60, key)
+        ticket = server.app_ticket("알파", int(time.time()) + 60, key, "gh:kim")
         last = ticket[-1]
         tampered = ticket[:-1] + ("0" if last != "0" else "1")
-        self.assertFalse(server.app_ticket_ok(tampered, "알파", key))
-        self.assertFalse(server.app_ticket_ok(ticket, "베타", key))
+        self.assertFalse(server.app_ticket_ok(tampered, "알파", key, "gh:kim"))
+        self.assertFalse(server.app_ticket_ok(ticket, "베타", key, "gh:kim"))
 
     def test_malformed_tickets_never_raise(self):
         key = b"0123456789abcdef0123456789abcdef"
-        for ticket in ("", "x", "1.2.3", "1.", "a.b", "é.0", "1." + "a" * 100, None):
+        for ticket in ("", "x", "1.2.3", "1.", "a.b", "é.0", "1." + "a" * 100,
+                       "1.gh:kim.bad.mac", "1.gh:.kim.abcdef0123456789abcdef0123456789", None):
             with self.subTest(ticket=ticket):
-                self.assertFalse(server.app_ticket_ok(ticket, "알파", key))
+                self.assertFalse(server.app_ticket_ok(ticket, "알파", key, "gh:kim"))
+                self.assertIsNone(server.app_ticket_resolve(ticket, key, ["gh:kim"]))
 
     def test_csp_origin_is_https_under_tls(self):
         # 없으면 TLS 인데 출처가 http:// 로 변해도 아무 검사가 빨개지지 않는다.
@@ -374,33 +416,127 @@ class ProjectAppTests(unittest.TestCase):
                 self.assertIn("default-src 'self';", csp)
 
 
+class AppTicketSubjectRevocationTests(unittest.TestCase):
+    """허용 목록에서 지운 계정이 이미 받은 티켓을 다시 쓸 수 없다는 회귀 시험."""
+    TOKEN = "t" * 40
+    NAME = "알파"
+    Q = urllib.parse.quote(NAME)
+    GITHUB_LOGIN = "taeseok"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name)
+        web = self.root / "projects" / self.NAME / "web"
+        web.mkdir(parents=True)
+        (web / "index.html").write_text("<!doctype html><p id=secret>APP-BODY</p>", encoding="utf-8")
+        (web / "style.css").write_text("body { color: #123; }\n", encoding="utf-8")
+        (web / "app.js").write_text("document.title = 'JS-RAN';\n", encoding="utf-8")
+        (self.root / "projects" / self.NAME / "app.json").write_text(
+            json.dumps({"root": "web", "entry": "index.html"}), encoding="utf-8")
+        (self.root / "AIMEM.md").write_text("# AIMEM\n\n- **REV: 1**\n", encoding="utf-8")
+        allowed = self.root / server.GITHUB_ALLOW_FILE
+        allowed.parent.mkdir(parents=True)
+        allowed.write_text(self.GITHUB_LOGIN + "\n", encoding="utf-8")
+        handler = type("H", (server.Handler,), {
+            "root": self.root, "require_auth": True, "tls": False, "access_token": self.TOKEN,
+            "guard": server.LoginGuard(), "log_message": lambda *a, **k: None})
+        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.addCleanup(self.httpd.server_close)
+        self.addCleanup(self.httpd.shutdown)
+        self.port = self.httpd.server_address[1]
+
+    def get(self, path, headers=None):
+        con = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        try:
+            con.putrequest("GET", path, skip_host=False, skip_accept_encoding=True)
+            for k, v in (headers or {}).items():
+                con.putheader(k, v)
+            con.endheaders()
+            r = con.getresponse()
+            return r.status, r.getheader("Location") or "", r.read()
+        finally:
+            con.close()
+
+    def github_headers(self, login=GITHUB_LOGIN):
+        exp = int(time.time()) + server.SESSION_TTL_SEC
+        value = server.sign_session(self.TOKEN, f"gh:{login}", exp)
+        return {"Cookie": f"{server.SESSION_COOKIE}={value}"}
+
+    def test_deleted_allowlist_account_cannot_reuse_its_ticket(self):
+        headers = self.github_headers()
+        status, loc, _ = self.get(f"/app/{self.Q}/", headers)
+        self.assertEqual(status, 302)
+        self.assertTrue(loc.startswith("/app/~"))
+        status, _, body = self.get(loc)
+        self.assertEqual(status, 200)
+        self.assertIn(b"APP-BODY", body)
+
+        allowed = self.root / server.GITHUB_ALLOW_FILE
+        allowed.write_text("someoneelse\n", encoding="utf-8")
+        status, _, body = self.get(loc)
+        self.assertEqual(status, 403)
+        self.assertIn("실행 티켓이 만료됐습니다", json.loads(body)["error"])
+        self.assertNotIn(b"APP-BODY", body)
+
+    def test_ticket_path_serves_index_and_subresources_without_credentials(self):
+        status, loc, _ = self.get(f"/app/{self.Q}/", self.github_headers())
+        self.assertEqual(status, 302)
+        for path in (loc, loc + "index.html", loc + "style.css", loc + "app.js"):
+            with self.subTest(path=path):
+                status, _, body = self.get(path)
+                self.assertEqual(status, 200, path)
+                self.assertTrue(body)
+        status, _, body = self.get(loc + "app.js")
+        self.assertEqual(body, b"document.title = 'JS-RAN';\n")
+
+    def test_other_subjects_ticket_is_refused_with_a_different_cookie(self):
+        allowed = self.root / server.GITHUB_ALLOW_FILE
+        allowed.write_text("kim\nlee\n", encoding="utf-8")
+        status, loc, _ = self.get(f"/app/{self.Q}/", self.github_headers("kim"))
+        self.assertEqual(status, 302)
+        status, _, body = self.get(loc, self.github_headers("lee"))
+        self.assertEqual(status, 403)
+        self.assertIn("실행 티켓이 만료됐습니다", json.loads(body)["error"])
+        self.assertNotIn(b"APP-BODY", body)
+
+
 class TicketLimitAndLogRedactionTests(unittest.TestCase):
     key = b"0123456789abcdef0123456789abcdef"
     name = "알파"
-    ticket_body = "1234.abcdef0123456789abcdef0123456789"
+    subject = "gh:kim"
+    ticket_body = "1234.abcdef012345.abcdef0123456789abcdef0123456789"
+
+    def test_ticket_length_allows_a_39_char_github_login(self):
+        now = int(time.time())
+        subject = "gh:" + "a" * 39
+        ticket = server.app_ticket(self.name, now + 60, self.key, subject)
+        self.assertLessEqual(len(ticket), 160)
+        self.assertTrue(server.app_ticket_ok(ticket, self.name, self.key, subject, now=now))
 
     def test_ticket_within_ttl_is_valid(self):
         now = int(time.time())
-        ticket = server.app_ticket(self.name, now + server.PROJECT_APP_TICKET_TTL_SEC, self.key)
-        self.assertTrue(server.app_ticket_ok(ticket, self.name, self.key, now=now))
+        ticket = server.app_ticket(self.name, now + server.PROJECT_APP_TICKET_TTL_SEC, self.key, self.subject)
+        self.assertTrue(server.app_ticket_ok(ticket, self.name, self.key, self.subject, now=now))
 
     def test_expired_ticket_is_rejected(self):
         now = int(time.time())
-        ticket = server.app_ticket(self.name, now - 10, self.key)
-        self.assertFalse(server.app_ticket_ok(ticket, self.name, self.key, now=now))
+        ticket = server.app_ticket(self.name, now - 10, self.key, self.subject)
+        self.assertFalse(server.app_ticket_ok(ticket, self.name, self.key, self.subject, now=now))
 
     def test_ticket_beyond_ttl_window_is_rejected(self):
         # 서명 키가 샜을 때 10년짜리 영구 티켓이 통과하지 않아야 한다.
         now = int(time.time())
         ticket = server.app_ticket(
-            self.name, now + server.PROJECT_APP_TICKET_TTL_SEC + 3600, self.key)
-        self.assertFalse(server.app_ticket_ok(ticket, self.name, self.key, now=now))
+            self.name, now + server.PROJECT_APP_TICKET_TTL_SEC + 3600, self.key, self.subject)
+        self.assertFalse(server.app_ticket_ok(ticket, self.name, self.key, self.subject, now=now))
 
     def test_ticket_inside_ttl_grace_is_valid(self):
         now = int(time.time())
         ticket = server.app_ticket(
-            self.name, now + server.PROJECT_APP_TICKET_TTL_SEC + 30, self.key)
-        self.assertTrue(server.app_ticket_ok(ticket, self.name, self.key, now=now))
+            self.name, now + server.PROJECT_APP_TICKET_TTL_SEC + 30, self.key, self.subject)
+        self.assertTrue(server.app_ticket_ok(ticket, self.name, self.key, self.subject, now=now))
 
     def test_ticket_log_hides_plain_tilde_path(self):
         line = f"GET /app/~{self.ticket_body}/웹워들/ HTTP/1.1"

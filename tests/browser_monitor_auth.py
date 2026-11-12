@@ -10,6 +10,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from urllib.parse import urljoin
 
@@ -22,6 +23,7 @@ from aimem_monitor import server          # noqa: E402
 
 
 TOKEN = "a" * 64                      # 접근 토큰 (64자 16진수 꼴)
+GITHUB_LOGIN = "kim"                  # 회수 검사용 허용 목록 계정
 
 
 class Checks:
@@ -55,6 +57,9 @@ def monitor_server():
     (tmp / ".aimem").mkdir()
     shutil.copy(ROOT / ".aimem" / "aimem.db", tmp / ".aimem" / "aimem.db")
     shutil.copy(ROOT / "AIMEM.md", tmp / "AIMEM.md")
+    allowed = tmp / server.GITHUB_ALLOW_FILE
+    allowed.parent.mkdir(parents=True, exist_ok=True)
+    allowed.write_text(GITHUB_LOGIN + "\n", encoding="utf-8")
     (tmp / "projects" / "웹워들").mkdir(parents=True)
     shutil.copy(ROOT / "projects" / "웹워들" / "app.json", tmp / "projects" / "웹워들" / "app.json")
     shutil.copytree(ROOT / "projects" / "웹워들" / "web", tmp / "projects" / "웹워들" / "web")
@@ -66,7 +71,7 @@ def monitor_server():
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{httpd.server_address[1]}"
+        yield f"http://127.0.0.1:{httpd.server_address[1]}", tmp
     finally:
         httpd.shutdown()
         httpd.server_close()
@@ -188,6 +193,103 @@ def check_top_level_is_opaque(ctx, base, checks):
         page.close()
 
 
+def check_subresources_ok(resources, checks):
+    """하위 자원 응답 코드를 직접 본다 - 403 이 하나도 없고 전부 200."""
+    statuses = [s for _, s in resources]
+    codes = sorted(set(statuses))
+    exts = sorted({url.rsplit(".", 1)[-1].lower() for url, _ in resources})
+    passed = (bool(resources) and 403 not in codes
+              and all(s == 200 for s in statuses) and {"js", "css"} <= set(exts))
+    checks.ok("하위 자원이 실제로 200 이다", passed,
+              f"{len(resources)}개 응답 코드={codes}, 확장자={exts}")
+
+
+def run_revocation_checks(browser, base, root, checks):
+    """허용 목록 계정으로 미리보기를 띄운 뒤 계정을 지워 회수가 듣는지 잰다."""
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    try:
+        exp = int(time.time()) + server.SESSION_TTL_SEC
+        cookie = server.sign_session(TOKEN, "gh:" + GITHUB_LOGIN, exp)
+        ctx.add_cookies([{"name": server.SESSION_COOKIE, "value": cookie, "url": base}])
+        resources = []
+        page = ctx.new_page()
+        page.on("response", lambda resp: resources.append(
+            (resp.url.split("?", 1)[0], resp.status))
+            if "/app/~" in resp.url
+            and resp.url.split("?", 1)[0].lower().endswith((".js", ".css")) else None)
+        page.goto(base + "/", wait_until="load")
+        page.wait_for_selector("#projects-list .proj-item", timeout=10000)
+        run = page.locator(".proj-run").first
+        run.wait_for(state="attached", timeout=10000)
+        run.click()
+        frame_el = page.locator("iframe.proj-app-frame")
+        frame_el.wait_for(state="visible", timeout=10000)
+        fl = page.frame_locator("iframe.proj-app-frame")
+        fl.locator("#board .tile").first.wait_for(state="attached", timeout=10000)
+        check_subresources_ok(resources, checks)
+
+        allowed = root / server.GITHUB_ALLOW_FILE
+        allowed.write_text("someoneelse\n", encoding="utf-8")
+        sub_url = next((u for u, _ in resources if u.lower().endswith(".js")), resources[0][0])
+        code = page.evaluate(
+            "async (u) => { const r = await fetch(u, {cache: 'no-store'}); return r.status; }",
+            sub_url)
+        checks.ok("회수가 듣는다 (최상위)", code == 403, f"fetch({sub_url}) -> {code}")
+
+        old_frame = next((f for f in page.frames if "/app/~" in f.url), None)
+        old_frame_url = old_frame.url if old_frame else None
+        if old_frame is None:
+            checks.ok("회수가 듣는다 (iframe 안)", False, "옛 티켓 프레임을 찾지 못함")
+        else:
+            try:
+                got = old_frame.evaluate(
+                    "async (u) => {"
+                    "  try { const r = await fetch(u, {cache: 'no-store'}); return 'status ' + r.status; }"
+                    "  catch (e) { return 'blocked ' + e.name; }"
+                    "}", sub_url)
+            except Exception as exc:
+                got = f"error {type(exc).__name__}: {exc}"
+            if got.startswith("status "):
+                passed = got == "status 403"
+                detail = f"프레임 안 fetch({sub_url}) -> {got}"
+            else:
+                try:
+                    script = old_frame.evaluate(
+                        "(u) => new Promise((resolve) => {"
+                        "  const s = document.createElement('script');"
+                        "  s.src = u;"
+                        "  s.onload = () => resolve('onload');"
+                        "  s.onerror = () => resolve('onerror');"
+                        "  document.head.appendChild(s);"
+                        "  setTimeout(() => resolve('timeout'), 3000);"
+                        "})", sub_url)
+                except Exception as exc:
+                    script = f"error {type(exc).__name__}: {str(exc).splitlines()[0]}"
+                passed = script == "onerror"
+                detail = f"프레임 안 fetch -> {got}; <script src> -> {script}"
+            checks.ok("회수가 듣는다 (iframe 안)", passed, detail)
+
+        if old_frame_url:
+            if not old_frame_url.endswith("/"):
+                old_frame_url += "/"
+            page.evaluate("(src) => { document.querySelector('iframe.proj-app-frame').src = src; }",
+                          old_frame_url)
+            page.wait_for_timeout(1500)
+            tiles = fl.locator("#board .tile").count()
+            checks.ok("옛 티켓은 지운 뒤에도 안 든다", tiles == 0,
+                      f"옛 티켓 URL={old_frame_url}, 타일 {tiles}개")
+        else:
+            checks.ok("옛 티켓은 지운 뒤에도 안 든다", False, "옛 티켓 프레임을 찾지 못함")
+
+        page.evaluate("(src) => { document.querySelector('iframe.proj-app-frame').src = src; }",
+                      base + "/app/웹워들/")
+        page.wait_for_timeout(1500)
+        tiles = fl.locator("#board .tile").count()
+        checks.ok("지운 뒤 발급도 막힌다", tiles == 0, f"타일 {tiles}개")
+    finally:
+        ctx.close()
+
+
 def run_checks(browser, base, checks):
     ctx = browser.new_context(viewport={"width": 1280, "height": 900})
     try:
@@ -209,11 +311,12 @@ def run_checks(browser, base, checks):
 def main():
     checks = Checks()
     try:
-        with monitor_server() as base:
+        with monitor_server() as (base, root):
             with sync_playwright() as pw:
                 browser = pw.chromium.launch()
                 try:
                     run_checks(browser, base, checks)
+                    run_revocation_checks(browser, base, root, checks)
                 finally:
                     browser.close()
     except Exception as exc:

@@ -9,6 +9,7 @@
 """
 import contextlib
 import http.client
+import http.server
 import io
 import json
 import os
@@ -20,6 +21,7 @@ import sys
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -99,6 +101,81 @@ class AuditTest(unittest.TestCase):
         self.assertEqual(server.subject_label("token"), "접근 토큰")
         self.assertEqual(server.subject_label("gh:tsyi"), "GitHub tsyi")
         self.assertIsNone(server.subject_label(None))
+
+
+class RevokedAuditTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self._tmp.name)
+        self.token = "c" * 64
+        _write(self.root, GITHUB_ALLOW_FILE, "octo-cat\n")
+        handler = type("H", (server.Handler,), {
+            "root": self.root, "require_auth": True, "tls": False,
+            "access_token": self.token, "guard": server.LoginGuard(),
+            "timeout": 5, "log_message": lambda *a, **k: None,
+        })
+        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self.httpd.daemon_threads = True
+        self.port = self.httpd.server_address[1]
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        with server._revoked_lock:
+            server._revoked_last.clear()
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self._tmp.cleanup()
+        with server._revoked_lock:
+            server._revoked_last.clear()
+
+    def cookie(self, login="octo-cat"):
+        exp = int(time.time()) + 600
+        return server.sign_session(self.token, server.SESSION_SUBJECT_GITHUB_PREFIX + login, exp)
+
+    def get(self, path, login="octo-cat"):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", path, headers={"Cookie": f"{server.SESSION_COOKIE}={self.cookie(login)}"})
+        r = conn.getresponse()
+        body = r.read()
+        status = r.status
+        conn.close()
+        return status, body
+
+    def revoked_lines(self):
+        p = self.root / server.AUDIT_LOG
+        if not p.exists():
+            return []
+        return [line.split("\t") for line in p.read_text(encoding="utf-8").splitlines()
+                if line.split("\t")[1] == "github-revoked"]
+
+    def test_revoked_account_is_audited_once(self):
+        status, body = self.get("/api/authinfo")
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["authenticated"])
+        _write(self.root, GITHUB_ALLOW_FILE, "# no accounts\n")
+        status, _ = self.get("/api/state")
+        self.assertEqual(status, 401)
+        lines = self.revoked_lines()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertEqual(lines[0][1:], ["github-revoked", "127.0.0.1", "gh:octo-cat",
+                                        "GET /api/state 허용 목록 밖"])
+        self.assertNotIn(self.token, (self.root / server.AUDIT_LOG).read_text(encoding="utf-8"))
+
+    def test_repeated_revoked_requests_do_not_add_lines(self):
+        _write(self.root, GITHUB_ALLOW_FILE, "# no accounts\n")
+        for _ in range(3):
+            status, _ = self.get("/api/state")
+            self.assertEqual(status, 401)
+        self.assertEqual(len(self.revoked_lines()), 1)
+
+    def test_zero_suppression_window_allows_new_lines(self):
+        _write(self.root, GITHUB_ALLOW_FILE, "# no accounts\n")
+        with mock.patch.object(server, "_REVOKED_AUDIT_MIN_SEC", 0):
+            for _ in range(2):
+                status, _ = self.get("/api/state")
+                self.assertEqual(status, 401)
+        self.assertEqual(len(self.revoked_lines()), 2)
 
 
 class AdminTest(unittest.TestCase):

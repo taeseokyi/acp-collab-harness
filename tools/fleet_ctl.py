@@ -800,10 +800,26 @@ def chain_label(fleet_on, projects, all_):
     return " + ".join((["함대"] if fleet_on else []) + [f"프로젝트 {p}" for p in projects]) or "(대상 없음)"
 
 
+def _queue_items():
+    """대기 큐의 (순번, 글). 큐는 라운드가 '다음에 할 일' 로 넘긴 함대의 일이다 - 요청이 아니어도 남은 일로 센다."""
+    import sqlite3  # noqa: PLC0415
+    db = fleet.ROOT / ".aimem" / "aimem.db"
+    if not db.exists():
+        return []
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+        try:
+            return [(int(r[0]), str(r[1] or "")) for r in con.execute("SELECT pos, task FROM queue ORDER BY pos")]
+        finally:
+            con.close()
+    except (sqlite3.Error, ValueError, TypeError):
+        return []
+
+
 def chain_work(fleet_on=False, projects=(), all_=False):
     """고른 대상의 남은 일. `{requests: [열린 요청 id], goals: {프로젝트: {done, total, open}}}`.
 
-    - 함대      : 프로젝트가 없는 열린 요청 (함대 자체의 일)
+    - 함대      : 프로젝트가 없는 열린 요청 (함대 자체의 일) + **대기 큐** (`queue`: 남은 항목 수 - 함대·전체일 때만)
     - 프로젝트들 : 그 프로젝트들의 열린 요청 + 체크 안 된 목표 (여러 개 고를 수 있다)
     - 전체      : 열린 요청 전부 + 목표 체크리스트가 있는 모든 프로젝트의 체크 안 된 목표 (나중에 생기는 프로젝트도)
     """
@@ -819,7 +835,7 @@ def chain_work(fleet_on=False, projects=(), all_=False):
         g = project_goals(name)
         if g:
             goals[name] = {"done": sum(1 for d, _ in g if d), "total": len(g), "open": [t for d, t in g if not d]}
-    return {"requests": ids, "goals": goals}
+    return {"requests": ids, "goals": goals, "queue": len(_queue_items()) if (all_ or fleet_on) else 0}
 
 
 def chain_set(on, project=None, max_rounds=None, by="사람", scope=None, projects=None, fleet_on=None, all_=None, autonomous=False,
@@ -878,6 +894,7 @@ def chain_set(on, project=None, max_rounds=None, by="사람", scope=None, projec
           "autonomous": bool(autonomous), "strikes": 0,
           "goals_done": sum(g["done"] for g in work["goals"].values()),     # 진전 = 이 수가 늘었거나
           "open_requests": work["requests"],                                 #        이 가운데 닫힌 요청이 생겼는가
+          "queue_left": work["queue"],                                       #        큐가 줄었는가
           "by": by, "at": _now(),
           "log": [f"{_now()} 켬 ({by}) - {chain_label(is_fleet, names, is_all)}, "
                   + f"상한 {mx} 라운드, " + ("완전 자율 종주" if autonomous else "닿으면 새 묶음으로 이어 감(끝날 때까지)" if renew else "닿으면 멈춤")]}
@@ -913,12 +930,13 @@ def chain_decide(round_n):
     done = sum(g["done"] for g in goals.values())
     total = sum(g["total"] for g in goals.values())
     goals_left = sum(len(g["open"]) for g in goals.values())
-    base = {"requests": open_ids, "goals": goals, "done": done, "total": total}
-    left = f"열린 요청 {len(open_ids)}건" + (f" · 목표 {done}/{total}" if goals else "")
+    queue_left = int(work.get("queue") or 0)
+    base = {"requests": open_ids, "goals": goals, "done": done, "total": total, "queue": queue_left}
+    left = f"열린 요청 {len(open_ids)}건" + (f" · 목표 {done}/{total}" if goals else "") + (f" · 큐 {queue_left}건" if queue_left else "")
     status = round_report_status(round_n)
     auto = bool(st.get("autonomous"))
     second_chance = auto and int(st.get("strikes", 0)) < 1          # 완전 자율 종주: 막혀도 한 번은 더 간다
-    if not open_ids and not goals_left and status == "DONE":
+    if not open_ids and not goals_left and not queue_left and status == "DONE":
         return {**base, "action": "stop", "kind": "done", "why": f"남은 일이 없습니다 ({left}) - 끝났습니다"}
     cap = int(st.get("max_rounds") or CHAIN_DEFAULT_ROUNDS)
     renew = bool(st.get("renew")) or auto or not st.get("max_rounds")     # 옛 상태의 max_rounds 0 = 이어 감
@@ -927,12 +945,14 @@ def chain_decide(round_n):
     if renew and total >= CHAIN_HARD_ROUNDS:
         return {**base, "action": "stop", "kind": "safety", "why": f"모두 {total} 라운드를 이어 왔습니다 - 안전 상한({CHAIN_HARD_ROUNDS})이라 멈춥니다. 계속하려면 다시 켜십시오 ({left})"}
     if status != "DONE":
-        if second_chance and (open_ids or goals_left):
+        if second_chance and (open_ids or goals_left or queue_left):
             return {**base, "action": "launch", "strike": True, "why": f"R{round_n} 보고가 {status or '없음'} 입니다 - 완전 자율 종주라 한 번 더 갑니다 ({left})"}
         return {**base, "action": "stop", "kind": "report", "why": f"R{round_n} 보고가 {status or '없음'} 입니다 - 사람이 봐야 합니다"
                 + (" (완전 자율 종주에서도 연달아 두 번째라 멈춥니다)" if auto else "")}
     closed = [i for i in (st.get("open_requests") or []) if i not in open_ids]
-    if not closed and done <= int(st.get("goals_done", 0)):
+    queue_shrank = "queue_left" in st and queue_left < int(st.get("queue_left") or 0)
+    queue_new = "queue_left" not in st and queue_left > 0       # 큐를 세기 전에 켠 상태 - 처음 본 큐는 새 일이다
+    if not closed and done <= int(st.get("goals_done", 0)) and not queue_shrank and not queue_new:
         if second_chance:
             return {**base, "action": "launch", "strike": True, "why": f"R{round_n} 동안 닫힌 요청도 늘어난 목표 체크도 없습니다 - 완전 자율 종주라 한 번 더 갑니다 ({left})"}
         return {**base, "action": "stop", "kind": "stuck", "why": f"R{round_n} 동안 닫힌 요청도 늘어난 목표 체크도 없습니다 ({left}) - 같은 자리를 돌지 않게 멈춥니다"
@@ -960,6 +980,24 @@ def _chain_request(project, round_n, open_, done, total):
               "(함대의 '이어 달리기' 가 자동으로 넣은 요청입니다 - 사람이 켰고, 목표가 다 체크되거나 진전이 없으면 스스로 멈춥니다.)")
     return server.create_request({"title": f"{project}: 남은 목표 {len(open_)}개 이어 가기 (R{round_n} 뒤 자동)",
                                   "detail": detail, "requester": "함대 이어 달리기", "project": project}, fleet.ROOT)
+
+
+def _chain_queue_request(round_n):
+    """대기 큐에 남은 일을 다음 라운드의 요청으로 넣습니다 (웹 요청 폼과 같은 길, 프로젝트 없음 = 함대의 일)."""
+    here = str(HERE)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    from aimem_monitor import server  # noqa: PLC0415
+    items = _queue_items()
+    lines = "\n".join(f"- 큐 {pos}번: {task[:300]}" for pos, task in items[:40])
+    detail = (f"R{round_n} 이 끝났고 열린 요청은 없지만 대기 큐에 {len(items)}건이 남아 있습니다. 큐가 이번 라운드의 할 일입니다:\n\n"
+              f"{lines}\n\n"
+              "전문은 `python3 tools/aimem_db.py queue list` 로 읽으십시오. 끝낸 항목은 검증 뒤 큐에서 내리고, "
+              "이번 라운드에 못 끝내는 항목은 **무엇이 막는지**(사람의 승인이 필요한지 포함)를 보고에 항목별로 적으십시오. "
+              "큐에 새 항목을 더하는 것은 이 일들을 하다 찾은 것만입니다.\n\n"
+              "(함대의 '이어 달리기' 가 자동으로 넣은 요청입니다 - 큐가 비거나 줄지 않으면 스스로 멈춥니다.)")
+    return server.create_request({"title": f"대기 큐 {len(items)}건 처리 (R{round_n} 뒤 자동)",
+                                  "detail": detail, "requester": "함대 이어 달리기"}, fleet.ROOT)
 
 
 #: 멈춘 까닭의 종류 (2026-11-11 태석님: "30회 돌고 멈췄는지, 다른 이유가 있어 멈춘 건지, 다 끝낸 건지 적절한 메시지")
@@ -997,10 +1035,17 @@ def chain_step(round_n, by="이어 달리기"):
             _chain_stop(st, "error", f"요청을 못 넣었습니다({name}): {res.get('error')}", round_n)
             return {"ok": False, "launched": False, "why": st["stopped_why"]}
         filed.append(res.get("id"))
+    # 큐만 남았고 함대의 열린 요청이 없으면, 큐를 비우는 요청을 넣는다
+    if d.get("queue") and "" not in open_projects and not d.get("requests"):
+        ok, res = _chain_queue_request(round_n)
+        if not ok:
+            _chain_stop(st, "error", f"요청을 못 넣었습니다(큐): {res.get('error')}", round_n)
+            return {"ok": False, "launched": False, "why": st["stopped_why"]}
+        filed.append(res.get("id"))
     st.update({"rounds_done": 0 if d.get("new_cycle") else int(st.get("rounds_done", 0)) + 1,      # 새 묶음은 0 부터 다시 센다
                "cycles": int(st.get("cycles", 0)) + (1 if d.get("new_cycle") else 0),
                "total_rounds": int(st.get("total_rounds", st.get("rounds_done", 0))) + 1,
-               "goals_done": d["done"], "at": _now(),
+               "goals_done": d["done"], "queue_left": int(d.get("queue") or 0), "at": _now(),
                "strikes": (int(st.get("strikes", 0)) + 1) if d.get("strike") else 0,     # 진전이 있었으면 다시 0
                "open_requests": chain_work(*chain_targets(st))["requests"]})
     st.setdefault("log", []).append(f"{_now()} R{round_n} 끝 - {d['why']}" + (f" → 요청 {', '.join(filed)}" if filed else ""))

@@ -142,18 +142,32 @@ def handoff_sync():
 def _import_handoff_entries(con, entries):
     """복구용: 파일의 항목을 events(kind='handoff') 로 적재한다(DB 를 잃었을 때 `migrate`). 이미 있는 항목은 건너뛴다."""
     n = 0
-    for e in reversed(list(entries)):  # 오래된 것부터 seq 가 커지도록
+    ordered = list(reversed(list(entries)))  # 오래된 것부터 seq 가 커지도록
+    last_rev = None
+    for i, e in enumerate(ordered):
         m = HANDOFF_ENTRY_RE.match(e)
         at = m.group(1)
         text = e[m.end():].lstrip()   # 머리(시각)를 뗀 본문
         rm = re.search(r"\*\*REV (\d+)", e)
+        if rm:
+            rev = int(rm.group(1))
+        elif last_rev is not None:
+            rev = last_rev  # 바로 앞(더 오래된) 항목의 REV 를 물려받는다
+        else:
+            rev = 0  # 앞에 아무것도 없고 뒤에도 REV 가 없을 때
+            for later in ordered[i + 1:]:
+                lm = re.search(r"\*\*REV (\d+)", later)
+                if lm:
+                    rev = int(lm.group(1))  # 뒤(더 새것)에서 처음 나오는 REV
+                    break
+        last_rev = rev
         exists = con.execute(
             "SELECT 1 FROM events WHERE kind='handoff' AND replace(substr(at,1,16),'T',' ')=? AND "
             "(substr(body,1,80)=? OR substr(body,1,80)=? OR substr(COALESCE(actor,'관리자')||': '||body,1,80)=?)",
             (at, text[:80], e[:80], text[:80])).fetchone()
         if not exists:
             con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
-                        (at, "관리자", int(rm.group(1)) if rm else None, "handoff", e))
+                        (at, "관리자", rev, "handoff", e))
             n += 1
     return n
 
@@ -1146,8 +1160,8 @@ def archive_apply(plan, actor="관리자"):
         dest = arch / f"runs-{month}"
         dest.mkdir(parents=True, exist_ok=True)
         names = r.get("files", [])
-        ordered = [name for name in names if not name.endswith(".json")]
-        ordered += [name for name in names if name.endswith(".json")]
+        ordered = [name for name in names if not name.endswith(".rc")]
+        ordered += [name for name in names if name.endswith(".rc")]
         for name in ordered:
             src = run_dir / name
             if src.is_file():
@@ -1275,6 +1289,7 @@ def archive_apply(plan, actor="관리자"):
         with f:
             try:
                 text = f.read()
+                end = f.tell()
             except OSError:
                 continue
             kept, by_month = [], {}
@@ -1305,6 +1320,10 @@ def archive_apply(plan, actor="관리자"):
                     raise RuntimeError(f"archive: {dest} 줄 수가 늘지 않았습니다 - 원본을 남깁니다")
                 log_total += len(lines)
             try:
+                f.seek(0, 2)
+                if f.tell() != end:
+                    f.seek(end)
+                    kept.append(f.read())
                 f.seek(0)
                 f.write("".join(kept))
                 f.truncate()

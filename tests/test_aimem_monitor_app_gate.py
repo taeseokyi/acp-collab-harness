@@ -32,6 +32,8 @@ class AppGateRegression(unittest.TestCase):
         web = root / "projects" / NAME / "web"
         web.mkdir(parents=True)
         (web / "index.html").write_text("<!doctype html><p id=secret>APP-BODY</p>", encoding="utf-8")
+        (web / "style.css").write_text("body { color: #123; }\n", encoding="utf-8")
+        (web / "app.js").write_text("document.title = 'JS-RAN';\n", encoding="utf-8")
         (root / "projects" / NAME / "app.json").write_text(json.dumps({"root": "web", "entry": "index.html"}), encoding="utf-8")
         (root / "AIMEM.md").write_text("# AIMEM\n\n- **REV: 1**\n", encoding="utf-8")
         allowed = root / server.GITHUB_ALLOW_FILE
@@ -74,11 +76,15 @@ class AppGateRegression(unittest.TestCase):
         self.assertEqual((status, loc), (302, "/login"))                                  # 무인증은 로그인으로
         status, loc, _ = self.get(f"/app/{Q}/", {"Authorization": "Bearer " + TOKEN})
         self.assertEqual(status, 302)
-        self.assertRegex(loc, r"\A/app/~\d+\.[0-9a-f]{32}/" + Q + r"/\Z")                 # 로그인한 사람에게만 티켓
-        status, _, body = self.get(loc)                                                   # 티켓 경로는 쿠키 없이
+        self.assertRegex(loc, r"\A/app/~\d+\.[0-9a-f]{12}\.[0-9a-f]{32}/" + Q + r"/\Z")  # 로그인한 사람에게만 티켓
+        status, _, body = self.get(loc)                                                  # 브라우저처럼 쿠키·Bearer 없이
+        self.assertEqual(status, 200)                                                    # 티켓 안 주체로 인가한다 (D1)
+        self.assertIn(b"APP-BODY", body)
+        status, _, body = self.get(loc, {"Authorization": "Bearer " + TOKEN})
         self.assertEqual(status, 200)
         self.assertIn(b"APP-BODY", body)
-        status, _, body = self.get(loc.replace("/app/~", "/app/~9", 1))                   # 위조
+        status, _, body = self.get(loc.replace("/app/~", "/app/~9", 1),
+                                   {"Authorization": "Bearer " + TOKEN})                 # 위조
         self.assertEqual(status, 403)
         self.assertNotIn(b"APP-BODY", body)
         ticket = loc.split("/")[2]
@@ -94,13 +100,16 @@ class AppGateRegression(unittest.TestCase):
     def test_github_session_gets_an_app_ticket(self):
         status, loc, body = self.get(f"/app/{Q}/", self.github_headers())
         self.assertEqual(status, 302)
-        self.assertRegex(loc, r"\A/app/~\d+\.[0-9a-f]{32}/" + Q + r"/\Z")
+        self.assertRegex(loc, r"\A/app/~\d+\.[0-9a-f]{12}\.[0-9a-f]{32}/" + Q + r"/\Z")
+        self.assertNotIn("gh:", loc)
+        self.assertNotIn(GITHUB_LOGIN, loc)
+        self.assertIn(server.app_ticket_tag(f"gh:{GITHUB_LOGIN}", TOKEN.encode("ascii")), loc)
         self.assertNotIn(b"APP-BODY", body)
 
     def test_github_app_ticket_opens_the_app(self):
         status, loc, _ = self.get(f"/app/{Q}/", self.github_headers())
         self.assertEqual(status, 302)
-        status, _, body = self.get(loc, self.github_headers())
+        status, _, body = self.get(loc)
         self.assertEqual(status, 200)
         self.assertIn(b"APP-BODY", body)
         self.assertTrue(body.lstrip().lower().startswith(b"<!doctype html"))
@@ -153,7 +162,8 @@ class AppGateRegression(unittest.TestCase):
         allowed.write_text("TaeSeok\n", encoding="utf-8")
         status, loc, body = self.get(f"/app/{Q}/", self.github_headers("taeseok"))
         self.assertEqual(status, 302)
-        self.assertRegex(loc, r"\A/app/~\d+\.[0-9a-f]{32}/" + Q + r"/\Z")
+        self.assertRegex(loc, r"\A/app/~\d+\.[0-9a-f]{12}\.[0-9a-f]{32}/" + Q + r"/\Z")
+        self.assertNotIn("taeseok", loc)
         self.assertNotIn(b"APP-BODY", body)
         status, _, body = self.get(loc, self.github_headers("taeseok"))
         self.assertEqual(status, 200)
@@ -166,8 +176,9 @@ class AppGateRegression(unittest.TestCase):
         headers = self.github_headers("TaeSeok")
         status, loc, _ = self.get(f"/app/{Q}/", headers)
         self.assertEqual(status, 302)
-        self.assertIn("/app/~", loc)
-        status, _, body = self.get(loc, headers)
+        self.assertRegex(loc, r"\A/app/~\d+\.[0-9a-f]{12}\.[0-9a-f]{32}/" + Q + r"/\Z")
+        self.assertNotIn("TaeSeok", loc)
+        status, _, body = self.get(loc)
         self.assertEqual(status, 200)
         self.assertIn(b"APP-BODY", body)
 
@@ -180,6 +191,52 @@ class AppGateRegression(unittest.TestCase):
         self.assertIn(status, (302, 401, 403))
         if status == 302:
             self.assertEqual(loc, "/login")
+        self.assertNotIn(b"APP-BODY", body)
+
+    def test_ticket_path_serves_index_and_subresources_without_credentials(self):
+        status, loc, _ = self.get(f"/app/{Q}/", self.github_headers())
+        self.assertEqual(status, 302)
+        for path in (loc, loc + "index.html", loc + "style.css", loc + "app.js"):
+            with self.subTest(path=path):
+                status, _, body = self.get(path)
+                self.assertEqual(status, 200, path)
+                self.assertTrue(body)
+        status, _, body = self.get(loc + "app.js")
+        self.assertEqual(body, b"document.title = 'JS-RAN';\n")
+
+    def test_deleted_allowlist_account_is_revoked_without_credentials(self):
+        status, loc, _ = self.get(f"/app/{Q}/", self.github_headers())
+        self.assertEqual(status, 302)
+        status, _, body = self.get(loc)
+        self.assertEqual(status, 200)
+        self.assertIn(b"APP-BODY", body)
+        allowed = self.httpd.RequestHandlerClass.root / server.GITHUB_ALLOW_FILE
+        allowed.write_text("someoneelse\n", encoding="utf-8")
+        status, _, body = self.get(loc)
+        self.assertEqual(status, 403)
+        self.assertNotIn(b"APP-BODY", body)
+
+    def test_other_subjects_ticket_is_refused_with_a_different_cookie(self):
+        root = self.httpd.RequestHandlerClass.root
+        allowed = root / server.GITHUB_ALLOW_FILE
+        allowed.write_text("kim\nlee\n", encoding="utf-8")
+        status, loc, _ = self.get(f"/app/{Q}/", self.github_headers("kim"))
+        self.assertEqual(status, 302)
+        status, _, body = self.get(loc, self.github_headers("lee"))
+        self.assertEqual(status, 403)
+        self.assertNotIn(b"APP-BODY", body)
+
+    def test_placeholder_ticket_is_refused_when_auth_is_on(self):
+        ticket = server.app_ticket(NAME, int(time.time()) + 60, TOKEN.encode("ascii"), None)
+        status, _, body = self.get(f"/app/~{ticket}/{Q}/")
+        self.assertEqual(status, 403)
+        self.assertNotIn(b"APP-BODY", body)
+
+    def test_ticket_for_another_project_is_refused(self):
+        ticket = server.app_ticket("베타", int(time.time()) + 60, TOKEN.encode("ascii"),
+                                   f"gh:{GITHUB_LOGIN}")
+        status, _, body = self.get(f"/app/~{ticket}/{Q}/")
+        self.assertEqual(status, 403)
         self.assertNotIn(b"APP-BODY", body)
 
 

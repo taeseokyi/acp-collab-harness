@@ -5,9 +5,12 @@ reader.py 구현은 읽지 않는다. 관리자가 못박은 인터페이스와 
 """
 
 import datetime
+import contextlib
+import io
 import json
 import os
 import pathlib
+import re
 import sys
 import tempfile
 import time
@@ -932,3 +935,62 @@ class HandoffFileFallbackTest(unittest.TestCase):
             self.assertEqual([e["text"] for e in reader._parse_log(lines, root)], ["old: in aimem"])
             (root / ".aimem" / "handoff.md").write_text("# Handoff Log (live)\n\nintro\n\n- `2026-11-10 19:00` new: in file\n  continued\n", encoding="utf-8")
             self.assertEqual(reader._parse_log(lines, root), [{"when": "2026-11-10 19:00", "text": "new: in file continued"}])
+
+
+ISO_LINE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} ")
+
+
+@unittest.skipIf(server is None, "server.py 아직 없음")
+class LogTimestampTest(unittest.TestCase):
+    """T-196: `monitor.log` 의 줄은 아카이브가 읽는 ISO 시각으로 시작한다."""
+
+    def _capture(self, fn):
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            fn()
+        return buf.getvalue()
+
+    def test_log_message_starts_with_iso(self):
+        out = self._capture(lambda: server.Handler.log_message(object(), "GET %s", "/app/~비밀티켓/x"))
+        self.assertRegex(out, ISO_LINE)
+
+    def test_log_message_still_masks_ticket_and_control_chars(self):
+        out = self._capture(
+            lambda: server.Handler.log_message(object(), "GET %s", "/app/~비밀티켓/x\x1b[31m")
+        )
+        self.assertIn("/app/~***", out)
+        self.assertNotIn("비밀티켓", out)
+        self.assertIn("\\x1b", out)
+        self.assertNotIn("\x1b", out)
+
+    def test_log_line_stamps_every_line(self):
+        out = self._capture(lambda: server.log_line("첫 줄\n둘째 줄\n셋째 줄"))
+        lines = out.splitlines()
+        self.assertEqual(len(lines), 3)
+        for line in lines:
+            self.assertRegex(line, ISO_LINE)
+        self.assertTrue(lines[1].endswith(" 둘째 줄"))
+        self.assertTrue(lines[2].endswith(" 셋째 줄"))
+
+    def test_serve_boot_messages_are_stamped(self):
+        class FakeHTTPD:
+            def __init__(self, addr, handler):
+                self.addr = addr
+                self.handler = handler
+
+            def handle_request(self):
+                return None
+
+            def server_close(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(server.http.server, "ThreadingHTTPServer", FakeHTTPD):
+            out = self._capture(
+                lambda: server.serve(host="127.0.0.1", port=0, root=pathlib.Path(tmp), once=True)
+            )
+        lines = [line for line in out.splitlines() if line.strip()]
+        self.assertTrue(lines)
+        for line in lines:
+            self.assertRegex(line, ISO_LINE)
+        self.assertTrue(any("AIMEM 모니터:" in line for line in lines))

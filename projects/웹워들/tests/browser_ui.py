@@ -159,6 +159,53 @@ def probe_locations(page, answer):
     )
 
 
+def contrast_probe_words(page, answer):
+    return page.evaluate(
+        "async (a) => { const w = await import('/js/words.js'); const g = await import('/js/game.js');"
+        " const words = w.ALLOWED.filter(x => x !== a);"
+        " const info = words.map(word => {"
+        "   const scores = g.scoreGuess(word, a);"
+        "   const correct = new Set(), present = new Set(), absent = new Set();"
+        "   for (let i = 0; i < scores.length; i++) {"
+        "     if (scores[i] === 'correct') correct.add(word[i]);"
+        "     else if (scores[i] === 'present') present.add(word[i]);"
+        "     else absent.add(word[i]);"
+        "   }"
+        "   const positive = new Set([...correct, ...present]);"
+        "   const presentOnly = new Set([...present].filter(ch => !correct.has(ch)));"
+        "   const absentOnly = new Set([...absent].filter(ch => !positive.has(ch)));"
+        "   return {word, correct, present, absent, positive, presentOnly, absentOnly};"
+        " });"
+        " for (const cWord of info) {"
+        "   if (cWord.correct.size === 0) continue;"
+        "   for (const pWord of info) {"
+        "     if (pWord.word === cWord.word) continue;"
+        "     let presentChar = null;"
+        "     for (const ch of pWord.presentOnly) {"
+        "       if (!cWord.correct.has(ch)) { presentChar = ch; break; }"
+        "     }"
+        "     if (!presentChar) continue;"
+        "     for (const aWord of info) {"
+        "       if (aWord.word === cWord.word || aWord.word === pWord.word) continue;"
+        "       if (aWord.correct.has(presentChar)) continue;"
+        "       let absentChar = null;"
+        "       for (const ch of aWord.absentOnly) {"
+        "         if (!cWord.positive.has(ch) && !pWord.positive.has(ch)) { absentChar = ch; break; }"
+        "       }"
+        "       if (!absentChar) continue;"
+        "       return {"
+        "         correct: {word: cWord.word},"
+        "         present: {word: pWord.word},"
+        "         absent: {word: aWord.word},"
+        "       };"
+        "     }"
+        "   }"
+        " }"
+        " return {correct: null, present: null, absent: null}; }",
+        answer,
+    )
+
+
 def type_guess(page, guess):
     page.keyboard.type(guess)
     page.keyboard.press("Enter")
@@ -940,7 +987,7 @@ def scenario_accessibility(page, checks):
 def scenario_accessibility_contrast(page, checks):
     dismiss_help(page)
     answer = answer_for_page(page)
-    locations = probe_locations(page, answer)
+    locations = contrast_probe_words(page, answer)
     checks.ok(
         "접근성 - 대비용 correct/present/absent 타일 준비",
         all(locations.get(state) for state in ("correct", "present", "absent")),
@@ -974,6 +1021,13 @@ def scenario_accessibility_contrast(page, checks):
     )
     if set(state_locations) != {"correct", "present", "absent"}:
         return
+
+    key_states = {item["state"] for item in keyboard_snapshot(page) if item["state"]}
+    checks.ok(
+        "접근성 - 대비용 키보드 판정 세 상태",
+        key_states == {"correct", "present", "absent"},
+        f"키 상태={sorted(key_states)}",
+    )
 
     filled_row = len(probe_rows)
     modes = (
@@ -1015,6 +1069,7 @@ def scenario_accessibility_contrast(page, checks):
         check_effective_contrast(page, checks, "⌫ 키", mode, '#keyboard .key[data-key="back"]')
 
         blur_active(page)
+        wait_input_ready(page, filled_row)
         page.keyboard.type("z")
         page.wait_for_function(
             "(r) => document.querySelector('#board .row:nth-child(' + (r + 1) + ') .tile:nth-child(1)').dataset.state === 'filled'",
