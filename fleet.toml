@@ -1,0 +1,44 @@
+# 함대 설정 한 곳 (공급자·하네스). 비밀 키는 적지 않는다 - 환경변수 이름(env_key)만, 값은 `.env` 에서 읽는다.
+# 설계: docs/FLEET-ENGINE-V2.md 3.5, 3.6
+
+[providers.kisti]
+base_url = "https://aida.kisti.re.kr:10430/v1"
+env_key = "KISTI_API_KEY"
+max_concurrent = 1        # 직렬 서버로 보고 시작한다. 실측으로 정한다
+idle_timeout_sec = 240    # 사건이 이만큼 없으면 멈춘 것으로 본다
+probe = "models"          # 준비 점검 때 GET <base_url>/models
+models = ["kistillm"]
+
+[providers.exaone]
+base_url = "https://api.exaone.ai/v1"
+env_key = "EXAONE_API_KEY"
+max_concurrent = 1
+idle_timeout_sec = 240
+models = ["k-exaone_v2.5"]
+
+[providers.openrouter]    # 하네스 실물 검사용 (태석님 2026-11-12: codex·opencode 검사는 오픈라우터 딥시크로)
+base_url = "https://openrouter.ai/api/v1"
+env_key = "OPENROUTER_API_KEY"
+max_concurrent = 3
+idle_timeout_sec = 240
+models = ["deepseek/deepseek-v4.1-flash"]
+
+[providers.anthropic]     # claude CLI 가 자기 로그인으로 붙는다 - 키·주소 없음
+max_concurrent = 3
+idle_timeout_sec = 600
+models = ["opus", "sonnet", "haiku"]
+
+[harness.claude]
+binary = "claude"
+providers = ["anthropic"]
+default_model = "sonnet"
+
+[harness.codex]           # ~/.codex/config.toml 의 model 은 'kistillm' (공급자 kisti)
+binary = "codex"
+providers = ["kisti", "openrouter"]
+default_model = "kisti/kistillm"
+
+[harness.opencode]        # ~/.config/opencode/opencode.jsonc 의 model 은 'kisti/kistillm'
+binary = "opencode"
+providers = ["kisti", "exaone", "openrouter"]
+default_model = "kisti/kistillm"

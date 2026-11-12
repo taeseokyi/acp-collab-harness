@@ -186,26 +186,169 @@ def _report_body(harness: str, out_path: pathlib.Path) -> str:
     return raw
 
 
-def _lost_end(rdir: pathlib.Path, run_id: str, errors: list) -> datetime | None:
-    """lost 실행의 끝 시각 - `tools/fleet.py` `_run_last_mtime()` 을 **그대로** 쓴다.
+def _naive_local(dt: datetime | None) -> datetime | None:
+    """started 는 naive 로컬 시각이라 tz 가 붙은 시각은 로컬로 바꿔 tz 를 뗀다."""
+    if dt is not None and dt.tzinfo is not None:
+        return dt.astimezone().replace(tzinfo=None)
+    return dt
 
-    규칙(`.lost` 마커의 `ended` -> 없거나 깨졌으면 기록 파일들의 마지막 mtime)을 여기서
-    다시 짜면 CLI 표와 웹 화면이 다른 숫자를 말하게 된다. 그 함수는 모듈 전역 `RUNS` 를
-    읽으므로, 전역을 바꿔치지 않고(서버는 스레드로 돈다) `RUNS` 만 `rdir` 로 바꾼 함수
-    사본을 만들어 부른다. 읽기 전용이다 - 마커를 쓰는 것은 `fleet.py reap` 이다.
-    """
+
+def _rt_sessions():
+    """`fleet_rt.sessions` - tools/ 가 sys.path 에 있어야 한다 (server/테스트와 같다). 없으면 None."""
     try:
-        import types
-        import fleet  # noqa: PLC0415 - tools/ 가 sys.path 에 있어야 한다 (server/테스트와 같다)
-        fn = fleet._run_last_mtime
-        bound = types.FunctionType(fn.__code__, {**fn.__globals__, "RUNS": rdir}, fn.__name__)
-        end = bound(run_id)
+        from fleet_rt import sessions  # noqa: PLC0415
+        return sessions
+    except Exception:  # noqa: BLE001 - 세션 없이도 옛 기록 화면은 떠야 한다
+        return None
+
+
+def _last_activity(root: pathlib.Path, run_id: str) -> datetime | None:
+    """lost 실행의 끝 시각 - `tools/fleet.py` `_run_last_mtime()` 과 **같은 규칙**을 `root` 기준으로 짠다.
+
+    규칙: 세션이면 end.json 의 ended -> 마지막 사건 시각 -> 폴더 파일들의 마지막 mtime.
+    옛 실행이면 `.lost` 마커의 `ended` -> 없거나 깨졌으면 기록 파일들의 마지막 mtime(`.seen`·`.lost` 제외).
+    예전에는 fleet 함수를 `types.FunctionType` 으로 복제하고 `RUNS` 전역만 바꿨는데, 이제 그 함수가
+    `_session_dir()` 를 거쳐 원래 모듈 전역을 읽어 `root` 가 아닌 진짜 저장소를 보게 되므로 쓰지 않는다.
+    전역을 바꿔치지 않으니 서버 스레드에서도 안전하다. 읽기 전용이다 - 마커를 쓰는 것은 `fleet.py reap` 이다.
+    """
+    rdir = root / ".aimem" / "runs"
+    sdir = root / ".aimem" / "sessions" / run_id
+    try:
+        if (sdir / "meta.json").is_file():
+            rt = _rt_sessions()
+            if rt is not None:
+                st = rt.state(sdir)
+                for at in (st.get("ended"), st.get("last_event_at")):
+                    dt = _parse_iso(str(at)[:19]) if at else None
+                    if dt is not None:
+                        return _naive_local(dt)
+            ts = [f.stat().st_mtime for f in sdir.iterdir() if f.is_file()]
+            return datetime.fromtimestamp(max(ts)) if ts else None
+        lost = rdir / f"{run_id}.lost"
+        if lost.exists():
+            try:
+                dt = datetime.fromisoformat(json.loads(lost.read_text(encoding="utf-8"))["ended"])
+                return _naive_local(dt)
+            except (ValueError, KeyError, TypeError, OSError):
+                pass
+        ts = [f.stat().st_mtime for f in rdir.glob(f"{run_id}.*") if f.suffix not in (".seen", ".lost")]
+        return datetime.fromtimestamp(max(ts)) if ts else None
+    except OSError:
+        return None
+
+
+def _lost_end(rdir: pathlib.Path, run_id: str, errors: list) -> datetime | None:
+    """옛 호출부 호환 - `rdir` 은 `<root>/.aimem/runs` 이다. 실제 계산은 `_last_activity`."""
+    try:
+        return _last_activity(pathlib.Path(rdir).parent.parent, run_id)
     except Exception as e:  # noqa: BLE001 - 화면은 떠야 한다
         errors.append(f"lost 실행 {run_id} 의 끝 시각을 구하지 못했습니다(경과가 계속 늘어납니다): {str(e)[:60]}")
         return None
-    if end is not None and end.tzinfo is not None:
-        end = end.astimezone().replace(tzinfo=None)  # started 는 naive 로컬 시각이다
-    return end
+
+
+#: 감독이 끊은 세션을 옛 꼴 `("done", rc)` 로 옮길 때 쓰는 종료코드 (`fleet._SESSION_RC` 와 같다).
+_SESSION_RC = {"timeout": 124, "stalled": 125}
+LAST_EVENT_MAX = 120
+
+
+def _session_display(sstate: str, rc) -> tuple[str, int | None]:
+    """세션 상태 -> 표의 옛 상태/rc. running/done/lost 세 가지만 낸다."""
+    if sstate == "running":
+        return "running", None
+    if sstate == "done":
+        return "done", rc if isinstance(rc, int) and not isinstance(rc, bool) else 0
+    if sstate == "failed":
+        return "done", rc if isinstance(rc, int) and not isinstance(rc, bool) else 1
+    if sstate in _SESSION_RC:
+        return "done", _SESSION_RC[sstate]
+    return "lost", None   # killed / lost / 모르는 값
+
+
+def _last_event_line(rt, d: pathlib.Path) -> str | None:
+    """마지막 `tool`/`text` 사건 한 줄 (<=120자). 없으면 None."""
+    try:
+        for _at, ev in reversed(rt.tail(d, 60)):
+            if ev.kind in ("tool", "text"):
+                t = " ".join(str(ev.text or "").split())
+                if t:
+                    return f"[{ev.kind}] {t}"[:LAST_EVENT_MAX]
+    except Exception:  # noqa: BLE001 - 어댑터가 모르는 줄에 터져도 표는 뜬다
+        pass
+    return None
+
+
+def _session_row(rt, d: pathlib.Path, now: datetime) -> dict | None:
+    meta = rt.load_meta(d)
+    if not isinstance(meta, dict):
+        return None
+    st = rt.state(d)
+    sstate = st.get("state") or "lost"
+    state, rc = _session_display(sstate, st.get("rc"))
+    extra = meta.get("extra") if isinstance(meta.get("extra"), dict) else {}
+    end = None
+    if state != "running":
+        if st.get("ended"):
+            end = _naive_local(_parse_iso(str(st["ended"])))
+        if end is None and state == "lost":
+            end = _last_activity(d.parent.parent.parent, d.name)
+    started = meta.get("started")
+    stt = _naive_local(_parse_iso(started)) if isinstance(started, str) else None
+    elapsed = None
+    if stt is not None:
+        elapsed = max(0, int(round(((end or now) - stt).total_seconds())))
+    try:
+        head = (rt.report(d) or "").strip()[:REPORT_HEAD]
+    except Exception:  # noqa: BLE001
+        head = ""
+    rnd = meta.get("round")
+    wp = meta.get("write_paths")
+    proj = extra.get("project")
+    return {
+        "id": meta.get("id") or d.name, "slot": meta.get("slot"), "harness": meta.get("harness") or "",
+        "model": meta.get("model"), "label": meta.get("label"),
+        "rev": extra.get("rev"), "write": wp if isinstance(wp, list) else [],
+        "started": started, "state": state, "rc": rc,
+        "elapsed_sec": elapsed, "report_head": head,
+        "task": meta.get("task_id") if isinstance(meta.get("task_id"), str) else None,
+        "project": proj if isinstance(proj, str) and proj else None,
+        "round": rnd if isinstance(rnd, int) and not isinstance(rnd, bool) else None,
+        "session_state": sstate, "fail_kind": st.get("fail_kind"),
+        "last_event_at": st.get("last_event_at") or None,
+        "last_event": _last_event_line(rt, d),
+        "provider": meta.get("provider"), "role": meta.get("role"),
+    }
+
+
+def _collect_sessions(root: pathlib.Path, now: datetime, errors: list) -> list[dict]:
+    sroot = root / ".aimem" / "sessions"
+    try:
+        if not sroot.is_dir():
+            return []
+    except OSError:
+        return []
+    rt = _rt_sessions()
+    if rt is None:
+        errors.append(".aimem/sessions 를 읽지 못했습니다: fleet_rt 를 불러올 수 없습니다")
+        return []
+    rows = []
+    try:
+        ids = rt.list_ids(sroot)
+    except Exception as e:  # noqa: BLE001
+        errors.append(f".aimem/sessions 를 읽지 못했습니다: {str(e)[:80]}")
+        return []
+    for sid in ids:
+        try:
+            row = _session_row(rt, sroot / sid, now)
+        except Exception as e:  # noqa: BLE001 - 세션 하나가 깨져도 나머지는 보인다
+            errors.append(f"세션 {sid} 을(를) 읽지 못했습니다: {str(e)[:60]}")
+            continue
+        if row is not None:
+            rows.append(row)
+    return rows
+
+
+_SESSION_NONE = {"session_state": None, "fail_kind": None, "last_event_at": None, "last_event": None,
+                 "provider": None, "role": None}
 
 
 def _collect_runs(root: pathlib.Path, now: datetime, errors: list) -> list[dict]:
@@ -215,7 +358,7 @@ def _collect_runs(root: pathlib.Path, now: datetime, errors: list) -> list[dict]
         metas = sorted(rdir.glob("*.json")) if rdir.is_dir() else []
     except OSError as e:
         errors.append(f".aimem/runs 를 읽지 못했습니다: {str(e)[:80]}")
-        return []
+        metas = []
     for mp in metas:
         try:
             meta = json.loads(mp.read_text(encoding="utf-8"))
@@ -264,7 +407,10 @@ def _collect_runs(root: pathlib.Path, now: datetime, errors: list) -> list[dict]
             "task": meta.get("task") if isinstance(meta.get("task"), str) else None,
             "project": meta.get("project") if isinstance(meta.get("project"), str) else None,
             "round": meta.get("round") if isinstance(meta.get("round"), int) and not isinstance(meta.get("round"), bool) else None,
+            **_SESSION_NONE,   # 옛 기록에는 없는 칸 (세션 행에서만 채운다)
         })
+    seen_ids = {r["id"] for r in runs}
+    runs.extend(r for r in _collect_sessions(root, now, errors) if r["id"] not in seen_ids)
     runs.sort(key=lambda r: str(r["id"]))
     return runs
 
@@ -647,8 +793,113 @@ def run_detail(run_id: str, root: pathlib.Path | None = None) -> dict:
     return d
 
 
+EVENTS_MAX_LINES = 2000   # 상세의 사건 보기는 끝에서 이만큼만 (옛 `.out` 은 전문이지만 사건 줄은 수가 많다)
+EVENT_LINE_MAX = 500
+
+
+def render_events(rt, sdir: pathlib.Path, max_lines: int = EVENTS_MAX_LINES) -> str:
+    """`events.jsonl` 을 사람이 읽는 줄로: `HH:MM:SS  [tool] Bash: ls`. usage/end/raw 사건은 건너뛴다."""
+    lines = []
+    try:
+        pairs = rt.tail(sdir, max_lines)
+    except Exception:  # noqa: BLE001
+        return ""
+    for at, ev in pairs:
+        if ev.kind not in ("tool", "text", "error"):
+            continue
+        hhmmss = ""
+        dt = _parse_iso(str(at)[:19]) if at else None
+        if dt is not None:
+            hhmmss = dt.strftime("%H:%M:%S")
+        text = " ".join(str(ev.text or "").split())[:EVENT_LINE_MAX]
+        lines.append(f"{hhmmss or '--:--:--'}  [{ev.kind}] {text}")
+    return "\n".join(lines)
+
+
+def run_events(run_id: str, root: pathlib.Path | None = None) -> str:
+    """세션 실행의 사건 보기(읽기 전용, 비밀 가림). 세션이 아니거나 못 읽으면 빈 문자열. 예외 없음."""
+    try:
+        if not isinstance(run_id, str) or len(run_id) > 64 or not RUN_ID_RE.fullmatch(run_id):
+            return ""
+        root = pathlib.Path(root) if root else pathlib.Path(__file__).resolve().parent.parent.parent
+        sdir = root / ".aimem" / "sessions" / run_id
+        rt = _rt_sessions()
+        if rt is None or sdir.is_symlink() or not (sdir / "meta.json").is_file():
+            return ""
+        return _redact(render_events(rt, sdir))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _fill_session_detail(d: dict, run_id: str, sdir: pathlib.Path) -> None:
+    """세션 폴더 하나의 상세. `DETAIL_KEYS` 는 그대로 - brief=brief.md, stderr_tail=stderr.log, report=report.md.
+
+    사건 보기(`events.jsonl` 렌더)는 키를 늘리지 않으려고 `run_events()` 로 따로 낸다.
+    """
+    errors = d["errors"]
+    rt = _rt_sessions()
+    if rt is None:
+        errors.append("fleet_rt 를 불러올 수 없어 세션을 읽지 못했습니다")
+        return
+    meta = rt.load_meta(sdir)
+    if not isinstance(meta, dict):
+        errors.append(f"세션 {run_id} 의 meta.json 이 없거나 깨졌습니다")
+        return
+    d["found"] = True
+    d["paths"]["dir"] = str(sdir)
+    names = {"out": "events.jsonl", "err": "stderr.log", "rc": "end.json", "brief": "brief.md"}
+    for k, n in names.items():
+        try:
+            d["paths"][k] = str(sdir / n) if (sdir / n).is_file() else ""
+        except OSError:
+            d["paths"][k] = ""
+    harness = _str(meta.get("harness"))
+    d["slot"], d["harness"], d["label"] = _str(meta.get("slot")), harness, _str(meta.get("label"))
+    if _str(meta.get("model")):
+        d["model"] = meta["model"]
+    elif harness in ("claude", "codex", "opencode"):
+        d["model"] = harness_model(harness)[0]
+    st = rt.state(sdir)
+    status, rc = _session_display(st.get("state") or "lost", st.get("rc"))
+    d["status"], d["rc"] = status, rc
+    started = meta.get("started")
+    d["started"] = started if isinstance(started, str) else None
+    end = None
+    if status != "running":
+        end = _naive_local(_parse_iso(str(st["ended"]))) if st.get("ended") else None
+        if end is None and status == "lost":
+            end = _last_activity(sdir.parent.parent.parent, run_id)
+    d["ended"] = end.isoformat(timespec="seconds") if end else None
+    stt = _naive_local(_parse_iso(started)) if isinstance(started, str) else None
+    if stt is not None:
+        try:
+            d["elapsed_s"] = max(0, int(round(((end or datetime.now()) - stt).total_seconds())))
+        except (TypeError, OverflowError):
+            d["elapsed_s"] = None
+    if d["paths"]["brief"] and _safe_run_file(sdir / "brief.md", sdir, errors):
+        d["brief"] = _redact(_read(sdir / "brief.md", errors))
+    if d["paths"]["err"] and _safe_run_file(sdir / "stderr.log", sdir, errors):
+        d["stderr_tail"] = _redact(_ANSI.sub("", _read(sdir / "stderr.log", errors)).strip())
+    try:
+        rp = (sdir / "report.md")
+        if rp.is_symlink():
+            errors.append("report.md 는 심볼릭 링크라 읽지 않았습니다")
+        else:
+            d["report"] = _redact((rt.report(sdir) or "").strip())
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"보고를 읽지 못했습니다: {str(e)[:60]}")
+
+
 def _fill_detail(d: dict, run_id: str, root) -> None:
     root = pathlib.Path(root) if root else pathlib.Path(__file__).resolve().parent.parent.parent
+    sdir = root / ".aimem" / "sessions" / run_id
+    try:
+        is_session = (sdir / "meta.json").is_file() and not sdir.is_symlink()
+    except OSError:
+        is_session = False
+    if is_session:
+        _fill_session_detail(d, run_id, sdir)
+        return
     rdir = root / ".aimem" / "runs"
     errors = d["errors"]
     if not rdir.is_dir():

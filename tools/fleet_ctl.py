@@ -67,6 +67,12 @@ def _now():
     return dt.datetime.now().isoformat(timespec="seconds")
 
 
+def _service_env():
+    # 배경 프로세스는 세션 표식 없이 띄운다 - 세션 안에서 불려도 그 세션과 함께 정리되지 않게 (`fleet_rt.base.service_env`).
+    from fleet_rt.base import service_env  # noqa: PLC0415
+    return service_env()
+
+
 def _aimem_dir():
     # 호출 시점에 계산합니다 - 테스트가 `fleet.RUNS` 를 갈아끼우면 상태 파일도 따라갑니다.
     return pathlib.Path(fleet.RUNS).parent
@@ -131,13 +137,11 @@ def spawn_allowed():
 # ----------------------------------------------------------------- 조회
 def running_runs():
     out = []
-    runs = pathlib.Path(fleet.RUNS)
-    if not runs.exists():
-        return out
-    for f in runs.glob("*.json"):
-        if f.name.endswith(".brief.json"):
+    # `fleet._list_runs` 는 옛 실행 파일과 새 세션 폴더를 함께 준다 - 여기서 직접 훑으면 세션을 놓쳐
+    # '완전 중지' 가 그래프 밖에서 띄운 작업자를 살려 둔다 (2026-11-12 통합 검사에서 발견).
+    for rid in fleet._list_runs():
+        if rid.endswith(".brief"):
             continue
-        rid = f.stem
         try:
             state, _ = fleet._run_state(rid)
         except Exception:  # noqa: BLE001
@@ -489,7 +493,7 @@ def resume(by="사람"):
                 subprocess.Popen([sys.executable, str(HERE / "fleet_graph.py"), "run", gi["id"],
                                   "--timeout", "3600", "--poll", "15"],
                                  cwd=str(fleet.ROOT), stdout=fh, stderr=subprocess.STDOUT,
-                                 stdin=subprocess.DEVNULL, start_new_session=True)
+                                 stdin=subprocess.DEVNULL, start_new_session=True, env=_service_env())
             started.append(gi["id"])
     mgr = manager_running()
     note = ("관리자 세션이 살아 있어 그대로 이어 갑니다" if mgr else
@@ -647,7 +651,7 @@ def launch_round(by="사람"):
     log = open(relay / f"r{n}.log", "a", encoding="utf-8")
     subprocess.Popen([sys.executable, str(HERE / "fleet_ctl.py"), "_relay", "--round", str(n)],
                      cwd=str(fleet.ROOT), stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                     start_new_session=True)
+                     start_new_session=True, env=_service_env())
     return {"ok": True, "round": n, "label": label, "brief": b["file"], "workspace": round_workspace(n), "mode": "running"}
 
 
@@ -916,7 +920,7 @@ def chain_set(on, project=None, max_rounds=None, by="사람", scope=None, projec
             log = open(_relay_dir() / f"r{int(relay['round'])}.log", "a", encoding="utf-8")
             subprocess.Popen([sys.executable, str(HERE / "fleet_ctl.py"), "_chainwatch", "--round", str(int(relay["round"]))],
                              cwd=str(fleet.ROOT), stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                             start_new_session=True)
+                             start_new_session=True, env=_service_env())
         except (OSError, ValueError):
             pass
     return {"ok": True, "chain": st}

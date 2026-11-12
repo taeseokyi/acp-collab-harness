@@ -210,13 +210,20 @@ def harness_durations():
         try:
             meta = fleet._run_meta(rid) or {}
             state, rc = fleet._run_state(rid)
-            rcf = fleet.RUNS / f"{rid}.rc"
-            if state != "done" or not meta.get("started") or not rcf.exists():
+            if state != "done" or not meta.get("started"):
                 continue
             started = _parse_started(meta["started"])
             if started is None:
                 continue
-            ended = dt.datetime.fromtimestamp(rcf.stat().st_mtime)
+            if meta.get("session"):
+                ended = fleet._run_last_mtime(rid)   # 세션은 end.json 의 끝난 시각
+                if ended is None:
+                    continue
+            else:
+                rcf = fleet.RUNS / f"{rid}.rc"
+                if not rcf.exists():
+                    continue
+                ended = dt.datetime.fromtimestamp(rcf.stat().st_mtime)
             out.setdefault(str(meta.get("harness") or "?"), []).append(max(1.0, (ended - started).total_seconds()))
         except Exception:  # noqa: BLE001 - 기록 하나가 깨져도 진행율은 나와야 한다 (`_busy_slots` 와 같은 방어)
             continue
@@ -319,6 +326,10 @@ def _busy_slots(g):
         meta = fleet._run_meta(rid) or {}
         if meta.get("slot"):
             busy.add(meta["slot"])
+        else:
+            # 돌고 있는데 어느 슬롯인지 모른다(메타가 깨짐·지워짐) - 모든 슬롯을 바쁜 것으로 본다.
+            # 살아 있는 작업자 옆에 두 번째를 띄우는 쪽이 기다리는 쪽보다 나쁘다.
+            busy.update(str(n.get("slot")) for n in g.get("nodes", []) if n.get("slot"))
     return busy
 
 
@@ -344,7 +355,8 @@ def _spawn_node(g, n, attempt_no):
                             task_id=tid, attempt=attempt_no,
                             label=f"{n.get('title','')} ({g['id']})".strip(),
                             write=list(n.get("write", [])), task=None, task_file=str(task_file),
-                            project=n.get("project") or g.get("project") or None, round=g.get("round"))
+                            project=n.get("project") or g.get("project") or None, round=g.get("round"),
+                            timeout=_node_timeout(g, n))
     import io, contextlib
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -444,6 +456,10 @@ def run_limit_signal(run_id):
     None 은 "구조 신호가 없다"(codex·opencode, 깨진 파일)이고 글자 판정으로 넘깁니다.
     """
     try:
+        sd = fleet._session_dir(run_id)
+        if sd is not None:
+            from fleet_rt import harness as rt_harness  # noqa: PLC0415
+            return rt_harness.get(json.loads((sd / "meta.json").read_text(encoding="utf-8"))["harness_effective"]).limit_signal(sd)
         meta = fleet._run_meta(run_id)
         if not isinstance(meta, dict) or meta.get("harness") != "claude":
             return None
@@ -673,6 +689,14 @@ def _kill_run(run_id, with_outcome=False):
     meta = fleet._run_meta(run_id) or {}
     pid = meta.get("pid")
     _LAST_REFUSAL.pop(run_id, None)
+    sd = fleet._session_dir(run_id)
+    if sd is not None:
+        # 새 세션은 감독(`fleet_rt.sessions.cancel`)이 끊는다 - 같은 안전 검사에 시작 시각 대조가 더해져 있다.
+        from fleet_rt import sessions as rt_sessions  # noqa: PLC0415
+        outcome = rt_sessions.cancel(sd, why="그래프 실행기")
+        if outcome == "refused":
+            _LAST_REFUSAL[run_id] = rt_sessions.LAST_REFUSAL.get(str(sd)) or "안전 검사 거부"
+        return (pid, outcome) if with_outcome else pid
 
     def out(o, why=None):
         if o == "refused":
@@ -718,6 +742,8 @@ def _kill_run(run_id, with_outcome=False):
 
 def _mark_lost(run_id):
     """`fleet.py` 의 lost 판정·경과 고정 마커. 이미 있으면 건드리지 않습니다."""
+    if fleet._session_dir(run_id) is not None:
+        return   # 세션은 `end.json` 이 끝남 기록이다 (`cancel` 이 적는다). 감독이 사라진 세션은 그 자체로 lost
     lost = fleet.RUNS / f"{run_id}.lost"
     if lost.exists():
         return
@@ -848,6 +874,13 @@ def step(g, concurrency=None, allow_spawn=None):
             continue
         att = n["attempts"][-1]
         state, rc = fleet._run_state(att["run_id"])
+        if state == "running" and fleet._session_orphaned(att["run_id"]):
+            # 감독 프로세스가 죽고 하네스만 남았다 - 지켜보는 이가 없으니 노드 한도까지 기다리지 않고 끊는다.
+            # 끊긴 세션은 lost 로 읽혀 아래의 보통 경로(재시도 규칙)를 탄다. 거부되면 running 인 채 둔다(슬롯 유지).
+            _pid, outcome = _kill_run(att["run_id"], with_outcome=True)
+            _log(g, f"orphaned {n['id']} ({att['run_id']}) - 감독 없이 남은 작업자를 끊음 ({outcome})")
+            if outcome != "refused":
+                state, rc = fleet._run_state(att["run_id"])
         if state == "running":
             if _check_timeout(g, n, att):
                 changed = True

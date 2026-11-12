@@ -59,7 +59,8 @@ do_start() {
     *) echo "모드는 https 또는 local" >&2; return 2 ;;
   esac
   cd "$ROOT"
-  PYTHONPATH=tools setsid nohup python3 -m aimem_monitor "${args[@]}" >>"$LOG" 2>&1 < /dev/null &
+  # 세션 표식(AIFLEET_*)을 지우고 띄운다 - 작업자가 모니터를 다시 띄워도 그 세션의 남은 프로세스로 보이지 않게
+  env -u AIFLEET_SESSION -u AIFLEET_ROLE -u AIFLEET_SESSIONS_ROOT PYTHONPATH=tools setsid nohup python3 -m aimem_monitor "${args[@]}" >>"$LOG" 2>&1 < /dev/null &
   echo $! > "$PIDF"; echo "$mode" > "$MODEF"
   chmod 600 "$LOG" 2>/dev/null || true
   sleep 1.5

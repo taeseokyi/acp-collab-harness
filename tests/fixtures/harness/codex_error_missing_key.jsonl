@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"01a1cf9e-51b5-7093-92f9-703dda54bb5d"}
+{"type":"turn.started"}
+{"type":"error","message":"Missing environment variable: `KISTI_API_KEY`."}
+{"type":"turn.failed","error":{"message":"Missing environment variable: `KISTI_API_KEY`."}}

@@ -436,7 +436,52 @@ def _worker_argv(harness, model, brief_path, ident=""):
     sys.exit(f"알 수 없는 하네스: {harness}")
 
 
+# ---------------------------------------------------------------------------
+# 엔진 v2 (2026-11-12): 실행 = 세션. 새 실행은 `.aimem/sessions/<id>/` 폴더 하나이고 `fleet_rt` 가 띄우고 지킨다.
+# 옛 `.aimem/runs/<id>.{json,out,err,rc,lost}` 는 읽기 전용 기록으로 남아 아래 함수들이 둘 다 읽는다.
+# 아래 이름(`_run_meta`·`_run_state`·`run_report` …)은 그래프 실행기·모니터·검사가 쓰는 겉면이라 그대로 둔다.
+# ---------------------------------------------------------------------------
+def _sessions_root():
+    # 호출 시점에 계산한다 - 검사가 `RUNS` 를 임시 폴더로 갈아끼우면 세션 폴더도 따라간다.
+    return pathlib.Path(RUNS).parent / "sessions"
+
+
+def _session_dir(run_id):
+    """그 실행이 새 세션이면 폴더, 옛 실행이면 None."""
+    try:
+        d = _sessions_root() / str(run_id)
+        # meta.json 이 지워져도 세션은 세션이다 - 폴더가 사라진 것으로 치면 살아 있는 작업자의 슬롯이 빈다.
+        return d if any((d / f).is_file() for f in ("meta.json", "brief.md", "events.jsonl")) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _rt_sessions():
+    from fleet_rt import sessions  # noqa: PLC0415 - 옛 기록만 읽는 명령은 런타임을 들이지 않는다
+    return sessions
+
+
+def _session_meta(d):
+    """세션 `meta.json` 을 옛 실행 메타 꼴로 (호출부가 `slot`·`harness`·`pid`·`brief` 를 읽는다)."""
+    try:
+        m = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(m, dict):
+        return None
+    extra = m.get("extra") if isinstance(m.get("extra"), dict) else {}
+    return {"id": m.get("id") or d.name, "slot": m.get("slot"), "harness": m.get("harness"), "model": m.get("model"),
+            "task": m.get("task_id"), "attempt": m.get("attempt"), "date": extra.get("date"),
+            "label": m.get("label"), "rev": extra.get("rev"), "write": m.get("write_paths") or [],
+            "pid": m.get("supervisor_pid"), "started": m.get("started"), "brief": str(d / "brief.md"),
+            "project": extra.get("project", ""), "round": m.get("round"),
+            "role": m.get("role"), "provider": m.get("provider"), "session": True}
+
+
 def _run_meta(run_id):
+    d = _session_dir(run_id)
+    if d is not None:
+        return _session_meta(d)
     f = RUNS / f"{run_id}.json"
     return json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
 
@@ -444,6 +489,16 @@ def _run_meta(run_id):
 def _run_last_mtime(run_id):
     """실행 기록 파일들 중 가장 늦은 수정 시각 - lost 실행의 '끝난 시각' 으로 쓴다."""
     import datetime
+    d = _session_dir(run_id)
+    if d is not None:
+        st = _rt_sessions().state(d)
+        for at in (st.get("ended"), st.get("last_event_at")):
+            try:
+                return datetime.datetime.fromisoformat(str(at)[:19])
+            except (TypeError, ValueError):
+                pass
+        ts = [f.stat().st_mtime for f in d.iterdir() if f.is_file()]
+        return datetime.datetime.fromtimestamp(max(ts)) if ts else None
     lost = RUNS / f"{run_id}.lost"
     if lost.exists():
         try:
@@ -454,7 +509,47 @@ def _run_last_mtime(run_id):
     return datetime.datetime.fromtimestamp(max(ts)) if ts else None
 
 
+#: 감독이 끊은 세션을 옛 꼴 `("done", rc)` 로 옮길 때 쓰는 종료코드.
+_SESSION_RC = {"timeout": 124, "stalled": 125}
+
+
+def _session_orphaned(run_id):
+    """감독 프로세스 없이 하네스만 살아 있는 세션인가 (옛 실행은 늘 False). 그래프가 보면 바로 끊는다."""
+    d = _session_dir(run_id)
+    if d is None:
+        return False
+    try:
+        return bool(_rt_sessions().state(d).get("orphaned"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _session_state(d):
+    """세션 상태를 옛 꼴 `(state, rc)` 로. 그래프 실행기는 `running`/`done`/`lost` 만 가린다.
+
+    `killed`(사람·엔진이 끊음)는 옛 `.lost` 와 같은 뜻이라 `lost` 로, 감독이 끊은 `timeout`·`stalled` 는
+    rc != 0 인 `done` 으로 준다 - 그래야 그래프가 보고를 거두고 재시도 규칙을 탄다.
+    """
+    st = _rt_sessions().state(d)
+    state, rc = st.get("state"), st.get("rc")
+    if state == "running":
+        return "running", None
+    if state in ("lost", "killed"):
+        return "lost", None
+    if state == "done":
+        return "done", rc if isinstance(rc, int) and not isinstance(rc, bool) else 0
+    # 감독이 끊은 세션의 rc 는 하네스가 받은 신호(-15)라 뜻이 없다 - 끊은 까닭을 종료코드로 준다.
+    if state in _SESSION_RC:
+        return "done", _SESSION_RC[state]
+    if isinstance(rc, int) and not isinstance(rc, bool) and rc != 0:
+        return "done", rc
+    return "done", 1
+
+
 def _run_state(run_id):
+    d = _session_dir(run_id)
+    if d is not None:
+        return _session_state(d)
     rc = RUNS / f"{run_id}.rc"
     if (RUNS / f"{run_id}.lost").exists():
         return "lost", None
@@ -479,6 +574,9 @@ def _run_state(run_id):
 
 def run_report(run_id):
     """작업자의 보고 본문만 뽑습니다 (하네스별 로그 머리말·JSON 포장 제거)."""
+    d = _session_dir(run_id)
+    if d is not None:
+        return (_rt_sessions().report(d) or "").strip()
     meta = _run_meta(run_id) or {}
     out_f = RUNS / f"{run_id}.out"
     out = out_f.read_text(encoding="utf-8", errors="replace") if out_f.exists() else ""
@@ -574,9 +672,26 @@ def spawn_task_id(task_id, label):
     return tid
 
 
+SPAWN_TIMEOUT_SEC = 1800          # 호출자가 한도를 안 주면 (그래프 노드 기본과 같다)
+SPAWN_TIMEOUT_SLACK_SEC = 120     # 감독의 벽시계 제한을 그래프 한도보다 이만큼 길게
+
+
+def _slot_model(slot):
+    """슬롯에 적힌 모델. 정본은 DB `slots.model`, DB 를 못 읽을 때만 거울 파일을 본다."""
+    st = db_state()
+    if st:
+        for row in st.get("slots") or []:
+            if row.get("slot") == slot:
+                return row.get("model") or None
+    return _load_slot_models().get(slot)
+
+
 def cmd_spawn(args):
-    """작업자 1명을 백그라운드로 띄웁니다. 즉시 돌아오고 run id 를 찍습니다."""
-    import datetime, shlex, subprocess as sp
+    """작업자 1명을 백그라운드로 띄웁니다. 즉시 돌아오고 run id 를 찍습니다.
+
+    띄우는 일은 `fleet_rt.sessions.spawn` 이 한다 - 세션마다 감독 프로세스 하나가 하네스를 지킨다.
+    """
+    import datetime
     # 함대 모드 (fleet_ctl, 2026-11-10): '실행' 이 아니면 띄우지 않습니다 - 일시 중지·완전 중지·준비
     import fleet_ctl  # noqa: PLC0415 - fleet_ctl 이 이 모듈을 import 하므로 지연
     allowed, why = fleet_ctl.spawn_allowed()
@@ -610,7 +725,7 @@ def cmd_spawn(args):
     stamp = datetime.datetime.now().strftime("%H%M%S")
     base = f"{task_id}-{args.slot}-a{attempt}-{stamp}"
     run_id, n = base, 1
-    while (RUNS / f"{run_id}.json").exists():
+    while (RUNS / f"{run_id}.json").exists() or (_sessions_root() / run_id).exists():
         n += 1
         run_id = f"{base}-{n}"
     label = (args.label or "").strip()
@@ -629,44 +744,53 @@ def cmd_spawn(args):
            "셸 변수 대입이나 다른 접두사를 앞에 붙이면 승인 요구로 막힌다. py_compile 이 만드는 __pycache__ 는 쓰기로 치지 않는다."]
           if harness == "claude" else []),
         "", task.strip(), ""])
-    brief_path = RUNS / f"{run_id}.brief.md"
-    brief_path.write_text(brief, encoding="utf-8")
-    model = args.model or _load_slot_models().get(args.slot)   # 슬롯 모델(DB 거울 fleet_slots.json) - 하네스 불문, 없으면 하네스 기본
-    argv, stdin_path = _worker_argv(harness, model, brief_path,
-                                    ident=f"[AIMEM 작업자 지시] 슬롯 {args.slot} · 확인토큰 {token} · AIMEM REV {rev}.")
-    out, err, rc = RUNS / f"{run_id}.out", RUNS / f"{run_id}.err", RUNS / f"{run_id}.rc"
-    shell = (" ".join(shlex.quote(a) for a in argv)
-             + (f" < {shlex.quote(stdin_path)}" if stdin_path else "")
-             + f" > {shlex.quote(str(out))} 2> {shlex.quote(str(err))}; echo $? > {shlex.quote(str(rc))}")
-    proc = sp.Popen(["bash", "-c", shell], cwd=ROOT, stdin=sp.DEVNULL, stdout=sp.DEVNULL, stderr=sp.DEVNULL,
-                    start_new_session=True)
-    meta = {"id": run_id, "slot": args.slot, "harness": harness, "model": model,
-            "task": task_id, "attempt": attempt, "date": datetime.date.today().isoformat(),
-            "label": label, "rev": rev, "write": args.write, "pid": proc.pid,
-            "started": datetime.datetime.now().isoformat(timespec="seconds"), "brief": str(brief_path)}
+    model = args.model or _slot_model(args.slot)   # 슬롯 모델(DB slots) - 하네스 불문, 없으면 하네스 기본
+    extra = {"date": datetime.date.today().isoformat(), "rev": rev}
     # 프로젝트·라운드는 식별자에 붙이지 않고 기록에 따로 적는다 - 화면이 실행을 프로젝트별로 구분해 보인다.
     try:
-        meta["project"] = getattr(args, "project", None) or task_project(task_id)
-        meta["round"] = getattr(args, "round", None) or current_round()
+        extra["project"] = getattr(args, "project", None) or task_project(task_id)
+        round_n = getattr(args, "round", None) or current_round()
     except Exception:  # noqa: BLE001 - 표시용 정보 때문에 스폰이 죽으면 안 된다
-        meta.setdefault("project", "")
-        meta.setdefault("round", None)
-    (RUNS / f"{run_id}.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+        extra.setdefault("project", "")
+        round_n = None
+    from fleet_rt import config as rt_config  # noqa: PLC0415
+    from fleet_rt.base import SessionSpec  # noqa: PLC0415
+    try:
+        cfg = rt_config.load(ROOT)
+        provider = cfg.provider_of(harness, model)
+        idle = cfg.idle_timeout(provider) if provider else None
+    except Exception as e:  # noqa: BLE001 - 설정이 깨져도 띄우기는 한다 (침묵 감지만 꺼진다)
+        print(f"주의: fleet.toml 을 읽지 못했습니다 ({e}) - 침묵 감지 없이 띄웁니다", file=sys.stderr)
+        provider, idle = None, None
+    # 벽시계 제한은 그래프 실행기가 노드 한도로 먼저 끊는다. 감독의 제한은 실행기가 죽었을 때의 뒷문이라 조금 길게 둔다.
+    timeout = float(getattr(args, "timeout", None) or SPAWN_TIMEOUT_SEC) + SPAWN_TIMEOUT_SLACK_SEC
+    spec = SessionSpec(id=run_id, role="worker", harness=harness, brief_path="", cwd=str(ROOT),
+                       slot=args.slot, model=normalize_model(harness, model), provider=provider,
+                       ident=f"[AIMEM 작업자 지시] 슬롯 {args.slot} · 확인토큰 {token} · AIMEM REV {rev}.",
+                       write_paths=list(args.write), timeout=timeout, idle_timeout=idle,
+                       round=round_n if isinstance(round_n, int) else None, task_id=task_id, attempt=attempt,
+                       label=label, extra=extra)
+    db = pathlib.Path(RUNS).parent / "aimem.db"
+    try:
+        _rt_sessions().spawn(spec, brief, _sessions_root(), db_path=str(db) if db.exists() else None, env_root=str(ROOT))
+    except (ValueError, OSError, RuntimeError) as e:
+        sys.exit(f"작업자를 띄우지 못했습니다 ({run_id}): {e}")
     print(run_id)
-    _db_sync()
     return 0
 
 
 def _list_runs():
     """시작 시각 순. (옛 `YYYYMMDD-HHMMSS-S#` 와 새 `T-050-S1-a1-HHMMSS` 가 섞여 있어 이름순은 안 된다)"""
-    if not RUNS.exists():
-        return []
     def key(m):
         try:
             return json.loads(m.read_text(encoding="utf-8")).get("started") or ""
         except (OSError, ValueError):
             return ""
-    return [m.stem for m in sorted(RUNS.glob("*.json"), key=key)]
+    pairs = [(key(m), m.stem) for m in RUNS.glob("*.json")] if RUNS.exists() else []
+    sroot = _sessions_root()
+    if sroot.is_dir():
+        pairs += [(key(d / "meta.json"), d.name) for d in sroot.iterdir() if _session_dir(d.name) is not None]
+    return [rid for _k, rid in sorted(pairs, key=lambda t: t[0])]
 
 
 def cmd_runs(args):
@@ -685,6 +809,8 @@ def cmd_runs(args):
         if started:
             if end_f.exists():
                 end = datetime.datetime.fromtimestamp(end_f.stat().st_mtime)
+            elif state != "running" and meta.get("session"):
+                end = _run_last_mtime(rid) or datetime.datetime.now()  # 세션은 end.json 의 끝난 시각
             elif state == "lost":
                 end = _run_last_mtime(rid) or datetime.datetime.now()  # lost 는 마지막 흔적에서 멈춘다
             else:
@@ -720,7 +846,8 @@ def cmd_wait(args):
         rep = run_report(rid)
         print(rep if rep else "(보고 본문 비어 있음 - .err 를 보십시오)")
         if rc not in (0, None):
-            err_f = RUNS / f"{rid}.err"
+            sd = _session_dir(rid)
+            err_f = (sd / "stderr.log") if sd is not None else RUNS / f"{rid}.err"
             err = err_f.read_text(encoding="utf-8", errors="replace")[-1500:] if err_f.exists() else ""
             print("--- stderr 꼬리:\n" + err)
     _db_sync()
@@ -753,6 +880,14 @@ def cmd_reap(args):
     n = 0
     for rid in _list_runs():
         state, _ = _run_state(rid)
+        sd = _session_dir(rid)
+        if sd is not None:
+            # 세션: 끝남 기록 없이 감독이 사라진 것만 거둔다. `cancel` 이 남은 프로세스를 정리하고 end.json 을 적는다.
+            # 감독 없이 하네스만 남은 세션(`orphaned`)은 상태가 running 이다 - 슬롯을 잡고 있으니 같이 거둔다.
+            if (state == "lost" and not (sd / "end.json").exists()) or _session_orphaned(rid):
+                print(f"reaped {rid} ({_rt_sessions().cancel(sd, why='reap: 감독 프로세스가 사라짐')})")
+                n += 1
+            continue
         if state != "lost" or (RUNS / f"{rid}.lost").exists():
             continue
         ended = _run_last_mtime(rid) or datetime.datetime.now()

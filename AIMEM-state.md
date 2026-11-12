@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-12T20:10:17 / REV 162
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-12T22:03:24 / REV 162
 
 ## 2. 세션 명부
 
@@ -413,10 +413,6 @@
 
 | run id | 태스크 | 슬롯 | 하네스 | 모델 | 시도 | 상태 | rc | 시작 | 끝 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| T-240-S3-a1-160103 | T-240 | S3 | opencode |  | 1 | done | 0 | 16:01:03 | 16:05:53 |
-| T-242-S2-a1-161159 | T-242 | S2 | codex |  | 1 | done | 0 | 16:11:59 | 16:16:43 |
-| T-1-S2-a2-161436 | T-1 | S2 | codex |  | 2 | lost |  | 16:14:36 |  |
-| T-238-S1-a1-161707 | T-238 | S1 | claude | opus | 1 | done | 0 | 16:17:07 | 16:33:15 |
 | T-243-S3-a1-161709 | T-243 | S3 | opencode |  | 1 | done | 0 | 16:17:09 | 16:20:42 |
 | T-244-S2-a1-163844 | T-244 | S2 | codex |  | 1 | done | 0 | 16:38:44 | 16:43:49 |
 | T-245-S3-a1-164437 | T-245 | S3 | opencode |  | 1 | done | 0 | 16:44:37 | 16:48:25 |
@@ -441,5 +437,9 @@
 | T-262-S1-a1-191529 | T-262 | S1 | claude | opus | 1 | done | 0 | 19:15:29 | 19:27:09 |
 | T-263-S2-a1-193012 | T-263 | S2 | codex |  | 1 | lost |  | 19:30:12 | 20:10:17 |
 | T-265-S3-a1-193012 | T-265 | S3 | opencode |  | 1 | done | 1 | 19:30:12 | 20:01:25 |
-| T-265-S3-a2-200131 | T-265 | S3 | opencode |  | 2 | running |  | 20:01:31 |  |
-| T-263-S2-a2-201017 | T-263 | S2 | codex |  | 2 | running |  | 20:10:17 |  |
+| T-265-S3-a2-200131 | T-265 | S3 | opencode |  | 2 | lost |  | 20:01:31 | 20:13:52 |
+| T-263-S2-a2-201017 | T-263 | S2 | codex |  | 2 | lost |  | 20:10:17 | 20:13:52 |
+| ADHOC-S4-a1-213402 | ADHOC | S4 | claude | sonnet | 1 | done | 0 | 21:34:02 | 21:34:14 |
+| ADHOC-S2-a1-220212 | ADHOC | S2 | codex | openrouter/deepseek/deepseek-v4.1-flash | 1 | done | 0 | 22:02:12 | 22:02:20 |
+| ADHOC-S3-a1-220213 | ADHOC | S3 | opencode | openrouter/deepseek/deepseek-v4.1-flash | 1 | done | 0 | 22:02:13 | 22:02:26 |
+| ADHOC-S3-a1-220242 | ADHOC | S3 | opencode | openrouter/deepseek/deepseek-v4.1-flash | 1 | killed | -15 | 22:02:42 | 22:03:07 |

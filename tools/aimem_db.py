@@ -259,9 +259,22 @@ def _now():
     return dt.datetime.now().isoformat(timespec="seconds")
 
 
+def _sessions_ddl():
+    """`sessions` 표 정의는 `fleet_rt.base` 한 곳에 있다. 패키지가 없어도 이 도구는 떠야 하므로 늦게·안전하게 불러온다."""
+    tools = str(pathlib.Path(__file__).resolve().parent)
+    if tools not in sys.path:
+        sys.path.append(tools)
+    try:
+        from fleet_rt.base import SESSIONS_DDL
+        return SESSIONS_DDL
+    except ImportError:
+        return ""
+
+
 def cmd_init(a=None):
     with connect() as con:
         con.executescript(SCHEMA)
+        con.executescript(_sessions_ddl())
     print(f"ok: {DB}")
     return 0
 
@@ -316,6 +329,95 @@ def load_request_files(con, now=None):
                 con.execute("UPDATE tasks SET request_id=? WHERE id=? AND request_id IS NULL", (d.get("id") or f.stem, st["id"]))
         n_req += 1
     return n_req
+
+
+# ----------------------------------------------------------------- 세션 색인 (폴더 -> sessions 표)
+def _session_pid_alive(pid):
+    """`/proc/<pid>` 가 있고 좀비가 아니면 산 것. 끝난 자식을 아직 못 거둔 좀비는 산 것으로 치지 않는다."""
+    try:
+        pid = int(pid)
+        if pid <= 0:
+            return False
+        stat = pathlib.Path(f"/proc/{pid}/stat").read_text(errors="replace")
+    except (TypeError, ValueError, OSError):
+        return False
+    # 두 번째 칸(comm)에 공백·괄호가 들어갈 수 있어 마지막 ')' 뒤를 본다
+    return stat.rpartition(")")[2].split()[:1] != ["Z"]
+
+
+def _read_json_file(p):
+    try:
+        d = json.loads(pathlib.Path(p).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def session_row_from_dir(d):
+    """세션 폴더 하나를 `sessions` 표의 한 행(dict)으로. `meta.json` 이 없으면 None.
+
+    상태: end.json 이 있으면 그 state, 없으면 감독 pid 가 살았으면 running, 아니면 lost.
+    `fleet_rt.sessions.index_row` 가 있으면 그쪽이 정본이라 먼저 쓴다 (규칙이 둘로 갈라지지 않게)."""
+    d = pathlib.Path(d)
+    if not (d / "meta.json").is_file():
+        return None
+    try:
+        from fleet_rt import sessions as _rt_sessions
+        fn = getattr(_rt_sessions, "index_row", None)
+        if fn:
+            row = fn(d)
+            if isinstance(row, dict) and row.get("id"):
+                return row
+    except Exception:
+        pass
+    meta = _read_json_file(d / "meta.json")
+    if not meta:
+        return None
+    end = _read_json_file(d / "end.json")
+    sup = meta.get("supervisor_pid")
+    if end is not None:
+        state = end.get("state") or "done"
+    else:
+        state = "running" if _session_pid_alive(sup) else "lost"
+    wp = meta.get("write_paths")
+    return {"id": meta.get("id") or d.name, "role": meta.get("role") or "worker", "round": meta.get("round"),
+            "task_id": meta.get("task_id"), "slot": meta.get("slot"), "harness": meta.get("harness") or "?",
+            "model": meta.get("model"), "provider": meta.get("provider"), "pid": sup,
+            "pgid": meta.get("supervisor_pgid") or meta.get("pgid"),
+            "harness_session_id": (end or {}).get("harness_session_id") or meta.get("harness_session_id"),
+            "state": state, "started": meta.get("started") or meta.get("supervisor_started"),
+            "ended": (end or {}).get("ended"), "last_event_at": None, "rc": (end or {}).get("rc"),
+            "report_status": (end or {}).get("report_status"), "tokens_in": None, "tokens_out": None, "cost_usd": None,
+            "fail_kind": (end or {}).get("fail_kind"), "attempt": meta.get("attempt") or 1,
+            "label": meta.get("label"), "write_paths": json.dumps(wp if isinstance(wp, list) else [], ensure_ascii=False),
+            "dir": str(d)}
+
+
+def index_sessions(con):
+    """`<aimem>/sessions/*` 를 훑어 `sessions` 표를 다시 맞춘다 (멱등 upsert). 폴더가 정본이다.
+    토큰·마지막 사건 시각은 감독이 적는 값이라 덮지 않는다. 폴더가 없는 행은 건드리지 않는다. 적재 건수를 준다."""
+    sdir = ROOT / ".aimem" / "sessions"
+    n = 0
+    for d in sorted(sdir.iterdir()) if sdir.is_dir() else []:
+        if not d.is_dir():
+            continue
+        row = session_row_from_dir(d)
+        if not row:
+            continue
+        if isinstance(row.get("write_paths"), list):
+            row["write_paths"] = json.dumps(row["write_paths"], ensure_ascii=False)
+        cols = [c for c in row if c in _SESSION_COLS]
+        con.execute(f"INSERT INTO sessions({','.join(cols)}) VALUES({','.join('?' * len(cols))}) "
+                    "ON CONFLICT(id) DO UPDATE SET "
+                    + ",".join(f"{c}=excluded.{c}" for c in cols if c not in ("id", "tokens_in", "tokens_out", "cost_usd", "last_event_at")),
+                    [row[c] for c in cols])
+        n += 1
+    return n
+
+
+_SESSION_COLS = ("id", "role", "round", "task_id", "slot", "harness", "model", "provider", "pid", "pgid",
+                 "harness_session_id", "state", "started", "ended", "last_event_at", "rc", "report_status",
+                 "tokens_in", "tokens_out", "cost_usd", "fail_kind", "attempt", "label", "write_paths", "dir")
 
 
 def migrate(verbose=True):
@@ -469,9 +571,10 @@ def migrate(verbose=True):
                          json.dumps(d.get("write") or [], ensure_ascii=False), d.get("pid"), d.get("started"), ended, rc, state,
                          d.get("brief"), d.get("rev")))
             n_runs += 1
+        n_sess = index_sessions(con)
         con.commit()
     if verbose:
-        print(f"migrate: slots {n_slots} / ownership {n_own} / tasks {n_tasks} / queue {pos} / events +{n_ev} / requests {n_req} / graphs {n_g} / runs {n_runs}")
+        print(f"migrate: slots {n_slots} / ownership {n_own} / tasks {n_tasks} / queue {pos} / events +{n_ev} / requests {n_req} / graphs {n_g} / runs {n_runs} / sessions {n_sess}")
     return 0
 
 
@@ -485,6 +588,13 @@ def state_dict():
     with connect() as con:
         def rows(q, *p):
             return [dict(r) for r in con.execute(q, p)]
+
+        def session_rows():
+            # 읽기는 표를 만들지 않는다. 엔진 v2 이전에 만든 DB 에는 `sessions` 표가 없다 (init/migrate 가 만든다)
+            try:
+                return rows("SELECT * FROM sessions ORDER BY started")
+            except sqlite3.OperationalError:
+                return []
         out = {
             "generated": _now(), "rev": rev(con),
             "slots": rows("SELECT * FROM slots ORDER BY slot"),
@@ -495,6 +605,7 @@ def state_dict():
             "graphs": rows("SELECT id,request,concurrency,created,updated FROM graphs ORDER BY id"),
             "nodes": rows("SELECT * FROM nodes ORDER BY graph_id,node_id"),
             "runs": rows("SELECT * FROM runs ORDER BY started"),
+            "sessions": session_rows(),
             # 최근 50건 **더하기** 핸드오프 최근 12건. 합집합인 이유: `task`/`queue`/
             # `ownership` 이벤트가 한 라운드에 수십 건 쌓이면 `LIMIT 50` 안에서 핸드오프가
             # 밀려나, 웹 화면의 `4절` 로그가 2건으로 줄었다(REV 114 실측). 12 는
@@ -507,6 +618,16 @@ def state_dict():
         }
         for r in out["runs"]:
             r["write_paths"] = json.loads(r["write_paths"] or "[]")
+        for r in out["sessions"]:
+            r["write_paths"] = json.loads(r["write_paths"] or "[]")
+        # 화면은 아직 `runs` 키 하나를 읽는다: 옛 실행 + 새 세션을 같은 꼴로 합쳐 시작 시각 순(새것이 뒤)으로 준다
+        out["runs"] += [{"id": r["id"], "task_id": r["task_id"], "slot": r["slot"], "harness": r["harness"],
+                         "model": r["model"], "attempt": r["attempt"], "label": r["label"],
+                         "write_paths": r["write_paths"], "pid": r["pid"], "started": r["started"], "ended": r["ended"],
+                         "rc": r["rc"], "state": r["state"], "report_status": r["report_status"],
+                         "brief_path": str(pathlib.Path(r["dir"]) / "brief.md") if r["dir"] else None, "rev": None}
+                        for r in out["sessions"]]
+        out["runs"].sort(key=lambda r: r["started"] or "")
         for n in out["nodes"]:
             n["deps"] = json.loads(n["deps"] or "[]")
     return out
@@ -841,7 +962,7 @@ def archive_plan(days=14, now=None):
     now = now or dt.datetime.now()
     cutoff = (now - dt.timedelta(days=days)).isoformat(timespec="seconds")
     plan = {"days": days, "cutoff": cutoff, "tasks": [], "requests": [], "graphs": [],
-            "runs": [], "events": [], "handoff": [], "relay": [], "logs": [], "total_records": 0}
+            "runs": [], "sessions": [], "events": [], "handoff": [], "relay": [], "logs": [], "total_records": 0}
     with connect() as con:
         for r in con.execute("SELECT id,title,slot,status,inherited,artifacts,updated FROM tasks "
                              "WHERE status='DONE' AND COALESCE(updated,created,'') <= ? ORDER BY id", (cutoff,)):
@@ -989,6 +1110,25 @@ def archive_plan(days=14, now=None):
             seen_runs.add(rid)
             plan["runs"].append({"id": rid, "task": None, "when": when, "files": files})
 
+    # 세션 폴더: 런 파일과 같은 나이 규칙. **end.json 이 없는 세션은 절대 안 옮긴다** (돌고 있거나 lost 판정 전이다)
+    sess_dir = ROOT / ".aimem" / "sessions"
+    for d in sorted(sess_dir.iterdir()) if sess_dir.is_dir() else []:
+        if not d.is_dir() or not (d / "end.json").is_file() or not _ARCHIVE_ID_RE.fullmatch(d.name):
+            continue
+        meta = _read_json_file(d / "meta.json") or {}
+        end = _read_json_file(d / "end.json") or {}
+        task = meta.get("task_id")
+        if d.name in protected_ids or (isinstance(task, str) and task in protected_ids):
+            continue
+        if isinstance(task, str) and task in task_status and task_status[task] != "DONE":
+            continue
+        started = _iso(meta.get("started") or meta.get("supervisor_started") or end.get("ended"))
+        attached = isinstance(task, str) and task in archived_task_ids
+        if not attached and (not isinstance(task, str) or task not in task_status):
+            attached = bool(started) and started <= cutoff
+        if attached:
+            plan["sessions"].append({"id": d.name, "task": task, "when": started})
+
     archived_ids = set(archived_task_ids)
     archived_ids.update(r["id"] for r in plan["requests"])
     archived_ids.update(g["id"] for g in plan["graphs"])
@@ -1083,7 +1223,7 @@ def archive_plan(days=14, now=None):
                 moved += 1
         plan["logs"].append({"file": log_path.name, "lines": moved})
 
-    plan["total_records"] = (len(plan["runs"]) + len(plan["events"]) + len(plan["handoff"])
+    plan["total_records"] = (len(plan["runs"]) + len(plan["sessions"]) + len(plan["events"]) + len(plan["handoff"])
                              + len(plan["relay"]) + sum(x["lines"] for x in plan["logs"]))
     plan["total"] = len(plan["tasks"]) + len(plan["requests"]) + len(plan["graphs"])
     return plan
@@ -1093,7 +1233,7 @@ def archive_apply(plan, actor="관리자"):
     """계획대로 옮긴다. 태스크·이벤트는 아카이브에 먼저 쓰고 확인한 뒤 DB 에서 내린다; 요청·그래프·실행 파일은 이동."""
     arch = ROOT / ".aimem" / "archive"
     arch.mkdir(parents=True, exist_ok=True)
-    out = {"tasks": [], "requests": [], "graphs": [], "runs": [], "events": [],
+    out = {"tasks": [], "requests": [], "graphs": [], "runs": [], "sessions": [], "events": [],
            "handoff": [], "relay": [], "log_lines": 0, "files": 0}
     moved_any = False
     cell = lambda v: str(v or "-").replace("|", "\\|").replace("\n", " ")
@@ -1176,6 +1316,22 @@ def archive_apply(plan, actor="관리자"):
         out["runs"].append(r["id"])
         with connect() as con:
             con.execute("DELETE FROM runs WHERE id=?", (r["id"],))
+            con.commit()
+
+    sess_dir = ROOT / ".aimem" / "sessions"
+    for r in plan.get("sessions", []):
+        src = sess_dir / r["id"]
+        # 계획 뒤에 되살아났거나 end.json 이 없는 폴더는 옮기지 않는다
+        if not (src / "end.json").is_file():
+            continue
+        dest = arch / f"sessions-{(r.get('when') or plan['cutoff'])[:7] or 'undated'}"
+        dest.mkdir(parents=True, exist_ok=True)
+        src.replace(dest / r["id"])
+        out["files"] += 1
+        moved_any = True
+        out["sessions"].append(r["id"])
+        with connect() as con:
+            con.execute("DELETE FROM sessions WHERE id=?", (r["id"],))
             con.commit()
 
     if plan.get("handoff"):
@@ -1340,12 +1496,12 @@ def archive_apply(plan, actor="관리자"):
             out["files"] += 1
     out["log_lines"] = log_total
 
-    if (out["tasks"] or out["requests"] or out["graphs"] or out["runs"] or out["events"]
+    if (out["tasks"] or out["requests"] or out["graphs"] or out["runs"] or out["sessions"] or out["events"]
             or out["handoff"] or out["relay"] or out["log_lines"]):
         with connect() as con:
             body = (f"{plan['days']}일 경과 - 태스크 {len(out['tasks'])}건, 요청 {len(out['requests'])}건, 그래프 {len(out['graphs'])}개 아카이브"
                     + (f" (태스크 {', '.join(out['tasks'])})" if out["tasks"] else "")
-                    + f", 실행 {len(out['runs'])}건, 이벤트 {len(out['events'])}건"
+                    + f", 실행 {len(out['runs'])}건, 세션 {len(out['sessions'])}건, 이벤트 {len(out['events'])}건"
                     + f", 핸드오프 {len(out['handoff'])}건, 전달 {len(out['relay'])}개, 로그 {out['log_lines']}줄")
             con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
                         (_now(), actor, rev(con), "archive", body))
@@ -1362,7 +1518,7 @@ def archive_apply(plan, actor="관리자"):
         except sqlite3.Error as e:
             print(f"archive: VACUUM 실패 - 정리는 성공 ({e})")
     if moved_any or (out["tasks"] or out["requests"] or out["graphs"] or out["runs"]
-                     or out["events"] or out["handoff"] or out["relay"] or out["log_lines"]):
+                     or out["sessions"] or out["events"] or out["handoff"] or out["relay"] or out["log_lines"]):
         try:
             render(sync_aimem=False)
         except Exception as e:
@@ -1389,6 +1545,8 @@ def cmd_archive(a):
         print(f"archive: 그래프 <- {g['id']} (+파일 {len(g['side_files']) + len(g['inputs'])})")
     if plan["runs"]:
         print(f"archive: 실행 <- {len(plan['runs'])}건")
+    if plan["sessions"]:
+        print(f"archive: 세션 <- {len(plan['sessions'])}건")
     if plan["events"]:
         print(f"archive: 이벤트 <- {len(plan['events'])}건")
     if plan["handoff"]:
