@@ -1026,10 +1026,14 @@ class QueueFindingIdsTest(AimemDbCliTest):
         f = aimem_db.bare_finding_ids
         self.assertEqual(f("검수 N5·N6(낮음)"), ["N5", "N6"])
         self.assertEqual(f("(N7) 상한 ... M13 와 D5"), ["N7", "M13", "D5"])
-        for ok in ("R17-N5", "R17-N5·N6", "R17-N7, N8, N10", "R17-M13/M14", "'생략 N건'", "60→3", "T-224", "G-045",
-                   "S2", "REV 160", "R17 T-224 검수", "Q-261112-c3a1", "UTF-N8X", "N", "SN5"):
+        # 검수자마다 다른 글자도 쓴다 (R18·R19 실제 사례: A7·S8·G7·C2·B10·P2) - 글자를 가리지 않는다
+        self.assertEqual(f("재검수 P2(중간)·A7·G7·C2·B10·SN5"), ["P2", "A7", "G7", "C2", "B10", "SN5"])
+        for ok in ("R17-N5", "R17-N5·N6", "R17-N7, N8, N10", "R17-M13/M14", "R19-P2", "R18-A7·R18-S8·R18-B12",
+                   "R18-A7·S8", "'생략 N건'", "60→3", "T-224", "G-045", "S2", "S1~S4 는 유료", "R17", "REV 160",
+                   "R17 T-224 검수", "Q-261112-c3a1", "UTF-N8X", "UTF8", "N", "E2E"):
             self.assertEqual(f(ok), [], ok)
         self.assertEqual(f("R17-N5·N6 그리고 N9"), ["N9"])
+        self.assertEqual(f("R19-P2 와 P3"), ["P3"])
 
     def test_add_refuses_bare_and_accepts_qualified(self):
         with self.assertRaises(SystemExit) as cm:

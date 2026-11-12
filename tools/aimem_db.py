@@ -1423,24 +1423,28 @@ def cmd_ownership(a):
     return 0
 
 
-#: 검수 보고서의 발견 번호(N=결함, M=변이 시험, D=넘어온 결함). **보고서마다 1부터 다시 센다** - R15 의 N5 와
-#: R17 의 N5 는 다른 문제다. 큐는 라운드를 넘어 남으므로 큐에 적을 때는 `R17-N5` 처럼 라운드를 붙인다.
-#: 같은 라운드 것을 이어 적을 때는 `R17-N5·N6` 처럼 첫 번호에만 붙여도 된다 (2026-11-12 태석님 지시).
-_FINDING_QUALIFIED = re.compile(r"(?<![0-9A-Za-z])R\d+-[NMD]\d+(?:\s*[·,/]\s*[NMD]\d+)*(?![0-9A-Za-z])")
-_FINDING_BARE = re.compile(r"(?<![0-9A-Za-z_-])[NMD]\d{1,3}(?![0-9A-Za-z])")
+#: 검수 보고서의 발견 번호 - 영문 대문자 1~2자 + 숫자 (N=결함, M=변이 시험, D=넘어온 결함, 그 밖에 검수자마다
+#: P·A·S·G·C·B 같은 글자도 쓴다). **보고서마다 1부터 다시 센다** - R15 의 N5 와 R17 의 N5 는 다른 문제다.
+#: 큐는 라운드를 넘어 남으므로 큐에 적을 때는 `R17-N5` 처럼 라운드를 붙인다. 같은 라운드 것을 이어 적을 때는
+#: `R17-N5·N6` 처럼 첫 번호에만 붙여도 된다 (2026-11-12 태석님 지시, 같은 날 글자 제한을 없앰).
+#: 예외: `R17` 자체(라운드), `S1`~`S9`(슬롯 이름).
+_FINDING_QUALIFIED = re.compile(r"(?<![0-9A-Za-z])R\d+-[A-Z]{1,2}\d+(?:\s*[·,/]\s*[A-Z]{1,2}\d+)*(?![0-9A-Za-z])")
+_FINDING_BARE = re.compile(r"(?<![0-9A-Za-z_-])[A-Z]{1,2}\d{1,3}(?![0-9A-Za-z])")
+_FINDING_NOT_ID = re.compile(r"R\d+|S\d")
 
 
 def bare_finding_ids(text):
     """라운드가 안 붙은 발견 번호 목록 (`N5`, `M13` …). 비어 있으면 통과."""
     rest = _FINDING_QUALIFIED.sub(" ", str(text or ""))
-    return _FINDING_BARE.findall(rest)
+    return [x for x in _FINDING_BARE.findall(rest) if not _FINDING_NOT_ID.fullmatch(x)]
 
 
 def _check_queue_text(*texts):
-    bare = sorted({x for t in texts for x in bare_finding_ids(t)}, key=lambda x: (x[0], int(x[1:])))
+    bare = sorted({x for t in texts for x in bare_finding_ids(t)},
+                  key=lambda x: (x.rstrip("0123456789"), int(x[len(x.rstrip("0123456789")):])))
     if bare:
         sys.exit("큐에 적는 검수 발견 번호에는 라운드를 붙이십시오: " + ", ".join(bare) +
-                 " → 예) R17-N5, R17-N5·N6, R17-M13 (번호는 검수 보고서마다 1부터 다시 셉니다)")
+                 " → 예) R17-N5, R17-N5·N6, R19-P2 (번호는 검수 보고서마다 1부터 다시 셉니다. 앞의 R숫자가 라운드)")
 
 
 def cmd_queue(a):

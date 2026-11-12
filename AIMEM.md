@@ -1,6 +1,6 @@
 # AIMEM.md - Shared Working Memory
 
-The single source of truth for every AI session that works in `/home/tsyi/work/opencode`. The Manager and the
+The single source of truth for every AI session that works in `/home/tsyi/work/ai-fleet`. The Manager and the
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
@@ -200,9 +200,10 @@ python3 tools/aimem_db.py queue list | add --task "..." --slot-hint S1 | edit --
 **What it is:** follow-up work that came out of handling requests - mostly review findings and "next time" items.
 New web requests (`NEW`) come first each round; then the queue, top down. An empty queue and no open requests
 end the relay (`이어 달리기`). The web shows it as `대기 큐 · 후속 일` (columns: 할 일 / 추천 슬롯 / 출처 태스크).
-- **Finding IDs carry their round:** `R17-N5`, `R17-N5·N6`, `R17-M13` - never bare `N5`. Review reports number
-  findings (N = finding, M = mutation, D = carried defect) from 1 in every report, so a bare ID is ambiguous across
-  rounds. `queue add/edit` refuses bare IDs
+- **Finding IDs carry their round:** `R17-N5`, `R17-N5·N6`, `R19-P2` - never bare `N5`. Review reports number
+  findings from 1 in every report (N = finding, M = mutation, D = carried defect; reviewers also use other letters
+  such as P, A, S, G, C, B), so a bare ID is ambiguous across rounds. `queue add/edit` refuses any bare
+  `<1-2 capital letters><digits>` except a round (`R17`) or a slot (`S1`-`S9`)
 - **Refer to an item by its finding ID or text, not its position:** positions are renumbered after every `drop`
 
 The Manager takes the next task from the top (`8.0-4`). When the queue is empty it reports a summary and stops; it
@@ -522,7 +523,7 @@ never executes an item here on its own.
 | # | Item | Why | Risk | Status |
 | - | ---- | --- | ---- | ------ |
 | 1 | `python3 -m playwright install firefox` | The queue's "run the monitor's browser checks in Firefox too" cannot start: only chromium is installed. Installing is a hard limit (`0.2`), so R12 stopped and reported instead | Downloads ~90 MB into `~/.cache/ms-playwright`; no repo or config change. Declining only means the CSP `sandbox` directive and the ticket path stay checked in chromium alone | Waiting (R12) |
-| 2 | Register the status line in `~/.claude/settings.json`: `"statusLine": {"type": "command", "command": "python3 /home/tsyi/work/opencode/tools/claude_usage_statusline.py"}` | The Fleet tab's "Claude usage" card (R18-R19) reads `.aimem/claude-usage.json`, which only that status-line command writes. The file does not exist yet, so the card shows "register the status-line command" and nothing else. Writing a user-global file outside this folder is a hard limit (`0.2`), so R19 stopped and reported instead | One line in Taeseok's own Claude Code settings; the script reads nothing but the session JSON Claude Code already hands it (no credentials) and writes one file inside this folder. Declining only means the card stays empty | Waiting (R19) |
+| 2 | Register the status line in `~/.claude/settings.json`: `"statusLine": {"type": "command", "command": "python3 /home/tsyi/work/ai-fleet/tools/claude_usage_statusline.py"}` | The Fleet tab's "Claude usage" card (R18-R19) reads `.aimem/claude-usage.json`, which only that status-line command writes. The file does not exist yet, so the card shows "register the status-line command" and nothing else. Writing a user-global file outside this folder is a hard limit (`0.2`), so R19 stopped and reported instead | One line in Taeseok's own Claude Code settings; the script reads nothing but the session JSON Claude Code already hands it (no credentials) and writes one file inside this folder. Declining only means the card stays empty | Waiting (R19) |
 
 Approved and removed items: `retired-sections-2026-11.md` `[REV 128 내림] 9절`, `[REV 135 내림] 9절 1번`; older history in
 `retired-sections-2026-09.md`.
