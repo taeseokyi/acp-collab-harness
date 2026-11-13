@@ -365,8 +365,8 @@ A slot asked for a design decision has a defective brief; `BLOCKED` is the right
 
 Issue independent `spawn`s in one turn and collect with one `wait`; dependent tasks wait for their predecessor;
 never two slots on one file. Concurrency cap: 2~5 (`8.1`).
-**Per-provider concurrency is a setting** (`fleet.toml` `max_concurrent`), kept low for today's servers and raised
-when resources grow. The biggest lever is **prompt length** - short briefs, narrow write scope.
+Per-provider concurrency is a setting: `fleet.toml` `max_concurrent`. The biggest lever is **prompt length** -
+short briefs, narrow write scope.
 
 #### 8.0-3-1 Terminology and Identifiers
 

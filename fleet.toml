@@ -4,8 +4,7 @@
 [providers.kisti]
 base_url = "https://aida.kisti.re.kr:10430/v1"
 env_key = "KISTI_API_KEY"
-# 동시에 띄울 세션 수 - 지금 서버에 맞춘 값. 자원이 늘면 올린다
-max_concurrent = 1
+max_concurrent = 1        # 동시에 띄울 세션 수
 idle_timeout_sec = 240    # 사건이 이만큼 없으면 멈춘 것으로 본다
 probe = "models"          # 준비 점검 때 GET <base_url>/models
 models = ["kistillm"]
