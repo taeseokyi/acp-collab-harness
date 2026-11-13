@@ -4,7 +4,10 @@
 [providers.kisti]
 base_url = "https://aida.kisti.re.kr:10430/v1"
 env_key = "KISTI_API_KEY"
-max_concurrent = 1        # 직렬 서버로 보고 시작한다. 실측으로 정한다
+# 실측 2026-11-13 (요청마다 다른 1.6만 토큰 입력 + 256 토큰 출력, 2회 반복): 동시 1 = 약 20초, 동시 2 = 둘 다 약 39초,
+# 동시 3 = 셋 다 약 57초. 서버가 요청을 함께 받기는 하지만 처리량이 고정이라 나눠 먹을 뿐이다 - 겹쳐 보내면 먼저 끝날
+# 수 있던 일까지 늦게 끝나고, 요청마다 응답 없는 시간이 길어져 침묵 감지에 걸리기 쉽다. 그래서 1.
+max_concurrent = 1
 idle_timeout_sec = 240    # 사건이 이만큼 없으면 멈춘 것으로 본다
 probe = "models"          # 준비 점검 때 GET <base_url>/models
 models = ["kistillm"]
