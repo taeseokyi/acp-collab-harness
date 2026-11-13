@@ -19,12 +19,13 @@ DEFAULTS = {
                    "max_concurrent": 1, "idle_timeout_sec": 240, "models": ["k-exaone_v2.5"]},
         "openrouter": {"base_url": "https://openrouter.ai/api/v1", "env_key": "OPENROUTER_API_KEY",
                        "max_concurrent": 3, "idle_timeout_sec": 240, "models": ["deepseek/deepseek-v4.1-flash"]},
+        "opencode": {"max_concurrent": 1, "idle_timeout_sec": 240, "models": ["deepseek-v4.1-flash-free"]},
         "anthropic": {"max_concurrent": 3, "idle_timeout_sec": 600, "models": ["opus", "sonnet", "haiku"]},
     },
     "harness": {
         "claude": {"binary": "claude", "providers": ["anthropic"], "default_model": "sonnet"},
         "codex": {"binary": "codex", "providers": ["kisti", "openrouter"], "default_model": "kisti/kistillm"},
-        "opencode": {"binary": "opencode", "providers": ["kisti", "exaone", "openrouter"], "default_model": "kisti/kistillm"},
+        "opencode": {"binary": "opencode", "providers": ["kisti", "exaone", "openrouter", "opencode"], "default_model": "kisti/kistillm"},
     },
     "manager": {"mode": "resident"},
 }

@@ -23,6 +23,11 @@ max_concurrent = 3
 idle_timeout_sec = 240
 models = ["deepseek/deepseek-v4.1-flash"]
 
+[providers.opencode]      # 오픈코드 자체 공급(Zen). 무료 모델은 키 없이 오픈코드 하네스에서만 쓸 수 있다
+max_concurrent = 1        # 동시에 띄울 세션 수
+idle_timeout_sec = 240
+models = ["deepseek-v4.1-flash-free"]
+
 [providers.anthropic]     # claude CLI 가 자기 로그인으로 붙는다 - 키·주소 없음
 max_concurrent = 3
 idle_timeout_sec = 600
@@ -40,7 +45,7 @@ default_model = "kisti/kistillm"
 
 [harness.opencode]        # ~/.config/opencode/opencode.jsonc 의 model 은 'kisti/kistillm'
 binary = "opencode"
-providers = ["kisti", "exaone", "openrouter"]
+providers = ["kisti", "exaone", "openrouter", "opencode"]
 default_model = "kisti/kistillm"
 
 [manager]                 # 관리자 운용 방식 (설계 5.9)

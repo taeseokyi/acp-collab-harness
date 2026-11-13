@@ -116,7 +116,8 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(cfg.models_for("claude"),
                          [{"key": k, "name": k, "provider": "anthropic"} for k in ("opus", "sonnet", "haiku")])
         keys = [m["key"] for m in cfg.models_for("opencode")]
-        self.assertEqual(keys, ["kisti/kistillm", "exaone/k-exaone_v2.5", "openrouter/deepseek/deepseek-v4.1-flash"])
+        self.assertEqual(keys, ["kisti/kistillm", "exaone/k-exaone_v2.5", "openrouter/deepseek/deepseek-v4.1-flash",
+                                "opencode/deepseek-v4.1-flash-free"])
         self.assertEqual(cfg.models_for("codex")[0], {"key": "kisti/kistillm", "name": "kistillm", "provider": "kisti"})
         self.assertEqual(cfg.models_for("nohar"), [])
 
@@ -145,7 +146,7 @@ class GateTest(unittest.TestCase):
         self.assertFalse(providers.has_room(self.cfg, self.root, "kisti"))
         self.assertTrue(providers.has_room(self.cfg, self.root, "anthropic"))
         self.assertTrue(providers.has_room(self.cfg, self.root, None))
-        self.assertEqual(providers.room(self.cfg, self.root), {"kisti": 0, "exaone": 1, "openrouter": 3, "anthropic": 2})
+        self.assertEqual(providers.room(self.cfg, self.root), {"kisti": 0, "exaone": 1, "openrouter": 3, "opencode": 1, "anthropic": 2})
 
 
 
