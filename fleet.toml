@@ -52,3 +52,6 @@ default_model = "kisti/kistillm"
 # resident: 관리자 하나가 라운드 내내 산다 - 그래프가 도는 동안에도 기다리며 유료 문맥을 다시 낸다 (지금까지의 방식)
 # calls:    관리자는 ① 계획 ② 판정 ③ 마감 세 곳에서만 짧게 뜨고, 그 사이 그래프는 엔진(라운드 구동기)이 돌린다
 mode = "resident"
+
+[time]
+zone = "Asia/Seoul"        # 엔진·작업자·로그·모니터 화면의 시간대

@@ -28,6 +28,7 @@ DEFAULTS = {
         "opencode": {"binary": "opencode", "providers": ["kisti", "exaone", "openrouter", "opencode"], "default_model": "kisti/kistillm"},
     },
     "manager": {"mode": "resident"},
+    "time": {"zone": "Asia/Seoul"},
 }
 
 #: 관리자 운용 방식 (설계 5.9). `resident` 는 관리자 하나가 라운드 내내 산다(지금까지의 방식).
@@ -90,6 +91,10 @@ class Config:
                 return p
         return None
 
+    def time_zone(self):
+        """`[time] zone` - IANA 시간대 이름(기본 Asia/Seoul). 엔진·작업자·로그·모니터 화면이 이 시간대를 쓴다."""
+        return str((self.data.get("time") or {}).get("zone") or "Asia/Seoul")
+
     def manager_mode(self):
         """`[manager] mode` - `resident`(기본) 또는 `calls`. 표가 없으면 기본값 - 옛 설정 파일도 그대로 돈다."""
         return str((self.data.get("manager") or {}).get("mode") or "resident")
@@ -136,7 +141,7 @@ def _copy(d):
 
 
 def _validate(data):
-    for sec in ("providers", "harness", "manager"):
+    for sec in ("providers", "harness", "manager", "time"):
         if not isinstance(data.get(sec, {}), dict):
             raise ConfigError(f"{FILE}: [{sec}] 가 표가 아닙니다")
     for name, p in data.get("providers", {}).items():

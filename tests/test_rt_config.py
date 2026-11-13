@@ -53,6 +53,25 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(cfg.idle_timeout("anthropic"), 600.0)
         self.assertEqual(cfg.manager_mode(), "resident")
 
+    def test_time_zone(self):
+        self.assertEqual(config.load(self.root).time_zone(), "Asia/Seoul")      # 파일이 없으면 기본
+        (self.root / "fleet.toml").write_text('[time]\nzone = "UTC"\n', encoding="utf-8")
+        self.assertEqual(config.load(self.root).time_zone(), "UTC")
+
+    def test_timezone_apply_sets_tz_and_ignores_bad_names(self):
+        import os  # noqa: PLC0415
+        from unittest import mock  # noqa: PLC0415
+        from fleet_rt import timezone  # noqa: PLC0415
+        with mock.patch.dict(os.environ, {"TZ": "UTC"}):
+            (self.root / "fleet.toml").write_text('[time]\nzone = "Asia/Seoul"\n', encoding="utf-8")
+            self.assertEqual(timezone.apply(self.root), "Asia/Seoul")
+            self.assertEqual(os.environ["TZ"], "Asia/Seoul")
+            (self.root / "fleet.toml").write_text('[time]\nzone = "Not/AZone"\n', encoding="utf-8")
+            self.assertIsNone(timezone.apply(self.root))
+            self.assertEqual(os.environ["TZ"], "Asia/Seoul")    # 틀린 이름은 건드리지 않는다
+        import time  # noqa: PLC0415
+        time.tzset()
+
     def test_manager_mode(self):
         """`[manager] mode` - 기본은 상주(resident). 표가 없는 옛 설정도 상주. 모르는 값·표가 아닌 것은 거절 (설계 5.9)."""
         self.assertEqual(config.load(REPO).manager_mode(), "resident")         # 저장소의 설정은 상주 그대로

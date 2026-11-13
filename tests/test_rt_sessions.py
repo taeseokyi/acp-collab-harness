@@ -185,6 +185,17 @@ class TestRun(Base):
         self.assertLess(time.time() - t, 6)
         self.assertTrue(_wait(lambda: not self.group_of(d), 3))     # 감독은 end.json 뒤 DB 를 적고 끝난다
 
+    def test_reading_without_events_is_not_silence(self):
+        """사건은 없어도 데이터를 계속 읽는 하네스(긴 생성 중)는 침묵으로 끊지 않는다 - 읽기가 멈추면 끊는다."""
+        d = self.spawn(["busy-read 5", "emit 끝"], idle_timeout=2.5)
+        st = self.wait_end(d, 20)
+        self.assertEqual(st["state"], "done", st)
+        d2 = self.spawn(["hang"], idle_timeout=2.5)
+        st2 = self.wait_end(d2, 20)
+        self.assertEqual((st2["state"], st2["fail_kind"]), ("stalled", "infra"))
+        self.assertIn("읽기도 없음", st2["why"])
+        self.assertTrue(_wait(lambda: not self.group_of(d) and not self.group_of(d2), 5))   # 감독이 DB 를 적고 끝날 때까지
+
     def test_timeout(self):
         d = self.spawn(["emit 시작", "sleep 30"], timeout=1.5)
         st = self.wait_end(d)

@@ -884,10 +884,33 @@ def _empty_state(root, errors):
     return scrub_public(state, root)
 
 
+def tz_info(root):
+    """`{"name": IANA 이름, "offset": "+09:00"}` - 화면의 모든 시각은 이 구역(`fleet.toml` 설정)으로 읽습니다.
+
+    이름이 틀렸거나 설정을 못 읽으면 이 기계의 현지 구역으로 낮춥니다.
+    """
+    import zoneinfo
+    name = None
+    try:
+        cfg = _fleet_rt("config").load(root)
+        name = str(getattr(cfg, "time_zone", lambda: "Asia/Seoul")())
+        tz = zoneinfo.ZoneInfo(name)
+    except Exception:  # noqa: BLE001 - 설정·이름 어느 쪽이든 화면은 떠야 한다
+        tz = None
+    now = datetime.datetime.now(tz) if tz is not None else datetime.datetime.now().astimezone()
+    if tz is None:
+        name = now.tzname() or "local"
+    off = now.utcoffset() or datetime.timedelta(0)
+    mins = int(off.total_seconds() // 60)
+    sign = "+" if mins >= 0 else "-"
+    return {"name": name, "offset": "%s%02d:%02d" % (sign, abs(mins) // 60, abs(mins) % 60)}
+
+
 def _blank_keys(root):
     """`graphs` 를 **빼고** 나머지 최상위 키의 기본값. 비싸서 따로 붙입니다."""
     return {
         "generated": datetime.datetime.now().isoformat(timespec="seconds"),
+        "tz": tz_info(root),
         "aimem": {}, "slots": [], "board": [], "queue": [],
         "log": [], "runs": [], "eta": {}, "requests": [],
         "claude_usage": None,
@@ -3148,6 +3171,10 @@ def serve(host=HOST, port=PORT, root=ROOT, once=False, tls=False, auth=None):
     반대로 `--tls` 없이 띄우면 옛 동작 그대로(로컬 http, 인증 없음)입니다.
     """
     require_auth = bool(tls) if auth is None else bool(auth)
+    try:    # 로그·화면 시각을 설정 시간대 하나로 (`fleet.toml` `[time] zone`)
+        _fleet_rt("timezone").apply(root)
+    except Exception:  # noqa: BLE001
+        pass
     for k, src in load_monitor_env(root):
         log_line(f"  {k} 를 {src} 에서 읽었습니다")
     token, created = (None, False)

@@ -1449,6 +1449,43 @@ class InboxReturnsEarly(unittest.TestCase):
         self.assertFalse(fleet_ctl.tell("   ")["ok"])
 
 
+class Reverify(unittest.TestCase):
+    """verify 만 고친 노드는 작업자를 다시 띄우지 않고 검증만 다시 돈다."""
+
+    def _g(self, rc=0, status="failed", verify="true"):
+        return {"id": "G-902", "nodes": [
+            {"id": "T-1", "slot": "S2", "deps": [], "status": status, "verify": verify,
+             "attempts": [{"run_id": "R1", "rc": rc, "verify_rc": 1, "fail_kind": "work"}]},
+            {"id": "T-2", "slot": "S3", "deps": ["T-1"], "status": "blocked", "attempts": []}]}
+
+    def test_pass_marks_done_and_frees_dependents_without_spawning(self):
+        g = self._g()
+        with mock.patch.object(fleet_graph, "_verify", return_value=(0, "ok")) as v, \
+                mock.patch.object(fleet_graph, "_spawn_node") as sp, mock.patch.object(fleet_graph, "_log"):
+            ok, msg = fleet_graph.reverify(g, "T-1")
+        self.assertTrue(ok, msg)
+        v.assert_called_once()
+        sp.assert_not_called()
+        self.assertEqual([n["status"] for n in g["nodes"]], ["done", "todo"])
+        self.assertEqual(len(g["nodes"][0]["attempts"]), 1)
+        self.assertIsNone(g["nodes"][0]["attempts"][0]["fail_kind"])
+
+    def test_still_failing_leaves_node_as_is(self):
+        g = self._g()
+        with mock.patch.object(fleet_graph, "_verify", return_value=(1, "bad")), mock.patch.object(fleet_graph, "_log"):
+            ok, _ = fleet_graph.reverify(g, "T-1")
+        self.assertFalse(ok)
+        self.assertEqual(g["nodes"][0]["status"], "failed")
+        self.assertEqual(g["nodes"][0]["attempts"][0]["reverify"]["verify_rc"], 1)
+
+    def test_refuses_when_the_work_itself_failed(self):
+        g = self._g(rc=2)
+        with mock.patch.object(fleet_graph, "_verify") as v:
+            ok, _ = fleet_graph.reverify(g, "T-1")
+        self.assertFalse(ok)
+        v.assert_not_called()
+
+
 class GraphShape(unittest.TestCase):
     """`new` 가 찍는 병렬 모양 - 일렬 그래프와 한 슬롯에 몰린 단계를 알려 준다 (막지는 않는다)."""
 

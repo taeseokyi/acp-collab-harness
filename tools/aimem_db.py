@@ -21,6 +21,13 @@ import re
 import sqlite3
 import sys
 
+try:    # 시각은 설정 시간대 하나로 (`fleet.toml` `[time] zone`)
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    from fleet_rt import timezone as _rt_tz
+    _rt_tz.apply(pathlib.Path(__file__).resolve().parent.parent)
+except Exception:  # noqa: BLE001
+    pass
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DB = ROOT / ".aimem" / "aimem.db"
 AIMEM = ROOT / "AIMEM.md"

@@ -40,6 +40,12 @@ HARNESS_GRACE_SEC = 3.0
 DRAIN_SEC = 1.0
 LINE_CAP = 1 << 20
 TICK = 0.1
+#: 침묵 판정에서 '사건' 말고도 살아 있음으로 치는 것: 하네스 그룹이 실제로 데이터를 읽고 있는가(`/proc/<pid>/io` 의 rchar).
+#: opencode·codex 는 긴 파일을 생성하는 동안 다 될 때까지 사건을 하나도 내지 않는다 - 그 사이 모델의 토큰은 소켓으로
+#: 계속 들어온다. 공급자가 정말 멈추면 읽는 양도 멈춘다. 연결 유지 신호(수십 바이트)는 문턱보다 훨씬 작다.
+#: (R24 T-282: 무료 딥시크가 브라우저 검사 파일을 4분 동안 쓰다가 '침묵 240초' 로 끊김, 2026-11-13)
+IO_CHECK_SEC = 10.0
+IO_PROGRESS_BYTES = 4096
 
 
 def _now_ms():
@@ -192,6 +198,23 @@ class Supervisor:
             if ev is not None:
                 yield ev
 
+    def _group_rchar(self):
+        """내 프로세스 그룹에서 나를 뺀 프로세스들이 지금까지 읽은 바이트 합 (`/proc/<pid>/io` rchar). 못 읽으면 0."""
+        me, total = os.getpid(), 0
+        try:
+            pgid = os.getpgid(0)
+        except OSError:
+            return 0
+        for p in sessions.group_members(pgid, exclude=(me,)):
+            try:
+                for line in open(f"/proc/{p}/io", encoding="ascii"):
+                    if line.startswith("rchar:"):
+                        total += int(line.split()[1])
+                        break
+            except (OSError, ValueError):
+                continue
+        return total
+
     def run(self):
         for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             signal.signal(s, self._on_signal)
@@ -252,6 +275,7 @@ class Supervisor:
             idle = m.get("idle_timeout")
             idle = float(idle) if idle else None
             verdict = None
+            io_at, io_last = time.monotonic(), self._group_rchar()
             while True:
                 if self.stop_sig is not None:
                     verdict = {"state": "killed", "fail_kind": None,
@@ -264,8 +288,14 @@ class Supervisor:
                 if timeout and now - started > timeout:
                     verdict = {"state": "timeout", "fail_kind": "timeout", "why": f"벽시계 {timeout:g}초 넘김"}
                     break
+                if idle and now - io_at >= min(IO_CHECK_SEC, idle / 3):   # 침묵 한도 안에 세 번은 본다
+                    io_at = now
+                    rchar = self._group_rchar()
+                    if rchar - io_last >= IO_PROGRESS_BYTES:
+                        self.last_activity = now
+                    io_last = rchar
                 if idle and now - self.last_activity > idle:
-                    verdict = {"state": "stalled", "fail_kind": "infra", "why": f"침묵 {idle:g}초 넘김"}
+                    verdict = {"state": "stalled", "fail_kind": "infra", "why": f"침묵 {idle:g}초 넘김 (사건도 읽기도 없음)"}
                     break
                 time.sleep(TICK)
             if verdict is None:

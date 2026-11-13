@@ -39,6 +39,7 @@ HOST = "127.0.0.1"
 #: 코드로 못박습니다.
 STATE_KEYS = {
     "generated": "ISO8601(초) 수집 시각",
+    "tz": "{name, offset}  - 화면 시각의 기준 구역(IANA 이름)과 지금의 UTC 오프셋 '+09:00'. 서버가 보내는 시각 문자열은 이 구역의 시계(오프셋 없음)",
     "aimem": "{rev, lines, updated}  - DB 의 REV + AIMEM.md 1절",
     "slots": "[{slot, harness, role, note, model, model_source}]  - 명부 + 하네스 설정 모델",
     "board": "[{id, task, slot, status, handoff, artifact}]  - 작업 보드",

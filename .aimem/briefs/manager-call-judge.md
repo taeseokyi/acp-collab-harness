@@ -4,7 +4,7 @@
 
 ## 할 일
 0. 사람이 남긴 말 `{workspace}/INBOX.md` 가 있으면 먼저 읽습니다(호출 방식에서는 '지금까지' 에도 붙습니다). 같은 요청 안에서는 이 말이 요청 본문보다 앞섭니다.
-1. '지금까지' 의 노드 결과와 `{workspace}/` 의 검수 보고서를 읽고, 필요한 곳만 직접 확인합니다(`fleet_graph.py status <G>`, 해당 파일·`git diff --stat` 뒤 그 hunk, 검사 한 번). 일은 다 됐는데 `verify` 가 틀려 실패한 노드는 재현 확인 뒤 `events` 에 사유를 남기고 닫습니다.
+1. '지금까지' 의 노드 결과와 `{workspace}/` 의 검수 보고서를 읽고, 필요한 곳만 직접 확인합니다(`fleet_graph.py status <G>`, 해당 파일·`git diff --stat` 뒤 그 hunk, 검사 한 번). 일은 다 됐는데 `verify` 가 틀려 실패한 노드는 verify 를 고친 뒤 `fleet_graph.py unblock <G> <노드> --reverify`(작업자를 다시 띄우지 않고 검증만)로 닫고 `events` 에 사유를 남깁니다.
 2. `8.0-8` 그래프 체크포인트 (a)~(e): 보드를 결과에 맞추고(REVIEW/DONE), `aimem_db.py event` 한 줄("G-xxx 끝: 노드별 결과, 남은 것"), 큐 정리(발견 번호에는 라운드를 붙임 `R{round}-N3`·`R{round}-P2`, 고칠 때는 `queue edit`), 교차 검수가 끝난 태스크 DONE, 새로 온 `NEW` 요청 판단.
 3. 정합니다.
    - 검수가 찾은 결함을 고치거나 그 수정을 다시 검수해야 하면 후속 그래프를 만듭니다: `fleet_graph.py new … --followup "<어느 검수·어느 결함의 후속>"`(절대 상한 그래프 6·태스크 18). **수정 뒤 재검수를 상한 때문에 건너뛰지 않습니다.** 결함 수정도 무료 슬롯이 합니다.

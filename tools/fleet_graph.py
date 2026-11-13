@@ -1615,10 +1615,46 @@ def unblock(g, node_id):
     return True, f"{node_id}: {how}" + (f" / 함께 푼 노드: {', '.join(freed)}" if freed else "")
 
 
+def reverify(g, node_id):
+    """작업자를 다시 띄우지 않고 **검증만 다시** 돌립니다. (ok, 메시지)
+
+    `verify` 가 틀려 실패한 노드(작업은 끝났는데 검사 쪽 결함 - 출력 꼴을 잘못 읽음 등)를 관리자가 verify 를 고친 뒤
+    쓰는 길입니다. 예전에는 `unblock` 으로 작업자를 또 띄워 이미 끝난 일을 다시 시켰습니다 (R24 T-281, 2026-11-13).
+    마지막 시도가 rc 0 으로 끝난 `failed`/`blocked` 노드만 받습니다. 통과하면 `done`, 아니면 그대로 두고 출력 꼬리를 줍니다.
+    """
+    nodes = {n["id"]: n for n in g["nodes"]}
+    n = nodes.get(node_id)
+    if n is None:
+        return False, f"노드가 없습니다: {node_id}"
+    if n.get("status") not in ("blocked", "failed"):
+        return False, f"{node_id} 는 {n.get('status', 'todo')} 입니다 - blocked/failed 만 다시 검증합니다"
+    last = (n.get("attempts") or [None])[-1]
+    if not last or last.get("rc") != 0:
+        return False, f"{node_id} 의 마지막 시도가 rc 0 으로 끝나지 않았습니다 - 작업을 다시 해야 하면 unblock 을 쓰십시오"
+    if not n.get("verify"):
+        return False, f"{node_id} 에 verify 가 없습니다"
+    vrc, vtail = _verify(n)
+    last["reverify"] = {"at": _now(), "verify_rc": vrc, "verify_tail": (vtail or "")[-600:]}
+    if vrc != 0:
+        _log(g, f"reverify {node_id} - 여전히 실패 (verify rc {vrc})")
+        return False, f"{node_id}: 다시 검증했지만 실패 (rc {vrc})\n{(vtail or '')[-600:]}"
+    last["verify_rc"], last["verify_tail"], last["fail_kind"] = 0, vtail, None
+    n["status"] = "done"
+    freed = []
+    for m in g["nodes"]:
+        if m.get("status") == "blocked" and not m.get("attempts"):
+            deps = [nodes[d] for d in m.get("deps", []) if d in nodes]
+            if deps and not any(d.get("status") in ("failed", "blocked") for d in deps):
+                m["status"] = "todo"
+                freed.append(m["id"])
+    _log(g, f"reverify {node_id} - 통과, done (작업자는 다시 띄우지 않음)" + (f"; 뒤쪽 {', '.join(freed)} 도 todo" if freed else ""))
+    return True, f"{node_id}: 다시 검증 통과 - done" + (f" / 함께 푼 노드: {', '.join(freed)}" if freed else "")
+
+
 def cmd_unblock(a):
     with graph_lock(a.id, "unblock"):
         g = _load(a.id)
-        ok, msg = unblock(g, a.node)
+        ok, msg = (reverify if getattr(a, "reverify", False) else unblock)(g, a.node)
         if ok:
             _save(g)
     print(msg, file=sys.stdout if ok else sys.stderr)
@@ -1689,6 +1725,8 @@ def main():
     u = sub.add_parser("unblock", help="사람이 확인한 blocked/failed 노드를 다시 굴림")
     u.add_argument("id")
     u.add_argument("node")
+    u.add_argument("--reverify", action="store_true",
+                   help="작업자를 다시 띄우지 않고 검증만 다시 (verify 를 고쳤을 때). 통과하면 done")
     a = p.parse_args()
     return {"new": cmd_new, "validate": cmd_validate, "step": cmd_step, "run": cmd_run,
             "status": cmd_status, "list": cmd_list, "unblock": cmd_unblock}[a.cmd](a) or 0

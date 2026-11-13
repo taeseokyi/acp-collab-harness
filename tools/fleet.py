@@ -308,6 +308,13 @@ def cmd_brief(args):
 # 관리자만 예외다(컨텍스트 유지).
 # ---------------------------------------------------------------------------
 RUNS = ROOT / ".aimem" / "runs"
+
+try:    # 시각은 설정 시간대 하나로 (`fleet.toml` `[time] zone`). 엔진 도구는 모두 이 모듈을 들이므로 여기 한 곳이면 된다
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent)) if str(pathlib.Path(__file__).resolve().parent) not in sys.path else None
+    from fleet_rt import timezone as _rt_tz
+    _rt_tz.apply(ROOT)
+except Exception:  # noqa: BLE001
+    pass
 # 하네스별 명령·허용 도구·환경은 어댑터(`fleet_rt/harness/*.py`)에 있다.
 
 

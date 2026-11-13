@@ -11,6 +11,7 @@
     FAKE: env <이름>               {"type":"text","text":"<이름>=<값>"} (없으면 `<이름>=` ) - 환경 표식 확인용
     FAKE: write <상대경로> <글>    작업 폴더(cwd) 아래에 파일을 쓴다. 절대 경로·`..` 은 거절(rc 2)
     FAKE: sleep <초>               잠깐 쉰다
+    FAKE: busy-read <초>          사건 없이 그만큼 데이터를 계속 읽는다 (긴 생성 중인 하네스 - 침묵으로 치면 안 된다)
     FAKE: hang                     사건 하나({"type":"text","text":"hang"}) 내고 영원히 잔다 (침묵 감지·끊기 검사)
     FAKE: ignore-term              SIGTERM 을 무시한다 (SIGKILL 길 검사)
     FAKE: child <초>               같은 프로세스 그룹에 `sleep <초>` 손자를 띄운다. 사건 {"type":"tool","name":"child","pid":..}
@@ -169,6 +170,13 @@ def _run(brief_path):
             dst.write_text(body.replace("\\n", "\n"), encoding="utf-8")
         elif word == "sleep":
             time.sleep(float(rest))
+        elif word == "busy-read":
+            # 사건은 내지 않고 데이터만 계속 읽는다 - 긴 생성 중인 하네스(토큰이 소켓으로 들어오는 중)를 흉내 (침묵 오판 검사)
+            end = time.time() + float(rest or "3")
+            with open("/dev/urandom", "rb") as fh:
+                while time.time() < end:
+                    fh.read(65536)
+                    time.sleep(0.05)
         elif word == "hang":
             _out({"type": "text", "text": "hang"})
             while True:

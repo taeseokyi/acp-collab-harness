@@ -27,6 +27,7 @@ const STATUS_CLASS = {
 
 const DEMO_STATE = {
   generated: '2026-11-09T17:05:00',
+  tz: { name: 'Asia/Seoul', offset: '+09:00' },
   aimem: {
     rev: 109,
     lines: 523,
@@ -164,9 +165,49 @@ function show(value, fallback = '-') {
   return String(value);
 }
 
+// 화면의 모든 시각은 한 구역(fleet.toml 의 time_zone, 서버가 state.tz 로 알려 준다)으로 읽고 보인다.
+// 서버의 시각 문자열은 오프셋 없는 그 구역의 시계다. 브라우저 구역(Date 의 지역 메서드)을 서버 시각에 쓰지 않는다.
+let TZ = { name: 'Asia/Seoul', offset: '+09:00' };
+function setTimeZone(tz) {
+  if (!tz || typeof tz.name !== 'string' || !/^[+-]\d{2}:\d{2}$/.test(tz.offset || '')) return;
+  try { new Intl.DateTimeFormat('ko-KR', { timeZone: tz.name }); } catch (e) { return; }
+  TZ = { name: tz.name, offset: tz.offset };
+}
+const NAIVE_TIME_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(\.\d+)?)?)?$/;
+// 서버 시각 문자열(또는 epoch ms)을 epoch ms 로. Z·오프셋이 있으면 그대로, 없으면 설정 구역의 시계로 읽는다. 못 읽으면 NaN.
+function parseTime(value) {
+  if (typeof value === 'number') return value;
+  const str = String(value === null || value === undefined ? '' : value).trim();
+  if (!str) return NaN;
+  const m = NAIVE_TIME_RE.exec(str);
+  if (m) return Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4] || '00'}:${m[5] || '00'}:${m[6] || '00'}${m[7] || ''}${TZ.offset}`);
+  return Date.parse(str);
+}
+function zoneParts(ms) {
+  const f = new Intl.DateTimeFormat('en-GB', { timeZone: TZ.name, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const o = {};
+  for (const p of f.formatToParts(new Date(ms))) o[p.type] = p.value;
+  return o;
+}
+// 설정 구역의 'YYYY-MM-DD HH:MM[:SS]' (date:false 면 시각만)
+function fmtTime(value, opts = {}) {
+  const ms = parseTime(value);
+  if (!Number.isFinite(ms)) return '-';
+  const o = zoneParts(ms);
+  const clock = `${o.hour}:${o.minute}` + (opts.seconds ? ':' + o.second : '');
+  return opts.date === false ? clock : `${o.year}-${o.month}-${o.day} ${clock}`;
+}
+function zoneNowNaive() {
+  const o = zoneParts(Date.now());
+  return `${o.year}-${o.month}-${o.day}T${o.hour}:${o.minute}:${o.second}`;
+}
+
 function fmtDateTime(value) {
   if (!value) return '-';
-  return String(value).replace('T', ' ').slice(0, 16);
+  const str = String(value);
+  if (NAIVE_TIME_RE.test(str)) return str.replace('T', ' ').slice(0, 16);   // 이미 설정 구역의 시계
+  const ms = parseTime(str);
+  return Number.isFinite(ms) ? fmtTime(ms) : str.replace('T', ' ').slice(0, 16);
 }
 
 function fmtElapsed(sec) {
@@ -1227,7 +1268,7 @@ function mgrStateBadge(sessionState, status) {
   return b;
 }
 function agoText(iso) {
-  const t = Date.parse(String(iso || ''));
+  const t = parseTime(iso);
   return Number.isFinite(t) ? fmtElapsed((Date.now() - t) / 1000) + ' 전' : null;
 }
 // 실행 표·슬롯 카드의 "마지막 사건 N초 전 · <last_event>" (세션 실행만 값이 있다)
@@ -1702,14 +1743,14 @@ function renderProjectPicker(data) {
 
 function fmtUsageReset(value) {
   if (typeof value !== 'string' || value === '') return null;
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value);
-  if (!m) return null;
-  const now = new Date();
-  const isToday = Number(m[1]) === now.getFullYear()
-    && Number(m[2]) === now.getMonth() + 1
-    && Number(m[3]) === now.getDate();
-  const time = m[4] + ':' + m[5];
-  return isToday ? '초기화 ' + time : '초기화 ' + Number(m[2]) + '/' + Number(m[3]) + ' ' + time;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) return null;
+  const ms = parseTime(value);
+  if (!Number.isFinite(ms)) return null;
+  const o = zoneParts(ms);
+  const n = zoneParts(Date.now());
+  const isToday = o.year === n.year && o.month === n.month && o.day === n.day;
+  const time = o.hour + ':' + o.minute;
+  return isToday ? '초기화 ' + time : '초기화 ' + Number(o.month) + '/' + Number(o.day) + ' ' + time;
 }
 
 function usageStaleText(ageSeconds) {
@@ -1954,7 +1995,7 @@ function renderFleetControl(data) {
     const sum = document.createElement('summary');
     const failed = prep.checks.filter((c) => !c.ok);
     // 준비 점검은 누른 순간의 결과다. 오래된 결과가 '막힘' 으로 계속 떠 있으면 지금 상태로 읽힌다 (REV 145)
-    const ageMin = (Date.now() - Date.parse(prep.at)) / 60000;
+    const ageMin = (Date.now() - parseTime(prep.at)) / 60000;
     const old = Number.isFinite(ageMin) && ageMin > 30;
     const ageText = !old ? '' : (ageMin < 90 ? `${Math.round(ageMin)}분 전` : (ageMin < 48 * 60 ? `${Math.round(ageMin / 60)}시간 전` : `${Math.round(ageMin / 1440)}일 전`));
     sum.textContent = (old ? '지난 준비 점검 ' : '준비 점검 ') + `${fmtDateTime(prep.at)} - ${prep.ok ? '통과' : '막힘'}`
@@ -2056,8 +2097,8 @@ async function openManagerDetail(cur, all = false) {
   const s = d.session || {};
   const meta = document.createElement('div');
   meta.className = 'detail-meta';
-  const st = Date.parse(String(s.started || ''));
-  const la = Date.parse(String(d.last_activity || ''));
+  const st = parseTime(s.started);
+  const la = parseTime(d.last_activity);
   const isRun = s.status === 'running';
   meta.appendChild(detailMetaItem('상태', MGR_STATE_TEXT[s.session_state] || (isRun ? '실행 중' : show(s.status)) + (s.orphaned ? ' (감독 없이 도는 중)' : '')));
   meta.appendChild(detailMetaItem('시작', fmtDateTime(s.started)));
@@ -2172,7 +2213,7 @@ function renderManager(data) {
   if (isRun) {
     const act = document.createElement('div');
     act.className = 'manager-step';
-    const la = Date.parse(String(cur.last_activity || ''));
+    const la = parseTime(cur.last_activity);
     const idle = Number.isFinite(la) ? (Date.now() - la) / 1000 : null;
     const parts = [];
     if (idle !== null) parts.push('마지막 사건 ' + fmtElapsed(idle) + ' 전');
@@ -2189,8 +2230,8 @@ function renderManager(data) {
 
   const meta = document.createElement('div');
   meta.className = 'manager-meta';
-  const st = Date.parse(String(cur.started || ''));
-  const up = Date.parse(String(cur.updated || ''));
+  const st = parseTime(cur.started);
+  const up = parseTime(cur.updated);
   const parts = ['시작 ' + fmtDateTime(cur.started)];
   if (Number.isFinite(st)) {
     const end = isRun ? Date.now() : (Number.isFinite(up) ? up : Date.now());
@@ -2905,7 +2946,7 @@ function attemptList(n) {
 const GRAPH_STALE_SEC = 2 * 3600;
 
 function graphStale(g) {
-  const t = Date.parse(String(g.updated || g.created || ''));
+  const t = parseTime(g.updated || g.created);
   return Number.isFinite(t) && (Date.now() - t) / 1000 > GRAPH_STALE_SEC;
 }
 
@@ -2915,7 +2956,7 @@ function graphStateBadge(g, finished) {
     if (!(counts.failed || counts.blocked)) return badge('완료', 'done');
     return counts.done ? badge('일부 실패', 'partial') : badge('실패', 'failed');   // 끝난 것이 0 인데 '부분 완료' 라고 적혀 실패를 놓쳤다
   }
-  const t = Date.parse(String(g.updated || g.created || ''));
+  const t = parseTime(g.updated || g.created);
   if (Number.isFinite(t) && (Date.now() - t) / 1000 > GRAPH_STALE_SEC) {
     const span = badge('멈춤', 'stale');
     span.title = '진행 중으로 남아 있지만 ' + fmtElapsed((Date.now() - t) / 1000) + ' 동안 갱신이 없습니다 (실행자가 끝난 그래프)';
@@ -3808,7 +3849,7 @@ function renderProjects(data) {
   const filter = PROJECT_FILTERS.find((f) => f.key === fkey) || PROJECT_FILTERS[2];
   const q = search && !search.hidden ? search.value.trim().toLowerCase() : '';
   // 진행 중 먼저, 그 안에서는 최근에 움직인 것 먼저
-  const recent = (p) => Math.max(Number(p.last_round) || 0, 0) * 1e12 + (Date.parse(p.updated || '') || 0) / 1000;
+  const recent = (p) => Math.max(Number(p.last_round) || 0, 0) * 1e12 + (parseTime(p.updated) || 0) / 1000;
   const list = all.filter(filter.test)
     .filter((p) => !q || String(p.name || '').toLowerCase().includes(q))
     .sort((a, b) => (projectDone(a) - projectDone(b)) || (recent(b) - recent(a)));
@@ -3947,6 +3988,7 @@ function markScrollableTables() {
 window.addEventListener('resize', () => markScrollableTables());
 
 function renderAll(data) {
+  setTimeZone(data && data.tz);
   renderErrors(data);
   renderTabCounts(data);
   renderFleetControl(data);
@@ -3966,7 +4008,7 @@ function renderAll(data) {
 }
 
 function demoState() {
-  DEMO_STATE.generated = new Date().toISOString().slice(0, 19);
+  DEMO_STATE.generated = zoneNowNaive();
   return DEMO_STATE;
 }
 
@@ -3974,7 +4016,7 @@ function demoCreateRequest(payload) {
   const id = 'demo-' + Date.now().toString(36);
   DEMO_STATE.requests.unshift({
     id,
-    created: new Date().toISOString().slice(0, 19),
+    created: zoneNowNaive(),
     requester: payload.requester || '데모 요청자',
     title: payload.title,
     detail: payload.detail,
@@ -4038,7 +4080,7 @@ function showLoadError() {
     if (layout && layout.parentNode) layout.parentNode.insertBefore(box, layout); else document.body.appendChild(box);
   }
   const why = /failed to fetch|networkerror|load failed/i.test(state.error) ? '서버에 연결할 수 없습니다' : state.error;
-  const when = state.fetchedAt ? `아래 내용은 ${new Date(state.fetchedAt).toLocaleTimeString('ko-KR', { hour12: false })} 에 받은 것입니다.` : '아직 받은 자료가 없어 화면이 비어 있습니다.';
+  const when = state.fetchedAt ? `아래 내용은 ${fmtTime(state.fetchedAt, { date: false, seconds: true })} 에 받은 것입니다.` : '아직 받은 자료가 없어 화면이 비어 있습니다.';
   box.textContent = '';
   const msg = document.createElement('div');
   const b = document.createElement('strong'); b.textContent = '자료를 불러오지 못했습니다';
