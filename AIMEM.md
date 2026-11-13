@@ -181,6 +181,10 @@ New web requests (`NEW`) come first each round; then the queue, top down. The we
   so a bare ID is ambiguous across rounds. `queue add/edit` refuses any bare `<1-2 capital letters><digits>` except
   a round (`R17`) or a slot (`S1`-`S9`)
 - **Refer to an item by its finding ID or text, not its position:** positions are renumbered after every `drop`
+- **Every item starts with its owner:** `[<project name>]` (the folder name under `projects/`, as is) for a project's
+  work, `[함대]` for the fleet's own. A project's items are that project's remaining work - a chain run on the project
+  does not end while they are left, and files them as that project's request. No tag, or a name with no folder,
+  counts as the fleet's
 
 The Manager takes the next task from the top (`8.0-4`). When the queue is empty it reports a summary and stops; it
 never invents items.

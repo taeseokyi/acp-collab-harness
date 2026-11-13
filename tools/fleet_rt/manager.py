@@ -31,6 +31,9 @@ MANAGER_TOOLS = ",".join([
     # 검사 스크립트는 `Bash(python3 tests/*)` 꼴이어야 한다. `Bash(python3 tests/:*)` 는 낱말 경계에서만 맞아
     # `python3 tests/browser_x.py` 를 허용하지 않는다 (R22 에서 관리자가 브라우저 검사를 못 돌린 까닭, haiku 로 실측).
     "Bash(python3 tests/*)", "Bash(PYTHONPATH=tools python3 tests/*)",
+    # 전체 검사 한 줄과, 관리자가 노드의 verify 로 쓰려고 만든 검증 도구 - 붙이기 전에 지금 트리에서 한 번 돌려 본다(8.0-8).
+    # 없을 때는 unittest 꼴로 감싸 돌려야 했다 (R28 관리자 제안, 2026-11-14 태석님 승인)
+    "Bash(python3 tools/check.py:*)", "Bash(python3 .aimem/graph/inputs/*)",
     # 읽기 명령 - 작업자 목록(`harness.claude.WORKER_TOOLS`)의 읽기 쪽과 같다
     "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(grep:*)",
     "Bash(sed -n:*)", "Bash(diff:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",

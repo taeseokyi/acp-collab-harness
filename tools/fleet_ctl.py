@@ -1595,11 +1595,39 @@ def _queue_items():
         return []
 
 
+_QUEUE_TAG = re.compile(r"\A\s*\[([^\[\]]{1,60})\]")
+
+
+def queue_project(task):
+    """큐 항목이 어느 프로젝트의 일인가 - 글머리 `[이름]` 이 `projects/<이름>/` 을 가리키면 그 이름, 아니면 ''(함대의 일).
+    관리자는 큐 항목 앞에 `[자모맞히기]`·`[함대]` 처럼 적는다(표준 브리프). 프로젝트의 큐는 그 프로젝트의 남은 일이다."""
+    m = _QUEUE_TAG.match(str(task or ""))
+    name = m.group(1).strip() if m else ""
+    if not name or not re.match(fleet.PROJECT_NAME_RE, name):
+        return ""
+    try:
+        return name if (fleet.ROOT / "projects" / name).is_dir() else ""
+    except OSError:
+        return ""
+
+
+def chain_queue(fleet_on=False, projects=(), all_=False):
+    """고른 대상의 큐 항목 `[(순번, 글, 프로젝트)]`. 함대 = 프로젝트 표시가 없는 항목, 프로젝트 = 그 이름이 붙은 항목, 전체 = 전부."""
+    want = set(projects)
+    out = []
+    for pos, task in _queue_items():
+        proj = queue_project(task)
+        if all_ or (not proj and fleet_on) or (proj and proj in want):
+            out.append((pos, task, proj))
+    return out
+
+
 def chain_work(fleet_on=False, projects=(), all_=False):
     """고른 대상의 남은 일. `{requests: [열린 요청 id], goals: {프로젝트: {done, total, open}}}`.
 
-    - 함대      : 프로젝트가 없는 열린 요청 (함대 자체의 일) + **대기 큐** (`queue`: 남은 항목 수 - 함대·전체일 때만)
-    - 프로젝트들 : 그 프로젝트들의 열린 요청 + 체크 안 된 목표 (여러 개 고를 수 있다)
+    - 함대      : 프로젝트가 없는 열린 요청 (함대 자체의 일) + 프로젝트 표시가 없는 **대기 큐** 항목
+    - 프로젝트들 : 그 프로젝트들의 열린 요청 + 체크 안 된 목표 + 그 프로젝트 이름이 붙은 큐 항목 (여러 개 고를 수 있다)
+    `queue` = 대상 안의 큐 항목 수 (`chain_queue`)
     - 전체      : 열린 요청 전부 + 목표 체크리스트가 있는 모든 프로젝트의 체크 안 된 목표 (나중에 생기는 프로젝트도)
     """
     reqs = _open_requests()
@@ -1614,7 +1642,7 @@ def chain_work(fleet_on=False, projects=(), all_=False):
         g = project_goals(name)
         if g:
             goals[name] = {"done": sum(1 for d, _ in g if d), "total": len(g), "open": [t for d, t in g if not d]}
-    return {"requests": ids, "goals": goals, "queue": len(_queue_items()) if (all_ or fleet_on) else 0}
+    return {"requests": ids, "goals": goals, "queue": len(chain_queue(fleet_on, projects, all_))}
 
 
 @_not_while_switching
@@ -1804,13 +1832,14 @@ def _chain_request(project, round_n, open_, done, total):
                                   "detail": detail, "requester": "함대 이어 달리기", "project": project}, fleet.ROOT)
 
 
-def _chain_queue_request(round_n):
-    """대기 큐에 남은 일을 다음 라운드의 요청으로 넣습니다 (웹 요청 폼과 같은 길, 프로젝트 없음 = 함대의 일)."""
+def _chain_queue_request(round_n, project="", items=None):
+    """대기 큐에 남은 일을 다음 라운드의 요청으로 넣습니다 (웹 요청 폼과 같은 길). `project` 가 없으면 함대의 일이고
+    `items`(`[(순번, 글)]`)가 없으면 큐 전부다 - 이어 달리기는 대상 안의 항목만 넘긴다."""
     here = str(HERE)
     if here not in sys.path:
         sys.path.insert(0, here)
     from aimem_monitor import server  # noqa: PLC0415
-    items = _queue_items()
+    items = _queue_items() if items is None else list(items)
     lines = "\n".join(f"- 큐 {pos}번: {task[:300]}" for pos, task in items[:40])
     detail = (f"R{round_n} 이 끝났고 열린 요청은 없지만 대기 큐에 {len(items)}건이 남아 있습니다. 큐가 이번 라운드의 할 일입니다:\n\n"
               f"{lines}\n\n"
@@ -1818,8 +1847,8 @@ def _chain_queue_request(round_n):
               "이번 라운드에 못 끝내는 항목은 **무엇이 막는지**(사람의 승인이 필요한지 포함)를 보고에 항목별로 적으십시오. "
               "큐에 새 항목을 더하는 것은 이 일들을 하다 찾은 것만입니다.\n\n"
               "(함대의 '이어 달리기' 가 자동으로 넣은 요청입니다 - 큐가 비거나 줄지 않으면 스스로 멈춥니다.)")
-    return server.create_request({"title": f"대기 큐 {len(items)}건 처리 (R{round_n} 뒤 자동)",
-                                  "detail": detail, "requester": "함대 이어 달리기"}, fleet.ROOT)
+    return server.create_request({"title": (f"{project}: " if project else "") + f"대기 큐 {len(items)}건 처리 (R{round_n} 뒤 자동)",
+                                  "detail": detail, "requester": "함대 이어 달리기", **({"project": project} if project else {})}, fleet.ROOT)
 
 
 #: 멈춘 까닭의 종류 - 화면이 종류별로 다른 안내를 보인다
@@ -1857,11 +1886,18 @@ def chain_step(round_n, by="이어 달리기"):
             _chain_stop(st, "error", f"요청을 못 넣었습니다({name}): {res.get('error')}", round_n)
             return {"ok": False, "launched": False, "why": st["stopped_why"]}
         filed.append(res.get("id"))
-    # 큐만 남았고 함대의 열린 요청이 없으면, 큐를 비우는 요청을 넣는다
-    if d.get("queue") and "" not in open_projects and not d.get("requests"):
-        ok, res = _chain_queue_request(round_n)
+    # 큐가 남았는데 그 임자(함대 또는 프로젝트)의 열린 요청이 없으면, 그 큐를 비우는 요청을 임자마다 하나씩 넣는다.
+    # 방금 남은 목표 요청을 넣은 프로젝트는 건너뛴다 - 그 요청이 PROGRESS 의 '남은 일' 을 따라가며 큐도 본다
+    by_owner = {}
+    for pos, task, proj in chain_queue(*chain_targets(st)):
+        by_owner.setdefault(proj, []).append((pos, task))
+    goal_filed = {name for name, g in d["goals"].items() if g["open"] and name not in open_projects}
+    for proj, items in sorted(by_owner.items()):
+        if proj in open_projects or proj in goal_filed:
+            continue
+        ok, res = _chain_queue_request(round_n, proj, items)
         if not ok:
-            _chain_stop(st, "error", f"요청을 못 넣었습니다(큐): {res.get('error')}", round_n)
+            _chain_stop(st, "error", f"요청을 못 넣었습니다(큐{' ' + proj if proj else ''}): {res.get('error')}", round_n)
             return {"ok": False, "launched": False, "why": st["stopped_why"]}
         filed.append(res.get("id"))
     st.update({"rounds_done": 0 if d.get("new_cycle") else int(st.get("rounds_done", 0)) + 1,      # 새 묶음은 0 부터 다시 센다

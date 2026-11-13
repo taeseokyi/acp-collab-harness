@@ -371,6 +371,38 @@ class ChainTest(unittest.TestCase):
         d = fleet_ctl.chain_decide(8)
         self.assertEqual((d["action"], d["kind"]), ("stop", "done"))
 
+    def test_a_projects_queue_items_are_that_projects_remaining_work(self):
+        """큐 항목 앞의 `[프로젝트]` 는 그 프로젝트의 일이다 - 프로젝트만 고른 이어 달리기도 그 큐가 남았으면 끝이 아니다
+        (2026-11-14 태석님: "자모맞히기 품질 보강이면 프로젝트 자모맞히기 아닌가요?")."""
+        self.progress(2, 2)
+        self.queue("[알파] 시험 보강", "[함대] 시험 격리", "표시 없는 일", " [없는것] 폴더가 없는 이름", "[알파] 낱말 보태기")
+        self.assertEqual([fleet_ctl.queue_project(t) for _, t in fleet_ctl._queue_items()], ["알파", "", "", "", "알파"])
+        self.assertEqual(fleet_ctl.chain_work(projects=["알파"])["queue"], 2)
+        self.assertEqual(fleet_ctl.chain_work(fleet_on=True)["queue"], 3)            # 함대 = 프로젝트 표시가 없는 것
+        self.assertEqual(fleet_ctl.chain_work(fleet_on=True, projects=["알파"])["queue"], 5)
+        self.assertEqual(fleet_ctl.chain_work(all_=True)["queue"], 5)
+        self.assertEqual(fleet_ctl.chain_work(projects=["베타"])["queue"], 0)
+        self.assertTrue(fleet_ctl.chain_set(True, projects=["알파"], max_rounds=3)["ok"])
+        self.assertEqual(fleet_ctl.chain_state()["queue_left"], 2)
+        st = fleet_ctl.chain_state(); st["goals_done"] = 1; fleet_ctl._chain_write(st)   # 이번 라운드에 목표가 닫혔다
+        self.report(7, "DONE")
+        d = fleet_ctl.chain_decide(7)
+        self.assertEqual((d["action"], d["queue"]), ("launch", 2))                   # 목표는 다 찼지만 큐가 남았다
+        with mock.patch.object(fleet_ctl, "launch_round", return_value={"ok": True, "round": 8}):
+            res = fleet_ctl.chain_step(7)
+        self.assertTrue(res["launched"], res)
+        rec = [json.loads(f.read_text(encoding="utf-8")) for f in (self.repo / ".aimem" / "requests").glob("*.json")]
+        self.assertEqual(len(rec), 1)                                                # 함대의 큐는 대상이 아니라 요청을 안 넣는다
+        self.assertEqual((rec[0]["project"], rec[0]["title"]), ("알파", "알파: 대기 큐 2건 처리 (R7 뒤 자동)"))
+        self.assertIn("큐 1번: [알파] 시험 보강", rec[0]["detail"])
+        self.assertIn("큐 5번: [알파] 낱말 보태기", rec[0]["detail"])
+        self.assertNotIn("시험 격리", rec[0]["detail"])
+        self.queue("[함대] 시험 격리")                                               # 프로젝트의 큐가 비었다
+        self.report(8, "DONE")
+        with mock.patch.object(fleet_ctl, "_open_requests", return_value=[]):
+            d = fleet_ctl.chain_decide(8)
+        self.assertEqual((d["action"], d["kind"]), ("stop", "done"))
+
     def test_queue_request_lists_the_items(self):
         self.queue("로그에 시각 찍기", "검사 고치기")
         ok, res = fleet_ctl._chain_queue_request(7)
