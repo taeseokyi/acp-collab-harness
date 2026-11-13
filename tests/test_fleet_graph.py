@@ -600,11 +600,17 @@ class FleetGraphContractTests(unittest.TestCase):
         t.start()
         t.join(5)
         if t.is_alive():
-            for suf in (".rc", ".out", ".err"):          # 막힌 스레드를 풀어 준다
-                try:
-                    os.close(os.open(self.runs / f"X{suf}", os.O_WRONLY | os.O_NONBLOCK))
-                except OSError:
-                    pass
+            # 막힌 스레드를 풀어 주고 **끝날 때까지 기다린 뒤** 실패한다. 기다리지 않으면 시험이 끝나 패치가 풀린 뒤에
+            # 스레드가 이어 돌아 운영 `.aimem/graph/` 에 이 그래프를 써 버린다 (2026-11-13 변이 시험에서 실제로 G-900 이 샜다).
+            for _ in range(50):
+                for suf in (".rc", ".out", ".err"):
+                    try:
+                        os.close(os.open(self.runs / f"X{suf}", os.O_WRONLY | os.O_NONBLOCK))
+                    except OSError:
+                        pass
+                t.join(0.2)
+                if not t.is_alive():
+                    break
             self.fail("step() 이 FIFO 실행 기록에서 막혔다")
         att = g["nodes"][0]["attempts"][-1] if g["nodes"][0]["attempts"] else g["nodes"][0].get("stopped_attempts", [{}])[-1]
         self.assertEqual(att.get("rc"), -1)           # 읽지 못한 종료 코드는 -1 (실패로 본다)
