@@ -1,14 +1,14 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-13T14:12:16 / REV 169
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-13T14:18:12 / REV 169
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
 | S1 | `a41f0c` | claude | opus | 린터 / 보드 CLI / 판단형 | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
-| S2 | `d27e93` | claude | sonnet | 만들기·고치기 (무료) | R21: 하네스 claude(sonnet) - 23:03 시동 쪽 변경, 관리자 변경 아님 |
-| S3 | `5b8c1e` | claude | sonnet | 만들기·검사 (무료) | R21: 하네스 claude(sonnet) - 23:03 시동 쪽 변경, 관리자 변경 아님 |
+| S2 | `d27e93` | codex | kisti/kistillm | 만들기·고치기 (무료) | R21: 하네스 claude(sonnet) - 23:03 시동 쪽 변경, 관리자 변경 아님 |
+| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | 만들기·검사 (무료) | R21: 하네스 claude(sonnet) - 23:03 시동 쪽 변경, 관리자 변경 아님 |
 | S4 | `6cd650` | claude | sonnet | 병렬 작업자 (속도) | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
 
 ## 3. 작업 보드
@@ -198,6 +198,8 @@
 
 ## 4. 이벤트 로그 (최신 50)
 
+- `2026-11-13T14:17:12` fleet.py [slot] REV 169: slot set S3: 하네스 claude→opencode, 모델 sonnet→opencode/deepseek-v4.1-flash-free
+- `2026-11-13T14:17:12` fleet.py [slot] REV 169: slot set S2: 하네스 claude→codex, 모델 sonnet→kisti/kistillm
 - `2026-11-13 13:54` 클로드 코드 [handoff] REV 169: **REV 169. 공급자 동시 실행은 규칙이 아니라 설정 (태석님 지시).** kistillm 이 돌아와 동시 처리 수를 쟀다(요청마다 다른 1.6만 토큰 입력·256 토큰 출력, 2회): 동시 1 약 20초, 동시 2 둘 다 약 39초, 동시 3 셋 다 약 57초 - 서버는 함께 받지만 처리량이 고정이라 나눠 먹는다. 그래서 지금 `fleet.toml` `[providers.kisti] max_concurrent = 1`. 태석님 방침: 자원이 늘면 동시 실행이 득일 수 있으니 열어 둔다 - 엔진은 이 숫자만 보고, 올릴 때는 
 - `2026-11-13T08:58:12` 클로드 코드 [queue] REV 168: 대기 큐 2건 처리(태석님 지시): R22-N1 - fleet.py wait 의 stderr 읽기도 FIFO 안전하게, step() 단위 FIFO 회귀 검사. R22-N2·N3·N4 - 세션 meta 상한·read_regular_bytes 의 장치 거절과 fd 닫기·'이번 라운드' 둘째 줄 검사. 변이 시험으로 옛 동작을 잡는 것 확인.
 - `2026-11-13T08:58:12` 관리자 [queue] REV 168: queue -1 FIFO 에서 step() 이 아직 막힘(R22-N1, 낮음): fleet_graph.step() 이 run_limit_signal 보다 먼저 fleet.run_report 로 같은 .out 을 read_text 하고(tools/fleet.py run_report), .rc 가 FIFO 면 _run_state 의 rc.read_text 도 막힘. .out·.rc·.err 읽기를 fleet.read_regular_bytes 로 옮기고 FIFO 시험을 step() 단위로. 근거 rounds/R22/REVIEW-r22-4
@@ -246,8 +248,6 @@
 - `2026-11-12T23:57:29` 관리자 [task] REV 164: T-269 TODO S1 재검수: R22-P1·P2·P3·Q1·Q2·Q5 가 정말 닫혔는가
 - `2026-11-12T23:57:29` 관리자 [task] REV 164: T-268 TODO S3 시험: 어댑터 한도 판정 세션 갈래·옛 동작 못박기 걷기 (R22-Q1·Q2·Q5, V19)
 - `2026-11-12T23:57:29` 관리자 [task] REV 164: T-267 TODO S2 claude 어댑터 한도 판정: N3·N4 수정 옮기기 + 판정 한 곳으로 (R22-P1·P2·P3)
-- `2026-11-12T23:57:17` 관리자 [ownership] REV 164: rounds/R22/REVIEW-r22-2.md -> S1
-- `2026-11-12T23:57:17` 관리자 [ownership] REV 164: tests/test_rt_claude.py -> S3
 - `2026-11-12 23:28` M-R21 [handoff] REV 164: **REV 164. R21 (관리자 M-R21-230339) - BLOCKED, 엔진 v2 결함으로 작업자 0명.** NEW 요청 없음. 이어받은 Q-261112-7d68 의 G-052(R20 후속 4노드)를 재개하려 했으나 fleet_graph._busy_slots 가 관리자 세션(.aimem/sessions/M-R21-*, role manager·slot null)을 '슬롯 모를 running 실행' 으로 세어 모든 슬롯을 바쁨으로 본다 → 관리자가 살아 있는 한 어떤 노드도 못 띄운다(로그: skip T-263/T-265 - 
 - `2026-11-12 23:00` 클로드 코드 [handoff] REV 163: **REV 163. 함대 엔진 v2 (태석님 지시, 클로드 코드 커밋).** R20 은 11-12 20:13 마감 없이 끊겼다(G-052 4건 todo, 요청 Q-261112-7d68 진행 중, 큐 5건 - 다음 라운드가 이어받는다). 그 뒤 엔진을 바꿨다: (1) 작업자와 관리자를 엔진이 직접 세션으로 띄운다 - `tools/fleet_rt`(하네스 어댑터 claude·codex·opencode·fake + 세션마다 감독 프로세스), 기록은 `.aimem/sessions/<id>/`(사건 흐름 events.jsonl·report.
 - `2026-11-12 17:42` 클로드 코드 [handoff] REV 162: **REV 162 (덧붙임, 클로드 코드 커밋 - R20 도중).** 태석님 지시. 모니터 화면 정리: (1) 상단 바 - 어두운 모드·로그인·로그아웃을 ⚙ 설정 메뉴 하나로(폰·데스크톱 같은 꼴), 720px 이하는 짧은 글자로 2행, 930px 이상 1행(320~1450px 10px 간격 실측, 3행 없음). (2) 데스크톱 - 핸드오프 로그 시각 칸이 잘리던 것, ASSIGNED·NEEDS-FIX 배지 잘림, '자동 새로고침' 간격, 서브태스크 없는 진행 중 요청의 같은 문장 두 번. 함께: R19 종료분(REPORT·REV 
@@ -422,8 +422,6 @@
 
 | run id | 태스크 | 슬롯 | 하네스 | 모델 | 시도 | 상태 | rc | 시작 | 끝 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| T-252-S3-a1-185202 | T-252 | S3 | opencode |  | 1 | done | 0 | 18:52:02 | 18:55:19 |
-| T-252-S3-a2-185555 | T-252 | S3 | opencode |  | 2 | done | 0 | 18:55:55 | 18:58:04 |
 | T-254-S3-a1-185833 | T-254 | S3 | opencode |  | 1 | done | 0 | 18:58:33 | 19:01:31 |
 | T-256-S3-a1-190137 | T-256 | S3 | opencode |  | 1 | done | 0 | 19:01:37 | 19:05:05 |
 | T-257-S3-a1-190512 | T-257 | S3 | opencode |  | 1 | done | 0 | 19:05:12 | 19:09:53 |
@@ -452,3 +450,5 @@
 | T-274-S3-a1-004400 | T-274 | S3 | claude | sonnet | 1 | done | 0 | 00:44:00 | 00:45:31 |
 | T-275-S1-a1-004604 | T-275 | S1 | claude | opus | 1 | done | 0 | 00:46:04 | 01:20:51 |
 | ADHOC-S3-a1-141151 | ADHOC | S3 | opencode | opencode/deepseek-v4.1-flash-free | 1 | done | 0 | 14:11:51 | 14:12:14 |
+| ADHOC-S2-a1-141719 | ADHOC | S2 | codex | kisti/kistillm | 1 | done | 0 | 14:17:19 | 14:18:03 |
+| ADHOC-S3-a1-141719 | ADHOC | S3 | opencode | opencode/deepseek-v4.1-flash-free | 1 | done | 0 | 14:17:19 | 14:17:37 |
