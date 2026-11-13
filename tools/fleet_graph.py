@@ -1378,6 +1378,52 @@ def round_budget_problem(rnd, new_ids, followup, exclude=None):
     return None
 
 
+def graph_shape(g):
+    """그래프의 병렬 모양. `{"nodes", "levels": [[노드 id …], …], "notes": [사람이 읽을 말 …]}`.
+
+    단계 = 의존을 따라간 깊이(앞선 노드가 다 끝나야 뜰 수 있는 차례). 한 단계 안의 노드는 동시에 뜰 수 있다 -
+    단, 슬롯 하나는 한 번에 하나만 돌리므로 같은 단계의 노드가 한 슬롯에 몰리면 그만큼 줄을 선다.
+    판단은 관리자의 몫이라 막지 않고 알려만 준다 (`new` 가 찍는다). 순환은 `validate_graph` 가 따로 잡는다.
+    """
+    nodes = {str(n.get("id")): n for n in g.get("nodes", [])}
+    depth = {}
+
+    def d(nid, seen=()):
+        if nid in depth:
+            return depth[nid]
+        if nid in seen or nid not in nodes:
+            return 0
+        deps = [str(x) for x in (nodes[nid].get("deps") or []) if str(x) in nodes]
+        depth[nid] = 1 + max((d(x, seen + (nid,)) for x in deps), default=0)
+        return depth[nid]
+
+    for nid in nodes:
+        d(nid)
+    levels = [[nid for nid in nodes if depth.get(nid) == k] for k in range(1, max(depth.values(), default=0) + 1)]
+    notes = []
+    n = len(nodes)
+    widest = max((len(lv) for lv in levels), default=0)
+    if n >= 4 and widest <= 1:
+        notes.append(f"일렬입니다(노드 {n}개가 {len(levels)}단계로 하나씩). 서로의 결과를 읽지 않는 노드는 deps 를 빼고, "
+                     "인터페이스(파일·함수 이름과 꼴)를 브리프에 먼저 못박아 만들기·화면·검사를 같은 단계에 두십시오")
+    for k, lv in enumerate(levels, 1):
+        by_slot = {}
+        for nid in lv:
+            by_slot.setdefault(str(nodes[nid].get("slot")), []).append(nid)
+        crowded = {s: ids for s, ids in by_slot.items() if len(ids) > 1}
+        if crowded and len(by_slot) < len(lv):
+            desc = ", ".join(f"{s} {len(ids)}개" for s, ids in crowded.items())
+            notes.append(f"{k}단계의 노드가 한 슬롯에 몰렸습니다({desc}) - 슬롯은 한 번에 하나라 줄을 섭니다. "
+                         "다른 슬롯(다른 공급자면 더 좋음)에 나누면 동시에 돕니다")
+    return {"nodes": n, "levels": levels, "notes": notes}
+
+
+def shape_line(g):
+    sh = graph_shape(g)
+    return (f"모양: 노드 {sh['nodes']}개 · {len(sh['levels'])}단계 · 단계별 "
+            + " / ".join(str(len(lv)) for lv in sh["levels"])), sh["notes"]
+
+
 def cmd_new(a):
     nodes = json.loads(pathlib.Path(a.nodes).read_text(encoding="utf-8"))
     for n in nodes:
@@ -1409,6 +1455,10 @@ def cmd_new(a):
     _save(g)
     _log(g, f"created {len(nodes)} nodes, request={a.request!r}")
     print(GRAPHS / f"{a.id}.json")
+    line, notes = shape_line(g)
+    print(line)
+    for x in notes:
+        print("  참고: " + x)
     return 0
 
 
@@ -1450,18 +1500,43 @@ def cmd_step(a):
         return 0 if finished else 1
 
 
+#: 사람이 돌고 있는 라운드의 관리자에게 남기는 말 (`fleet_ctl.py tell`). 그래프 실행기는 이 파일이 바뀌면 rc 4 로 돌아와
+#: 관리자가 읽게 한다 - 관리자는 `run` 에 블로킹해 있어 다른 길로는 도중에 말을 들을 수 없다.
+INBOX_NAME = "INBOX.md"
+RC_INBOX = 4
+
+
+def inbox_path(round_n):
+    try:
+        return pathlib.Path(fleet.ROOT) / "rounds" / f"R{int(round_n)}" / INBOX_NAME
+    except (TypeError, ValueError):
+        return None
+
+
+def _mtime(p):
+    try:
+        return p.stat().st_mtime if p is not None else None
+    except OSError:
+        return None
+
+
 def cmd_run(a):
     with graph_lock(a.id, "run"):
         g = _load(a.id)
         if not _validate_or_report(g):
             return 2
         deadline = time.time() + a.timeout
-        halted = False
+        halted = inbox = False
+        box = inbox_path(g.get("round"))
+        box0 = _mtime(box)
         while time.time() < deadline:
             if step(g, a.concurrency):
                 break
             if _fleet_mode() == "stopped":
                 halted = True
+                break
+            if _mtime(box) != box0:
+                inbox = True
                 break
             time.sleep(a.poll)
         g = _load(a.id)
@@ -1478,6 +1553,11 @@ def cmd_run(a):
                   f"run {last.get('run_id','-')}  rc {last.get('rc','-')}/{last.get('verify_rc','-')}  {n.get('title','')}")
         if halted:
             return 3
+        if inbox:
+            # 떠 있는 작업자는 그대로 둔다 - 다시 `run` 하면 거둔다
+            print(f"사람이 말을 남겼습니다: {box.relative_to(fleet.ROOT) if box else INBOX_NAME} - 읽고 판단한 뒤 "
+                  f"`fleet_graph.py run {g['id']}` 로 이어 가십시오 (rc {RC_INBOX})")
+            return RC_INBOX
         return 0 if all(n.get("status") == "done" for n in g["nodes"]) else 1
 
 

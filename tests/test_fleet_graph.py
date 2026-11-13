@@ -1405,6 +1405,79 @@ class EngineV2Stage3(unittest.TestCase):
         self.assertEqual(log.count("보드 동기화 실패"), 1)
 
 
+class InboxReturnsEarly(unittest.TestCase):
+    """사람이 `tell` 로 말을 남기면 `run` 이 rc 4 로 돌아와 관리자가 읽게 한다. 떠 있는 작업자는 건드리지 않는다."""
+
+    def test_run_returns_4_when_inbox_changes_and_ctl_tell_writes_it(self):
+        import argparse  # noqa: PLC0415
+        import threading  # noqa: PLC0415
+        import fleet_ctl  # noqa: PLC0415
+        with tempfile.TemporaryDirectory() as t:
+            root = pathlib.Path(t)
+            graphs = root / ".aimem" / "graph"
+            graphs.mkdir(parents=True)
+            g = {"id": "G-901", "round": 7, "concurrency": 1, "created": "2026-11-13T00:00:00",
+                 "nodes": [{"id": "T-1", "title": "t", "slot": "S2", "task": "x", "deps": [], "write": [],
+                            "max_attempts": 1, "status": "todo", "attempts": []}]}
+            (graphs / "G-901.json").write_text(json.dumps(g), encoding="utf-8")
+            with mock.patch.object(fleet, "ROOT", root), mock.patch.object(fleet, "RUNS", root / ".aimem" / "runs"), \
+                    mock.patch.object(fleet_graph, "GRAPHS", graphs), mock.patch.object(fleet_graph, "_LOGGED_ONCE", set()), \
+                    mock.patch.object(fleet_graph, "_validate_or_report", return_value=True), \
+                    mock.patch.object(fleet_graph, "step", return_value=False), \
+                    mock.patch.object(fleet_graph, "_fleet_mode", return_value="running"), \
+                    mock.patch.object(fleet_ctl, "active_round", return_value=7):
+                (root / "rounds" / "R7").mkdir(parents=True)
+                box = []
+                th = threading.Thread(target=lambda: box.append(fleet_graph.cmd_run(
+                    argparse.Namespace(id="G-901", timeout=20, poll=0.1, concurrency=None))), daemon=True)
+                th.start()
+                time.sleep(0.5)
+                out = fleet_ctl.tell("화면은 웹워들과 비슷하게", "검사")
+                th.join(5)
+                self.assertFalse(th.is_alive())
+                self.assertEqual(box, [fleet_graph.RC_INBOX])
+                self.assertTrue(out["ok"])
+                self.assertEqual(out["round"], 7)
+                text = (root / "rounds" / "R7" / "INBOX.md").read_text(encoding="utf-8")
+                self.assertIn("화면은 웹워들과 비슷하게", text)
+                self.assertIn("검사", text)
+
+    def test_tell_refuses_without_a_running_round_or_text(self):
+        import fleet_ctl  # noqa: PLC0415
+        with mock.patch.object(fleet_ctl, "active_round", return_value=None):
+            self.assertFalse(fleet_ctl.tell("x")["ok"])
+        self.assertFalse(fleet_ctl.tell("   ")["ok"])
+
+
+class GraphShape(unittest.TestCase):
+    """`new` 가 찍는 병렬 모양 - 일렬 그래프와 한 슬롯에 몰린 단계를 알려 준다 (막지는 않는다)."""
+
+    def _g(self, spec):
+        return {"nodes": [{"id": i, "slot": s, "deps": list(d)} for i, s, d in spec]}
+
+    def test_chain_is_flagged(self):
+        g = self._g([("T-1", "S2", []), ("T-2", "S3", ["T-1"]), ("T-3", "S2", ["T-2"]), ("T-4", "S1", ["T-3"])])
+        sh = fleet_graph.graph_shape(g)
+        self.assertEqual([len(x) for x in sh["levels"]], [1, 1, 1, 1])
+        self.assertTrue(any("일렬" in n for n in sh["notes"]))
+
+    def test_parallel_levels_and_crowded_slot(self):
+        g = self._g([("T-1", "S1", []), ("T-2", "S2", ["T-1"]), ("T-3", "S3", ["T-1"]), ("T-4", "S2", ["T-1"]),
+                     ("T-5", "S1", ["T-2", "T-3", "T-4"])])
+        sh = fleet_graph.graph_shape(g)
+        self.assertEqual(sh["levels"], [["T-1"], ["T-2", "T-3", "T-4"], ["T-5"]])
+        self.assertFalse(any("일렬" in n for n in sh["notes"]))
+        self.assertTrue(any("2단계" in n and "S2 2개" in n for n in sh["notes"]))
+
+    def test_well_spread_graph_has_no_notes(self):
+        g = self._g([("T-1", "S2", []), ("T-2", "S3", []), ("T-3", "S4", []), ("T-4", "S1", ["T-1", "T-2", "T-3"])])
+        self.assertEqual(fleet_graph.graph_shape(g)["notes"], [])
+
+    def test_unknown_deps_and_cycles_do_not_crash(self):
+        g = self._g([("T-1", "S2", ["T-9"]), ("T-2", "S2", ["T-3"]), ("T-3", "S2", ["T-2"])])
+        fleet_graph.graph_shape(g)     # 순환·없는 노드는 validate_graph 가 따로 잡는다 - 여기서는 죽지만 않으면 된다
+
+
 class ReportEndedInToolCall(unittest.TestCase):
     """R9 T-116: kistillm 이 도구 호출을 글자로 내고 54초 만에 rc 0 으로 끝났는데 느슨한 verify 가 done 을 줬다."""
 

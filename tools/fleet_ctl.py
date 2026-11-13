@@ -1892,6 +1892,13 @@ def calls_digest(n, calls, max_chars=DIGEST_MAX_CHARS, why=None):
             "더 필요하면 `python3 tools/fleet_graph.py status <G>` 와 파일을 직접 읽으십시오.", ""]
     if why:
         head += [f"**엔진이 이 호출을 부른 까닭:** {why}", ""]
+    try:
+        box = _round_dir(n) / "INBOX.md"
+        if box.is_file() and not box.is_symlink():
+            head += ["### 사람이 남긴 말 (`" + ws + "/INBOX.md` - 지시입니다. 요청보다 앞섭니다)", "",
+                     box.read_text(encoding="utf-8", errors="replace")[-4000:].strip(), ""]
+    except (OSError, ValueError):
+        pass
     files = []
     try:
         for f in sorted((fleet.ROOT / ws).iterdir()):
@@ -2021,9 +2028,13 @@ def _run_round_graphs(n, gids, poll=DRIVE_POLL_SEC, timeout=DRIVE_GRAPH_TIMEOUT_
             return "skipped"
         bad0, spawn = _bad_nodes(graphs), True
         deadline = time.time() + timeout
+        box = fleet_graph.inbox_path(n)
+        box0 = fleet_graph._mtime(box)
         while True:
             if mode() != "running":
                 return "halted"
+            if fleet_graph._mtime(box) != box0:
+                return "inbox"          # 사람이 말을 남겼다 - 떠 있는 작업자는 두고 판정을 부른다
             finished = [fleet_graph.step(g, allow_spawn=None if spawn else False) for g in graphs]
             if all(finished):
                 return "done"
@@ -2209,7 +2220,8 @@ def _drive_loop(n, close_only, spawn_call, run_graphs, poll):
             reason[0] = (f"그래프 {', '.join(action[1])} 실행 결과 `{out}`"
                          + {"blocked": " - 노드가 새로 막혀 남은 노드를 띄우지 않고 판정을 앞당겼습니다",
                             "timeout": f" - 한 번에 붙잡는 시간({DRIVE_GRAPH_TIMEOUT_SEC // 60}분)이 지났습니다. 아직 도는 노드가 있으면 `NEXT: RUN` 으로 이어 돌립니다",
-                            "skipped": " - 다른 실행자가 잡았거나 검증에 걸려 돌리지 못했습니다"}.get(out, ""))
+                            "skipped": " - 다른 실행자가 잡았거나 검증에 걸려 돌리지 못했습니다",
+                            "inbox": " - 사람이 말을 남겼습니다(아래 '사람이 남긴 말'). 떠 있는 작업자는 그대로입니다"}.get(out, ""))
             if out == "halted":
                 return halt("그래프 실행 중")
             action = ("call", "judge")
@@ -2253,6 +2265,36 @@ def _drive_main(n, close_only=False):
             pass
         return _drive(n, close_only)
 
+# ----------------------------------------------------------------- 관리자에게 전하기
+def tell(message, by="사람"):
+    """돌고 있는 라운드의 관리자에게 말을 남긴다 - `rounds/R<N>/INBOX.md` 에 덧붙인다.
+
+    관리자는 시작할 때·그래프를 만들기 전·체크포인트마다 이 파일을 읽는다(브리프). 그래프 실행기는 파일이 바뀌면
+    rc 4 로 돌아와 관리자가 바로 읽게 하고, 호출 방식에서는 진행기가 판정을 앞당겨 부르며 '지금까지' 에 붙인다.
+    돌고 있는 라운드가 없으면 거절한다 - 다음 라운드의 일은 요청으로 넣는다.
+    """
+    text = str(message or "").strip()
+    if not text:
+        return {"ok": False, "error": "전할 말이 비어 있습니다"}
+    if len(text) > 4000:
+        return {"ok": False, "error": f"전할 말이 4000자를 넘습니다 ({len(text)}자)"}
+    n = active_round()
+    if n is None:
+        return {"ok": False, "error": "돌고 있는 라운드가 없습니다 - 다음 라운드의 일은 요청으로 넣으십시오"}
+    try:
+        d = _round_dir(n)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / "INBOX.md"
+    if p.is_symlink():
+        return {"ok": False, "error": "INBOX.md 가 심볼릭 링크라 쓰지 않습니다"}
+    head = "" if p.exists() else f"# R{n} 사람이 관리자에게 남긴 말\n\n관리자는 읽고 판단합니다. 요청보다 이 말이 앞섭니다(같은 요청 안에서).\n\n"
+    with open(p, "a", encoding="utf-8") as fh:
+        fh.write(f"{head}## {_now()} · {str(by)[:60]}\n\n{text}\n\n")
+    return {"ok": True, "round": n, "path": str(p.relative_to(fleet.ROOT))}
+
+
 # ----------------------------------------------------------------- CLI
 def main(argv=None):
     p = argparse.ArgumentParser(description="함대 제어 (준비/실행/일시 중지/완전 중지/라운드 실행)")
@@ -2269,6 +2311,9 @@ def main(argv=None):
     c.add_argument("--max", type=int, default=None, help=f"상한 라운드 (기본 {CHAIN_DEFAULT_ROUNDS}, 최대 {CHAIN_MAX_ROUNDS})")
     c.add_argument("--renew", action="store_true", help="상한에 닿으면 멈추지 않고 새 묶음으로 이어 간다 (끝날 때까지)")
     c.add_argument("--by", default="CLI")
+    t = sub.add_parser("tell", help="돌고 있는 라운드의 관리자에게 말을 남긴다 (rounds/R<N>/INBOX.md)")
+    t.add_argument("message")
+    t.add_argument("--by", default="CLI")
     w = sub.add_parser("_chainwatch")
     w.add_argument("--round", type=int, required=True)
     w.add_argument("--close-only", action="store_true", help="마감만 지켜본다 - 이어 달리기는 하지 않는다")
@@ -2280,6 +2325,10 @@ def main(argv=None):
         return _chain_wait_and_step(a.round, close_only=a.close_only)
     if a.cmd == "_rounddrive":
         return _drive_main(a.round, close_only=a.close_only)
+    if a.cmd == "tell":
+        out = tell(a.message, a.by)
+        print(json.dumps(out, ensure_ascii=False, indent=1))
+        return 0 if out.get("ok") else 1
     if a.cmd == "chain":
         out = ({"ok": True, "chain": chain_state()} if a.action == "status"
                else chain_set(a.action == "on", None, a.max, a.by, projects=a.project, fleet_on=(a.fleet or None), all_=(a.all or None),

@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/a
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 169** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-13 13:54 KST
+- **REV: 170** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-13 14:37 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **the `role=manager` session the engine starts for a round** (harness claude,
@@ -433,6 +433,10 @@ starts blank every round and uses this file plus the handoff log as memory; it m
 
 The standing routine every round brief points to; briefs list only the round's tasks.
 
+**Talking to a running round:** `fleet_ctl.py tell "…"` appends to `rounds/R<N>/INBOX.md`. The Manager reads it at start,
+before making a graph and at every checkpoint; `fleet_graph run` returns rc 4 when it changes. Within a request, the
+human's message wins over the request text.
+
 **Two round modes** (`fleet.toml` `[manager] mode`; default `resident`). `resident`: one Manager session lives for
 the whole round and does everything below. `calls`: the Manager is started as short separate sessions - ① plan
 (Start + graph planning), ② judge (graph checkpoints, follow-up graphs; repeats), ③ close (Close) - and **the
@@ -474,6 +478,10 @@ used and **the round's tasks are the `NEW` requests**; with nothing to do the Ma
 **Graph and verify rules** (standing; the round brief repeats them in Korean)
 - **Free slots build and fix; paid slots (S1, S4) judge, design and review adversarially.** A build or fix given
   to a paid slot is listed with its reason in report item (6). Never move a failed free task to a paid slot
+- **Parallel graphs:** a `deps` edge only where a node reads another's output. Fix the interface (file and function
+  names, input/output shapes) first and put it in each brief, so logic, UI, styles and tests can sit side by side;
+  spread one level over different slots (different providers run at the same time); reviews go last.
+  `fleet_graph.py new` prints the graph's shape and notes a single-file chain or a crowded slot
 - **Small nodes:** one new file, about 200 lines, about 10 checks. Split larger work; split a file two slots
   would both write. Do not tell a worker to "plan first" - have it edit files right away
 - **The engine runs `verify` confined** (bubblewrap): writable only in the repo and `/tmp`, `.git` read-only,

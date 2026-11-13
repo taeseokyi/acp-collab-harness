@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-13T14:18:12 / REV 169
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-13T14:37:49 / REV 170
 
 ## 2. 세션 명부
 
@@ -198,6 +198,20 @@
 
 ## 4. 이벤트 로그 (최신 50)
 
+- `2026-11-13 14:37` 클로드 코드 [handoff] REV 170: **REV 170. 관리자에게 도중에 말 전하기 + 병렬 그래프 규칙 (태석님 지시).** (1) R23(자모맞히기 첫 라운드)은 태석님이 요청에 '화면·게임 방식은 웹워들과 비슷하게' 를 덧붙였는데 관리자가 이미 요청을 읽은 뒤라 반영할 길이 없어, 작업자가 뜨기 전에 완전 중지했다(최소 마감 PARTIAL, 태스크·그래프 없음, 요청은 NEW 그대로). 관리자가 쓰다 만 `projects/자모맞히기/` 뼈대와 `.aimem/graph/inputs/r23/` 는 다음 관리자가 보고 쓰거나 버린다. (2) **`fleet_ctl.p
+- `2026-11-13T14:27:35` 관리자 [ownership] REV 169: rounds/R23/REVIEW-r23*.md -> S1
+- `2026-11-13T14:27:35` 관리자 [ownership] REV 169: projects/자모맞히기/tests/browser_game.py -> S3
+- `2026-11-13T14:27:35` 관리자 [ownership] REV 169: projects/자모맞히기/tests/test_logic.mjs -> S3
+- `2026-11-13T14:27:34` 관리자 [ownership] REV 169: projects/자모맞히기/tests/test_words.py -> S3
+- `2026-11-13T14:27:34` 관리자 [ownership] REV 169: projects/자모맞히기/web/css/** -> S3
+- `2026-11-13T14:27:34` 관리자 [ownership] REV 169: projects/자모맞히기/web/js/words.js -> S3
+- `2026-11-13T14:27:34` 관리자 [ownership] REV 169: projects/자모맞히기/tools/** -> S3
+- `2026-11-13T14:27:34` 관리자 [ownership] REV 169: projects/자모맞히기/data/** -> S3
+- `2026-11-13T14:27:31` 관리자 [ownership] REV 169: projects/자모맞히기/app.json -> S2
+- `2026-11-13T14:27:31` 관리자 [ownership] REV 169: projects/자모맞히기/web/index.html -> S2
+- `2026-11-13T14:27:31` 관리자 [ownership] REV 169: projects/자모맞히기/web/js/app.js -> S2
+- `2026-11-13T14:27:31` 관리자 [ownership] REV 169: projects/자모맞히기/web/js/game.js -> S2
+- `2026-11-13T14:27:31` 관리자 [ownership] REV 169: projects/자모맞히기/web/js/jamo.js -> S2
 - `2026-11-13T14:17:12` fleet.py [slot] REV 169: slot set S3: 하네스 claude→opencode, 모델 sonnet→opencode/deepseek-v4.1-flash-free
 - `2026-11-13T14:17:12` fleet.py [slot] REV 169: slot set S2: 하네스 claude→codex, 모델 sonnet→kisti/kistillm
 - `2026-11-13 13:54` 클로드 코드 [handoff] REV 169: **REV 169. 공급자 동시 실행은 규칙이 아니라 설정 (태석님 지시).** kistillm 이 돌아와 동시 처리 수를 쟀다(요청마다 다른 1.6만 토큰 입력·256 토큰 출력, 2회): 동시 1 약 20초, 동시 2 둘 다 약 39초, 동시 3 셋 다 약 57초 - 서버는 함께 받지만 처리량이 고정이라 나눠 먹는다. 그래서 지금 `fleet.toml` `[providers.kisti] max_concurrent = 1`. 태석님 방침: 자원이 늘면 동시 실행이 득일 수 있으니 열어 둔다 - 엔진은 이 숫자만 보고, 올릴 때는 
@@ -234,27 +248,12 @@
 - `2026-11-13T00:34:57` 관리자 [task] REV 164: T-271 DONE
 - `2026-11-13T00:34:57` 관리자 [task] REV 164: T-270 DONE
 - `2026-11-13T00:34:50` M-R22 [queue] REV 164: queue -1 브라우저 검사가 '진짜 저장소의 그때그때 상태' 에 기대는 자리를 한 번 쓸어내십시오. R17 에 두 건이 이 까닭으로 깨졌습니다(그래프 제목 펼치기 - 끝난 그래프가 접힘 / 프로젝트 칸 볼드 - 최근 실행 20건이 전부 함대 일). 둘 다 임시 저장소 고정 자료로 옮겨 고쳤습니다. tests/browser_monitor_*.py 에서 ROOT 를 그대로 보는 시나리오를 찾아 같은 꼴로 옮기십시오
-- `2026-11-13T00:34:50` M-R22 [queue] REV 164: queue -2 SIGTERM 시험 구멍(재검수 R19-P2, 중간): 재검수가 넣은 변이 셋 - serve() 의 SIGTERM 처리기 지우기 / 처리기 되돌리기 지우기 / finally 의 flush_denied_audit 지우기 - 이 모두 모니터 시험 117건을 초록으로 통과합니다. 자식 프로세스로 서버를 띄워 실제 SIGTERM 을 보내고 access.log 에 'audit-dropped' 가 남는지 보는 시험을 새 파일(tests/test_monitor_shutdown.py)에 두십시오 (rounds/R19/REVIEW-
-- `2026-11-13T00:34:50` M-R22 [queue] REV 164: queue -3 한도 판정의 구조 신호(재검수 R19-P3, 낮음): 지금은 rc != 0 + 보고 글자로 봅니다. 글자 쪽은 'You've hit your weekly limit' 같은 형제 문구를 놓칩니다. claude 하네스는 .aimem/runs/<id>.out JSON 에 is_error·api_error_status=429·api_error=usage_limit_reached·terminal_reason=api_error 를 남기므로 글자보다 그것을 먼저 보십시오. codex/opencode 는 그런 칸이 없어 글자 판정
-- `2026-11-13T00:34:49` M-R22 [queue] REV 164: queue -4 R18 적대적 검수가 남긴 시험 구멍 일곱(R18-A7·R18-A12·R18-S8·R18-G7·R18-C2·R18-B10·R18-B12, 낮음~정보): 변이를 넣어도 시험이 초록인 자리들입니다. rounds/R18/REVIEW-r18.md 의 변이표를 보고 하나씩 메우십시오
-- `2026-11-13T00:34:49` M-R22 [queue] REV 164: queue -5 재검수 R19-P6(낮음): serve() 에서 SIGTERM 처리기를 건 뒤 try: 로 들어가기까지 log_line 여러 줄이 있어, 그 틈에 SIGTERM 이 오면 shutdown 이 아직 안 뜬 httpd 를 건드립니다. 처리기 설치를 try 바로 앞으로 옮기거나 처리기가 플래그만 세우게 하십시오 (rounds/R19/REVIEW-r19.md)
-- `2026-11-13T00:15:52` 관리자 [task] REV 164: T-271 TODO S1 재검수: R22-R1·R2 가 닫혔는가
-- `2026-11-13T00:15:51` 관리자 [task] REV 164: T-270 TODO S3 test_fleet_graph: Q2 세션 시험 fake 우회 + Q1 디딤 폴더 (R22-R1·R2)
-- `2026-11-13T00:15:48` 관리자 [ownership] REV 164: rounds/R22/REVIEW-r22-3.md -> S1
-- `2026-11-13T00:15:48` M-R22 [graph] REV 164: G-053 finished: T-267(S2 어댑터 판정 한 벌)·T-268(S3 시험)·T-269(S1 재검수 rounds/R22/REVIEW-r22-2.md) DONE. P1·P2·P3·Q5·V19 닫힘(변이 16 중 15 잡힘). 남은 것: R1(중간, 전체 discover 에서 test_q2 429 FAIL - fake 강제)·R2(낮음, Q1 디딤 폴더) → G-054 후속
-- `2026-11-13T00:15:48` 관리자 [task] REV 164: T-269 DONE
-- `2026-11-13T00:15:48` 관리자 [task] REV 164: T-268 DONE
-- `2026-11-13T00:15:48` 관리자 [task] REV 164: T-267 DONE
-- `2026-11-12T23:57:29` 관리자 [task] REV 164: T-269 TODO S1 재검수: R22-P1·P2·P3·Q1·Q2·Q5 가 정말 닫혔는가
-- `2026-11-12T23:57:29` 관리자 [task] REV 164: T-268 TODO S3 시험: 어댑터 한도 판정 세션 갈래·옛 동작 못박기 걷기 (R22-Q1·Q2·Q5, V19)
-- `2026-11-12T23:57:29` 관리자 [task] REV 164: T-267 TODO S2 claude 어댑터 한도 판정: N3·N4 수정 옮기기 + 판정 한 곳으로 (R22-P1·P2·P3)
 - `2026-11-12 23:28` M-R21 [handoff] REV 164: **REV 164. R21 (관리자 M-R21-230339) - BLOCKED, 엔진 v2 결함으로 작업자 0명.** NEW 요청 없음. 이어받은 Q-261112-7d68 의 G-052(R20 후속 4노드)를 재개하려 했으나 fleet_graph._busy_slots 가 관리자 세션(.aimem/sessions/M-R21-*, role manager·slot null)을 '슬롯 모를 running 실행' 으로 세어 모든 슬롯을 바쁨으로 본다 → 관리자가 살아 있는 한 어떤 노드도 못 띄운다(로그: skip T-263/T-265 - 
 - `2026-11-12 23:00` 클로드 코드 [handoff] REV 163: **REV 163. 함대 엔진 v2 (태석님 지시, 클로드 코드 커밋).** R20 은 11-12 20:13 마감 없이 끊겼다(G-052 4건 todo, 요청 Q-261112-7d68 진행 중, 큐 5건 - 다음 라운드가 이어받는다). 그 뒤 엔진을 바꿨다: (1) 작업자와 관리자를 엔진이 직접 세션으로 띄운다 - `tools/fleet_rt`(하네스 어댑터 claude·codex·opencode·fake + 세션마다 감독 프로세스), 기록은 `.aimem/sessions/<id>/`(사건 흐름 events.jsonl·report.
 - `2026-11-12 17:42` 클로드 코드 [handoff] REV 162: **REV 162 (덧붙임, 클로드 코드 커밋 - R20 도중).** 태석님 지시. 모니터 화면 정리: (1) 상단 바 - 어두운 모드·로그인·로그아웃을 ⚙ 설정 메뉴 하나로(폰·데스크톱 같은 꼴), 720px 이하는 짧은 글자로 2행, 930px 이상 1행(320~1450px 10px 간격 실측, 3행 없음). (2) 데스크톱 - 핸드오프 로그 시각 칸이 잘리던 것, ASSIGNED·NEEDS-FIX 배지 잘림, '자동 새로고침' 간격, 서브태스크 없는 진행 중 요청의 같은 문장 두 번. 함께: R19 종료분(REPORT·REV 
 - `2026-11-12 17:32` 관리자 R19 [handoff] REV 162: **REV 162. R19 - 끊긴 R18 을 닫고, 사용 한도 카드와 감사 상한을 끝까지 몰아 적대적 검수·재검수까지.** R18 은 WSL 재시작으로 끊겼었고 G-045 를 이어 돌려 닫았습니다(T-234·T-235 는 작업자가 일을 다 했는데 다른 파일의 검사 자료가 틀려 verify 가 빨갰던 것 - 고친 뒤 관리자가 같은 명령을 직접 돌려 rc 0 확인하고 닫음). **엔진 결함 둘을 실측으로 잡았습니다**: R18 이 넣은 한도 판정이 보고에 '사용 한도' 글자만 있어도 멀쩡한 DONE 을 막았습니다(실제로 T-241·T
 - `2026-11-12 17:16` 클로드 코드 [handoff] REV 161: **REV 161 (클로드 코드, R19 도중 커밋).** 태석님 지시. (1) **대기 큐 결함 번호에 라운드**: 검수 번호(N=결함·M=변이 시험·D=넘어온 결함)는 보고서마다 1부터 다시 세어 라운드끼리 섞였다 → 큐에는 `R17-N5`·`R17-N5·N6` 꼴만, `queue add/edit` 가 맨 `N5` 를 거절. `queue edit --pos`(제자리 고침) 신설. 큐 1~3 을 이 꼴로 고치고 출처 T-224 를 적음. 표준 브리프·AIMEM 4.5 에 규칙(순서 번호 대신 발견 번호로 가리킴). (2) **화면
 - `2026-11-12 15:30` 클로드 코드 [handoff] REV 160: **R18 끊김 (REV 그대로).** 2026-11-12 14:57 WSL 이 업데이트로 재시작되어(15:22 재기동, 커널 6.18.58.1) 관리자 R18·작업자·이어 달리기 감시자가 모두 사라졌다. G-045: T-231·T-232·T-233·T-237 done, T-234(S2)·T-236(S3) 는 실행 1분 안에 lost(거둠), T-235·T-238 todo. 파일·git·DB 손상 없음, 린터 통과. 전체 테스트 641 중 1건 실패 - `test_collect_state_failure_branch_keys_matc
-- `2026-11-12 14:15` 관리자 R17 [handoff] REV 160: **REV 160. R17 - R16 을 닫고(끊긴 라운드), 웹 요청 넷을 끝냈습니다. 큰 것은 감사 N1.** 티켓 URL 하나로 분당 60줄 상한을 채워 **회수된 계정의 시도가 0줄**이던 것을 닫았습니다 - URL 이 주장한 티켓 주체는 인증된 주체로 치지 않아 키에서 경로를 뺍니다(`authenticated` 인자). 재검수 실측: 가상 30분 park 0줄 → **30줄**. N2(생략 수 귀속)·N3(경로 고정)도 닫힘. 검수 T-224 가 찾은 **N9(중간, 시험 구멍)** - 그 수정을 되돌려도 시험이 전부 초록
 
 ## 4.5 대기 큐
 
@@ -307,6 +306,18 @@
 | `projects/웹워들/web/js/storage.js` | S2 | R13 T-161 부모 모드 저장 (S4 유료→S2 무료, 만들기·고치기는 무료 슬롯) |
 | `projects/웹워들/web/js/ui.js` | S2 | R13 T-161 await init() 호출 자리 (storage.js 와 같은 슬롯) |
 | `projects/웹워들/web/js/words.js` | S2 | R7 단어 목록 생성물 |
+| `projects/자모맞히기/app.json` | S2 | R23 |
+| `projects/자모맞히기/data/**` | S3 | R23 |
+| `projects/자모맞히기/tests/browser_game.py` | S3 | R23 |
+| `projects/자모맞히기/tests/test_logic.mjs` | S3 | R23 |
+| `projects/자모맞히기/tests/test_words.py` | S3 | R23 |
+| `projects/자모맞히기/tools/**` | S3 | R23 |
+| `projects/자모맞히기/web/css/**` | S3 | R23 |
+| `projects/자모맞히기/web/index.html` | S2 | R23 |
+| `projects/자모맞히기/web/js/app.js` | S2 | R23 |
+| `projects/자모맞히기/web/js/game.js` | S2 | R23 |
+| `projects/자모맞히기/web/js/jamo.js` | S2 | R23 |
+| `projects/자모맞히기/web/js/words.js` | S3 | R23 |
 | `rounds/**` | 관리자 | 라운드 기록 폴더 rounds/R<N>/ - brief.md·REPORT.md 만 (결과물은 projects/) |
 | `rounds/R10/REVIEW.md` | S1 | R10 |
 | `rounds/R11/REVIEW-A.md` | S1 | R11 T-136 적대적 검수 A |
@@ -332,6 +343,7 @@
 | `rounds/R22/REVIEW-r22-3.md` | S1 | R22 T-271 재검수 |
 | `rounds/R22/REVIEW-r22-4.md` | S1 | R22 T-275 검수 |
 | `rounds/R22/REVIEW-r22.md` | S1 | R22 T-266 재검수 (R21 이 못 띄워 R22 폴더로 옮김) |
+| `rounds/R23/REVIEW-r23*.md` | S1 | R23 |
 | `skills/**` | 관리자 | **현재 비어 있음** (REV 101 에서 `acp-slot-lifecycle` 제거). 되살아나면 이 행이 그대로 적용된다 |
 | `tests/browser_monitor_app.py` | S3 | R10 T-131 |
 | `tests/browser_monitor_auth.py` | S3 | R10 T-135 |
@@ -417,6 +429,7 @@
 | Q-261112-c3a1 | 대기 큐 1~3 처리 (R18) | 관리자 (R17 검수가 남긴 큐) | DONE | 2026-11-12T14:25:16 |
 | Q-261112-7d68 | 대기 큐 5건 처리 (R19 뒤 자동) | 함대 이어 달리기 | DONE | 2026-11-12T17:35:20 |
 | Q-261113-a22b | 대기 큐 2건 처리: 실행 기록 FIFO·메타 상한(R22-P4) + 시험 구멍 넷(R22-S1·S2·Q3·Q4) | 관리자 M-R22 (대기 큐) | DONE | 2026-11-13T00:36:31 |
+| Q-261113-bd56 | 한글 자모 낱말 맞히기 웹 게임 (새 프로젝트) | 태석 | NEW | 2026-11-13T14:24:03 |
 
 ## 실행 (최근 30)
 
