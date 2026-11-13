@@ -69,9 +69,6 @@
   --row-hover:var(--st-surface-2);
   --row-running-bg:var(--st-info-tint);
   --row-lost-bg:var(--st-warn-tint);
-  --banner-demo-bg:var(--st-info-tint);
-  --banner-demo-border:var(--st-line);
-  --banner-demo-text:var(--st-info-text);
   --banner-errors-bg:var(--st-danger-tint);
   --banner-errors-border:var(--st-danger);
   --banner-errors-text:var(--st-danger-text);
@@ -101,12 +98,8 @@
   --badge-lost-text:var(--st-warn-text);
   --badge-unknown-bg:var(--st-surface-2);
   --badge-unknown-text:var(--st-ink-soft);
-  --badge-busy-bg:var(--st-warn-tint);
-  --badge-busy-text:var(--st-warn-text);
   --badge-idle-bg:var(--st-accent-tint);
   --badge-idle-text:var(--st-accent-text);
-  --badge-error-bg:var(--st-danger-tint);
-  --badge-error-text:var(--st-danger-text);
 }
 
 [data-theme="dark"]{
@@ -216,12 +209,6 @@ body {
   padding: var(--st-s-2) var(--st-s-3);
   border-radius: var(--st-r-sm);
   font-size: var(--st-fs-sm);
-}
-
-.banner-demo {
-  background: var(--banner-demo-bg);
-  border: 1px solid var(--banner-demo-border);
-  color: var(--banner-demo-text);
 }
 
 .banner-errors {
@@ -499,19 +486,9 @@ tbody tr:hover td {
   color: var(--badge-unknown-text);
 }
 
-.badge-busy {
-  background: var(--badge-busy-bg);
-  color: var(--badge-busy-text);
-}
-
 .badge-idle {
   background: var(--badge-idle-bg);
   color: var(--badge-idle-text);
-}
-
-.badge-error {
-  background: var(--badge-error-bg);
-  color: var(--badge-error-text);
 }
 
 .empty {
@@ -1038,7 +1015,7 @@ td { font-size: var(--st-fs-md); padding-top: 9px; padding-bottom: 9px; vertical
 .badge-partial { background: var(--st-warn-tint); color: var(--st-warn-text); }
 .badge-needs { background: var(--st-warn-tint); color: var(--st-warn-text); }
 .badge-failed { background: var(--st-danger-tint); color: var(--st-danger-text); }
-.badge-pending, .badge-stale { background: var(--st-surface-2); color: var(--st-ink-soft); }
+.badge-stale { background: var(--st-surface-2); color: var(--st-ink-soft); }
 .model-source { font-size: var(--st-fs-xs); max-width: none; }
 .slot-state { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
 .slot-state .sub { max-width: 100%; }
@@ -1206,7 +1183,6 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .run-line { display: inline-flex; gap: 4px; align-items: center; }
 .manager-detail-btn { margin-left: auto; font-size: var(--st-fs-sm); padding: 3px 12px; }
 .manager-step { font-size: var(--st-fs-sm); color: var(--st-ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.manager-step.is-warn { color: var(--st-warn-text); font-weight: var(--st-fw-medium); }
 .mgr-list { margin: 0; padding-left: var(--st-s-5); display: grid; gap: 6px; font-size: var(--st-fs-sm); }
 .mgr-list li { overflow-wrap: anywhere; }
 .mgr-list .mgr-body { white-space: pre-wrap; }   /* 관리자 단계 본문(표·목록)의 줄바꿈 보존 (2026-11-10) */
@@ -1284,11 +1260,10 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .md-block { position: relative; }
 .md-bar { display: flex; justify-content: flex-end; margin-bottom: 2px; }
 .md-toggle { font-size: var(--st-fs-xs, 12px); color: var(--st-ink-muted); }
-.mgr-list .mgr-body.md-host, .mgr-list div.mgr-body { display: block; margin-top: 2px; }
+.mgr-list div.mgr-body { display: block; margin-top: 2px; }
 .mgr-list div.mgr-body .md > :last-child { margin-bottom: 0; }
 
 /* ---- 슬롯 관리 (2026-11-10) ---- */
-.slot-manage { text-align: center; }
 .slot-bar { display: flex; align-items: center; gap: 12px; margin-top: var(--st-s-2); }
 .slot-msg { font-size: var(--st-fs-sm); color: var(--st-accent-ink, var(--st-ink)); }
 .slot-msg.is-error, .hint.is-error { color: var(--st-danger, #e0283f); }
@@ -1378,7 +1353,6 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .fleet-chain-opt input[type="checkbox"], .fleet-chain-opt input[type="radio"] { flex: none; margin: 0; width: 17px; height: 17px;
   accent-color: var(--st-accent, #0b7a5c); }
 .fleet-chain-opt-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fleet-chain-kind { flex: none; font-size: 11px; color: var(--st-ink-muted); }
 .fleet-chain-opt.is-fleet .fleet-chain-opt-text { font-weight: 600; }
 .fleet-chain-opt:has(input:checked) { border-color: var(--st-accent, #0b7a5c);
   background: color-mix(in srgb, var(--st-accent, #0b7a5c) 10%, var(--st-surface, #fff)); }
@@ -1584,7 +1558,6 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
   .tablewrap td .report-head { white-space: normal; overflow: visible; }
   .tablewrap td .run-what > span, .tablewrap td .slot-state .sub, .tablewrap td .model-source { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
   .subtasks td:nth-child(2) { padding-left: 0; }
-  .slot-manage { text-align: left; }
 }
 /* 카드 안의 긴 글(핸드오프 로그 등)은 세 줄까지 - 누르면 펼쳐진다. 묶음 칸(상태+부제 등)은 이름표와 한 줄에 */
 @media (max-width: 900px) {
@@ -1595,7 +1568,6 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
   }
   .tablewrap > table > tbody > tr > td.is-empty { display: none; }
   .tablewrap > table > tbody > tr > td:not(.elide) { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; }
-  .tablewrap > table > tbody > tr > td:has(> .slot-manage)::before { display: none; }
 }
 
 /* ---- 한국어 줄바꿈: 낱말 가운데서 꺾지 않는다('실행/기', '준/비'). 긴 경로·URL 은 넘치기 전에 꺾는다 ---- */
@@ -1750,12 +1722,7 @@ button:disabled { opacity: 0.6; }
 .attempt-kind.is-infra, .attempt-kind.is-limit { color: var(--badge-blocked-text); }
 .attempt-why { font-size: 12px; opacity: .8; white-space: pre-wrap; overflow-wrap: anywhere; }
 
-/* 호출 방식 라운드: 관리자 카드의 단계 표시, 세션 목록의 라운드 머리글 */
-.manager-phase { color: var(--muted, inherit); font-size: 13px; white-space: nowrap; }
-.manager-round-head { font-weight: var(--st-fw-bold); font-size: 13px; margin: 12px 0 4px; }
-.manager-round-head:first-child { margin-top: 0; }
-
-/* 운영 방침 고르기 (무료 중심 / 품질 중심 / 빠른 구현) */
+/* 운영 방식 고르기 (무료 중심 / 품질 중심 / 빠른 구현) */
 .fc-policy { display: flex; flex-wrap: wrap; align-items: center; gap: var(--st-s-1) var(--st-s-2); margin-top: var(--st-s-2); }
 .fc-policy-lab { font-size: var(--st-fs-sm); color: var(--st-ink-muted); }
 .fc-policy-seg { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }

@@ -1,14 +1,3 @@
-const DEMO = location.search.includes('demo');
-
-const WEIGHTS = {
-  TODO: 0,
-  ASSIGNED: 0.1,
-  'IN-PROGRESS': 0.5,
-  REVIEW: 0.8,
-  DONE: 1,
-  BLOCKED: 0,
-};
-
 const STATUS_CLASS = {
   TODO: 'todo',
   ASSIGNED: 'assigned',
@@ -23,107 +12,6 @@ const STATUS_CLASS = {
   done: 'done',
   lost: 'lost',
   unknown: 'unknown',
-};
-
-const DEMO_STATE = {
-  generated: '2026-11-09T17:05:00',
-  tz: { name: 'Asia/Seoul', offset: '+09:00' },
-  aimem: {
-    rev: 109,
-    lines: 523,
-    updated: '2026-11-09 16:40 KST',
-    goal: { text: '함대 모니터링 웹 UI 를 만든다', status: '진행 중' },
-  },
-  slots: [
-    { slot: 'S1', harness: 'claude', role: '린터 / 보드 CLI', note: 'CLI 작업자', model: 'opus[1m]', model_source: 'fleet.toml harness.claude.default_model' },
-    { slot: 'S2', harness: 'codex', role: '계약 테스트', note: '테스트 작성자', model: 'gpt-5-codex', model_source: 'fleet.toml harness.codex.default_model' },
-    { slot: 'S3', harness: 'opencode', role: '커밋 훅 / 검수', note: 'CLI 작업자', model: 'kistillm', model_source: 'fleet.toml harness.opencode.default_model' },
-    { slot: '관리자', harness: 'claude', role: '합류점 / 서버', note: 'server.py 소유', model: 'opus[1m]', model_source: 'fleet.toml harness.claude.default_model' },
-  ],
-  board: [
-    { id: 'T-036', task: '데이터 계층', slot: 'S1', status: 'REVIEW', handoff: '-', artifact: '`reader.py`' },
-    { id: 'T-037', task: '계약 테스트', slot: 'S2', status: 'DONE', handoff: 'T-036', artifact: '`tests/test_aimem_monitor.py`' },
-    { id: 'T-038', task: '웹 UI 정적 프런트엔드', slot: 'S3', status: 'IN-PROGRESS', handoff: 'T-039', artifact: '`tools/aimem_monitor/static/**`' },
-    { id: 'T-039', task: '웹 UI 서버', slot: '관리자', status: 'DONE', handoff: 'T-038', artifact: '`server.py`' },
-    { id: 'T-040', task: '통합·교차검수', slot: 'S3', status: 'TODO', handoff: 'T-036~039', artifact: '-' },
-    { id: 'T-041', task: '요청 분담 CLI', slot: '미배정', status: 'ASSIGNED', handoff: 'T-039', artifact: '-' },
-    { id: 'T-042', task: '모델 표기 점검', slot: '미배정', status: 'BLOCKED', handoff: '-', artifact: '-' },
-  ],
-  queue: [
-    { order: '1', task: '통합·교차검수', slots: 'S3', handoff: 'T-036~039', note: '라운드 4. 자기채점 금지' },
-    { order: '2', task: '요청 -> 서브태스크 분담 CLI', slots: '관리자', handoff: 'T-039', note: '지금은 손으로 고쳐야 함' },
-    { order: '3', task: '모델 표기 정리', slots: '-', handoff: '-', note: '대기' },
-  ],
-  log: [
-    { when: '2026-11-09 16:40', text: 'REV 109. 웹 UI 라운드 3 시작.' },
-    { when: '2026-11-09 16:31', text: 'S1 스모크 실행 기록.' },
-  ],
-  runs: [
-    { id: '20261109-170500-S3', slot: 'S3', harness: 'opencode', model: 'kistillm', label: 'T-038 프런트엔드 작성', rev: 109, write: ['tools/aimem_monitor/static/index.html', 'app.js', 'style.css'], started: '2026-11-09T17:05:00', state: 'running', rc: null, elapsed_sec: 31, report_head: '작업 중 - 정적 3파일 작성, 데모 경로 포함' },
-    { id: '20261109-164500-S2', slot: 'S2', harness: 'codex', model: 'gpt-5-codex', label: '계약 테스트 작성', rev: 109, write: ['tests/test_aimem_monitor.py'], started: '2026-11-09T16:45:00', state: 'done', rc: 0, elapsed_sec: 68, report_head: 'DONE - 계약 테스트 4건 통과' },
-    { id: '20261109-163112-S1', slot: 'S1', harness: 'claude', model: 'opus[1m]', label: '스모크 S1', rev: 109, write: [], started: '2026-11-09T16:31:12', state: 'done', rc: 0, elapsed_sec: 11, report_head: 'DONE - lint 0 errors' },
-    { id: '20261109-160000-S1', slot: 'S1', harness: 'claude', model: 'opus[1m]', label: '리더 스캔', rev: 108, write: [], started: '2026-11-09T16:00:00', state: 'lost', rc: 2, elapsed_sec: 34, report_head: 'LOST - stderr: AIMEM.md parse error' },
-  ],
-  eta: {
-    by_harness: {
-      claude: { median_sec: 11, samples: 2, source: ['20261109-163112-S1', '20261109-160000-S1'] },
-      codex: { median_sec: 68, samples: 1, source: ['20261109-164500-S2'] },
-      opencode: { median_sec: 31, samples: 1, source: ['20261109-170500-S3'] },
-    },
-    overall: { median_sec: 55, samples: 4 },
-  },
-  graphs: [
-    {
-      id: 'R-002',
-      request: '라운드2: 밝은 모드 UI + KISTI 상태 카드 + ETA 초과 + 린터 + 교차검수',
-      created: '2026-11-09T17:23:23',
-      updated: '2026-11-09T17:26:18',
-      percent: 42.0,
-      eta_seconds: 610,
-      eta_at: '2026-11-09T17:55',
-      counts: { done: 2, running: 1, todo: 2 },
-      source: 'fleet_graph.progress',
-      nodes: [
-        { id: 'N1', title: 'ETA 초과 처리 (reader.py)', slot: 'S1', harness: 'claude', status: 'done', deps: [], attempts: 1, max_attempts: 2, last_run: '20261109-172329-S1' },
-        { id: 'N2', title: '린터 보드 담당 허용 (aimem_lint.py)', slot: 'S1', harness: 'claude', status: 'done', deps: ['N1'], attempts: 1, max_attempts: 2, last_run: '20261109-172446-S1' },
-        { id: 'N3', title: '웹 UI 밝은 모드 + 가독성·정렬 + KISTI 카드 + 그래프 트리', slot: 'S3', harness: 'opencode', status: 'running', deps: [], attempts: 2, max_attempts: 2, last_run: '20261109-172618-S3' },
-      ],
-    },
-  ],
-  requests: [
-    {
-      id: '20261109-170500-3f2a',
-      created: '2026-11-09T17:05:00',
-      requester: '태석',
-      title: '함대 모니터 웹 UI 요청',
-      detail: '함대 현황, 실행 상태, 보드/큐, 요청 폼, 분담 트리를 한 화면에서 본다.',
-      status: 'IN-PROGRESS',
-      subtasks: [
-        { id: 'T-036', title: '데이터 계층', slot: 'S1', harness: 'claude', status: 'DONE', run_id: '20261109-163112-S1' },
-        { id: 'T-037', title: '계약 테스트', slot: 'S2', harness: 'codex', status: 'REVIEW', run_id: '20261109-164500-S2' },
-        { id: 'T-038', title: '웹 UI 프런트엔드', slot: 'S3', harness: 'opencode', status: 'IN-PROGRESS', run_id: '20261109-170500-S3' },
-        { id: 'T-041', title: '요청 분담 CLI', slot: 'S1', harness: 'claude', status: 'BLOCKED', run_id: '20261109-160000-S1' },
-      ],
-      progress_pct: 42.5,
-      eta_sec: 180,
-      eta_at: '2026-11-09T17:08:00',
-      eta_basis: 'claude 중앙값 11s(표본 2) 중 최댓값, 병렬 가정',
-    },
-    {
-      id: '20261109-165000-9b1e',
-      created: '2026-11-09T16:50:00',
-      requester: '태석',
-      title: '모델 표기 점검 요청',
-      detail: '슬롯 명부의 model_source 가 실제 하네스 설정과 일치하는지 본다.',
-      status: 'PLANNED',
-      subtasks: [],
-      progress_pct: null,
-      eta_sec: null,
-      eta_at: null,
-      eta_basis: '분담 전 - 관리자가 서브태스크를 만들면 ETA 가 계산된다',
-    },
-  ],
-  errors: [],
 };
 
 const state = {
@@ -197,11 +85,6 @@ function fmtTime(value, opts = {}) {
   const clock = `${o.hour}:${o.minute}` + (opts.seconds ? ':' + o.second : '');
   return opts.date === false ? clock : `${o.year}-${o.month}-${o.day} ${clock}`;
 }
-function zoneNowNaive() {
-  const o = zoneParts(Date.now());
-  return `${o.year}-${o.month}-${o.day}T${o.hour}:${o.minute}:${o.second}`;
-}
-
 function fmtDateTime(value) {
   if (!value) return '-';
   const str = String(value);
@@ -244,29 +127,37 @@ function badge(text, cls) {
   return span;
 }
 
-// 같은 상태는 어느 탭에서나 같은 말로 (2026-11-12 화면 점검: done·DONE·완료·IN-PROGRESS·진행 중이 탭마다 달랐다).
+// 같은 상태는 어느 탭에서나 같은 말로 (2026-11-12 화면 점검). 도는 프로세스 = '실행 중', 요청의 IN-PROGRESS 만 '진행 중'.
 // 원래 값은 data-status 와 title 에 남긴다 (검사·검색은 data-status 로)
 const STATUS_LABEL = {
-  done: '완료', running: '진행 중', 'in-progress': '진행 중', todo: '할 일', assigned: '배정됨', review: '검토 중',
-  blocked: '막힘', failed: '실패', lost: '사라짐', new: '새 요청', planned: '계획됨', rejected: '거절', skipped: '건너뜀',
+  done: '완료', running: '실행 중', 'in-progress': '진행 중', todo: '할 일', assigned: '배정됨', review: '검토 중',
+  blocked: '막힘', failed: '실패', lost: '사라짐', new: '새 요청', planned: '계획됨', rejected: '거절',
   partial: '일부 완료', unknown: '모름', infra: '공급자 장애',
 };
-function statusLabel(raw) {
+// 보드(와 요청 안 서브태스크)의 칸은 엔진이 그래프 노드를 따라 고친다 - REVIEW 는 관리자 판정 대기, BLOCKED 는 막힘이거나 실패
+const BOARD_LABEL = { review: '관리자 확인 대기', blocked: '막힘·실패' };
+function statusLabel(raw, over) {
   const key = String(raw || '').toLowerCase();
+  if (over && over[key]) return over[key];
   if (STATUS_LABEL[key]) return STATUS_LABEL[key];
   if (key.startsWith('needs')) return '고칠 것 있음';
   if (key.startsWith('reject')) return '거절';
   return String(raw);
 }
-function statusBadge(value) {
+function statusBadge(value, over) {
   const raw = show(value);
   const key = raw.toLowerCase();
   const cls = key === 'lost' ? 'lost' : (STATUS_CLASS[raw] || STATUS_CLASS[raw.toUpperCase()] || (key === 'infra' ? 'blocked' : key === 'failed' ? 'failed' : key === 'todo' ? 'todo' : key === 'blocked' ? 'blocked' : 'neutral'));
-  const span = badge(statusLabel(raw), cls);
+  const label = statusLabel(raw, over);
+  const span = badge(label, cls);
   span.dataset.status = raw;
-  if (statusLabel(raw) !== raw) span.title = raw;
-  if (key === 'lost') span.title = '작업자가 보고/종료코드 없이 사라짐';
+  if (label !== raw) span.title = raw;
+  if (key === 'lost') span.title = '감독이 사라진 실행 (종료 기록 없음)';
   return span;
+}
+
+function boardBadge(value) {
+  return statusBadge(value, BOARD_LABEL);
 }
 
 function emptyP(text) {
@@ -462,9 +353,8 @@ function requestFullViewLabel(req) {
 }
 
 async function fetchRequestFull(req) {
-  if (DEMO || req.detail_truncated !== true) return req;
-  const res = await fetch('/api/requests/' + encodeURIComponent(req.id), { headers: { Accept: 'application/json' } });
-  const body = await res.json().catch(() => ({}));
+  if (req.detail_truncated !== true) return req;
+  const { res, body } = await api('/api/requests/' + encodeURIComponent(req.id));
   if (!res.ok || !body.ok) throw new Error(body.error || ('HTTP ' + res.status));
   return Object.assign({}, req, { title: body.title, detail: body.detail, detail_truncated: false });
 }
@@ -801,7 +691,7 @@ function openTaskDetail(taskId, data) {
     meta.appendChild(detailMetaItem('작업', plainText(title) || '-'));
     meta.appendChild(detailMetaItem('슬롯', show(b ? b.slot : (sub ? sub.st.slot : (gn ? gn.n.slot : null)))));
     if (b) {
-      meta.appendChild(detailMetaItem('상태', statusBadge(b.status)));
+      meta.appendChild(detailMetaItem('상태', boardBadge(b.status)));
       meta.appendChild(detailMetaItem('출처 태스크', show(b.handoff)));
       meta.appendChild(detailMetaItem('산출물', plainText(b.artifact) || '-'));
     } else {
@@ -809,7 +699,7 @@ function openTaskDetail(taskId, data) {
     }
     if (sub) {
       meta.appendChild(detailMetaItem('요청', show(sub.req.title)));
-      meta.appendChild(detailMetaItem('요청 내 상태', statusBadge(sub.st.status)));
+      meta.appendChild(detailMetaItem('요청 내 상태', boardBadge(sub.st.status)));
       if (sub.st.harness) meta.appendChild(detailMetaItem('하네스', show(sub.st.harness)));
     }
     if (gn) {
@@ -883,40 +773,21 @@ function openManagerList(sessions) {
   openPanel('관리자 세션 ' + sessions.length + '개', (body) => {
     const sizeText = (s) => (s.record_kb === null || s.record_kb === undefined) ? '-'
       : (s.record_kb >= 1024 ? (s.record_kb / 1024).toFixed(1) + 'MB' : s.record_kb + 'KB');
-    const addTable = (list, calls) => {
-      const rows = list.map((s) => [
-        calls && s.phase ? `R${s.round} ${mgrPhaseText(s.phase)}` : show(s.label),
-        mgrStateBadge(s.session_state, s.status),
-        fmtDateTime(s.started),
-        fmtDateTime(s.updated),
-        sizeText(s),
-      ]);
-      const tw = document.createElement('div');
-      tw.className = 'tablewrap';
-      tw.appendChild(newTable(['라벨', '상태', '시작', '갱신', '기록'], rows, null, {
-        widths: [null, '80px', '150px', '150px', '70px'],
-        center: [1], ellipsis: [0],
-        rowOpen: list.map((s) => ({ fn: () => openManagerDetail(s), title: '관리자 세션 상세: ' + show(s.label, '') })),
-      }));
-      body.appendChild(tw);
-    };
-    // 같은 라운드의 호출 세션(phase 있음)은 라운드 머리글 아래로 묶는다. 상주 세션은 옛 모양 그대로 한 표.
-    let run = [];
-    const flush = () => { if (run.length) { addTable(run, false); run = []; } };
-    for (let i = 0; i < sessions.length;) {
-      const s = sessions[i];
-      if (!s.phase) { run.push(s); i += 1; continue; }
-      let k = i;
-      while (k < sessions.length && sessions[k].phase && sessions[k].round === s.round) k += 1;
-      flush();
-      const h = document.createElement('div');
-      h.className = 'manager-round-head';
-      h.textContent = `R${s.round} · 호출 ${k - i}개`;
-      body.appendChild(h);
-      addTable(sessions.slice(i, k), true);
-      i = k;
-    }
-    flush();
+    const rows = sessions.map((s) => [
+      show(s.label),
+      mgrStateBadge(s.session_state, s.status),
+      fmtDateTime(s.started),
+      fmtDateTime(s.updated),
+      sizeText(s),
+    ]);
+    const tw = document.createElement('div');
+    tw.className = 'tablewrap';
+    tw.appendChild(newTable(['라벨', '상태', '시작', '갱신', '기록'], rows, null, {
+      widths: [null, '80px', '150px', '150px', '70px'],
+      center: [1], ellipsis: [0],
+      rowOpen: sessions.map((s) => ({ fn: () => openManagerDetail(s), title: '관리자 세션 상세: ' + show(s.label, '') })),
+    }));
+    body.appendChild(tw);
   });
 }
 
@@ -947,7 +818,7 @@ function openRequestDetail(req) {
   overlay.hidden = false;
   const close = $('detail-close');
   if (close) close.focus();
-  if (req.detail_truncated === true && !DEMO) {
+  if (req.detail_truncated === true) {
     const seq = state.detailSeq;
     fetchRequestFull(req).then((full) => {
       if (seq !== state.detailSeq || !state.detailOpen) return;   // 그사이 다른 상세를 열었다
@@ -1083,17 +954,6 @@ function renderDetail(detail) {
   addDetailSection(body, '사건 (events.jsonl)', detail.events, true, true);
 }
 
-async function serverErrorReason(res) {
-  let data = null;
-  try {
-    data = await res.json();
-  } catch (err) {
-    return null;
-  }
-  if (data && typeof data.error === 'string' && data.error !== '') return data.error;
-  return null;
-}
-
 async function openDetail(runId) {
   notePanel('run:' + runId, '실행 ' + show(runId, ''), () => openDetail(runId));
   runPanelCleanups();
@@ -1111,46 +971,20 @@ async function openDetail(runId) {
   body.textContent = '가져오는 중... (' + runId + ')';
 
   let res;
+  let detail;
   try {
-    res = await fetch('/api/runs/' + encodeURIComponent(runId), {
-      headers: { Accept: 'application/json' },
-    });
+    ({ res, body: detail } = await api('/api/runs/' + encodeURIComponent(runId)));
   } catch (err) {
     if (seq !== state.detailSeq) return;
     body.textContent = '가져오기 실패: ' + (err && err.message ? err.message : String(err));
     return;
   }
-
-  if (res.status === 404) {
-    if (seq !== state.detailSeq) return;
-    const reason = await serverErrorReason(res);
-    if (seq !== state.detailSeq) return;
-    body.textContent = reason ? 'HTTP 404 - ' + reason : '404 - 실행 기록을 찾을 수 없습니다: ' + runId;
-    return;
-  }
-  if (res.status === 400) {
-    if (seq !== state.detailSeq) return;
-    const reason = await serverErrorReason(res);
-    if (seq !== state.detailSeq) return;
-    body.textContent = reason ? 'HTTP 400 - ' + reason : '400 - 잘못된 실행 id 입니다: ' + runId;
-    return;
-  }
+  if (seq !== state.detailSeq) return;
   if (!res.ok) {
-    if (seq !== state.detailSeq) return;
-    const reason = await serverErrorReason(res);
-    if (seq !== state.detailSeq) return;
-    body.textContent = reason
-      ? 'HTTP ' + res.status + ' - ' + reason
-      : '가져오기 실패: HTTP ' + res.status + ' ' + (res.statusText || '');
-    return;
-  }
-
-  let detail;
-  try {
-    detail = await res.json();
-  } catch (err) {
-    if (seq !== state.detailSeq) return;
-    body.textContent = '응답을 해석할 수 없습니다.';
+    const reason = detail && typeof detail.error === 'string' && detail.error ? detail.error : null;
+    const fallback = { 404: '404 - 실행 기록을 찾을 수 없습니다: ' + runId, 400: '400 - 잘못된 실행 id 입니다: ' + runId }[res.status]
+      || '가져오기 실패: HTTP ' + res.status + ' ' + (res.statusText || '');
+    body.textContent = reason ? 'HTTP ' + res.status + ' - ' + reason : fallback;
     return;
   }
 
@@ -1239,30 +1073,13 @@ function renderMeta(data) {
 }
 
 // ---- 관리자 세션 (.aimem/sessions/M-R<N>-…) - 상태 낱말은 서버가 준 것 그대로 (설계 5.6)
-const MGR_STATE_TEXT = {
-  running: '실행 중', launching: '띄우는 중', driving: '엔진이 그래프 실행 중', done: '끝남', failed: '실패', killed: '중단',
-  timeout: '시간 초과', stalled: '침묵으로 끊김', lost: '끊김(감독 사라짐)',
-};
-// 호출 방식 라운드의 호출 단계 (서버 PHASE_LABEL 과 같은 글자)
-const MGR_PHASE_TEXT = { plan: '① 계획', judge: '② 판정', close: '③ 마감' };
-function mgrPhaseText(p) { return MGR_PHASE_TEXT[p] || ''; }
-// 함대 카드의 호출 방식 라운드 한 줄. 상주 라운드(mode 없음)는 null 을 돌려 옛 문구를 그대로 쓴다.
-function callsRoundText(mg) {
-  if (!mg || mg.mode !== 'calls') return null;
-  const ph = mgrPhaseText(mg.phase);
-  if (mg.state === 'driving') return `R${mg.round} 호출 사이 - 엔진이 그래프를 돌리는 중` + (ph ? ` (마지막 호출: ${ph})` : '');
-  if (mg.state === 'launching') return `R${mg.round} ${ph} 호출을 띄우는 중입니다`;
-  if (mg.state === 'running') {
-    const ago = agoText(mg.last_event_at);
-    return `R${mg.round} ${ph} 호출 중` + (mg.phase === 'judge' && mg.calls ? ` (${mg.calls}번째 호출)` : '')
-      + (ago ? ` · 마지막 사건 ${ago}` : '');
-  }
-  return null;
-}
+// 세션이 끝난 까닭의 낱말 - 실행 표·관리자 카드·상세가 같은 말을 쓴다. '사라짐' 은 진짜 lost(감독이 사라지고 종료 기록 없음)만.
+const SESSION_END_TEXT = { stalled: '침묵으로 끊김', timeout: '시간 초과', failed: '실패', killed: '중단' };
+const MGR_STATE_TEXT = Object.assign({ running: '실행 중', launching: '띄우는 중', done: '끝남', lost: '사라짐' }, SESSION_END_TEXT);
 function mgrStateBadge(sessionState, status) {
   const key = sessionState || status || 'unknown';
-  const cls = key === 'running' || key === 'launching' || key === 'driving' ? 'running' : (key === 'done' ? 'done'
-    : (['failed', 'timeout', 'stalled', 'lost'].includes(key) || status === 'failed' ? 'blocked' : 'neutral'));
+  const cls = key === 'running' || key === 'launching' ? 'running' : (key === 'done' ? 'done'
+    : (['failed', 'killed', 'timeout', 'stalled', 'lost'].includes(key) ? 'blocked' : 'neutral'));
   const b = badge(MGR_STATE_TEXT[key] || show(key), cls);
   b.dataset.status = key;
   return b;
@@ -1277,20 +1094,20 @@ function lastEventText(r) {
   const ago = agoText(r.last_event_at);
   return ago ? `마지막 사건 ${ago}` + (r.last_event ? ' · ' + r.last_event : '') : '';
 }
-// 감독이 끊은 세션은 stalled/timeout 을 자기 낱말로 (옛 상태 어휘는 done/rc 로 접혀 있다)
-const SESSION_END_TEXT = { stalled: '침묵으로 끊김', timeout: '시간 초과' };
+// 실행 한 줄의 상태 - 세션 상태(session_state)를 먼저 본다. 옛 `state` 는 failed→done, killed→lost 로 접혀 있어 쓰지 않는다.
 function runStatusBadge(r) {
   const ss = r && r.session_state;
   if (ss && SESSION_END_TEXT[ss]) {
     const b = badge(SESSION_END_TEXT[ss], 'blocked');
     b.dataset.status = ss;
-    b.title = ss === 'stalled' ? '마지막 사건 뒤 침묵이 제한을 넘겨 감독이 끊음' : '벽시계 제한을 넘겨 감독이 끊음';
+    b.title = { stalled: '마지막 사건 뒤 침묵이 제한을 넘겨 감독이 끊음', timeout: '벽시계 제한을 넘겨 감독이 끊음',
+      failed: '작업자가 실패로 끝남', killed: '사람이 중단함' }[ss];
     return b;
   }
-  return statusBadge(r.state);
+  return statusBadge(ss || r.state);
 }
 
-// 운영 방침 (무료 중심 / 품질 중심 / 빠른 구현). 서버가 `fleet.policy` 를 주지 않으면(옛 서버) 화면에 아무것도 안 낸다.
+// 운영 방식 (무료 중심 / 품질 중심 / 빠른 구현). `fleet.policy` 가 없으면 화면에 아무것도 안 낸다.
 function fleetPolicy(data) {
   const p = data && data.fleet && data.fleet.policy;
   return p && Array.isArray(p.choices) && p.choices.length ? p : null;
@@ -1306,12 +1123,12 @@ function policySegment(policy, selected, name, onChange) {
   wrap.className = 'fc-policy';
   const lab = document.createElement('span');
   lab.className = 'fc-policy-lab';
-  lab.textContent = '운영 방침';
+  lab.textContent = '운영 방식';
   wrap.appendChild(lab);
   const seg = document.createElement('div');
   seg.className = 'fc-policy-seg';
   seg.setAttribute('role', 'radiogroup');
-  seg.setAttribute('aria-label', '운영 방침');
+  seg.setAttribute('aria-label', '운영 방식');
   const desc = document.createElement('div');
   desc.className = 'fc-hint fc-policy-desc';
   const radios = [];
@@ -1356,6 +1173,19 @@ const FLEET_BUTTONS = [
     confirm: '돌고 있는 작업자와 그래프 실행기를 지금 종료합니다.\n중간 산출물이 반쯤 남을 수 있습니다. 계속할까요?' },
 ];
 
+// 서버 호출 하나로: payload 가 있으면 POST(JSON), 없으면 GET. 본문이 JSON 이 아니면 {ok:false, error:'HTTP n'}.
+async function api(url, payload) {
+  const opt = { headers: { Accept: 'application/json' } };
+  if (payload !== undefined) {
+    opt.method = 'POST';
+    opt.headers['Content-Type'] = 'application/json';
+    opt.body = JSON.stringify(payload);
+  }
+  const res = await fetch(url, opt);
+  const body = await res.json().catch(() => ({ ok: false, error: 'HTTP ' + res.status }));
+  return { res, body };
+}
+
 async function fleetAction(act, confirmText, extraBody) {
   if (confirmText && !window.confirm(confirmText)) return;
   state.fleetBusy = act;
@@ -1365,17 +1195,7 @@ async function fleetAction(act, confirmText, extraBody) {
     renderClaudeUsage(state.data);
   }
   try {
-    let body;
-    if (DEMO) {
-      body = { ok: true, note: '데모 모드 - 실제로 바꾸지 않습니다' };
-    } else {
-      const res = await fetch('/api/fleet/' + act, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify(extraBody || {}),
-      });
-      body = await res.json().catch(() => ({ ok: false, error: 'HTTP ' + res.status }));
-    }
+    const { body } = await api('/api/fleet/' + act, extraBody || {});
     state.fleetMsg = { act, ok: body.ok !== false, body };
   } catch (err) {
     state.fleetMsg = { act, ok: false, body: { error: err && err.message ? err.message : String(err) } };
@@ -1389,7 +1209,7 @@ async function fleetAction(act, confirmText, extraBody) {
 
 function fleetMsgText(m) {
   const b = m.body || {};
-  const name = { prepare: '준비', run: '실행', pause: '일시 중지', stop: '완전 중지', round: '라운드 실행' }[m.act] || m.act;
+  const name = { prepare: '준비', run: '재개', pause: '일시 중지', stop: '완전 중지', round: '라운드 실행' }[m.act] || m.act;
   if (m.act === 'prepare' && Array.isArray(b.checks)) {
     const bad = b.checks.filter((c) => !c.ok && c.required).map((c) => c.name);
     return b.ok ? '준비 점검 통과 - 준비 상태입니다' : `준비 점검에서 막혔습니다: ${bad.join(', ')} (아래 목록)`;
@@ -1399,7 +1219,7 @@ function fleetMsgText(m) {
     const k = (b.killed || []).length;
     return `완전 중지 - 작업자 ${k}개 종료` + ((b.halted_graphs || []).length ? `, 그래프 ${b.halted_graphs.join(', ')} 정리` : '') + '. ' + (b.note || '');
   }
-  if (m.act === 'run') return '실행 - ' + ((b.resumed_graphs || []).length ? `그래프 ${b.resumed_graphs.join(', ')} 이어 돌림. ` : '') + (b.note || '');
+  if (m.act === 'run') return '재개 - ' + ((b.resumed_graphs || []).length ? `그래프 ${b.resumed_graphs.join(', ')} 이어 돌림. ` : '') + (b.note || '');
   if (m.act === 'round') return `라운드 R${b.round} 실행 - 관리자 세션을 띄웠습니다 (${b.brief}). 위 관리자 카드에 나타납니다`;
   return name + ' 완료';
 }
@@ -1422,21 +1242,10 @@ async function chainAction(on, target, maxRounds) {
   state.chainMsg = null;
   if (state.data) renderFleetChain(state.data);
   try {
-    let body;
-    if (DEMO) {
-      body = { ok: true };
-    } else {
-      const res = await fetch('/api/fleet/chain', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify(on
-          ? { on: true, all: !!target.all, fleet: !!target.fleet, projects: target.projects || [], max_rounds: maxRounds,
-            renew: !!target.renew, autonomous: !!target.auto,
-            ...(target.policy ? { policy: target.policy } : {}) }
-          : { on: false }),
-      });
-      body = await res.json().catch(() => ({ ok: false, error: 'HTTP ' + res.status }));
-    }
+    const { body } = await api('/api/fleet/chain', on
+      ? { on: true, all: !!target.all, fleet: !!target.fleet, projects: target.projects || [], max_rounds: maxRounds,
+        renew: !!target.renew, autonomous: !!target.auto, ...(target.policy ? { policy: target.policy } : {}) }
+      : { on: false });
     state.chainMsg = body.ok === false ? (body.error || '바꾸지 못했습니다') : null;
   } catch (err) {
     state.chainMsg = err && err.message ? err.message : String(err);
@@ -1457,6 +1266,13 @@ function chainTargetText(t) {
   return parts.join(' + ');
 }
 
+// 이어 달리기의 상한 값은 엔진이 알려 준다(fleet.chain.limits). 없으면 지금까지의 값.
+function chainLimits(f) {
+  const l = (f && f.chain && f.chain.limits) || {};
+  const n = (v, d) => (Number.isInteger(v) && v > 0 ? v : d);
+  return { default: n(l.default, 3), max: n(l.max, 10), hard: n(l.hard, 30) };
+}
+
 function renderFleetChain(data) {
   const box = $('fleet-control');
   if (!box) return;
@@ -1469,15 +1285,16 @@ function renderFleetChain(data) {
   }
   const f = (data && data.fleet) || {};
   const ch = f.chain || {};
+  const lim = chainLimits(f);
   const names = Array.from(new Set([]
     .concat((data && Array.isArray(data.projects) ? data.projects : []).map((p) => p && p.name))
     .concat((data && Array.isArray(data.requests) ? data.requests : []).map((q) => q && q.project))
     .filter(Boolean))).sort();
-  const sig = JSON.stringify([f.mode, !!ch.on, ch.label, ch.all, ch.fleet, ch.projects, ch.max_rounds, ch.autonomous, ch.renew, ch.cycles, ch.total_rounds, f.chain_modes, ch.rounds_done, ch.stopped_why, ch.stopped_kind, ch.stopped_at, names, f.policy ? [f.policy.default, f.policy.chain, f.policy.choices] : null,
+  const sig = JSON.stringify([f.mode, !!ch.on, ch.label, ch.all, ch.fleet, ch.projects, ch.max_rounds, ch.autonomous, ch.renew, ch.cycles, ch.total_rounds, f.chain_modes, ch.rounds_done, ch.stopped_why, ch.stopped_kind, ch.stopped_at, names, f.policy ? [f.policy.default, f.policy.chain, f.policy.choices, state.policyChoice] : null, lim,
     !!state.chainBusy, state.chainMsg]);
   if (el.dataset.sig === sig) return;
   el.dataset.sig = sig;
-  const keep = state.chainForm || { all: false, fleet: false, projects: [], max: 3 };
+  const keep = state.chainForm || { all: false, fleet: false, projects: [], max: lim.default };
   el.textContent = '';
   if (!f.mode) return;
   const head = document.createElement('div');
@@ -1489,12 +1306,12 @@ function renderFleetChain(data) {
   el.appendChild(head);
   if (ch.on) {
     head.appendChild(badge('켜짐', 'running'));
-    const label = ch.label || chainTargetText({ all: ch.all, fleet: ch.fleet, projects: ch.projects }) || (ch.project ? '프로젝트 ' + ch.project : '전체(프로젝트+함대)');
+    const label = ch.label || chainTargetText({ all: ch.all, fleet: ch.fleet, projects: ch.projects }) || '전체(프로젝트+함대)';
     const what = document.createElement('span');
     what.className = 'fleet-chain-what';
-    const cap = ch.max_rounds || 3;
+    const cap = ch.max_rounds || lim.default;
     const chPol = policyLabel(fleetPolicy(data), f.policy && f.policy.chain);
-    what.textContent = `${label}${chPol ? ' · ' + chPol : ''} · 상한 ${cap} 라운드 · 닿으면 ${ch.autonomous ? '새로 이어 감 (완전 자율 종주)' : (ch.renew || !ch.max_rounds) ? '새로 이어 감 (끝날 때까지)' : '멈춤'}`;
+    what.textContent = `${label}${chPol ? ' · ' + chPol : ''} · 상한 ${cap} 라운드 · 닿으면 ${ch.autonomous ? '새로 이어 감 (완전 자율 종주)' : (ch.renew || !ch.max_rounds) ? '새로 이어 감 (끝날 때까지)' : '끝에서 멈춤'}`;
     head.appendChild(what);
     const off = document.createElement('button');
     off.type = 'button';
@@ -1507,36 +1324,33 @@ function renderFleetChain(data) {
     t.className = 'fc-hint fleet-chain-note';
     t.textContent = ((ch.cycles ? `${ch.cycles + 1}번째 묶음 · ` : '') + `이번 묶음 ${ch.rounds_done || 0}/${cap} 라운드 끝남`
       + (ch.total_rounds ? ` (모두 ${ch.total_rounds} 라운드)` : '')
-      + ' · 라운드가 끝나면 고른 대상에 열린 요청이나 체크 안 된 목표가 남았는지 보고, 새 관리자로 다음 라운드를 띄웁니다');
+      + ' · 끝날 때마다 열린 요청·남은 목표를 보고 새 관리자로 다음 라운드를 띄웁니다');
     el.appendChild(t);
   } else {
-    // ---- 지난번에 왜 멈췄나: 다 끝낸 것인지, 상한·안전 상한인지, 막힌 것인지 종류별로 다르게 알린다 (2026-11-11 태석님)
+    // ---- 지난번에 왜 멈췄나: 제목 한 줄 + 다음에 할 일 한 줄. 엔진이 적은 까닭(stopped_why)은 마우스를 올리면 보인다.
     if (ch.stopped_why) {
       const KIND = {
-        done: ['done', '다 끝냈습니다', '남은 일이 없어 스스로 멈췄습니다. 새 요청이 생기면 다시 켜면 됩니다'],
-        cap: ['warn', '상한 라운드를 채워 멈췄습니다', "남은 일이 있습니다. 계속하려면 다시 켜거나, '새로 이어 달리기' 로 켜면 상한마다 새로 이어 갑니다"],
-        safety: ['warn', '안전 상한(모두 30 라운드)에 닿아 멈췄습니다', '남은 일이 있습니다. 진행 상황을 한 번 확인한 뒤 다시 켜면 이어 갑니다'],
-        stuck: ['bad', '진전이 없어 멈췄습니다', '한 라운드 동안 닫힌 요청도 늘어난 목표도 없었습니다. 그 라운드의 종료 보고를 보고 요청을 고치거나 나눈 뒤 다시 켜십시오'],
-        report: ['bad', '관리자 보고가 DONE 이 아니어서 멈췄습니다', `그 라운드의 종료 보고(rounds/R${ch.stopped_round || '<N>'}/REPORT.md)를 확인하십시오. 고친 뒤 다시 켜면 이어 갑니다`],
-        error: ['bad', '다음 라운드를 띄우지 못해 멈췄습니다', "준비 점검이나 관리자 기동에서 막혔습니다. 위의 '준비' 를 눌러 무엇이 막는지 확인하십시오"],
+        done: ['done', '다 끝냈습니다', '새 요청이 생기면 다시 켜십시오'],
+        cap: ['warn', '상한 라운드를 채워 멈췄습니다', "남은 일이 있습니다 - 다시 켜거나 '새로 이어 달리기' 로 켜십시오"],
+        safety: ['warn', `안전 상한(모두 ${lim.hard} 라운드)에 닿아 멈췄습니다`, '진행 상황을 확인한 뒤 다시 켜십시오'],
+        stuck: ['bad', '진전이 없어 멈췄습니다', '직전 라운드의 종료 보고를 보고 요청을 고치거나 나눈 뒤 다시 켜십시오'],
+        report: ['bad', '관리자 보고가 DONE 이 아니어서 멈췄습니다', `rounds/R${ch.stopped_round || '<N>'}/REPORT.md 를 확인하고 다시 켜십시오`],
+        error: ['bad', '다음 라운드를 띄우지 못해 멈췄습니다', "'준비' 를 눌러 무엇이 막는지 확인하십시오"],
         wait: ['bad', '라운드가 끝나지 않아 기다리기를 그만두었습니다', '관리자 세션이 살아 있는지 확인하십시오'],
-        off: ['info', '사람이 껐습니다', ''],
+        off: ['info', '', ''],
       };
-      const [tone, head1, next] = KIND[ch.stopped_kind] || ['info', '지난번에 멈춘 이유', ''];
+      const [tone, head1, next] = KIND[ch.stopped_kind] || ['info', '', ''];
       const note = document.createElement('div');
       note.className = 'fleet-chain-stop is-' + tone;
       note.setAttribute('role', 'status');
+      note.title = String(ch.stopped_why);
       const h = document.createElement('div');
       h.className = 'fleet-chain-stop-head';
-      h.textContent = head1
+      // 사람이 끈 경우의 제목은 엔진의 까닭 그대로 (한 번만 적는다)
+      h.textContent = (head1 || show(ch.stopped_why))
         + (ch.stopped_round ? ` · R${ch.stopped_round} 뒤` : '')
         + (ch.stopped_at ? ` · ${fmtDateTime(ch.stopped_at)}` : '');
       note.appendChild(h);
-      const body = document.createElement('div');
-      body.className = 'fleet-chain-stop-body';
-      const ran = ch.total_rounds || ch.rounds_done || 0;
-      body.textContent = show(ch.stopped_why) + (ran ? ` (이어 띄운 라운드 ${ran}회` + (ch.cycles ? `, 묶음 ${ch.cycles + 1}개` : '') + ')' : '');
-      note.appendChild(body);
       if (next) {
         const n2 = document.createElement('div');
         n2.className = 'fleet-chain-stop-next';
@@ -1584,12 +1398,6 @@ function renderFleetChain(data) {
       tx.textContent = it.text;
       lab.appendChild(cb);
       lab.appendChild(tx);
-      if (it.value !== '') {
-        const kind = document.createElement('span');
-        kind.className = 'fleet-chain-kind';
-        kind.textContent = '프로젝트';
-        lab.appendChild(kind);
-      }
       grid.appendChild(lab);
       boxes.push(cb);
     }
@@ -1609,11 +1417,11 @@ function renderFleetChain(data) {
     const num = document.createElement('input');
     num.type = 'number';
     num.min = '1';
-    num.max = '10';
-    num.value = String(keep.max || 3);
+    num.max = String(lim.max);
+    num.value = String(keep.max || lim.default);
     num.className = 'fleet-chain-max';
     num.setAttribute('aria-label', '상한 라운드');
-    num.title = '한 묶음에서 이어 띄울 라운드 수 (1~10). 라운드마다 새 관리자가 뜹니다';
+    num.title = `한 묶음에서 이어 띄울 라운드 수 (1~${lim.max}). 라운드마다 새 관리자가 뜹니다`;
     capLine.appendChild(num);
     const capTxt = document.createElement('span');
     capTxt.className = 'fc-hint';
@@ -1628,7 +1436,6 @@ function renderFleetChain(data) {
     modes.className = 'fleet-chain-modes';
     modes.setAttribute('role', 'radiogroup');
     modes.setAttribute('aria-label', '상한에 닿으면 할 일');
-    const known = Array.isArray(f.chain_modes) ? f.chain_modes : [];
     const radios = {};
     const curMode = keep.mode || 'stop';
     const addMode = (key, text, sub, tip) => {
@@ -1654,23 +1461,23 @@ function renderFleetChain(data) {
       modes.appendChild(lab);
       radios[key] = r;
     };
-    addMode('stop', '멈춤', '상한만큼 돌고 끝', '상한 라운드를 채우면 멈춥니다. 남은 일이 있으면 다시 켭니다');
+    addMode('stop', '끝에서 멈춤', '상한만큼 돌고 끝', '상한 라운드를 채우면 멈춥니다. 남은 일이 있으면 다시 켭니다');
     addMode('renew', '새로 이어 달리기', '끝날 때까지',
       '상한을 채우면 새 묶음으로 넘어가 라운드 수를 다시 세며 이어 갑니다. 남은 일이 없을 때까지 갑니다. 보고가 DONE 이 아니거나 진전이 없으면 멈춥니다');
-    if (known.includes('autonomous')) {                      // 서버가 아는 방식만 보인다
-      addMode('autonomous', '완전 자율 종주', '막혀도 한 번 더',
-        '새 묶음으로 이어 가며 끝까지 갑니다. 보고가 DONE 이 아니거나 진전이 없어도 한 번은 더 가 보고, 연달아 두 번 막히면 멈춥니다');
-    }
+    addMode('autonomous', '완전 자율 종주', '막혀도 한 번 더',
+      '새 묶음으로 이어 가며 끝까지 갑니다. 보고가 DONE 이 아니거나 진전이 없어도 한 번은 더 가 보고, 연달아 두 번 막히면 멈춥니다');
     if (!Object.values(radios).some((r) => r.checked)) radios.stop.checked = true;
     sec2.appendChild(modes);
     el.appendChild(sec2);
 
+    // 운영 방식은 '라운드 실행' 옆의 한 곳에서 고른다 - 여기서는 지금 고른 것을 글로만 보인다
     const pol = fleetPolicy(data);
-    let polSeg = null;
+    const polKey = pol ? policySelected(pol, state.policyChoice) : null;
     if (pol) {
-      polSeg = policySegment(pol, policySelected(pol, keep.policy || pol.chain || pol.default), 'fleet-chain-policy', (k) => { sync(); });
-      polSeg.el.classList.add('fleet-chain-policy');
-      el.appendChild(polSeg.el);
+      const pt = document.createElement('div');
+      pt.className = 'fc-hint fleet-chain-policy';
+      pt.textContent = '운영 방식: ' + policyLabel(pol, polKey);
+      el.appendChild(pt);
     }
     const on = document.createElement('button');
     on.type = 'button';
@@ -1689,7 +1496,7 @@ function renderFleetChain(data) {
         renew: mode !== 'stop',
         auto: mode === 'autonomous',
         max: Number(num.value) || 0,
-        policy: polSeg ? polSeg.get() : undefined,
+        policy: polKey || undefined,
       };
     };
     const sync = () => {
@@ -1726,25 +1533,12 @@ function renderFleetChain(data) {
       sync();
       const t = state.chainForm;
       if (!t.fleet && !t.projects.length) return fail("무엇을 이어 달릴지 하나 이상 체크하십시오 - 함대나 프로젝트를 고르거나 '모두 선택' 을 누르십시오");
-      if (!(t.max >= 1 && t.max <= 10)) return fail('상한 라운드는 1~10 으로 적어 주십시오');
-      // 서버가 아직 '새로 이어 달리기' 를 모르면(다시 띄우기 전) 옛 방식(상한 0 = 끝날 때까지)으로 보낸다
-      const rounds = (t.renew && !known.includes('renew')) ? 0 : t.max;
-      const how = t.auto ? `상한 ${t.max} 라운드씩, 닿으면 새로 이어 가며 완전 자율 종주로`
-        : t.renew ? `상한 ${t.max} 라운드씩, 닿으면 새로 이어 가며 끝날 때까지` : `최대 ${t.max}번까지`;
-      if (!window.confirm(`${chainTargetText(t)} 에 열린 요청이나 체크 안 된 목표가 남아 있는 동안 라운드를 ${how} 이어 띄웁니다.\n`
-        + '라운드마다 유료 관리자(Opus)가 한 번씩 뜹니다. '
-        + (t.auto ? '보고가 DONE 이 아니거나 진전이 없어도 한 번은 더 가고, 연달아 두 번 막히면 멈춥니다. 남은 일이 없으면 끝납니다.\n'
-          : '남은 일이 없거나, 보고가 DONE 이 아니거나, 한 라운드에 닫힌 요청도 늘어난 목표도 없으면 스스로 멈춥니다.\n')
-        + "지금 도는 라운드가 있으면 그 라운드부터, 없으면 '라운드 실행' 을 누른 라운드부터 이어 갑니다. 켤까요?")) return undefined;
-      return chainAction(true, t, rounds);
+      if (!(t.max >= 1 && t.max <= lim.max)) return fail(`상한 라운드는 1~${lim.max} 으로 적어 주십시오`);
+      return chainAction(true, t, t.max);
     });
     sync();
     const foot = document.createElement('div');
     foot.className = 'fleet-chain-foot';
-    const hint = document.createElement('div');
-    hint.className = 'fc-hint fleet-chain-note';
-    hint.textContent = '꺼져 있습니다. 켜 두면 라운드가 끝났을 때 고른 대상에 열린 요청이나 체크 안 된 목표가 남아 있는 동안 다음 라운드를 스스로 띄웁니다';
-    foot.appendChild(hint);
     foot.appendChild(on);
     el.appendChild(foot);
   }
@@ -1774,38 +1568,33 @@ function syncNewProjectInput(sel, input, focus) {
   }
 }
 
-function renderProjectPicker(data) {
-  const sel = $('req-project-pick');
-  if (!sel) return;
-  const input = $('req-project');
-  const names = projectNameList(data);
-  const namesKey = names.join('|');
-  if (sel.dataset.names !== namesKey) {     // 바뀔 때만 다시 채운다 (고르는 중 목록이 깜박이지 않게)
-    const current = sel.value;
+// 프로젝트 고르기(<select> + 새 이름 입력) - 작업 요청 폼과 요청 수정 폼이 같이 쓴다. 이름 목록이 바뀔 때만 다시 채워
+// 고르는 중에 목록이 깜박이지 않는다. `current` 가 있으면(수정 폼) 그 값을 고른 채로 시작한다.
+function fillProjectPicker(sel, input, names, current) {
+  const extra = current && !names.includes(current) ? current : null;   // 목록에 없는 현재 값도 고를 수 있게
+  const key = names.join('|') + (extra ? '|+' + extra : '');
+  if (sel.dataset.names !== key) {
+    const keep = current !== undefined ? current : sel.value;
     const options = [];
-    const base = document.createElement('option');
-    base.value = '';
-    base.textContent = '(함대 자체의 일 - 프로젝트 없음)';
-    options.push(base);
-    for (const name of names) {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name;
-      options.push(opt);
-    }
-    const fresh = document.createElement('option');
-    fresh.value = '__new__';
-    fresh.textContent = '+ 새 프로젝트…';
-    options.push(fresh);
+    const mk = (value, text) => { const o = document.createElement('option'); o.value = value; o.textContent = text; options.push(o); };
+    mk('', '(함대 자체의 일 - 프로젝트 없음)');
+    for (const name of names) mk(name, name);
+    if (extra) mk(extra, extra);
+    mk('__new__', '+ 새 프로젝트…');
     sel.replaceChildren(...options);
-    sel.dataset.names = namesKey;
-    sel.value = (current === '__new__' || names.includes(current)) ? current : '';
+    sel.dataset.names = key;
+    sel.value = (keep === '__new__' || names.includes(keep) || keep === extra) ? keep : '';
   }
   if (!sel.dataset.bound) {
     sel.dataset.bound = '1';
     sel.addEventListener('change', () => syncNewProjectInput(sel, input, true));
   }
   syncNewProjectInput(sel, input, false);
+}
+
+function renderProjectPicker(data) {
+  const sel = $('req-project-pick');
+  if (sel) fillProjectPicker(sel, $('req-project'), projectNameList(data));
 }
 
 function fmtUsageReset(value) {
@@ -1880,6 +1669,17 @@ function renderClaudeUsage(data) {
   }
 }
 
+// 함대가 '실행' 인데 도는 것이 하나도 없으면 '실행 (대기)' - '실행 중' 과 헷갈리지 않게
+function fleetModeLabel(f) {
+  return show(f.label) + (f.idle && f.mode === 'running' ? ' (대기)' : '');
+}
+
+// 유료 관리자 - 모델 이름은 엔진이 알려 줄 때만 붙인다
+function paidManager(f) {
+  const m = f && f.manager && f.manager.model;
+  return '유료 관리자' + (m ? `(${m})` : '');
+}
+
 function renderFleetControl(data) {
   renderFleetChain(data);
   const box = $('fleet-control');
@@ -1887,9 +1687,9 @@ function renderFleetControl(data) {
   const f = data.fleet || {};
   const md = f.mode;
   if (pill) {
-    pill.textContent = md ? '함대: ' + show(f.label) : '';
+    pill.textContent = md ? '함대: ' + fleetModeLabel(f) : '';
     pill.className = 'mode-pill' + (md ? ' mode-' + md : '');
-    pill.title = f.note ? `${show(f.label)} - ${f.note} (${fmtDateTime(f.at)}, ${show(f.by)})` : '';
+    pill.title = f.note ? `${fleetModeLabel(f)} - ${f.note} (${fmtDateTime(f.at)}, ${show(f.by)})` : '';
   }
   if (!box) return;
   box.textContent = '';
@@ -1903,13 +1703,12 @@ function renderFleetControl(data) {
   title.className = 'manager-title';
   title.textContent = '함대';
   head.appendChild(title);
-  head.appendChild(badge(show(f.label), MODE_BADGE[md] || 'neutral'));
+  head.appendChild(badge(fleetModeLabel(f), MODE_BADGE[md] || 'neutral'));
   const meta = document.createElement('span');
   meta.className = 'fc-meta';
   const bits = [];
   if (f.at) bits.push(fmtDateTime(f.at) + ' · ' + show(f.by));
   if (f.default) bits.push('상태 파일 없음(기본값)');
-  if (f.idle) bits.push('도는 라운드 없음');
   if (f.running_runs) bits.push(`작업자 ${f.running_runs}개 실행 중`);
   if (Array.isArray(f.graphs) && f.graphs.length) bits.push('미완 그래프 ' + f.graphs.map((g) => {
     // 진척을 첫 화면에서 본다 - 전에는 요청 트리 탭까지 가야 했다
@@ -1952,25 +1751,22 @@ function renderFleetControl(data) {
   rb.disabled = !!state.fleetBusy || !can.round;
   const briefName = brief.standard ? '표준 브리프 (할 일 = 웹 NEW 요청)' : brief.file;
   rb.title = brief.file
-    ? `새 관리자 라운드를 띄웁니다 (유료 Opus). 브리프: ${briefName}`
+    ? `새 ${paidManager(f)} 라운드를 띄웁니다. 브리프: ${briefName}`
       + (can.round ? (f.idle ? ' - 준비 점검을 먼저 돌린 뒤 띄웁니다' : '') : (md === 'running' ? ' - 지금 라운드가 끝난 뒤에' : ' - 먼저 준비를 누르십시오'))
     : '확정된 다음 라운드 브리프가 없습니다' + (brief.drafts && brief.drafts.length ? ` (초안: ${brief.drafts.join(', ')})` : '');
   rb.addEventListener('click', () => {
+    // 화면에 다 보이는 것을 되묻지 않는다 - 할 일이 없을 때만 확인
     const reqs = (data && Array.isArray(data.requests)) ? data.requests : [];
     const nNew = reqs.filter((q) => String(q.status || '').toUpperCase() === 'NEW').length;
-    const todo = brief.standard
-      ? (nNew ? `할 일: 새 작업 요청 ${nNew}건` : "할 일: 새 작업 요청이 없습니다 - 관리자는 점검만 하고 끝냅니다. 시킬 일이 있으면 취소하고 '할 일 쓰기' 로 먼저 넣으십시오")
-      : `브리프: ${briefName}`;
     const pk = polSeg ? polSeg.get() : null;
-    const pl = pk ? policyLabel(pol, pk) : '';
-    fleetAction('round', `새 관리자 라운드 R${brief.round} 를 띄웁니다 (유료 Opus 세션).\n${todo}${pl ? `\n운영 방침: ${pl}` : ''}\n계속할까요?`, pk ? { policy: pk } : undefined);
+    fleetAction('round', brief.standard && !nNew ? "할 일이 없습니다 - 관리자는 점검만 하고 끝냅니다. 그래도 띄울까요?" : null, pk ? { policy: pk } : undefined);
   });
   row.appendChild(rb);
   box.appendChild(row);
   const pol = fleetPolicy(data);
   let polSeg = null;
   if (pol) {
-    polSeg = policySegment(pol, policySelected(pol, state.policyChoice), 'fleet-round-policy', (k) => { state.policyChoice = k; });
+    polSeg = policySegment(pol, policySelected(pol, state.policyChoice), 'fleet-round-policy', (k) => { state.policyChoice = k; renderFleetChain(state.data); });
     box.appendChild(polSeg.el);
   }
 
@@ -1983,7 +1779,7 @@ function renderFleetControl(data) {
     const fresh = reqs.filter((q) => String(q.status || '').toUpperCase() === 'NEW');
     const txt = document.createElement('span');
     // 라운드가 도는 중에는 '지금 도는 라운드' 를 먼저 보인다 - 다음 번호만 보여 R7 이 도는데 R8 로 읽혔다 (2026-11-10 R7 실측)
-    const curRound = (md === 'running' && !f.idle && f.manager && f.manager.round && ['launching', 'running', 'driving'].includes(f.manager.state)) ? f.manager : null;
+    const curRound = (md === 'running' && !f.idle && f.manager && f.manager.round && ['launching', 'running'].includes(f.manager.state)) ? f.manager : null;
     if (curRound) {
       const now = document.createElement('div');
       now.className = 'fc-hint-now';
@@ -2031,11 +1827,7 @@ function renderFleetControl(data) {
   if (mg && mg.round) {
     const r = document.createElement('div');
     r.className = 'fc-hint';
-    const ct = callsRoundText(mg);
-    if (ct) {
-      r.textContent = ct;
-      r.dataset.status = mg.state;
-    } else if (mg.state === 'launching') {
+    if (mg.state === 'launching') {
       r.textContent = `R${mg.round} 관리자를 띄우는 중입니다`;
     } else if (mg.state === 'running') {
       const ago = agoText(mg.last_event_at);
@@ -2072,11 +1864,10 @@ function renderFleetControl(data) {
     const failed = prep.checks.filter((c) => !c.ok);
     // 준비 점검은 누른 순간의 결과다. 오래된 결과가 '막힘' 으로 계속 떠 있으면 지금 상태로 읽힌다 (REV 145)
     const ageMin = (Date.now() - parseTime(prep.at)) / 60000;
-    const old = Number.isFinite(ageMin) && ageMin > 30;
-    const ageText = !old ? '' : (ageMin < 90 ? `${Math.round(ageMin)}분 전` : (ageMin < 48 * 60 ? `${Math.round(ageMin / 60)}시간 전` : `${Math.round(ageMin / 1440)}일 전`));
-    sum.textContent = (old ? '지난 준비 점검 ' : '준비 점검 ') + `${fmtDateTime(prep.at)} - ${prep.ok ? '통과' : '막힘'}`
-      + (failed.length ? ` (${failed.length}건 미통과)` : '')
-      + (old ? ` · ${ageText} 결과라 지금 상태가 아닙니다 - '준비' 를 누르면 다시 점검합니다` : '');
+    const old = Number.isFinite(ageMin) && ageMin > 30;      // 오래된 결과는 흐리게 (지금 상태가 아니다)
+    const ago = !Number.isFinite(ageMin) ? '' : (ageMin < 90 ? `${Math.round(ageMin)}분 전` : (ageMin < 48 * 60 ? `${Math.round(ageMin / 60)}시간 전` : `${Math.round(ageMin / 1440)}일 전`));
+    sum.textContent = `준비 점검 ${ageMin < 720 ? fmtTime(prep.at, { date: false }) : fmtDateTime(prep.at)}` + (ago ? ` (${ago})` : '')
+      + ` - ${prep.ok ? '통과' : '막힘'}` + (failed.length ? ` (${failed.length}건 미통과)` : '');
     if (old) det.classList.add('fc-prep-old');
     det.appendChild(sum);
     const ul = document.createElement('ul');
@@ -2094,17 +1885,15 @@ function renderFleetControl(data) {
 
 function managerActivity(data) {
   const runs = Array.isArray(data.runs) ? data.runs : [];
-  const running = runs.filter((r) => r && r.state === 'running');
+  const running = runs.filter((r) => r && r.state === 'running' && r.role !== 'manager');
   const graphs = Array.isArray(data.graphs) ? data.graphs : [];
-  const live = graphs.filter((g) => !graphFinished(g) && !graphStale(g));
+  const live = graphs.filter((g) => !graphFinished(g) && g.runner);
   if (live.length) {
     return `그래프 ${live.map((g) => g.id).join(', ')} 실행 중 · 작업자 ${running.length}개 가동`;
   }
   if (running.length) return `작업자 ${running.length}개 가동 중 (그래프 밖 단건 실행)`;
   return '직접 작업 중 (계획·검증·보고 작성) - 이 동안 작업자는 0개입니다';
 }
-
-const MANAGER_IDLE_WARN_SEC = 600;
 
 function detailRows(parent, title, rows) {
   const sec = document.createElement('section');
@@ -2148,8 +1937,7 @@ async function openManagerDetail(cur, all = false) {
   state.detailOpen = true;
   state.detailSeq += 1;
   const seq = state.detailSeq;
-  $('detail-label').textContent = '관리자 - ' + show(cur.label)
-    + (cur.phase && mgrPhaseText(cur.phase) && !String(cur.label || '').includes(mgrPhaseText(cur.phase)) ? ' ' + mgrPhaseText(cur.phase) : '');
+  $('detail-label').textContent = '관리자 - ' + show(cur.label);
   const body = $('detail-body');
   body.textContent = '';
   body.appendChild(emptyP('불러오는 중…'));
@@ -2158,10 +1946,9 @@ async function openManagerDetail(cur, all = false) {
   if (close) close.focus();
   let d;
   try {
-    if (DEMO) throw new Error('데모 모드에는 관리자 기록이 없습니다');
-    const res = await fetch('/api/managers/' + encodeURIComponent(cur.id) + (all ? '?all=1' : ''), { headers: { Accept: 'application/json' } });
-    d = await res.json().catch(() => ({}));
-    if (!res.ok || !d.ok) throw new Error(d.error || ('HTTP ' + res.status));
+    const r = await api('/api/managers/' + encodeURIComponent(cur.id) + (all ? '?all=1' : ''));
+    d = r.body;
+    if (!r.res.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.res.status));
   } catch (err) {
     if (seq !== state.detailSeq) return;
     body.textContent = '';
@@ -2179,7 +1966,7 @@ async function openManagerDetail(cur, all = false) {
   meta.appendChild(detailMetaItem('상태', MGR_STATE_TEXT[s.session_state] || (isRun ? '실행 중' : show(s.status)) + (s.orphaned ? ' (감독 없이 도는 중)' : '')));
   meta.appendChild(detailMetaItem('시작', fmtDateTime(s.started)));
   meta.appendChild(detailMetaItem(isRun ? '경과' : '소요', Number.isFinite(st) ? fmtElapsed(((isRun ? Date.now() : (Number.isFinite(la) ? la : Date.now())) - st) / 1000) : '-'));
-  meta.appendChild(detailMetaItem('마지막 활동', Number.isFinite(la) ? fmtDateTime(d.last_activity) + ` (${fmtElapsed((Date.now() - la) / 1000)} 전)` : '-'));
+  meta.appendChild(detailMetaItem('마지막 사건', Number.isFinite(la) ? fmtDateTime(d.last_activity) + ` (${fmtElapsed((Date.now() - la) / 1000)} 전)` : '-'));
   meta.appendChild(detailMetaItem('단계', show(d.steps_total)));
   meta.appendChild(detailMetaItem('사건 기록', d.record_kb != null ? (d.record_kb >= 1024 ? (d.record_kb / 1024).toFixed(1) + 'MB' : d.record_kb + 'KB') : '-'));
   body.appendChild(meta);
@@ -2226,7 +2013,7 @@ function appendPolicyChip(head, data) {
   if (!t) return;
   const c = badge(t, 'neutral');
   c.classList.add('manager-policy');
-  c.title = '이 라운드의 운영 방침';
+  c.title = '이 라운드의 운영 방식';
   head.appendChild(c);
 }
 
@@ -2270,19 +2057,12 @@ function renderManager(data) {
     return;
   }
   const isRun = cur.status === 'running';
-  const driving = !!(mg && mg.state === 'driving' && !isRun);
-  head.appendChild(driving ? mgrStateBadge('driving') : mgrStateBadge(cur.session_state, cur.status));
+  head.appendChild(mgrStateBadge(cur.session_state, cur.status));
   appendPolicyChip(head, data);
   const label = document.createElement('span');
   label.className = 'manager-label';
   label.textContent = show(cur.label);
   head.appendChild(label);
-  if (cur.phase && mgrPhaseText(cur.phase)) {
-    const ph = document.createElement('span');
-    ph.className = 'manager-phase';
-    ph.textContent = (cur.round ? 'R' + cur.round + ' ' : '') + mgrPhaseText(cur.phase);
-    head.appendChild(ph);
-  }
   box.appendChild(head);
 
   const detailBtn = document.createElement('button');
@@ -2295,7 +2075,6 @@ function renderManager(data) {
   const what = document.createElement('div');
   what.className = 'manager-what';
   what.textContent = isRun ? managerActivity(data)
-    : driving ? `R${mg.round} 호출 사이 - 엔진이 그래프를 돌리는 중입니다`
     : '실행 중인 관리자 없음' + ((data.fleet || {}).idle ? ' - 라운드가 끝났습니다' : ' - 함대는 다음 라운드 대기(정지) 상태입니다');
   box.appendChild(what);
 
@@ -2310,10 +2089,6 @@ function renderManager(data) {
     if (cur.steps) parts.push(`${cur.steps}단계`);
     if (cur.last_step) parts.push('최근: ' + cur.last_step);
     act.textContent = parts.join(' · ');
-    if (idle !== null && idle > MANAGER_IDLE_WARN_SEC) {
-      act.classList.add('is-warn');
-      act.title = '관리자 사건이 오래 없었습니다. 긴 작업자 대기(fleet_graph run)일 수도, 멈춘 것일 수도 있습니다 - 상세 보기로 확인';
-    }
     box.appendChild(act);
   }
 
@@ -2344,10 +2119,8 @@ function renderManager(data) {
 // ---- 슬롯 관리 (2026-11-10, 태석님 지시) - 추가/변경/삭제, 모델은 fleet.toml 목록에서
 async function loadModels(force = false) {
   if (state.models && !force) return state.models;
-  if (DEMO) { state.models = { ok: true, models: [] }; return state.models; }
   try {
-    const res = await fetch('/api/models', { headers: { Accept: 'application/json' } });
-    state.models = await res.json();
+    state.models = (await api('/api/models')).body;
   } catch (err) {
     state.models = { ok: false, models: [], error: err && err.message ? err.message : String(err) };
   }
@@ -2355,8 +2128,7 @@ async function loadModels(force = false) {
 }
 
 async function slotRequest(url, payload) {
-  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(payload) });
-  const body = await res.json().catch(() => ({ ok: false, error: 'HTTP ' + res.status }));
+  const { res, body } = await api(url, payload);
   return { ok: res.ok && body.ok !== false, body };
 }
 
@@ -2428,16 +2200,22 @@ function openSlotForm(existing, runId, isRunning) {
     actions.appendChild(save);
     if (!isNew) {
       const del = document.createElement('button'); del.type = 'button'; del.className = 'btn-danger'; del.textContent = '이 슬롯 삭제';
-      del.addEventListener('click', async () => {
-        if (!window.confirm(`${existing.slot} 을(를) 명부에서 지웁니다. 끝나지 않은 태스크가 있으면 거절됩니다. 계속할까요?`)) return;
+      const removeSlot = async (force) => {
         del.disabled = true;
-        const r = await slotRequest(`/api/slots/${existing.slot}/remove`, {});
-        if (!r.ok && /끝나지 않은 태스크/.test(r.body.error || '') && window.confirm(r.body.error + '\n\n그래도 강제로 지울까요?')) {
-          const r2 = await slotRequest(`/api/slots/${existing.slot}/remove`, { force: true });
-          Object.assign(r, r2);
+        const r = await slotRequest(`/api/slots/${existing.slot}/remove`, force ? { force: true } : {});
+        if (r.ok) { closeDetail(); state.slotMsg = { ok: true, text: `${existing.slot} 삭제됨` + (r.body.notice ? ` · 관리자 통지 요청 ${r.body.notice} 생성` : '') }; await refresh(); return; }
+        del.disabled = false;
+        msg.textContent = r.body.error || '실패';
+        msg.classList.add('is-error');
+        // 미완 태스크가 있어 엔진이 거절하면 그 말 그대로 보이고, 그래도 지우려면 이 단추 하나 (확인창 없음)
+        if (/끝나지 않은 태스크/.test(r.body.error || '') && !actions.querySelector('.slot-force')) {
+          const fb = document.createElement('button'); fb.type = 'button'; fb.className = 'btn-danger slot-force'; fb.textContent = '강제로 지움';
+          fb.addEventListener('click', () => { fb.remove(); removeSlot(true); });
+          actions.appendChild(fb);
         }
-        if (r.ok) { closeDetail(); state.slotMsg = { ok: true, text: `${existing.slot} 삭제됨` + (r.body.notice ? ` · 관리자 통지 요청 ${r.body.notice} 생성` : '') }; await refresh(); }
-        else { del.disabled = false; msg.textContent = r.body.error || '실패'; msg.classList.add('is-error'); }
+      };
+      del.addEventListener('click', () => {
+        if (window.confirm(`${existing.slot} 을(를) 명부에서 지웁니다. 계속할까요?`)) removeSlot(false);
       });
       actions.appendChild(del);
     }
@@ -2445,7 +2223,7 @@ function openSlotForm(existing, runId, isRunning) {
     let modelSel = null;
     const rebuildModels = (models, keepCurrent = true) => {
       modelWrap.textContent = '';
-      const cur = !keepCurrent ? '' : (modelSel ? modelSel.value : (existing ? show(existing.model_raw || existing.model, '') : ''));
+      const cur = !keepCurrent ? '' : (modelSel ? modelSel.value : (existing ? show(existing.model, '') : ''));
       modelSel = modelOptions(models, harnessSel.value, cur);
       modelWrap.appendChild(modelSel);
       if (models && models.ok === false) { const e = document.createElement('div'); e.className = 'hint is-error'; e.textContent = '모델 목록 실패: ' + show(models.error, ''); modelWrap.appendChild(e); }
@@ -2697,45 +2475,17 @@ const BOARD_FILTERS = [
   { key: 'all', label: '전체', test: () => true },
 ];
 
-// ---- 끝난 것 정리 (아카이브, 2026-11-10) - 8.0 보관·폐기를 웹에서. 미리보기(dry_run) → 확인 → 실행
+// ---- 끝난 것 정리 (아카이브, 2026-11-10) - 8.0 보관·폐기를 웹에서. 미리보기(dry_run) → 실행 (미리보기가 곧 확인)
 async function archiveRequest(days, dryRun) {
-  const res = await fetch('/api/archive', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ days, dry_run: dryRun }) });
-  const body = await res.json().catch(() => ({ ok: false, error: 'HTTP ' + res.status }));
+  const { res, body } = await api('/api/archive', { days, dry_run: dryRun });
   return { ok: res.ok && body.ok !== false, body };
 }
 
 function openArchivePanel() {
   openPanel('끝난 것 정리 (아카이브)', (body) => {
-    // 무엇이 정리되는지 풀어서 적는다 (2026-11-11 태석님: 요청·그래프도 같이 정리되는 줄 몰랐다)
-    const intro = document.createElement('div');
+    const intro = document.createElement('p');
     intro.className = 'hint archive-intro';
-    const lead = document.createElement('p');
-    lead.textContent = '끝난 일을 화면에서 치웁니다. 보드의 태스크만이 아니라 요청 트리의 요청과 그래프도 함께 정리됩니다.';
-    intro.appendChild(lead);
-    const ul = document.createElement('ul');
-    for (const [what, where] of [
-      ['끝난 태스크 (DONE)', '보드에서 사라지고 archive/board-<월>.md 에 남습니다'],
-      ['닫힌 작업 요청 (DONE·REJECTED)', '요청 트리에서 사라지고 archive/requests-<월>/ 로 옮겨집니다'],
-      ['노드가 모두 끝난 그래프 (분담 트리)', '요청 트리의 태스크 그래프에서 사라지고, 브리프·로그·입력 파일과 함께 archive/graph-<월>/ 로 옮겨집니다'],
-      ['작업자 실행 기록', '함대 탭 작업자 실행 상태에서 사라지고 archive/runs-<월>/ 로 옮겨집니다'],
-      ['이벤트', '보드·큐 탭의 이벤트 목록에서 사라지고 archive/events-<월>.jsonl 로 옮겨집니다'],
-      ['핸드오프 (최신 12건 제외)', 'archive/handoff-<월>.md 로 옮겨집니다 - 최신 12건은 무엇이든 남습니다'],
-      ['옛 전달 기록 (.aimem/relay, 이전 체제)', '남아 있으면 그 라운드의 그래프가 모두 정리될 때 archive/relay-<월>/ 로 함께 옮겨집니다'],
-      ['오래된 로그 줄', 'monitor.log·fleet-mode.log 의 기준 시각보다 오래된 줄만. 접속 기록(access.log)은 건드리지 않습니다'],
-    ]) {
-      const li = document.createElement('li');
-      const b = document.createElement('strong');
-      b.textContent = what;
-      li.appendChild(b);
-      li.appendChild(document.createTextNode(' - ' + where));
-      ul.appendChild(li);
-    }
-    intro.appendChild(ul);
-    const tail = document.createElement('p');
-    tail.textContent = '지우는 것이 아니라 .aimem/archive/ 로 옮기는 것이라 나중에 찾아볼 수 있습니다. 아직 도는 그래프와 열린 요청은 건드리지 않고, '
-      + '프로젝트 진행률에는 정리한 요청도 계속 셉니다. 먼저 미리보기로 무엇이 옮겨지는지 확인한 뒤 실행하십시오. '
-      + '(관리자는 라운드를 닫을 때 14일 지난 것만 자동으로 정리합니다 - 최근에 끝난 것은 여기서 직접 정리합니다.)';
-    intro.appendChild(tail);
+    intro.textContent = '끝난 일을 .aimem/archive/ 로 옮깁니다 (지우지 않음). 미리보기로 목록을 먼저 확인합니다.';
     body.appendChild(intro);
     const row = document.createElement('div'); row.className = 'slot-actions archive-actions';
     const sel = document.createElement('select');
@@ -2755,7 +2505,7 @@ function openArchivePanel() {
       if (counts) {
         const line = document.createElement('p');
         line.className = 'hint';
-        line.textContent = `실행 기록 ${counts.runs || 0}건 · 이벤트 ${counts.events || 0}건 · 핸드오프 ${counts.handoff || 0}건 ${counts.relay ? ` · 옛 전달 ${counts.relay}개` : ''} · 로그 ${counts.log_lines || 0}줄`;
+        line.textContent = `이벤트 ${counts.events || 0}건 · 핸드오프 ${counts.handoff || 0}건 · 로그 ${counts.log_lines || 0}줄`;
         out.appendChild(line);
       }
       const list = (title, items, fmt) => {
@@ -2774,7 +2524,6 @@ function openArchivePanel() {
     const run = async (dry) => {
       preview.disabled = true; apply.disabled = true;
       const days = Number(sel.value);
-      if (!dry && !window.confirm(`${days === 0 ? '지금 끝난 것 전부' : days + '일 지난 것'}를 아카이브로 옮깁니다. 계속할까요?`)) { preview.disabled = false; apply.disabled = false; return; }
       const r = await archiveRequest(days, dry);
       render(r, dry);
       preview.disabled = false;
@@ -2825,7 +2574,7 @@ function renderBoard(data) {
       line.className = 'run-line';
       const verdictOnly = String(run.state || '').toLowerCase() === 'done' && reportStatus(run.report_head);   // 끝난 실행은 보고 판정만 (done · DONE 이 겹쳐 보였다)
       // 상태 칸이 이미 같은 말('진행 중')을 하고 있으면 여기서는 되풀이하지 않는다 - 칩 둘이 나란히 찍혔다 (2026-11-12 태석님)
-      const sameAsStatus = statusLabel(run.state) === statusLabel(b.status);
+      const sameAsStatus = statusLabel(run.state) === statusLabel(b.status, BOARD_LABEL);
       if (!verdictOnly && !sameAsStatus) { line.appendChild(statusBadge(run.state)); line.appendChild(document.createTextNode(' ')); }
       if (reportStatus(run.report_head)) line.appendChild(reportBadge(run.report_head));
       if (line.childNodes.length) last.appendChild(line);
@@ -2838,7 +2587,7 @@ function renderBoard(data) {
       mono(b.id),
       plainText(b.task) || '-',
       show(b.slot),
-      statusBadge(b.status),
+      boardBadge(b.status),
       last,
       plainText(b.artifact) || '-',
     ];
@@ -2890,7 +2639,7 @@ function fmtGraphEta(value) {
 function graphFinished(g) {
   const nodes = Array.isArray(g.nodes) ? g.nodes : [];
   if (!nodes.length) return Number(g.percent) >= 100;
-  return nodes.every((n) => ['done', 'failed', 'blocked', 'skipped'].includes(String(n.status || '').toLowerCase()));
+  return nodes.every((n) => ['done', 'failed', 'blocked'].includes(String(n.status || '').toLowerCase()));
 }
 
 function graphArchivable(g) {
@@ -3000,7 +2749,7 @@ function graphWaitSummary(graphs) {
   const byProv = new Map();
   let infra = 0;
   for (const g of graphs) {
-    if (graphFinished(g) || graphStale(g)) continue;
+    if (graphFinished(g) || !g.runner) continue;   // 실행기가 잡고 있는 그래프만 '대기' 를 말한다
     for (const n of (Array.isArray(g.nodes) ? g.nodes : [])) {
       if (!n) continue;
       const w = parseWaiting(n.waiting);
@@ -3022,7 +2771,7 @@ function attemptList(n) {
     const li = document.createElement('li');
     li.className = 'attempt-item';
     const bits = [];
-    bits.push(FAIL_KIND_LABEL[a.fail_kind] || (a.fail_kind ? String(a.fail_kind) : '성공 또는 진행 중'));
+    bits.push(FAIL_KIND_LABEL[a.fail_kind] || (a.fail_kind ? String(a.fail_kind) : '성공 또는 실행 중'));
     if (a.session_state) bits.push(`세션 ${a.session_state}`);
     if (a.provider) bits.push(a.provider);
     const head = document.createElement('span');
@@ -3042,11 +2791,10 @@ function attemptList(n) {
   return ol;
 }
 
-const GRAPH_STALE_SEC = 2 * 3600;
-
-function graphStale(g) {
-  const t = parseTime(g.updated || g.created);
-  return Number.isFinite(t) && (Date.now() - t) / 1000 > GRAPH_STALE_SEC;
+// 그래프가 도는지는 엔진이 안다 - 실행기 프로세스가 그래프를 잡고 있나(runner). 시각으로 짐작하지 않는다.
+// runner 가 없거나(null=모름 포함) 못 읽었으면 '실행기 없음'
+function graphRunning(g) {
+  return !!(g && g.runner === true);
 }
 
 function graphStateBadge(g, finished) {
@@ -3055,13 +2803,10 @@ function graphStateBadge(g, finished) {
     if (!(counts.failed || counts.blocked)) return badge('완료', 'done');
     return counts.done ? badge('일부 실패', 'partial') : badge('실패', 'failed');   // 끝난 것이 0 인데 '부분 완료' 라고 적혀 실패를 놓쳤다
   }
-  const t = parseTime(g.updated || g.created);
-  if (Number.isFinite(t) && (Date.now() - t) / 1000 > GRAPH_STALE_SEC) {
-    const span = badge('멈춤', 'stale');
-    span.title = '진행 중으로 남아 있지만 ' + fmtElapsed((Date.now() - t) / 1000) + ' 동안 갱신이 없습니다 (실행자가 끝난 그래프)';
-    return span;
-  }
-  return badge('진행 중', 'running');
+  if (graphRunning(g)) return badge('실행 중', 'running');
+  const span = badge('실행기 없음', 'stale');
+  span.title = '끝나지 않았는데 그래프를 돌리는 실행기가 없습니다 - 함대의 재개로 이어 돌립니다';
+  return span;
 }
 
 function graphBlock(g) {
@@ -3069,7 +2814,7 @@ function graphBlock(g) {
   const finished = graphFinished(g);
   if (!state.graphKnown.has(key)) {
     state.graphKnown.add(key);
-    if (!finished && !graphStale(g)) state.graphOpen.add(key);   // 진행 중인 그래프만 펼친 채로 시작
+    if (!finished) state.graphOpen.add(key);   // 끝나지 않은 그래프만 펼친 채로 시작
   }
   const open = state.graphOpen.has(key);
 
@@ -3099,7 +2844,7 @@ function graphBlock(g) {
   head.appendChild(req);
   const pct = document.createElement('span');
   pct.className = 'graph-meta';
-  pct.textContent = fmtGraphPct(g.percent) + (finished ? '' : ' · ETA ' + fmtGraphEta(g.eta_seconds));
+  pct.textContent = fmtGraphPct(g.percent) + (finished || !graphRunning(g) ? '' : ' · 남은 ' + fmtGraphEta(g.eta_seconds));
   head.appendChild(pct);
   head.appendChild(graphStateBadge(g, finished));
   block.appendChild(head);
@@ -3108,11 +2853,12 @@ function graphBlock(g) {
   const meta = document.createElement('div');
   meta.className = 'graph-counts';
   const parts = [];
-  for (const [k, label] of [['done', '완료'], ['running', '진행 중'], ['todo', '할 일'], ['failed', '실패'], ['blocked', '막힘']]) {
-    if (counts[k]) parts.push(`${label} ${counts[k]}`);
+  const infraN = (Array.isArray(g.nodes) ? g.nodes : []).filter(nodeIsInfra).length;   // 공급자 장애는 '막힘' 과 따로 센다
+  const shown = Object.assign({}, counts, { blocked: (counts.blocked || 0) - infraN, infra: infraN });
+  for (const [k, label] of [['done', '완료'], ['running', '실행 중'], ['todo', '할 일'], ['failed', '실패'], ['blocked', '막힘'], ['infra', '공급자 장애']]) {
+    if (shown[k] > 0) parts.push(`${label} ${shown[k]}`);
   }
   if (g.updated) parts.push('갱신 ' + fmtDateTime(g.updated));
-  if (!finished && g.eta_at) parts.push('도착 예상 ' + fmtDateTime(g.eta_at));
   meta.textContent = parts.join(' · ') || '-';
   block.appendChild(meta);
 
@@ -3185,27 +2931,25 @@ function renderGraphs(data) {
 function progressOf(req) {
   const subs = Array.isArray(req.subtasks) ? req.subtasks : [];
   if (!subs.length) return null;
-  if (req.progress_pct !== null && req.progress_pct !== undefined && Number.isFinite(Number(req.progress_pct))) {
-    return Number(req.progress_pct);
-  }
-  let sum = 0;
-  for (const s of subs) {
-    const raw = show(s.status, '');
-    sum += WEIGHTS[raw] ?? WEIGHTS[raw.toUpperCase()] ?? 0;
-  }
-  return (sum / subs.length) * 100;
+  const n = Number(req.progress_pct);
+  return req.progress_pct !== null && req.progress_pct !== undefined && Number.isFinite(n) ? n : null;
 }
 
+// 남은 시간 한 줄 - 없으면 '-'
 function etaText(req) {
-  const parts = [];
-  if (req.eta_at) parts.push(fmtDateTime(req.eta_at));
-  if (req.eta_sec !== null && req.eta_sec !== undefined && req.eta_sec !== '') {
-    parts.push(fmtElapsed(req.eta_sec));
-  }
-  return parts.length ? parts.join(' · ') : '-';
+  const n = Number(req.eta_sec);
+  return req.eta_sec === null || req.eta_sec === undefined || req.eta_sec === '' || !Number.isFinite(n) ? '-' : '남은 ' + fmtElapsed(n);
 }
 
 const REQ_CLOSED = new Set(['DONE', 'REJECTED']);
+
+// 끝난 요청·정리할 수 있는 그래프 - 요청 탭 머리글과 '정리' 단추 숫자가 같이 쓴다
+function closedItems(data) {
+  return {
+    requests: (Array.isArray(data.requests) ? data.requests : []).filter((r) => REQ_CLOSED.has(String(r.status || '').toUpperCase())),
+    graphs: (Array.isArray(data.graphs) ? data.graphs : []).filter(graphArchivable),
+  };
+}
 
 function canEditRequest(req) {
   return String(req.status || '').toUpperCase() === 'NEW'
@@ -3226,17 +2970,8 @@ async function saveRequestEdit(req, form) {
   buttons.forEach((b) => { b.disabled = true; });
   msg.textContent = '저장 중…'; msg.className = 'form-msg';
   try {
-    if (DEMO) {
-      req.title = title; req.detail = detail; if (pickEl) req.project = project;
-    } else {
-      const res = await fetch('/api/requests/' + encodeURIComponent(req.id) + '/edit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify(pickEl ? { title, detail, project } : { title, detail }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok || !body.ok) throw new Error(body.error || ('HTTP ' + res.status));
-    }
+    const { res, body } = await api('/api/requests/' + encodeURIComponent(req.id) + '/edit', pickEl ? { title, detail, project } : { title, detail });
+    if (!res.ok || !body.ok) throw new Error(body.error || ('HTTP ' + res.status));
     state.editing = null;
     await refresh();
   } catch (err) {
@@ -3261,44 +2996,12 @@ function requestEditForm(req) {
   ph.className = 'hint';
   ph.textContent = '결과물이 쌓일 곳 · 비우면 함대 자체의 일';
   pl.appendChild(ph);
-  const names = projectNameList(state.data);
   const ps = document.createElement('select');
   ps.className = 'req-edit-project-pick';
-  const base = document.createElement('option');
-  base.value = '';
-  base.textContent = '(함대 자체의 일 - 프로젝트 없음)';
-  ps.appendChild(base);
-  for (const name of names) {
-    const opt = document.createElement('option');
-    opt.value = name;
-    opt.textContent = name;
-    ps.appendChild(opt);
-  }
-  if (req.project && !names.includes(req.project)) {
-    const opt = document.createElement('option');
-    opt.value = req.project;
-    opt.textContent = req.project;
-    ps.appendChild(opt);
-  }
-  const fresh = document.createElement('option');
-  fresh.value = '__new__';
-  fresh.textContent = '+ 새 프로젝트…';
-  ps.appendChild(fresh);
-  ps.value = req.project || '';
   const pi = document.createElement('input');
   pi.type = 'text'; pi.className = 'req-edit-project'; pi.maxLength = 40;
   pi.placeholder = '새 프로젝트 이름'; pi.hidden = true;
-  const syncEditProject = () => {
-    if (ps.value === '__new__') {
-      pi.hidden = false;
-      pi.focus();
-    } else {
-      pi.hidden = true;
-      pi.value = '';
-    }
-  };
-  ps.addEventListener('change', syncEditProject);
-  syncEditProject();
+  fillProjectPicker(ps, pi, projectNameList(state.data), req.project || '');
   const dl = document.createElement('label');
   dl.textContent = '본문';
   const ta = document.createElement('textarea');
@@ -3351,8 +3054,7 @@ function renderRequests(data) {
   const tools = $('requests-tools');
   if (tools) {
     tools.textContent = '';
-    const closedRequests = requests.filter((r) => REQ_CLOSED.has(String(r.status || '').toUpperCase()));
-    const closedGraphs = (Array.isArray(data.graphs) ? data.graphs : []).filter(graphArchivable);
+    const { requests: closedRequests, graphs: closedGraphs } = closedItems(data);
     const label = document.createElement('span');
     if (!closedRequests.length && !closedGraphs.length) {
       label.textContent = '끝난 요청 없음';
@@ -3499,7 +3201,7 @@ function renderRequests(data) {
       waitLine.className = 'req-wait-line';
       waitLine.textContent = String(req.status || '').toUpperCase() === 'IN-PROGRESS'
         ? '관리자가 서브태스크 없이 직접 하는 일입니다'
-        : '아직 분담 전 - 관리자가 서브태스크로 나누면 진행률과 ETA 가 나옵니다';
+        : '아직 분담 전 - 관리자가 서브태스크로 나누면 진행률과 남은 시간이 나옵니다';
       article.appendChild(waitLine);
     } else {
       const progressRow = document.createElement('div');
@@ -3516,7 +3218,7 @@ function renderRequests(data) {
       const etaLabel = document.createElement('span');
       etaLabel.className = 'eta';
       const eta = etaText(req);
-      etaLabel.textContent = eta === '-' ? 'ETA 미정' : 'ETA ' + eta;
+      etaLabel.textContent = eta === '-' ? '남은 시간 미정' : eta;
       progressRow.appendChild(bar);
       progressRow.appendChild(pctLabel);
       progressRow.appendChild(etaLabel);
@@ -3524,7 +3226,7 @@ function renderRequests(data) {
 
       const basis = document.createElement('div');
       basis.className = 'req-basis';
-      basis.textContent = 'ETA 근거: ' + show(req.eta_basis, '근거 없음');
+      basis.textContent = '남은 시간 근거: ' + show(req.eta_basis, '근거 없음');
       article.appendChild(basis);
     }
 
@@ -3549,7 +3251,7 @@ function renderRequests(data) {
           runId.className = 'run-id';
           runId.textContent = show(run.id);
           link.appendChild(runId);
-          if (statusLabel(run.state) !== statusLabel(st.status)) {   // 상태 칸과 같은 말이면 되풀이하지 않는다
+          if (statusLabel(run.state) !== statusLabel(st.status, BOARD_LABEL)) {   // 상태 칸과 같은 말이면 되풀이하지 않는다
             link.appendChild(document.createTextNode(' '));
             link.appendChild(statusBadge(run.state));
           }
@@ -3564,7 +3266,7 @@ function renderRequests(data) {
           show(st.title),
           show(st.slot),
           show(st.harness),
-          statusBadge(st.status),
+          boardBadge(st.status),
           run ? fmtElapsed(run.elapsed_sec) : '-',
           link,
         ];
@@ -3667,17 +3369,17 @@ function setTabCount(id, n, hot) {
 
 function renderTabCounts(data) {
   const runs = Array.isArray(data.runs) ? data.runs : [];
-  const running = runs.filter((r) => r && r.state === 'running').length;
+  const running = runs.filter((r) => r && r.state === 'running' && r.role !== 'manager').length;   // 작업자만 (관리자는 따로 카드)
   setTabCount('tab-count-fleet', running, true);
   const projects = Array.isArray(data.projects) ? data.projects : [];
   const unfinished = projects.filter((p) => !projectDone(p)).length;
   // 네 탭 모두 같은 규칙: 숫자 = 그 탭에서 지금 살아 있는 것(도는 작업자 / 진행 중 프로젝트 / 미완료 태스크+큐 / 열린 요청), 0 이면 숨김.
   // 전에는 프로젝트만 전체 수라 다 끝나도 늘 1 이 떠 있었다 (2026-11-12 저녁 태석님: 직접 처리)
   setTabCount('tab-count-projects', unfinished, true);
-  // 보드·큐 탭의 숫자 = 그 탭에 남은 일 = 미완료 태스크 + 대기 큐 (전에는 큐만 세어 탭 5 · 미완료 10 으로 어긋나 보였다)
+  // 보드·큐 탭의 숫자 = 미완료 태스크만 (대기 큐 건수는 큐 머리글에 따로)
   const queue = Array.isArray(data.queue) ? data.queue.length : 0;
   const openTasks = (Array.isArray(data.board) ? data.board : []).filter((t) => !boardClosed(t)).length;
-  setTabCount('tab-count-board', openTasks + queue, true);
+  setTabCount('tab-count-board', openTasks, true);
   const qc = $('queue-count');
   if (qc) qc.textContent = queue ? String(queue) : '';
   const reqs = Array.isArray(data.requests) ? data.requests : [];
@@ -3688,14 +3390,13 @@ function renderTabCounts(data) {
   const pj = $('tab-count-projects');
   if (pj) pj.title = `진행 중인 프로젝트 ${unfinished}개 (전체 ${projects.length}개)`;
   const b = $('tab-count-board');
-  if (b) b.title = `미완료 태스크 ${openTasks}건 + 대기 큐 ${queue}건`;
+  if (b) b.title = `미완료 태스크 ${openTasks}건`;
   const q = $('tab-count-requests');
   if (q) q.title = '끝나지 않은 요청';
-  const closedRequests = reqs.filter((r) => REQ_CLOSED.has(String(r.status || '').toUpperCase()));
-  const closedGraphs = (Array.isArray(data.graphs) ? data.graphs : []).filter(graphArchivable);
+  const { requests: closedRequests, graphs: closedGraphs } = closedItems(data);
   setTabCount('archive-count', closedRequests.length + closedGraphs.length, false);
   const archBtn = $('archive-open');
-  if (archBtn) archBtn.title = `끝난 요청 ${closedRequests.length}건 · 끝난 그래프 ${closedGraphs.length}개`;
+  if (archBtn) archBtn.title = `끝난 요청 ${closedRequests.length}건 · 끝난 그래프 ${closedGraphs.length}개를 아카이브로 옮깁니다 (지우지 않음)`;
 }
 
 // ---- 프로젝트 결과물 보기 (REV 146) - `projects/<이름>/` 의 파일 목록과 본문을 상세 패널에서
@@ -3708,8 +3409,7 @@ function fmtBytes(n) {
 }
 
 async function projectApi(name, tail) {
-  const res = await fetch('/api/projects/' + encodeURIComponent(name) + tail, { headers: { Accept: 'application/json' } });
-  const body = await res.json().catch(() => ({}));
+  const { res, body } = await api('/api/projects/' + encodeURIComponent(name) + tail);
   if (!res.ok || !body.ok) throw new Error(body.error || ('HTTP ' + res.status));
   return body;
 }
@@ -3723,7 +3423,7 @@ function openProjectFiles(pr, filePath) {
     const showList = async () => {
       body.replaceChildren(note('목록을 불러오는 중…'));
       try {
-        const d = DEMO ? { path: `projects/${name}/`, files: [], truncated: false } : await projectApi(name, '/files');
+        const d = await projectApi(name, '/files');
         if (!alive()) return;
         body.replaceChildren();
         const head = note(`${show(d.path, '')} · 파일 ${d.files.length}개` + (d.truncated ? ' (앞 500개만)' : '') + ' · 행을 누르면 본문', 'proj-meta');
@@ -3787,8 +3487,6 @@ function openProjectApp(pr) {
     tab.className = 'btn-link link-btn';
     tab.title = '더 큰 화면으로 봅니다. 여기서도 격리되어 새 탭에서는 기록이 남지 않습니다';
     body.appendChild(tab);
-
-    if (DEMO) { body.appendChild(note('데모 화면에서는 실행할 수 없습니다')); return; }
 
     const part = 'aimem.app.v1.' + encodeURIComponent(name);
     function okKey(k) {
@@ -3981,7 +3679,7 @@ function renderProjects(data) {
     meta.className = 'proj-meta proj-sub';
     const bits = [];
     bits.push(rq.total ? `요청 ${rq.done || 0}/${rq.total} 완료` : '요청 없음');
-    if (rq.active) bits.push(`진행 중 ${rq.active}`);
+    if (rq.active) bits.push(`처리 중 ${rq.active}`);
     if (rq.new) bits.push(`대기 ${rq.new}`);
     const rounds = Array.isArray(pr.rounds) ? pr.rounds : [];
     bits.push(rounds.length
@@ -4106,32 +3804,8 @@ function renderAll(data) {
   markScrollableTables();
 }
 
-function demoState() {
-  DEMO_STATE.generated = zoneNowNaive();
-  return DEMO_STATE;
-}
-
-function demoCreateRequest(payload) {
-  const id = 'demo-' + Date.now().toString(36);
-  DEMO_STATE.requests.unshift({
-    id,
-    created: zoneNowNaive(),
-    requester: payload.requester || '데모 요청자',
-    title: payload.title,
-    detail: payload.detail,
-    status: 'NEW',
-    subtasks: [],
-    progress_pct: null,
-    eta_sec: null,
-    eta_at: null,
-    eta_basis: '데모 모드 - 서버 분담이 아직 적용되지 않았다',
-  });
-  return { ok: true, id, path: '.aimem/requests/' + id + '.json' };
-}
-
 async function fetchState() {
-  if (DEMO) return demoState();
-  const res = await fetch('/api/state', { headers: { Accept: 'application/json' } });
+  const { res, body } = await api('/api/state');
   if (res.status === 401) {
     // 세션 만료·토큰 교체 - 로그인 화면으로 (인증이 켜진 서버에서만 생긴다)
     location.href = '/login';
@@ -4140,7 +3814,7 @@ async function fetchState() {
   if (!res.ok) {
     throw new Error(`GET /api/state ${res.status} ${res.statusText || ''}`.trim());
   }
-  return res.json();
+  return body;
 }
 
 function updateLastRefresh() {
@@ -4247,29 +3921,9 @@ async function onSubmit(event) {
   msg.className = 'form-msg';
   msg.textContent = '보내는 중...';
   try {
-    let result;
-    if (DEMO) {
-      result = demoCreateRequest(payload);
-    } else {
-      const res = await fetch('/api/requests', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      let body = null;
-      try {
-        body = await res.json();
-      } catch (err) {
-        body = null;
-      }
-      if (!res.ok || !body || body.ok === false) {
-        const reason = body && body.error
-          ? body.error
-          : `POST /api/requests ${res.status} ${res.statusText || ''}`.trim();
-        throw new Error(reason);
-      }
-      result = body;
-    }
+    const { res, body } = await api('/api/requests', payload);
+    if (!res.ok || body.ok === false) throw new Error(body.error || `POST /api/requests ${res.status} ${res.statusText || ''}`.trim());
+    const result = body;
     $('request-form').reset();
     if (pickEl) pickEl.value = '';
     if (projectEl) { projectEl.value = ''; projectEl.hidden = true; }
@@ -4345,16 +3999,14 @@ function initSettingsMenu() {
 }
 
 async function initAuth() {
-  if (DEMO) return;
   try {
-    const res = await fetch('/api/authinfo', { headers: { Accept: 'application/json' } });
-    const info = await res.json();
+    const info = (await api('/api/authinfo')).body;
     if (!info || !info.auth_required) return;      // 인증이 꺼진 로컬 서버 - 표시하지 않는다
     $('auth-who').textContent = info.who ? info.who : '';
     $('auth-box').hidden = false;
     $('logout').addEventListener('click', async () => {
       try {
-        await fetch('/api/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        await api('/api/logout', {});
       } finally {
         location.href = '/login';
       }
@@ -4390,8 +4042,6 @@ function init() {
   trackTopbarHeight();
   initRequestFab();
   initAuth();
-  const demoBanner = $('demo-banner');
-  demoBanner.hidden = !DEMO;
   initTheme();
   initSettingsMenu();
   bindDetailControls();
@@ -4444,7 +4094,7 @@ function selectTab(key, moveFocus) {
   });
   markScrollableTables();               // 숨어 있던 패널의 표는 폭이 0 이라 보일 때 다시 잰다
   if (location.hash !== '#tab=' + target) {
-    history.replaceState(null, '', '#tab=' + target);   // 기존 쿼리스트링(?demo=1)은 건드리지 않는다
+    history.replaceState(null, '', '#tab=' + target);
   }
 }
 
@@ -4472,6 +4122,6 @@ initTabs();
 window.__aimemMd = { renderMarkdown };
 
 // 폰 설치(PWA): 서비스 워커는 앱 껍데기만 캐시한다(API 금지 - sw.js 참조). 등록 실패는 조용히 넘긴다.
-if ('serviceWorker' in navigator && !DEMO && location.protocol === 'https:') {
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
   window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => null); });
 }

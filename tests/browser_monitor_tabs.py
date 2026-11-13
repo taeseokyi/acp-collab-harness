@@ -45,7 +45,7 @@ def monitor_server(root=None):
                                             "timeout": 5, "log_message": lambda *a, **k: None})
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     httpd.daemon_threads = True
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread = threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     try:
         yield f"http://127.0.0.1:{httpd.server_address[1]}"
@@ -63,6 +63,7 @@ def write_fixed_repo(root):
     fixed = (
         ("임시-진행-프로젝트", "IN-PROGRESS", "Q-FIXED-PROGRESS"),
         ("임시-끝난-프로젝트", "DONE", "Q-FIXED-DONE"),
+        ("임시-진행-프로젝트", "NEW", "Q-FIXED-NEW"),
     )
     for name, status, req_id in fixed:
         pdir = root / "projects" / name
@@ -256,6 +257,62 @@ def project_picker_scenario(browser, base, checks):
         ctx.close()
 
 
+def edit_picker_scenario(browser, base, checks):
+    """요청 수정 폼의 프로젝트 고르기는 작업 요청 폼과 같은 함수다 - 현재 값을 고른 채 열리고 '+ 새 프로젝트…' 로 입력칸이 나온다."""
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    try:
+        page.goto(base + "/", wait_until="load")
+        page.click("#tab-requests")
+        page.wait_for_selector("#requests-list .req-edit-btn", state="visible", timeout=15000)
+        page.locator("#requests-list .req-edit-btn").first.click()
+        sel = page.locator(".req-edit-project-pick")
+        sel.wait_for(state="visible", timeout=5000)
+        values = sel.locator("option").evaluate_all("opts => opts.map((o) => o.value)")
+        cur = sel.input_value()
+        shown = page.locator(".req-edit-project").is_visible()
+        sel.select_option("__new__")
+        after_new = page.locator(".req-edit-project").is_visible()
+        sel.select_option("")
+        after_none = page.locator(".req-edit-project").is_visible()
+        checks.ok("요청 수정 폼의 프로젝트 고르기",
+                  cur == "임시-진행-프로젝트" and "" in values and "__new__" in values and not shown and after_new and not after_none,
+                  f"현재={cur!r}, 값={values}, 처음 입력칸={shown}, 새 프로젝트={after_new}, 비움={after_none}")
+    finally:
+        ctx.close()
+
+
+def tab_counts_scenario(browser, base, checks):
+    """탭 숫자의 규칙: 함대 = 실행 중 작업자(관리자 제외), 보드·큐 = 미완료 태스크만(큐는 큐 머리글에), 정리 단추 = 끝난 요청+그래프."""
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+
+    def state_route(route):
+        r = route.fetch()
+        d = r.json()
+        run = lambda i, role, state: {"id": f"r{i}", "slot": "S1", "harness": "x", "model": "m", "label": "t", "started": "2026-11-13T10:00:00",  # noqa: E731
+                                      "state": state, "rc": None, "elapsed_sec": 5, "report_head": "", "role": role,
+                                      "session_state": state, "last_event_at": None, "last_event": None}
+        d["runs"] = [run(1, "worker", "running"), run(2, "manager", "running"), run(3, "worker", "done")]
+        d["board"] = [{"id": f"T-{i}", "task": "x", "slot": "S1", "status": st, "handoff": "-", "artifact": ""}
+                      for i, st in enumerate(("TODO", "REVIEW", "DONE", "BLOCKED"))]
+        d["queue"] = [{"order": str(i), "task": "x", "slots": "S1", "handoff": "", "note": ""} for i in range(1, 4)]
+        route.fulfill(response=r, body=json.dumps(d), content_type="application/json")
+    page.route("**/api/state*", state_route)
+    try:
+        page.goto(base + "/", wait_until="load")
+        page.wait_for_selector("#tab-count-fleet", state="attached", timeout=15000)
+        page.wait_for_function("() => document.getElementById('tab-count-fleet').textContent.trim() !== ''", timeout=15000)
+        txt = lambda i: page.locator(i).inner_text().strip()  # noqa: E731
+        checks.ok("탭 숫자: 함대는 실행 중 작업자만 (관리자 제외)", txt("#tab-count-fleet") == "1", txt("#tab-count-fleet"))
+        checks.ok("탭 숫자: 보드·큐는 미완료 태스크만 (3), 큐 건수는 큐 머리글에 (3)",
+                  txt("#tab-count-board") == "3" and txt("#queue-count") == "3", f"{txt('#tab-count-board')} / {txt('#queue-count')}")
+        sec = page.locator("#runs-table-wrap").locator("xpath=ancestor::section[1]//h2").first.inner_text()
+        checks.ok("실행 표 머리글은 '실행 상태'", sec.strip().startswith("실행 상태"), sec)
+    finally:
+        ctx.close()
+
+
 def main():
     checks = Checks()
     try:
@@ -268,6 +325,8 @@ def main():
                     with monitor_server(root=temp_root) as base:
                         tabs_scenario(browser, base, checks)
                         project_picker_scenario(browser, base, checks)
+                        edit_picker_scenario(browser, base, checks)
+                        tab_counts_scenario(browser, base, checks)
             finally:
                 browser.close()
     except Exception as exc:

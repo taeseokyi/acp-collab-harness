@@ -1,13 +1,11 @@
 """claude 하네스 어댑터 - `claude -p --output-format stream-json --verbose`.
 
-옛 `fleet._worker_argv` 의 claude 가지(`--output-format json`, 끝에 한 덩이 JSON)를 사건 흐름 꼴로 바꾼 것이다.
-의존 방향은 fleet -> fleet_rt 이므로 `fleet` 은 들이지 않는다 (아래 도구 목록·환경변수 이름은 거기서 복사해 왔다).
+모델은 `spec.model`(슬롯 모델, 없으면 `fleet.toml` 하네스 기본을 spawn 이 채운다)을 하네스 꼴로 받는다.
 """
 from __future__ import annotations
 
 import json
 import pathlib
-import re
 import shutil
 import subprocess
 from typing import Optional
@@ -34,32 +32,6 @@ WORKER_TOOLS = ",".join([
     "Bash(timeout:*)", "Bash(sleep:*)", "Bash(ss:*)", "Bash(kill:*)",
 ])
 
-_SUMMARY_MAX = 120
-
-
-def _require_repo_cwd(cwd):
-    """진짜 하네스는 함대 저장소(`tools/fleet.py` 가 있는 폴더)에서만 띄운다.
-    2026-11-12 에 /tmp 검토 사본에서 진짜 작업자가 떠 버린 일의 재발 방지."""
-    p = pathlib.Path(str(cwd)) if cwd else None
-    if p is None or not p.is_dir() or not (p / "tools" / "fleet.py").is_file():
-        raise ValueError(f"함대 저장소가 아닌 작업 폴더에서는 claude 를 띄우지 않는다: {cwd!r}")
-
-
-def _normalize_model(model):
-    """슬롯에 적힌 모델에서 `anthropic/`·`claude-cli/` 접두를 뗀다 (fleet.normalize_model 의 claude 가지)."""
-    if not model:
-        return "sonnet"
-    m = str(model).strip()
-    for pre in ("anthropic/", "claude-cli/"):
-        if m.startswith(pre):
-            m = m[len(pre):]
-    return m or "sonnet"
-
-
-def _one_line(s, n=_SUMMARY_MAX):
-    s = " ".join(str(s).split())
-    return s if len(s) <= n else s[:n - 1] + "…"
-
 
 def _tool_summary(name, inp):
     """도구 호출을 `Bash: echo x` 꼴 한 줄로. 입력에서 command/file_path/pattern 순으로 대표 값을 고른다."""
@@ -67,7 +39,7 @@ def _tool_summary(name, inp):
     if isinstance(inp, dict):
         for key in ("command", "file_path", "path", "pattern", "url", "description"):
             if inp.get(key):
-                detail = _one_line(inp[key])
+                detail = base.one_line(inp[key])
                 break
     return f"{name}: {detail}" if detail else str(name)
 
@@ -89,23 +61,6 @@ def _parse_json(raw):
     return d if isinstance(d, dict) else None
 
 
-LIMIT_PATTERNS = (
-    "hit your 5-hour limit", "5-hour limit reached", "weekly limit reached",
-    "usage limit reached", "rate limit exceeded", "rate_limit_error",
-    "session limit reached", "reached your usage limit",
-    "hit your weekly limit", "hit your usage limit", "hit your limit",
-    "한도에 도달", "한도에 걸", "한도를 초과", "한도로 끊", "한도로 끝", "한도에 막",
-)
-
-
-def limit_text_hit(text) -> bool:
-    """글자 끝 2000자에 사용 한도 문구가 있으면 True (문자열이 아니면 False). 판정은 여기 한 벌만 둔다."""
-    if not isinstance(text, str) or not text:
-        return False
-    tail = text[-2000:].lower()
-    return any(p in tail for p in LIMIT_PATTERNS)
-
-
 def result_limit_signal(res, events=()) -> Optional[bool]:
     """result 사건 하나(+ 그 앞 사건들)로 본 사용 한도: True/False/None(모름 - 호출자가 글자 판정으로 넘어간다)."""
     if not isinstance(res, dict):
@@ -121,7 +76,8 @@ def result_limit_signal(res, events=()) -> Optional[bool]:
         return True
     if res.get("terminal_reason") == "api_error":
         for key in ("result", "api_error", "stop_reason"):
-            if limit_text_hit(res.get(key)):
+            v = res.get(key)
+            if isinstance(v, str) and base.LIMIT_RE.search(v[-2000:]):
                 return True
     # 오류로 끝났고 그 전에 한도 거절 신호가 있었으면 한도다 (overageStatus 가 아니라 status 만 본다)
     for d in events or ():
@@ -176,8 +132,8 @@ class ClaudeHarness:
 
     # -- 띄우기 ---------------------------------------------------------------------------------
     def _argv(self, spec):
-        _require_repo_cwd(spec.cwd)
-        argv = ["claude", "-p", "--model", _normalize_model(spec.model),
+        base.require_repo_cwd(spec.cwd, "claude")
+        argv = ["claude", "-p", *(["--model", spec.model] if spec.model else []),
                 "--output-format", "stream-json", "--verbose",
                 "--permission-mode", "acceptEdits", "--allowedTools", spec.tools or WORKER_TOOLS]
         denied = (spec.extra or {}).get("disallowed_tools")
@@ -274,23 +230,10 @@ class ClaudeHarness:
         text = "".join(parts).strip()
         if text:
             return text
-        return self._stderr_tail(session_dir)
-
-    @staticmethod
-    def _stderr_tail(session_dir):
-        """보고문이 없을 때 stderr 에서 색 코드와 도구 로그 줄을 걷어낸 꼬리 (fleet.run_report 와 같은 생각)."""
-        try:
-            err = (pathlib.Path(session_dir) / "stderr.log").read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            return ""
-        err = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", err)
-        kept = [l for l in err.splitlines()
-                if l.strip() and not re.match(r"^\s*(←|✗|!|\||\+|-|@|\$|>|codex$|tokens used|Reading additional)", l)]
-        tail = "\n".join(kept[-25:]).strip()
-        return "(최종 보고문 없음 - 작업자가 보고 전에 끝남. stderr 꼬리:)\n" + tail if tail else ""
+        return base.no_report_tail(session_dir)
 
     def limit_signal(self, session_dir) -> Optional[bool]:
-        """`fleet_graph.run_limit_signal` 을 마지막 result 사건에 옮긴 것. result 가 없으면 None(모름)."""
+        """마지막 result 사건으로 본 사용 한도. result 가 없으면 None(모름)."""
         try:
             evs = self._events(session_dir)
             res = next((d for d in reversed(evs) if d.get("type") == "result"), None)

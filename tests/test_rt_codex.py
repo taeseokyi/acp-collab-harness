@@ -79,7 +79,7 @@ class CommandTest(unittest.TestCase):
             (pathlib.Path(t) / "tools" / "fleet.py").write_text("")
             self.assertEqual(A.command(SessionSpec(id="x", role="worker", harness="codex", brief_path="b", cwd=t)).cwd, t)
         with self.assertRaises(ValueError):
-            codex_h._require_repo_cwd("/no/such/dir")
+            A.command(SessionSpec(id="x", role="worker", harness="codex", brief_path="b", cwd="/no/such/dir"))
 
 
 class ParseTest(unittest.TestCase):

@@ -9,6 +9,8 @@ import pathlib
 import tomllib
 
 FILE = "fleet.toml"
+#: `[time] zone` 이 없을 때의 시간대 - 이 값의 한 곳
+DEFAULT_TIME_ZONE = "Asia/Seoul"
 
 #: 파일이 없을 때의 기본값. `fleet.toml` 과 같게 유지한다 (검사가 둘을 대조한다).
 DEFAULTS = {
@@ -23,21 +25,16 @@ DEFAULTS = {
         "anthropic": {"tier": "paid", "max_concurrent": 3, "idle_timeout_sec": 600, "models": ["opus", "sonnet", "haiku"]},
     },
     "harness": {
-        "claude": {"binary": "claude", "providers": ["anthropic"], "default_model": "sonnet"},
-        "codex": {"binary": "codex", "providers": ["kisti", "openrouter"], "default_model": "kisti/kistillm"},
-        "opencode": {"binary": "opencode", "providers": ["kisti", "exaone", "openrouter", "opencode"], "default_model": "kisti/kistillm"},
+        "claude": {"providers": ["anthropic"], "default_model": "sonnet"},
+        "codex": {"providers": ["kisti", "openrouter"], "default_model": "kisti/kistillm"},
+        "opencode": {"providers": ["kisti", "exaone", "openrouter", "opencode"], "default_model": "kisti/kistillm"},
     },
-    "manager": {"mode": "resident"},
-    "time": {"zone": "Asia/Seoul"},
+    "time": {"zone": DEFAULT_TIME_ZONE},
     "policy": {"default": "cost",
                "cost": {"extra_slots": 2, "slot_tiers": ["free"]},
                "quality": {"extra_slots": 2, "slot_tiers": ["free", "paid"]},
                "speed": {"extra_slots": 4, "slot_tiers": ["free", "paid"]}},
 }
-
-#: 관리자 운용 방식 (설계 5.9). `resident` 는 관리자 하나가 라운드 내내 산다(지금까지의 방식).
-#: `calls` 는 관리자가 계획·판정·마감 세 곳에서만 짧게 뜨고, 그 사이 그래프는 엔진(`fleet_ctl` 의 라운드 구동기)이 돌린다.
-MANAGER_MODES = ("resident", "calls")
 
 #: 라운드 운영 방식 - 관리자가 슬롯을 어떻게 쓰나. 관리자에게 주는 지시 한 덩이만 다르고 엔진의 배정은 같다.
 #: cost(무료 중심, 지금까지의 방식) · quality(품질 중심) · speed(빠른 구현)
@@ -107,12 +104,8 @@ class Config:
         return None
 
     def time_zone(self):
-        """`[time] zone` - IANA 시간대 이름(기본 Asia/Seoul). 엔진·작업자·로그·모니터 화면이 이 시간대를 쓴다."""
-        return str((self.data.get("time") or {}).get("zone") or "Asia/Seoul")
-
-    def manager_mode(self):
-        """`[manager] mode` - `resident`(기본) 또는 `calls`. 표가 없으면 기본값 - 옛 설정 파일도 그대로 돈다."""
-        return str((self.data.get("manager") or {}).get("mode") or "resident")
+        """`[time] zone` - IANA 시간대 이름(기본 `DEFAULT_TIME_ZONE`). 엔진·작업자·로그·모니터 화면이 이 시간대를 쓴다."""
+        return str((self.data.get("time") or {}).get("zone") or DEFAULT_TIME_ZONE)
 
     def policy_default(self):
         """`[policy] default` - 라운드를 띄울 때 운영 방식을 따로 고르지 않으면 이것. 표가 없으면 `cost`(지금까지의 방식)."""
@@ -192,7 +185,7 @@ def _copy(d):
 
 
 def _validate(data):
-    for sec in ("providers", "harness", "manager", "time", "policy"):
+    for sec in ("providers", "harness", "time", "policy"):
         if not isinstance(data.get(sec, {}), dict):
             raise ConfigError(f"{FILE}: [{sec}] 가 표가 아닙니다")
     for name, p in data.get("providers", {}).items():
@@ -211,13 +204,9 @@ def _validate(data):
         for pn in h.get("providers", []):
             if pn not in data.get("providers", {}):
                 raise ConfigError(f"{FILE}: harness.{name} 가 모르는 공급자 '{pn}' 를 가리킵니다")
-    mode = data.get("manager", {}).get("mode", "resident")
-    if mode not in MANAGER_MODES:
-        # 모르는 값을 기본값으로 삼키지 않는다 - 'call' 같은 오타로 사람이 고른 방식과 다르게 돌면 비용이 달라진다
-        raise ConfigError(f"{FILE}: manager.mode 는 {' · '.join(MANAGER_MODES)} 가운데 하나여야 합니다 (받은 값 {mode!r})")
     policy = data.get("policy", {}).get("default", "cost")
     if policy not in POLICIES:
-        # 오타를 기본값으로 삼키면 사람이 고른 것과 다른 비용으로 돈다 - manager.mode 와 같은 까닭
+        # 오타를 기본값으로 삼키면 사람이 고른 것과 다른 비용으로 돈다
         raise ConfigError(f"{FILE}: policy.default 는 {' · '.join(POLICIES)} 가운데 하나여야 합니다 (받은 값 {policy!r})")
     for key, v in data.get("policy", {}).items():
         if key == "default":

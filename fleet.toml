@@ -39,24 +39,16 @@ idle_timeout_sec = 600
 models = ["opus", "sonnet", "haiku"]
 
 [harness.claude]
-binary = "claude"
 providers = ["anthropic"]
 default_model = "sonnet"
 
 [harness.codex]           # ~/.codex/config.toml 의 model 은 'kistillm' (공급자 kisti)
-binary = "codex"
 providers = ["kisti", "openrouter"]
 default_model = "kisti/kistillm"
 
 [harness.opencode]        # ~/.config/opencode/opencode.jsonc 의 model 은 'kisti/kistillm'
-binary = "opencode"
 providers = ["kisti", "exaone", "openrouter", "opencode"]
 default_model = "kisti/kistillm"
-
-[manager]                 # 관리자 운용 방식 (설계 5.9)
-# resident: 관리자 하나가 라운드 내내 산다 - 그래프가 도는 동안에도 기다리며 유료 문맥을 다시 낸다 (지금까지의 방식)
-# calls:    관리자는 ① 계획 ② 판정 ③ 마감 세 곳에서만 짧게 뜨고, 그 사이 그래프는 엔진(라운드 구동기)이 돌린다
-mode = "resident"
 
 [time]
 zone = "Asia/Seoul"        # 엔진·작업자·로그·모니터 화면의 시간대

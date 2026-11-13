@@ -246,7 +246,7 @@ class DbIsCanonical(_Base):
         self.seed()
         s = reader.collect(self.root)
         self.assertEqual(s["slots"][0]["model"], "엉터리")
-        self.assertEqual(s["slots"][0]["model_source"], "슬롯 설정")
+        self.assertEqual(s["slots"][0]["model_source"], "")   # 슬롯이 정한 모델은 출처를 적지 않는다
 
     def test_8a_without_db_model_harness_config_is_used(self):
         self.seed()
@@ -274,21 +274,16 @@ class DbIsCanonical(_Base):
         self.assertEqual(s["slots"][0]["model_source"], "fleet.toml 기본")
 
 
-class MarkdownFallback(_Base):
+class MissingDb(_Base):
     aimem_text = TABLE_AIMEM
 
-    def test_7_missing_db_falls_back_to_markdown(self):
+    def test_7_missing_db_is_an_error_line_not_a_markdown_read(self):
         self.assertFalse(self.db.exists())
         s = reader.collect(self.root)
-        self.assertEqual([x["slot"] for x in s["slots"]], ["SMD"])
-        self.assertEqual(s["slots"][0]["role"], "마크다운역할")
-        self.assertEqual([x["id"] for x in s["board"]], ["T-MD"])
-        self.assertEqual([x["task"] for x in s["queue"]], ["마크다운큐"])
-        self.assertIn("마크다운로그", s["log"][0]["text"])
-        self.assertGreaterEqual(len(s["errors"]), 1)
+        self.assertEqual((s["slots"], s["board"], s["queue"], s["log"]), ([], [], [], []))   # 마크다운 표는 읽지 않는다
         self.assertTrue(any("DB" in e for e in s["errors"]), s["errors"])
 
-    def test_7b_fallback_does_not_create_db(self):
+    def test_7b_missing_db_is_not_created(self):
         reader.collect(self.root)
         self.assertFalse(self.db.exists())
 

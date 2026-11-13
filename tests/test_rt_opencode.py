@@ -90,15 +90,8 @@ class CommandTest(unittest.TestCase):
             _repo_ok = _repo(tempfile.mkdtemp(dir=t))
             A.command(_spec(_repo_ok))
 
-    def test_resume_command(self):
-        with tempfile.TemporaryDirectory() as t:
-            root = _repo(t)
-            c = A.resume_command(_spec(root, model="m/x"), "ses_1", str(root / "msg.md"))
-            self.assertEqual(c.argv[:8], ["opencode", "run", "--format", "json", "-s", "ses_1", "-m", "m/x"])
-            self.assertTrue(c.argv[-1].endswith("msg.md"))
-            self.assertEqual(len(c.argv), 9)
-            c2 = A.resume_command(_spec(root), "ses_1", "msg.md")
-            self.assertNotIn("-m", c2.argv)
+    def test_resume_command_is_not_supported(self):
+        self.assertIsNone(A.resume_command(None, "ses_1", "msg.md"))     # 작업자는 일회성
 
 
 class ParseTest(unittest.TestCase):

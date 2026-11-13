@@ -65,45 +65,28 @@ def add_run(
     out=None,
     err=None,
     brief=None,
-    pid=None,
 ):
-    runs_dir = root / ".aimem" / "runs"
-    runs_dir.mkdir(parents=True, exist_ok=True)
-    meta = {
-        "id": run_id,
-        "slot": slot,
-        "harness": harness,
-        "model": model,
-        "label": label,
-        "rev": 110,
-        "write": ["tests/test_aimem_monitor_detail.py"],
-        "started": started,
-    }
-    if pid is not None:
-        meta["pid"] = pid
-    (runs_dir / f"{run_id}.json").write_text(
-        json.dumps(meta, ensure_ascii=False), encoding="utf-8"
-    )
+    """세션 폴더 하나 (`.aimem/sessions/<id>/`). `out` 은 보고(report.md), rc 가 있으면 끝난 것(end.json)."""
+    d = root / ".aimem" / "sessions" / run_id
+    d.mkdir(parents=True, exist_ok=True)
+    meta = {"id": run_id, "role": "worker", "harness": harness, "model": model, "slot": slot, "label": label,
+            "started": started, "write_paths": ["tests/test_aimem_monitor_detail.py"], "extra": {"rev": "110"},
+            "supervisor_pid": 2 ** 22 + 12345}
+    (d / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
     if rc is not None:
-        rc_path = runs_dir / f"{run_id}.rc"
-        rc_path.write_text(f"{rc}\n", encoding="utf-8")
-        if elapsed is not None:
-            start = datetime.datetime.fromisoformat(started).timestamp()
-            stamp = start + elapsed
-            os.utime(rc_path, (stamp, stamp))
+        ended = datetime.datetime.fromisoformat(started) + datetime.timedelta(seconds=elapsed or 0)
+        (d / "end.json").write_text(json.dumps({"state": "done" if rc == 0 else "failed", "rc": rc,
+                                                "ended": ended.isoformat(timespec="seconds")}), encoding="utf-8")
     if out is not None:
-        (runs_dir / f"{run_id}.out").write_text(out, encoding="utf-8")
+        (d / "report.md").write_text(out, encoding="utf-8")
     if err is not None:
-        (runs_dir / f"{run_id}.err").write_text(err, encoding="utf-8")
+        (d / "stderr.log").write_text(err, encoding="utf-8")
     if brief is not None:
-        (runs_dir / f"{run_id}.brief.md").write_text(brief, encoding="utf-8")
+        (d / "brief.md").write_text(brief, encoding="utf-8")
 
 
-def snapshot_runs(runs_dir):
-    return sorted(
-        (p.name, p.stat().st_mtime_ns)
-        for p in runs_dir.iterdir()
-    )
+def snapshot_dir(path):
+    return sorted((p.name, p.stat().st_mtime_ns) for p in path.iterdir())
 
 
 def detail_shape_ok(test, detail, served=False):
@@ -147,7 +130,6 @@ class TestRunDetailContract(unittest.TestCase):
             err="stderr 한 줄",
             brief="지시 본문",
         )
-        self.real_root = pathlib.Path(__file__).resolve().parents[1]
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -213,33 +195,15 @@ class TestRunDetailContract(unittest.TestCase):
         ):
             self.assertFalse(VALID_ID_RE.fullmatch(value), value)
 
-    def test_real_record_reads_rc_and_report(self):
-        self.require_run_detail()
-        run_json = self.real_root / ".aimem" / "runs" / f"{RUN_ID}.json"
-        if not run_json.exists():
-            self.skipTest(f"실제 기록 없음: {RUN_ID}")
-
-        detail = reader.run_detail(RUN_ID)  # 기본 root = 저장소 루트
-        detail_shape_ok(self, detail)
-        self.assertTrue(detail["found"])
-        self.assertEqual(detail["rc"], 0)
-        self.assertGreater(detail["elapsed_s"], 0)
-        self.assertNotEqual(detail["report"], "")
-
     def test_read_only_before_after(self):
         self.require_run_detail()
-        runs_dir = self.real_root / ".aimem" / "runs"
-        run_json = runs_dir / f"{RUN_ID}.json"
-        if not run_json.exists():
-            self.skipTest(f"실제 기록 없음: {RUN_ID}")
-
-        before = snapshot_runs(runs_dir)
-        reader.run_detail(RUN_ID)
+        sdir = self.root / ".aimem" / "sessions" / RUN_ID
+        before = snapshot_dir(sdir)
+        reader.run_detail(RUN_ID, self.root)
         for bad_id in ("../../etc/passwd", "", None, "x" * 10000,
                        "20261109-172618-S3/../.."):
-            reader.run_detail(bad_id)
-        after = snapshot_runs(runs_dir)
-        self.assertEqual(before, after, "run_detail 이 .aimem/runs 를 바꿨습니다")
+            reader.run_detail(bad_id, self.root)
+        self.assertEqual(before, snapshot_dir(sdir), "run_detail 이 세션 폴더를 바꿨습니다")
 
 
 def handler_has_runs_route():
@@ -298,7 +262,7 @@ class TestServerContract(unittest.TestCase):
         if not self.no_tcp_mode:
             self.port = self.httpd.server_address[1]
             self.thread = threading.Thread(
-                target=self.httpd.serve_forever, daemon=True
+                target=self.httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
             )
             self.thread.start()
 

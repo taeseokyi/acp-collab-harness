@@ -1,4 +1,4 @@
-"""`tools/fleet.py` 의 운영 상태 DB 우선 / 마크다운 폴백 경로 회귀 테스트.
+"""`tools/fleet.py` 의 운영 상태(DB 정본) 읽기 회귀 테스트.
 
 표준 라이브러리 unittest + tempfile + unittest.mock 만 쓴다. 실제
 `.aimem/aimem.db` 는 읽지도 쓰지도 않는다 - DB 경로와 `state_dict()` 를
@@ -20,7 +20,7 @@ import aimem_db  # noqa: E402
 import fleet  # noqa: E402
 
 
-class FleetDbFallbackTests(unittest.TestCase):
+class FleetDbStateTests(unittest.TestCase):
     def setUp(self):
         fleet._DB_CACHE.update(at=0.0, state=None)
 
@@ -33,11 +33,6 @@ class FleetDbFallbackTests(unittest.TestCase):
         p = mock.patch.object(aimem_db, "DB", self.dummy_db)
         p.start()
         self.addCleanup(p.stop)
-
-    def _write_aimem(self, name, text):
-        path = self.tmp / name
-        path.write_text(text, encoding="utf-8")
-        return path
 
     def test_roster_db_path_filters_invalid_slot_names(self):
         state = {
@@ -59,28 +54,16 @@ class FleetDbFallbackTests(unittest.TestCase):
             result = fleet.roster()
 
         self.assertEqual(result, {
-            "S1": ("a41f0c", "claude", ""),
-            "S10": ("b10b10", "codex", ""),
+            "S1": ("a41f0c", "claude"),
+            "S10": ("b10b10", "codex"),
         })
-        self.assertTrue(all(key == "" for _, _, key in result.values()))
 
-    def test_roster_markdown_fallback_and_empty_table(self):
-        table = self._write_aimem(
-            "with_table.md",
-            "| S9 | `abc123` | claude | opus | 역할 | 세션키자리 |\n",
-        )
-        no_table = self._write_aimem(
-            "no_table.md",
-            "# AIMEM\n\n## 2. 명부\n\n(DB 로 이관 - `.aimem/aimem.db`)\n",
-        )
-
+    def test_roster_without_db_is_empty(self):
         with mock.patch.object(fleet, "db_state", return_value=None):
-            with mock.patch.object(fleet, "AIMEM", table):
-                self.assertEqual(
-                    fleet.roster(), {"S9": ("abc123", "claude", "역할")}
-                )
-            with mock.patch.object(fleet, "AIMEM", no_table):
-                self.assertEqual(fleet.roster(), {})
+            self.assertEqual(fleet.roster(), {})
+            self.assertEqual(fleet.board_rows(), [])
+            self.assertEqual(fleet.owned_paths("S1"), [])
+            self.assertIn("읽지 못했습니다", fleet._roster_miss("S1"))
 
     def test_read_rev_db_path_coerces_string(self):
         with mock.patch.object(fleet, "db_state", return_value={"rev": "114"}):
@@ -88,36 +71,24 @@ class FleetDbFallbackTests(unittest.TestCase):
         self.assertEqual(rev, 114)
         self.assertIsInstance(rev, int)
 
-    def test_read_rev_markdown_fallback(self):
-        aimem = self._write_aimem(
-            "rev.md",
-            "# AIMEM\n\n- **REV: 77** (개정 번호)\n",
-        )
+    def test_read_rev_without_db_exits(self):
         with mock.patch.object(fleet, "db_state", return_value=None):
-            with mock.patch.object(fleet, "AIMEM", aimem):
-                self.assertEqual(fleet.read_rev(), 77)
-
-    def test_read_rev_missing_both_sources_exits(self):
-        missing = self.tmp / "missing.md"
-        with mock.patch.object(fleet, "db_state", return_value=None):
-            with mock.patch.object(fleet, "AIMEM", missing):
-                with self.assertRaises(SystemExit):
-                    fleet.read_rev()
+            with self.assertRaises(SystemExit):
+                fleet.read_rev()
 
     def test_owned_paths_for_slot(self):
         state = {
             "ownership": [
                 {"path_pattern": "tests/x.py", "owner": "S2", "note": ""},
-                {"path_pattern": "src/<슬롯>/y.py", "owner": "해당 슬롯", "note": ""},
                 {"path_pattern": "tests/other.py", "owner": "S1", "note": ""},
-                {"path_pattern": "docs/<슬롯>.md", "owner": "해당 슬롯", "note": ""},
-                {"path_pattern": "tools/z.py", "owner": "S3", "note": ""},
+                {"path_pattern": "docs/y.md", "owner": " S2 ", "note": ""},
+                {"path_pattern": "tools/z.py", "owner": None, "note": ""},
             ],
         }
         with mock.patch.object(fleet, "db_state", return_value=state):
             paths = fleet.owned_paths("S2")
 
-        self.assertEqual(paths, ["tests/x.py", "src/S2/y.py", "docs/S2.md"])
+        self.assertEqual(paths, ["tests/x.py", "docs/y.md"])
 
     def test_board_rows_from_db_normalizes_none(self):
         state = {
@@ -144,6 +115,17 @@ class FleetDbFallbackTests(unittest.TestCase):
             fleet.path_allowed(".aimem/archive/x.md", [".aimem/archive/**"]),
             ".aimem/archive/**",
         )
+
+    def test_spawn_model_falls_back_to_the_fleet_toml_default(self):
+        """슬롯에 모델이 없으면 fleet.toml 하네스 기본을 하네스에 넘긴다 - 문지기가 센 공급자와 하네스가 쓰는 모델이 같게."""
+        from fleet_rt import config as rt_config
+        cfg = rt_config.load(fleet.ROOT)
+        with mock.patch.object(fleet, "roster", return_value={"S1": ("t", "claude"), "S2": ("t", "codex")}), \
+                mock.patch.object(fleet, "_slot_model", return_value=None):
+            for slot, h in (("S1", "claude"), ("S2", "codex")):
+                self.assertEqual(fleet.spawn_harness_model(slot), (h, cfg.harness(h)["default_model"]))
+            self.assertEqual(fleet.spawn_harness_model("S1", model="opus"), ("claude", "opus"))
+            self.assertEqual(fleet.spawn_harness_model("S9"), (None, None))
 
     def test_db_state_cache_ttl(self):
         cached = {"rev": 9, "slots": [{"slot": "S9"}], "tasks": []}

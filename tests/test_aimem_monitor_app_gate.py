@@ -42,7 +42,7 @@ class AppGateRegression(unittest.TestCase):
         handler = type("H", (server.Handler,), {"root": root, "require_auth": True, "tls": False, "access_token": TOKEN,
                                                 "guard": server.LoginGuard(), "log_message": lambda *a, **k: None})
         self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
         self.addCleanup(self.httpd.server_close)
         self.addCleanup(self.httpd.shutdown)
         self.port = self.httpd.server_address[1]

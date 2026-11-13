@@ -1,10 +1,4 @@
-"""`aimem_db.py` 의 task/request set 과 archive 회귀 테스트 (2026-11-10, 클로드 코드).
-
-- `request set` 이 `--status` 없이 기존 요청을 고치면 NOT NULL 로 실패하던 것
-- `task set` 이 `--status` 없이 고치면 기존 상태를 TODO 로 덮던 것
-- `archive`: DONE 이 된 지 N일 지난 태스크를 아카이브 파일에 먼저 쓰고 DB 에서 내린다
-- `request set` 이 `.aimem/requests/*.json` 도 맞춘다 (`migrate` 가 되돌리지 않게)
-"""
+"""`aimem_db.py` 명령·스냅샷·아카이브 테스트 (임시 저장소만 쓴다 - 운영 DB 는 건드리지 않는다)."""
 import argparse
 import contextlib
 import io
@@ -13,6 +7,7 @@ import os
 import pathlib
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -29,15 +24,11 @@ def ns(**kw):
     base.update(kw)
     return argparse.Namespace(**base)
 
-# `python3 -m unittest … 2>&1 | tail -3` 의 마지막 줄이 `OK` 이게 합니다 (2026-11-11 R11 T-139).
-# 이 파일의 시험이 부르는 명령들이 표준출력에 찍는 줄(`ok: …aimem.db`, 린터 결과)은 파이프에서 버퍼에 있다가
-# unittest 요약 **뒤에** 나와, `tail -3 | grep '^OK'` 로 건 검증이 멀쩡한 작업을 실패로 판정했습니다.
+# 명령이 찍는 줄이 unittest 요약 뒤에 섞이지 않게 모듈 동안 표준출력을 막는다 (`tail -3 | grep OK` 검증용)
 _QUIET = []
 
 
 def setUpModule():
-    import contextlib
-    import io
     cm = contextlib.redirect_stdout(io.StringIO())
     cm.__enter__()
     _QUIET.append(cm)
@@ -48,7 +39,9 @@ def tearDownModule():
         _QUIET.pop().__exit__(None, None, None)
 
 
-class AimemDbCliTest(unittest.TestCase):
+class DbFixture:
+    """임시 저장소 + 빈 DB. 테스트가 없는 믹스인이라 하위 클래스마다 시험이 다시 돌지 않는다."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.tmp.name)
@@ -73,6 +66,15 @@ class AimemDbCliTest(unittest.TestCase):
         with aimem_db.connect() as con:
             return con.execute(sql, args).fetchone()
 
+    def rows(self, sql, *args):
+        with aimem_db.connect() as con:
+            return con.execute(sql, args).fetchall()
+
+    def handoff_count(self):
+        return self.row("SELECT count(*) FROM events WHERE kind='handoff'")[0]
+
+
+class AimemDbCliTest(DbFixture, unittest.TestCase):
     def test_request_set_without_status_updates_existing(self):
         self.run_cmd(aimem_db.cmd_request, action="set", id="Q-1", title="t", status="NEW")
         self.run_cmd(aimem_db.cmd_request, action="set", id="Q-1", detail="줄1\n줄2")
@@ -113,7 +115,7 @@ class AimemDbCliTest(unittest.TestCase):
             self.run_cmd(aimem_db.cmd_request, action="set", id="Q-9", project="../x")
 
     def test_requests_taken_up_mid_round_join_the_round_record(self):
-        """REV 148: `round.json` 은 띄울 때의 열린 요청만 담았다 - 도중에 들어온 요청의 프로젝트가 라운드에서 빠졌다."""
+        """라운드 도중에 다룬 요청과 그 프로젝트가 도는 라운드의 `round.json` 에 덧붙는다."""
         import fleet
         rd = self.root / "rounds" / "R7"
         rd.mkdir(parents=True)
@@ -145,8 +147,7 @@ class AimemDbCliTest(unittest.TestCase):
                 self.assertFalse((self.root / "rounds" / "R9").exists())
 
     def test_archive_plan_survives_a_node_whose_task_is_the_whole_brief(self):
-        """2026-11-11 태석님: '지금 끝난 것 전부' 미리보기가 안 됨. 노드의 `task` 가 지시 본문 전체일 때 그것을
-        입력 파일 이름으로 써서 `File name too long` 으로 죽었다(14일 기준에서는 최근 그래프가 걸러져 안 보였다)."""
+        """노드의 `task` 가 지시 본문 전체여도 계획이 죽지 않는다 (파일 이름 꼴일 때만 입력 파일로 본다)."""
         g = self.root / ".aimem" / "graph"
         (g / "inputs").mkdir(parents=True)
         (g / "inputs" / "T-1.md").write_text("x", encoding="utf-8")
@@ -198,11 +199,7 @@ class AimemDbCliTest(unittest.TestCase):
         self.assertFalse((self.root / ".aimem" / "archive").exists())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-class SlotCommandTest(AimemDbCliTest):
+class SlotCommandTest(DbFixture, unittest.TestCase):
     """`aimem_db.py slot add|set|remove|list` (2026-11-10, 태석님 지시) - DB 가 슬롯 모델의 유일한 정본이다(거울 파일 `tools/fleet_slots.json` 은 더는 쓰지 않는다)."""
 
     def _json(self):
@@ -252,7 +249,7 @@ class SlotCommandTest(AimemDbCliTest):
         self.assertEqual(aimem_db.next_slot_id(), "S1")
 
 
-class ArchiveRequestsGraphsTest(AimemDbCliTest):
+class ArchiveRequestsGraphsTest(DbFixture, unittest.TestCase):
     """REV 123: `archive` 가 닫힌 요청 파일과 끝난 그래프(부속 파일·inputs 포함)도 내린다."""
 
     def _seed_files(self):
@@ -323,19 +320,39 @@ class ArchiveRequestsGraphsTest(AimemDbCliTest):
         self.assertTrue((self.root / ".aimem" / "requests" / "Q-1-old.json").exists())
 
 
-class MigrateEnglishHandoffTest(AimemDbCliTest):
-    """REV 128: `migrate` 가 영어 제목 `## 4. Handoff Log` 아래의 항목도 events(kind=handoff) 로 적재한다."""
+class MigrateTest(DbFixture, unittest.TestCase):
+    """`migrate` 는 요청 파일·handoff.md·세션 폴더만 적재한다 - AIMEM.md 의 옛 표·4절 로그와 `.aimem/runs` 는 읽지 않는다."""
 
-    def test_english_section_4_is_imported(self):
+    def test_markdown_tables_and_legacy_runs_are_not_imported(self):
         (self.root / "AIMEM.md").write_text(
-            "# AIMEM.md\n\n- **REV: 5** (x)\n\n## 4. Handoff Log\n\n"
-            "- `2026-11-10 19:00` Claude Code: **REV 5. English entry.** body\n\n## 4.5 Waiting Queue\n", encoding="utf-8")
+            "# AIMEM.md\n\n- **REV: 5** (x)\n\n## 2. 세션 명부\n\n| 슬롯 | 확인토큰 | 하네스 | 역할 |\n| --- | --- | --- | --- |\n"
+            "| S9 | `abc123` | claude | x |\n\n## 3. 작업 보드\n\n| ID | 태스크 | 담당 | 상태 |\n| --- | --- | --- | --- |\n"
+            "| T-9 | t | S9 | TODO |\n\n## 4. Handoff Log\n\n- `2026-11-10 19:00` 관리자: **REV 5.** 옛 4절 항목\n\n"
+            "## 4.5 대기 큐\n\n| 순서 | 태스크 |\n| --- | --- |\n| 1 | 큐 |\n\n## 6. 파일 소유권\n\n"
+            "| 경로 패턴 | 쓰기 소유 |\n| --- | --- |\n| `a.py` | S9 |\n", encoding="utf-8")
+        runs = self.root / ".aimem" / "runs"
+        runs.mkdir()
+        (runs / "r1.json").write_text(json.dumps({"id": "r1", "task": "T-9"}), encoding="utf-8")
+        (runs / "r1.rc").write_text("0", encoding="utf-8")
+        (self.root / ".aimem" / "graph").mkdir()
+        (self.root / ".aimem" / "graph" / "G-1.json").write_text(json.dumps({"id": "G-1", "nodes": [{"id": "T-9"}]}), encoding="utf-8")
         aimem_db.migrate(verbose=False)
-        row = self.row("SELECT at, rev FROM events WHERE kind='handoff'")
-        self.assertEqual((row["at"], row["rev"]), ("2026-11-10 19:00", 5))
+        for table in ("slots", "tasks", "queue", "ownership", "runs", "graphs", "nodes"):
+            self.assertEqual(self.row(f"SELECT count(*) FROM {table}")[0], 0, table)
+        self.assertEqual(self.handoff_count(), 0)
+        self.assertEqual(self.row("SELECT value FROM meta WHERE key='rev'")[0], "5")   # 빈 DB 의 REV 씨앗만 읽는다
+
+    def test_rev_seed_does_not_overwrite_db_rev(self):
+        (self.root / "AIMEM.md").write_text("- **REV: 5**\n", encoding="utf-8")
+        with aimem_db.connect() as con:
+            con.execute("INSERT INTO meta(key,value) VALUES('rev','9')")
+        aimem_db.migrate(verbose=False)
+        self.assertEqual(self.row("SELECT value FROM meta WHERE key='rev'")[0], "9")
 
 
-    # 결함 10: 본문에 `**REV N` 이 없는 항목도 rev 가 비지 않고, 파일 차례(최신 먼저)가 유지된다.
+class ImportHandoffEntriesTest(DbFixture, unittest.TestCase):
+    """복구용 적재: 본문에 `**REV N` 이 없는 항목도 rev 가 비지 않고, 파일 차례(최신 먼저)가 유지된다."""
+
     ENTRIES = [  # 최신 먼저 (`handoff_entries` 와 같은 차례)
         "- `2026-11-01 12:00` 관리자: **REV 101. 셋째 항목.**",
         "- `2026-11-01 11:00` 관리자: 둘째 항목 - 본문에 레브 글자가 없다.",
@@ -364,12 +381,8 @@ class MigrateEnglishHandoffTest(AimemDbCliTest):
         self.assertEqual(rendered[2], self.ENTRIES[2])
 
 
-class HandoffLogTest(AimemDbCliTest):
+class HandoffLogTest(DbFixture, unittest.TestCase):
     """REV 132: 핸드오프의 정본은 DB events 하나. .aimem/handoff.md 는 최신 12건 생성물, 밀려난 항목은 아카이브로 내보낸다."""
-
-    def handoff_count(self):
-        with aimem_db.connect() as con:
-            return con.execute("SELECT count(*) FROM events WHERE kind='handoff'").fetchone()[0]
 
     def test_add_writes_event_and_generates_file(self):
         new, exported = aimem_db.handoff_add("**REV 1. first.** body", actor="t", bump=True, when="2026-11-10 19:00")
@@ -439,7 +452,7 @@ class HandoffLogTest(AimemDbCliTest):
         self.assertIsNone(aimem_db.sync_rev_in_aimem())
 
 
-class HandoffConcurrencyTest(HandoffLogTest):
+class HandoffConcurrencyTest(DbFixture, unittest.TestCase):
     """동시에 쓰는 handoff add: 항목을 잃지 않고, REV 가 겹치지 않고, 아카이브에 두 번 붙지 않는다 - 잠금 파일 없이 DB 트랜잭션만으로."""
 
     def test_parallel_adds_lose_nothing_and_revs_are_unique(self):
@@ -487,8 +500,8 @@ class HandoffConcurrencyTest(HandoffLogTest):
             self.assertIsNone(aimem_db.rev(con))
 
 
-class ArchiveAttachedRecordsTest(AimemDbCliTest):
-    """REV 157: 끝난 작업을 정리할 때 그 작업에 딸린 실행·이벤트·핸드오프·전달·로그도 함께 옮긴다."""
+class ArchiveAttachedRecordsTest(DbFixture, unittest.TestCase):
+    """끝난 작업을 정리할 때 그 작업에 딸린 세션·이벤트·핸드오프·전달·로그도 함께 옮긴다."""
 
     OLD = "2026-01-01T00:00:00"
 
@@ -497,20 +510,6 @@ class ArchiveAttachedRecordsTest(AimemDbCliTest):
         with aimem_db.connect() as con:
             con.execute("INSERT INTO tasks(id,title,slot,status,created,updated) VALUES(?,?,?,?,?,?)",
                         (tid, "제목", "S1", status, updated, updated))
-            con.commit()
-
-    def _run(self, rid, task, started=None, rc=True):
-        started = started or self.OLD
-        d = self.root / ".aimem" / "runs"
-        d.mkdir(parents=True, exist_ok=True)
-        (d / f"{rid}.json").write_text(json.dumps({"id": rid, "task": task, "started": started}), encoding="utf-8")
-        (d / f"{rid}.out").write_text("x", encoding="utf-8")
-        (d / f"{rid}.brief.md").write_text("x", encoding="utf-8")
-        if rc:
-            (d / f"{rid}.rc").write_text("0", encoding="utf-8")
-        with aimem_db.connect() as con:
-            con.execute("INSERT INTO runs(id,task_id,slot,started,rc,state) VALUES(?,?,?,?,?,?)",
-                        (rid, task, "S1", started, 0 if rc else None, "done" if rc else "running"))
             con.commit()
 
     def _event(self, body, at=None, kind="note", rev=None):
@@ -522,37 +521,6 @@ class ArchiveAttachedRecordsTest(AimemDbCliTest):
 
     def _handoff(self, i, at, rev=None):
         return self._event(f"entry {i:02d}", at=at, kind="handoff", rev=rev)
-
-    def test_finished_task_runs_move_with_it(self):
-        self._task("T-900", "DONE")
-        self._run("run-900", "T-900")
-        plan = aimem_db.archive_plan(0)
-        self.assertEqual([r["id"] for r in plan["runs"]], ["run-900"])
-        out = aimem_db.archive_apply(plan, actor="t")
-        self.assertEqual(out["runs"], ["run-900"])
-        self.assertFalse((self.root / ".aimem" / "runs" / "run-900.json").exists())
-        dest = self.root / ".aimem" / "archive" / "runs-2026-01"
-        for ext in ("json", "rc", "out", "brief.md"):
-            self.assertTrue((dest / f"run-900.{ext}").exists(), ext)
-        self.assertIsNone(self.row("SELECT 1 FROM runs WHERE id=?", "run-900"))
-
-    def test_open_task_runs_stay(self):
-        self._task("T-901", "TODO")
-        self._run("run-901", "T-901")
-        plan = aimem_db.archive_plan(0)
-        self.assertEqual(plan["runs"], [])
-        aimem_db.archive_apply(plan, actor="t")
-        self.assertTrue((self.root / ".aimem" / "runs" / "run-901.json").exists())
-        self.assertIsNotNone(self.row("SELECT 1 FROM runs WHERE id=?", "run-901"))
-
-    def test_running_run_stays_even_for_finished_task(self):
-        self._task("T-902", "DONE")
-        self._run("run-902", "T-902", rc=False)
-        plan = aimem_db.archive_plan(0)
-        self.assertEqual(plan["runs"], [])
-        aimem_db.archive_apply(plan, actor="t")
-        self.assertTrue((self.root / ".aimem" / "runs" / "run-902.json").exists())
-        self.assertFalse((self.root / ".aimem" / "runs" / "run-902.rc").exists())
 
     def test_events_move_only_when_no_open_id_is_mentioned(self):
         self._task("T-900", "DONE")
@@ -614,9 +582,29 @@ class ArchiveAttachedRecordsTest(AimemDbCliTest):
         self.assertIn("old", arch)
         self.assertNotIn("시각 없음", arch)
 
+    def test_legacy_run_files_and_rows_are_left_alone(self):
+        """옛 `.aimem/runs` 는 더 다루지 않는다 - 끝난 태스크의 실행 파일도 `runs` 표 행(이력)도 그대로 남는다."""
+        self._task("T-900", "DONE")
+        d = self.root / ".aimem" / "runs"
+        d.mkdir(parents=True)
+        for name in ("run-900.json", "run-900.rc"):
+            (d / name).write_text("{}", encoding="utf-8")
+        with aimem_db.connect() as con:
+            con.execute("INSERT INTO runs(id,task_id,state,started) VALUES('run-900','T-900','done',?)", (self.OLD,))
+        plan = aimem_db.archive_plan(0)
+        self.assertNotIn("runs", plan)
+        out = aimem_db.archive_apply(plan, actor="t")
+        self.assertEqual(out["tasks"], ["T-900"])
+        self.assertEqual(sorted(x.name for x in d.iterdir()), ["run-900.json", "run-900.rc"])
+        self.assertIsNotNone(self.row("SELECT 1 FROM runs WHERE id='run-900'"))
+
+    def test_missing_runs_dir_is_fine(self):
+        self._task("T-900", "DONE")
+        self.assertFalse((self.root / ".aimem" / "runs").exists())
+        self.assertEqual(aimem_db.archive_apply(aimem_db.archive_plan(0), actor="t")["tasks"], ["T-900"])
+
     def test_rev_unchanged_and_archive_event_written(self):
         self._task("T-900", "DONE")
-        self._run("run-900", "T-900")
         self._event("T-900 note")
         with aimem_db.connect() as con:
             con.execute("INSERT INTO meta(key,value) VALUES('rev','42') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
@@ -624,26 +612,18 @@ class ArchiveAttachedRecordsTest(AimemDbCliTest):
         plan = aimem_db.archive_plan(0)
         out = aimem_db.archive_apply(plan, actor="t")
         self.assertEqual(self.row("SELECT value FROM meta WHERE key='rev'")[0], "42")
-        rows = [r["body"] for r in self.row_all("SELECT body FROM events WHERE kind='archive'")]
+        rows = [r["body"] for r in self.rows("SELECT body FROM events WHERE kind='archive'")]
         self.assertEqual(len(rows), 1)
-        self.assertIn(f"실행 {len(out['runs'])}건", rows[0])
-        self.assertIn(f"이벤트 {len(out['events'])}건", rows[0])
+        self.assertEqual(len(out["events"]), 1)
 
-    def row_all(self, sql, *args):
-        with aimem_db.connect() as con:
-            return con.execute(sql, args).fetchall()
-
-    def test_dry_run_leaves_runs_events_and_logs(self):
+    def test_dry_run_leaves_events_and_logs(self):
         self._task("T-900", "DONE")
-        self._run("run-900", "T-900")
         self._event("T-900 note")
         fleet = self.root / ".aimem" / "fleet-mode.log"
         fleet.write_text("2026-01-01T00:00:00 old\n", encoding="utf-8")
         out = self.run_cmd(aimem_db.cmd_archive, days=0, dry_run=True, actor="t")
-        self.assertIn("실행 <- 1건", out)
         self.assertIn("이벤트 <- 1건", out)
-        self.assertTrue((self.root / ".aimem" / "runs" / "run-900.json").exists())
-        self.assertIsNotNone(self.row("SELECT 1 FROM runs WHERE id=?", "run-900"))
+        self.assertEqual(self.row("SELECT count(*) FROM events")[0], 1)
         self.assertIsNotNone(self.row("SELECT 1 FROM tasks WHERE id=?", "T-900"))
         self.assertEqual(fleet.read_text(encoding="utf-8"), "2026-01-01T00:00:00 old\n")
         self.assertFalse((self.root / ".aimem" / "archive").exists())
@@ -669,19 +649,6 @@ class ArchiveAttachedRecordsTest(AimemDbCliTest):
             con.commit()
             return cur.lastrowid
 
-    def test_running_graph_protects_finished_node_run(self):
-        self._task("T-1", "DONE")
-        self._run("run-1", "T-1")
-        self._graph("G-1", [
-            {"id": "T-1", "task": "T-1", "status": "done", "attempts": [{"run_id": "run-1"}]},
-            {"id": "T-2", "task": "T-2", "status": "running", "attempts": []},
-        ])
-        plan = aimem_db.archive_plan(0)
-        self.assertEqual([r["id"] for r in plan["runs"]], [])
-        aimem_db.archive_apply(plan, actor="t")
-        self.assertTrue((self.root / ".aimem" / "runs" / "run-1.json").exists())
-        self.assertIsNotNone(self.row("SELECT 1 FROM runs WHERE id=?", "run-1"))
-
     def test_running_graph_protects_finished_node_task_row(self):
         self._task("T-1", "DONE")
         self._graph("G-1", [
@@ -692,18 +659,6 @@ class ArchiveAttachedRecordsTest(AimemDbCliTest):
         self.assertEqual([t["id"] for t in plan["tasks"]], [])
         aimem_db.archive_apply(plan, actor="t")
         self.assertIsNotNone(self.row("SELECT 1 FROM tasks WHERE id=?", "T-1"))
-
-    def test_running_graph_protects_off_board_node_run(self):
-        self._run("run-3", "T-3")
-        self._graph("G-1", [
-            {"id": "T-3", "task": "T-3", "status": "done", "attempts": [{"run_id": "run-3"}]},
-            {"id": "T-2", "task": "T-2", "status": "running", "attempts": []},
-        ])
-        plan = aimem_db.archive_plan(0)
-        self.assertEqual([r["id"] for r in plan["runs"]], [])
-        aimem_db.archive_apply(plan, actor="t")
-        self.assertTrue((self.root / ".aimem" / "runs" / "run-3.json").exists())
-        self.assertIsNotNone(self.row("SELECT 1 FROM runs WHERE id=?", "run-3"))
 
     def test_queue_referenced_event_stays(self):
         self._queue("T-300 다음 할 일")
@@ -778,7 +733,7 @@ class ArchiveAttachedRecordsTest(AimemDbCliTest):
         self.assertIsNone(self.row("SELECT 1 FROM events WHERE seq=?", 1))
 
     def test_log_cut_keeps_same_inode_and_held_handle_writes(self):
-        """결함 2/X8: 정리 뒤에도 열어 둔 핸들의 새 줄이 파일에 남고 inode 가 같아야 한다."""
+        """정리 뒤에도 열어 둔 핸들의 새 줄이 파일에 남고 inode 가 같다."""
         fleet = self.root / ".aimem" / "fleet-mode.log"
         fleet.write_text("2026-01-01T00:00:00 old\n", encoding="utf-8")
         before = fleet.stat().st_ino
@@ -794,7 +749,7 @@ class ArchiveAttachedRecordsTest(AimemDbCliTest):
         self.assertIn("old", arch.read_text(encoding="utf-8"))
 
     def test_monitor_log_held_is_left_alone(self):
-        """결함 2/X9: 모니터 서버가 monitor.log 를 쥐고 있으면 apply 도 손대지 않는다."""
+        """모니터 서버가 monitor.log 를 쥐고 있으면 apply 도 손대지 않는다."""
         aimem = self.root / ".aimem"
         log = aimem / "monitor.log"
         log.write_text("2026-01-01T00:00:00 old\n", encoding="utf-8")
@@ -805,115 +760,8 @@ class ArchiveAttachedRecordsTest(AimemDbCliTest):
         aimem_db.archive_apply(plan, actor="t")
         self.assertEqual(log.read_text(encoding="utf-8"), "2026-01-01T00:00:00 old\n")
 
-    def test_rc_moved_last_so_plan_rediscovers_after_failure(self):
-        """결함 4/X1 -> N1: 이동 차례는 `.json` 이 아니라 `.rc` 가 맨 마지막이다. 그래서 어느 replace 가
-        죽어도 `.rc` 없는 `.json` 이 남지 않고, 다음 계획이나 고아 줍기가 그 실행을 받아 간다.
-        (고치기 전 차례 - brief, out, rc - 로 돌아가면 첫 단언이 빨개진다.)"""
-        self._task("T-900", "DONE")
-        self._run("run-900", "T-900")
-        d = self.root / ".aimem" / "runs"
-        real_replace = pathlib.Path.replace
-        calls = []
-
-        def spy_replace(self_path, target):
-            calls.append(self_path.name)
-            return real_replace(self_path, target)
-
-        plan = aimem_db.archive_plan(0)
-        self.assertEqual([r["id"] for r in plan["runs"]], ["run-900"])
-        with mock.patch("pathlib.Path.replace", spy_replace):
-            aimem_db.archive_apply(plan, actor="t")
-        self.assertEqual(calls, ["run-900.brief.md", "run-900.json", "run-900.out", "run-900.rc"])
-        self.assertEqual(list(d.iterdir()), [])
-        dest = self.root / ".aimem" / "archive" / "runs-2026-01"
-        for ext in ("json", "rc", "out", "brief.md"):
-            self.assertTrue((dest / f"run-900.{ext}").exists(), ext)
-
-        # 셋째 replace(out)에서 죽인다: `.json` 은 이미 옮겨졌고 `.rc` 는 남아 있으므로
-        # `.rc` 없는 `.json` 이 남는 일이 없다. 다음 계획이 남은 조각을 줍는다.
-        self._task("T-901", "DONE")
-        self._run("run-901", "T-901")
-        calls.clear()
-
-        def flaky_replace(self_path, target):
-            calls.append(self_path.name)
-            if len(calls) == 3:
-                raise OSError("replace 실패")
-            return real_replace(self_path, target)
-
-        with mock.patch("pathlib.Path.replace", flaky_replace):
-            with self.assertRaises(OSError):
-                aimem_db.archive_apply(aimem_db.archive_plan(0), actor="t")
-        self.assertEqual(calls[:3], ["run-901.brief.md", "run-901.json", "run-901.out"])
-        self.assertFalse((d / "run-901.json").exists())
-        self.assertTrue((d / "run-901.rc").exists())
-        self.assertEqual([r["id"] for r in aimem_db.archive_plan(0)["runs"]], ["run-901"])
-        aimem_db.archive_apply(aimem_db.archive_plan(0), actor="t")
-        self.assertEqual(list(d.iterdir()), [])
-
-    def test_orphan_rc_and_out_are_reclaimed(self):
-        """결함 4/X2: `.json` 없는 고아 `.rc/.out` 도 계획이 주워 간다."""
-        d = self.root / ".aimem" / "runs"
-        d.mkdir(parents=True)
-        for name, text in (("run-777.out", "x"), ("run-777.rc", "0")):
-            f = d / name
-            f.write_text(text, encoding="utf-8")
-            os.utime(f, (946684800, 946684800))
-        plan = aimem_db.archive_plan(0)
-        self.assertEqual([r["id"] for r in plan["runs"]], ["run-777"])
-        out = aimem_db.archive_apply(plan, actor="t")
-        self.assertEqual(out["runs"], ["run-777"])
-        self.assertFalse((d / "run-777.out").exists())
-        self.assertFalse((d / "run-777.rc").exists())
-        dest = self.root / ".aimem" / "archive" / "runs-2000-01"
-        self.assertTrue((dest / "run-777.out").exists())
-        self.assertTrue((dest / "run-777.rc").exists())
-
-    def _fail_archiving_run_at(self, k):
-        """k 번째 `Path.replace` 에서 죽인 뒤 다시 돌려 `runs/` 가 비는지 본다 (N1)."""
-        self._task("T-900", "DONE")
-        self._run("run-900", "T-900")
-        d = self.root / ".aimem" / "runs"
-        real_replace = pathlib.Path.replace
-        calls = []
-
-        def flaky_replace(self_path, target):
-            calls.append(self_path.name)
-            if len(calls) == k:
-                raise OSError(f"replace {k} 실패")
-            return real_replace(self_path, target)
-
-        with mock.patch("pathlib.Path.replace", flaky_replace):
-            with self.assertRaises(OSError):
-                aimem_db.archive_apply(aimem_db.archive_plan(0), actor="t")
-        expected = ["run-900.brief.md", "run-900.json", "run-900.out", "run-900.rc"]
-        self.assertEqual(calls[:k], expected[:k], f"k={k}: 옛 차례(json 마지막)면 여기서 빨개진다")
-        # 고친 뒤에는 `.rc` 가 맨 마지막이라 `.rc` 없는 `.json` 이 남지 않는다.
-        if (d / "run-900.json").exists():
-            self.assertTrue((d / "run-900.rc").exists(), f"k={k}: .rc 없는 .json 이 남았다")
-        self.assertEqual([r["id"] for r in aimem_db.archive_plan(0)["runs"]], ["run-900"], f"k={k}")
-        aimem_db.archive_apply(aimem_db.archive_plan(0), actor="t")
-        self.assertEqual(list(d.iterdir()), [], f"k={k}: 다시 돌린 뒤에도 runs/ 가 비지 않았다")
-
-    def test_failure_at_first_replace_is_recovered_by_next_plan(self):
-        """N1 k=1(brief): 아직 아무것도 옮기지 않았고 `.json`+`.rc` 가 남아 다음 계획이 줍는다."""
-        self._fail_archiving_run_at(1)
-
-    def test_failure_at_second_replace_is_recovered_by_next_plan(self):
-        """N1 k=2(json): brief 만 옮겨졌고 `.json`+`.rc` 가 남아 다음 계획이 줍는다."""
-        self._fail_archiving_run_at(2)
-
-    def test_failure_at_third_replace_is_recovered_by_next_plan(self):
-        """N1 k=3(out): `.json` 은 옮겨졌고 `.rc` 고아가 남아 다음 계획이 줍는다."""
-        self._fail_archiving_run_at(3)
-
-    def test_failure_at_fourth_replace_is_recovered_by_next_plan(self):
-        """N1 k=4(rc): `.rc` 고아가 남아 다음 계획이 줍는다."""
-        self._fail_archiving_run_at(4)
-
     def test_log_lines_appended_between_read_and_cut_survive(self):
-        """N2: 로그를 읽은 뒤 자르기 전에 다른 프로세스가 `O_APPEND` 로 덧붙인 줄은 원본에 남아야 한다.
-        (고치기 전 코드는 `kept` 에 없는 그 줄을 truncate 로 지워 버린다 - 마지막 단언이 빨개진다.)"""
+        """로그를 읽은 뒤 자르기 전에 다른 프로세스가 `O_APPEND` 로 덧붙인 줄은 원본에 남는다."""
         fleet = self.root / ".aimem" / "fleet-mode.log"
         fleet.write_text("2026-01-01T00:00:00 old1\n2026-01-02T00:00:00 old2\n", encoding="utf-8")
         appended = "2999-01-01T00:00:00 끼어든 줄\n"
@@ -943,7 +791,7 @@ class ArchiveAttachedRecordsTest(AimemDbCliTest):
         self.assertNotIn("끼어든 줄", text)
 
     def test_task_reopened_after_plan_is_not_deleted(self):
-        """결함 9/X7: 계획 뒤 다시 열린 태스크 행은 apply 가 내리지 않는다."""
+        """계획 뒤 다시 열린 태스크 행은 apply 가 내리지 않는다."""
         self._task("T-900", "DONE")
         plan = aimem_db.archive_plan(0)
         self.assertEqual([t["id"] for t in plan["tasks"]], ["T-900"])
@@ -955,7 +803,7 @@ class ArchiveAttachedRecordsTest(AimemDbCliTest):
         self.assertNotIn("T-900", out["tasks"])
 
     def test_apply_rerenders_state_without_changing_aimem(self):
-        """결함 12/X10·N3: 정리 뒤 AIMEM-state.md 는 다시 쓰이고 AIMEM.md 는 그대로다."""
+        """정리 뒤 AIMEM-state.md 는 다시 쓰이고 AIMEM.md 는 그대로다."""
         aimem = self.root / "AIMEM.md"
         aimem.write_text("# AIMEM.md\n\n- **REV: 1**\n", encoding="utf-8")
         self._task("T-900", "DONE")
@@ -1006,16 +854,20 @@ class ArchiveAttachedRecordsTest(AimemDbCliTest):
         plan = aimem_db.archive_plan(0)
         self.assertNotIn(seq, [e["seq"] for e in plan["events"]])
 
-    def test_archive_plan_on_the_real_repo_is_fast(self):
-        db = ROOT / ".aimem" / "aimem.db"
-        with mock.patch.object(aimem_db, "ROOT", ROOT), mock.patch.object(aimem_db, "DB", db):
-            start = time.monotonic()
-            aimem_db.archive_plan(14)
-            elapsed = time.monotonic() - start
-        self.assertLess(elapsed, 8.0)
+    def test_archive_plan_scales_with_many_events_and_ids(self):
+        """이벤트 300건 × 식별자 400개 - 본문마다 낱말을 한 번만 뽑으므로 몇 초 안에 끝난다 (예전엔 정규식 재컴파일로 30초+)."""
+        with aimem_db.connect() as con:
+            con.executemany("INSERT INTO tasks(id,title,status,created,updated) VALUES(?,?,?,?,?)",
+                            [(f"T-{i}", "t", "DONE" if i % 2 else "TODO", self.OLD, self.OLD) for i in range(400)])
+            con.executemany("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
+                            [(self.OLD, "t", 1, "task", f"T-{i % 400} T-{(i * 7) % 400} " + "본문 " * 200) for i in range(300)])
+        start = time.monotonic()
+        plan = aimem_db.archive_plan(0)
+        self.assertLess(time.monotonic() - start, 5.0)
+        self.assertEqual(len(plan["tasks"]), 200)
 
 
-class QueueFindingIdsTest(AimemDbCliTest):
+class QueueFindingIdsTest(DbFixture, unittest.TestCase):
     """큐의 검수 발견 번호에는 라운드를 붙인다 (2026-11-12) - 번호가 보고서마다 1부터 다시 세어져 섞였다."""
 
     def q(self, action, **kw):
@@ -1058,3 +910,92 @@ class QueueFindingIdsTest(AimemDbCliTest):
         with self.assertRaises(SystemExit):
             self.q("edit", pos=1, task="N1 고침")
         self.assertEqual(self.q("edit", pos=9, task="R1-N1"), "큐에 9 번이 없습니다\n")
+
+
+class SnapshotTest(DbFixture, unittest.TestCase):
+    """`AIMEM-state.md` 는 명부·보드·큐·소유권·요청만 - 세션·실행·이벤트가 바뀌어도 그대로다."""
+
+    def body(self):
+        return [ln for ln in aimem_db.render_text().splitlines() if not ln.startswith(aimem_db.STAMP_PREFIX)]
+
+    def test_sections(self):
+        heads = [ln for ln in aimem_db.render_text().splitlines() if ln.startswith("## ")]
+        self.assertEqual(heads, ["## 2. 세션 명부", "## 3. 작업 보드", "## 4.5 대기 큐", "## 6. 파일 소유권", "## 요청"])
+
+    def test_unchanged_by_sessions_runs_and_events(self):
+        before = self.body()
+        with aimem_db.connect() as con:
+            con.execute("INSERT INTO sessions(id,role,harness,state,started) VALUES('M-R1-000000','manager','claude','running',?)", (aimem_db._now(),))
+            con.execute("INSERT INTO sessions(id,role,harness,state,started) VALUES('w1','worker','codex','running',?)", (aimem_db._now(),))
+            con.execute("INSERT INTO runs(id,task_id,state,started) VALUES('r1','T-1','done',?)", (aimem_db._now(),))
+            con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)", (aimem_db._now(), "t", 1, "note", "x"))
+        self.assertEqual(self.body(), before)
+        self.run_cmd(aimem_db.cmd_task, action="set", id="T-1", title="보드는 싣는다")
+        self.assertNotEqual(self.body(), before)
+
+    def test_state_dict_still_gives_runs_and_sessions_including_manager(self):
+        with aimem_db.connect() as con:
+            con.execute("INSERT INTO sessions(id,role,harness,state,started,write_paths) VALUES('M-R1-000000','manager','claude','running','2026-01-01T00:00:00','[]')")
+        st = aimem_db.state_dict()
+        self.assertEqual([r["id"] for r in st["runs"]], ["M-R1-000000"])
+        self.assertEqual([r["id"] for r in st["sessions"]], ["M-R1-000000"])
+
+
+class UniqueTmpTest(DbFixture, unittest.TestCase):
+    """같은 파일을 동시에 고쳐 써도 임시 파일이 겹치지 않는다 - 고정된 `.tmp` 이름이면 서로의 반쯤 쓴 파일을 바꿔 넣는다."""
+
+    def _race(self, n, work):
+        start, errors = threading.Barrier(n), []
+
+        def run(i):
+            try:
+                start.wait()
+                work(i)
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+        ts = [threading.Thread(target=run, args=(i,)) for i in range(n)]
+        [t.start() for t in ts]; [t.join() for t in ts]
+        self.assertEqual(errors, [])
+
+    def test_write_atomic_uses_a_fresh_tmp_per_writer(self):
+        f = self.root / "x.json"
+        seen = []
+        real = aimem_db.tempfile.mkstemp
+
+        def spy(*a, **kw):
+            fd, name = real(*a, **kw)
+            seen.append(name)
+            return fd, name
+        with mock.patch.object(aimem_db.tempfile, "mkstemp", spy):
+            self._race(16, lambda i: aimem_db._write_atomic(f, json.dumps({"i": i, "pad": "x" * 20000})))
+        self.assertEqual(len(set(seen)), 16)
+        self.assertEqual(sorted(x.name for x in self.root.iterdir() if x.name.startswith("x.json")), ["x.json"])
+        self.assertIn(json.loads(f.read_text(encoding="utf-8"))["i"], range(16))   # 찢긴 내용이 아니다
+
+    def test_concurrent_request_file_syncs_leave_valid_json(self):
+        f = self.root / ".aimem" / "requests" / "Q-1.json"
+        f.write_text(json.dumps({"id": "Q-1", "status": "NEW"}), encoding="utf-8")
+        self._race(12, lambda i: aimem_db._sync_request_file("Q-1", detail=f"d{i}" * 500))
+        self.assertTrue(json.loads(f.read_text(encoding="utf-8"))["detail"].startswith("d"))
+        self.assertEqual([x.name for x in f.parent.iterdir()], ["Q-1.json"])
+
+    def test_round_record_keeps_both_writers(self):
+        """`note_round_request` 는 엔진과 같은 잠금(`fleet_rt.roundrec`)으로 쓴다 - 둘의 고침이 모두 남는다."""
+        from fleet_rt import roundrec
+        rd = self.root / "rounds" / "R3"
+        rd.mkdir(parents=True)
+        (rd / "round.json").write_text(json.dumps({"round": 3, "requests": [], "projects": []}), encoding="utf-8")
+
+        def work(i):
+            if i % 2:
+                self.assertTrue(aimem_db.note_round_request(f"Q-{i}", n=3))
+            else:
+                roundrec.update(rd, lambda rec: {**rec, f"engine{i}": True})
+        self._race(10, work)
+        rec = json.loads((rd / "round.json").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(rec["requests"]), sorted(f"Q-{i}" for i in range(1, 10, 2)))
+        self.assertEqual(sorted(k for k in rec if k.startswith("engine")), sorted(f"engine{i}" for i in range(0, 10, 2)))
+
+
+if __name__ == "__main__":
+    unittest.main()

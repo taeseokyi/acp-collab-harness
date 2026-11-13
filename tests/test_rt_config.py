@@ -51,10 +51,9 @@ class ConfigTest(unittest.TestCase):
         self.assertIsNone(cfg.source)
         self.assertEqual(cfg.max_concurrent("kisti"), 1)
         self.assertEqual(cfg.idle_timeout("anthropic"), 600.0)
-        self.assertEqual(cfg.manager_mode(), "resident")
 
     def test_time_zone(self):
-        self.assertEqual(config.load(self.root).time_zone(), "Asia/Seoul")      # 파일이 없으면 기본
+        self.assertEqual(config.load(self.root).time_zone(), config.DEFAULT_TIME_ZONE)      # 파일이 없으면 기본
         (self.root / "fleet.toml").write_text('[time]\nzone = "UTC"\n', encoding="utf-8")
         self.assertEqual(config.load(self.root).time_zone(), "UTC")
 
@@ -71,19 +70,6 @@ class ConfigTest(unittest.TestCase):
             self.assertEqual(os.environ["TZ"], "Asia/Seoul")    # 틀린 이름은 건드리지 않는다
         import time  # noqa: PLC0415
         time.tzset()
-
-    def test_manager_mode(self):
-        """`[manager] mode` - 기본은 상주(resident). 표가 없는 옛 설정도 상주. 모르는 값·표가 아닌 것은 거절 (설계 5.9)."""
-        self.assertEqual(config.load(REPO).manager_mode(), "resident")         # 저장소의 설정은 상주 그대로
-        def root_with(text):          # 변형마다 새 폴더 - 같은 파일을 고쳐 쓰면 mtime 캐시가 끼어든다
-            d = pathlib.Path(tempfile.mkdtemp(dir=self.root))
-            (d / "fleet.toml").write_text(text, encoding="utf-8")
-            return d
-        self.assertEqual(config.load(root_with('[providers.a]\nmodels = ["x"]\n')).manager_mode(), "resident")
-        self.assertEqual(config.load(root_with('[manager]\nmode = "calls"\n')).manager_mode(), "calls")
-        for bad in ('[manager]\nmode = "call"\n', 'manager = "calls"\n', '[manager]\nmode = 1\n'):
-            with self.assertRaises(config.ConfigError, msg=bad):
-                config.load(root_with(bad))
 
     def test_policy_default(self):
         """`[policy] default` - 기본은 cost(무료 중심). 표가 없는 옛 설정도 cost. 모르는 값은 읽을 때 거절."""
@@ -127,7 +113,7 @@ class ConfigTest(unittest.TestCase):
         cfg = config.load(REPO)
         self.assertIn("kisti", cfg.providers())
         self.assertEqual(cfg.provider("kisti")["env_key"], "KISTI_API_KEY")
-        self.assertEqual(cfg.harness("codex")["binary"], "codex")
+        self.assertEqual(cfg.harness("codex")["default_model"], "kisti/kistillm")
         self.assertIsNone(cfg.provider("zzz"))
         self.assertEqual(cfg.max_concurrent("zzz"), 1)
         self.assertIsNone(cfg.idle_timeout("zzz"))
@@ -163,24 +149,6 @@ class GateTest(unittest.TestCase):
         self.root = pathlib.Path(self.tmp.name)
         self.cfg = config.load(REPO)
 
-    def test_running_by_provider(self):
-        fake_session(self.root, "a", "kisti", "live")
-        fake_session(self.root, "b", "anthropic", "live")
-        fake_session(self.root, "c", "anthropic", "live")
-        fake_session(self.root, "dead", "kisti", dead_pid())            # 감독이 죽음
-        fake_session(self.root, "ended", "kisti", dead_pid(), end=True)  # 끝남
-        (self.root / "nometa").mkdir()
-        self.assertEqual(providers.running_by_provider(self.root), {"kisti": 1, "anthropic": 2})
-        self.assertEqual(providers.running_by_provider(self.root / "missing"), {})
-
-    def test_has_room_and_room(self):
-        self.assertTrue(providers.has_room(self.cfg, self.root, "kisti"))
-        fake_session(self.root, "a", "kisti", "live")
-        fake_session(self.root, "b", "anthropic", "live")
-        self.assertFalse(providers.has_room(self.cfg, self.root, "kisti"))
-        self.assertTrue(providers.has_room(self.cfg, self.root, "anthropic"))
-        self.assertTrue(providers.has_room(self.cfg, self.root, None))
-        self.assertEqual(providers.room(self.cfg, self.root), {"kisti": 0, "exaone": 1, "openrouter": 3, "opencode": 1, "anthropic": 2})
 
 
 
@@ -204,7 +172,7 @@ class _Srv:
 
         self.srv = http.server.HTTPServer(("127.0.0.1", 0), H)
         self.url = f"http://127.0.0.1:{self.srv.server_address[1]}/v1"
-        self.t = threading.Thread(target=self.srv.serve_forever, daemon=True)
+        self.t = threading.Thread(target=lambda: self.srv.serve_forever(poll_interval=0.01), daemon=True)
         self.t.start()
 
     def close(self):
@@ -234,7 +202,7 @@ class ProbeTest(unittest.TestCase):
 
     def test_never_sends_the_key_even_to_a_planted_base_url(self):
         s = self.serve()
-        ok, detail = providers.probe(_cfg(s.url), "kisti", self.env)
+        ok, detail = providers.probe(_cfg(s.url), "kisti")
         self.assertTrue(ok, detail)
         self.assertEqual(s.got, [("/v1/models", None)])        # 요청은 갔지만 Authorization 은 없다
         self.assertNotIn(SECRET, detail)
@@ -249,7 +217,7 @@ class ProbeTest(unittest.TestCase):
     def test_redirect_is_not_followed(self):
         target = self.serve()
         s = self.serve(code=302, location=target.url + "/models")
-        ok, detail = providers.probe(_cfg(s.url), "kisti", self.env)
+        ok, detail = providers.probe(_cfg(s.url), "kisti")
         self.assertTrue(ok, detail)                              # 3xx 도 '응답함'
         self.assertIn("302", detail)
         self.assertEqual(target.got, [])                         # 넘겨준 곳에는 가지 않는다
@@ -259,14 +227,14 @@ class ProbeTest(unittest.TestCase):
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
         sock.close()                                             # 아무도 듣지 않는 자리
-        ok, detail = providers.probe(_cfg(f"http://127.0.0.1:{port}/v1"), "kisti", self.env, timeout=2)
+        ok, detail = providers.probe(_cfg(f"http://127.0.0.1:{port}/v1"), "kisti", timeout=2)
         self.assertFalse(ok)
         self.assertIn("연결 실패", detail)
         mute = socket.socket()                                   # 연결은 받지만 답하지 않는 자리
         mute.bind(("127.0.0.1", 0))
         mute.listen(1)
         self.addCleanup(mute.close)
-        ok, detail = providers.probe(_cfg(f"http://127.0.0.1:{mute.getsockname()[1]}/v1"), "kisti", self.env, timeout=0.5)
+        ok, detail = providers.probe(_cfg(f"http://127.0.0.1:{mute.getsockname()[1]}/v1"), "kisti", timeout=0.5)
         self.assertFalse(ok)
         self.assertIn("시간 초과", detail)
 
@@ -286,12 +254,12 @@ class ProbeTest(unittest.TestCase):
 
     def test_no_probe_configured(self):
         with mock.patch("urllib.request.OpenerDirector.open") as u:
-            self.assertEqual(providers.probe(_cfg("http://127.0.0.1:9/v1", probe=None), "kisti", {}), (True, "점검 없음"))
-            self.assertEqual(providers.probe(config.load(REPO), "anthropic", {}), (True, "점검 없음"))
+            self.assertEqual(providers.probe(_cfg("http://127.0.0.1:9/v1", probe=None), "kisti"), (True, "점검 없음"))
+            self.assertEqual(providers.probe(config.load(REPO), "anthropic"), (True, "점검 없음"))
         u.assert_not_called()
 
     def test_unknown_provider(self):
-        self.assertFalse(providers.probe(config.load(REPO), "zzz", {})[0])
+        self.assertFalse(providers.probe(config.load(REPO), "zzz")[0])
 
 
 class SessionKeyName(unittest.TestCase):

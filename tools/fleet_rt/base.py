@@ -19,7 +19,11 @@ from __future__ import annotations
 
 import dataclasses
 import pathlib
+import re
 from typing import Optional, Protocol
+
+#: 프로젝트 이름 = `projects/` 아래 폴더 하나의 이름 (정의는 여기 한 곳)
+PROJECT_NAME_RE = r"\A[0-9A-Za-z가-힣][0-9A-Za-z가-힣_-]{0,39}\Z"
 
 ROLES = ("manager", "worker", "reviewer")
 
@@ -28,13 +32,78 @@ ROLES = ("manager", "worker", "reviewer")
 #:   failed   하네스가 rc != 0 으로 끝남
 #:   killed   사람·엔진이 끊음 (cancel)
 #:   timeout  벽시계 제한을 넘겨 감독이 끊음
-#:   stalled  마지막 사건 뒤 침묵이 idle_timeout 을 넘겨 감독이 끊음
+#:   stalled  idle_timeout 동안 사건도 읽기(`/proc/<pid>/io`)도 없어 감독이 끊음
 END_STATES = ("done", "failed", "killed", "timeout", "stalled")
 STATES = ("running",) + END_STATES + ("lost",)
 
 #: 실패의 종류 (그래프의 재시도 정책이 본다). 감독이 정하는 것은 infra/timeout/limit 뿐이고,
 #: `work`(보고가 BLOCKED·검증 실패)는 그래프 실행기가 보고를 읽고 정한다.
 FAIL_KINDS = ("work", "infra", "limit", "timeout")
+
+#: 노드 한 시도의 벽시계 한도 기본(초) - 그래프 실행기·spawn·SessionSpec 이 같은 값을 쓴다.
+DEFAULT_NODE_TIMEOUT_SEC = 1800.0
+#: TERM 뒤 KILL 까지 기다리는 시간 - 감독이 하네스에, cancel·고아 청소가 pid 에 같은 유예를 준다.
+TERM_GRACE_SEC = 3.0
+
+#: 사용 한도 문구 - 세 어댑터가 오류 사건·결과 글에 같은 식 하나를 쓴다.
+LIMIT_RE = re.compile(r"\b429\b|rate[\s_-]?limit|quota|usage[\s_-]?limit|too many requests"
+                      r"|(?:hour|weekly|session) limit|hit your (?:[\w-]+ )?limit", re.I)
+
+#: 보고문 없이 끝난 세션의 보고 머리 (어댑터 `final_report` 가 stderr 꼬리 앞에 붙인다).
+NO_REPORT = "(최종 보고문 없음 - 작업자가 보고 전에 끝남. stderr 꼬리:)"
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_NOISE_RE = re.compile(r"^\s*(←|✗|!|\||\+|-|@|\$|>|codex$|tokens used|Reading additional)")
+
+# 보고 첫 줄의 상태 읽기: 앞 장식(인용·목록·제목·코드·BOM)과 `상태:`/`Status:` 라벨(앞 낱말 두 개까지)을 벗긴다.
+_STATUS_JUNK = r"(?:\s|[*#>`\[\]﻿-]|\d+\.)*"
+_STATUS_JUNK_RE = re.compile(_STATUS_JUNK)
+_STATUS_PREFIX = re.compile(
+    rf"^{_STATUS_JUNK}(?P<label>(?:[^\W\d_]{{1,20}}\s*){{0,2}}?(?:상태|(?i:status))\s*[:：])?{_STATUS_JUNK}")
+_STATUS_WORD_SRC = r"(DONE|PARTIAL|BLOCKED|REJECT|NEEDS-[A-Z][A-Z0-9_]*(?:-[A-Z0-9_]+)*)(?![A-Za-z0-9_-])"
+# 라벨이 없으면 대문자만 받는다 - `Blocked 링크 …` 같은 평문이 상태로 읽히지 않게(뒤가 `:`·줄 끝이면 대소문자 무관).
+_STATUS_WORD = re.compile(_STATUS_WORD_SRC)
+_STATUS_WORD_LABELED = re.compile(_STATUS_WORD_SRC, re.IGNORECASE)
+_STATUS_WORD_TERMINATED = re.compile(_STATUS_WORD_SRC + r"[*`\]]*\s*(?:[:：\-–—]|$)", re.IGNORECASE)
+
+
+def parse_status(report_text):
+    """보고 첫 비어 있지 않은 줄의 상태 낱말(대문자) - DONE/PARTIAL/BLOCKED/REJECT/NEEDS-*. 없으면 None."""
+    line = next((ln for ln in str(report_text or "").splitlines() if ln.strip()), None)
+    if line is None:
+        return None
+    w = None
+    m = _STATUS_PREFIX.match(line)
+    if m and m.group("label"):
+        w = _STATUS_WORD_LABELED.match(line[m.end():])
+    if not w:
+        body = line[_STATUS_JUNK_RE.match(line).end():]
+        w = _STATUS_WORD.match(body) or _STATUS_WORD_TERMINATED.match(body)
+    return w.group(1).upper() if w else None
+
+
+def require_repo_cwd(cwd, harness):
+    """진짜 하네스는 함대 저장소(`tools/fleet.py` 가 있는 폴더)에서만 띄운다 - /tmp 검수 사본에서 작업자가 뜨지 않게."""
+    p = pathlib.Path(str(cwd or ""))
+    if not cwd or not p.is_dir() or not (p / "tools" / "fleet.py").is_file():
+        raise ValueError(f"함대 저장소가 아닌 작업 폴더에서는 {harness} 를 띄우지 않는다: {cwd!r}")
+    return p
+
+
+def one_line(s, n=120):
+    """공백을 하나로 접은 한 줄, `n` 자를 넘으면 말줄임."""
+    s = " ".join(str(s if s is not None else "").split())
+    return s if len(s) <= n else s[:n - 1] + "…"
+
+
+def no_report_tail(session_dir, extra=()):
+    """보고문 없이 끝난 세션의 보고: stderr 에서 색 코드·도구 로그를 걷어낸 꼬리 25줄 + `extra` 줄. 없으면 빈 글."""
+    try:
+        err = (pathlib.Path(session_dir) / "stderr.log").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        err = ""
+    kept = [ln for ln in _ANSI_RE.sub("", err).splitlines() if ln.strip() and not _NOISE_RE.match(ln)]
+    tail = "\n".join(kept[-25:] + [str(x) for x in extra]).strip()
+    return f"{NO_REPORT}\n{tail}" if tail else ""
 
 EVENT_KINDS = ("text", "tool", "usage", "error", "end", "raw")
 
@@ -99,7 +168,7 @@ class SessionSpec:
     write_paths: list = dataclasses.field(default_factory=list)
     tools: Optional[str] = None              # 허용 도구 목록 (claude `--allowedTools`). None 이면 어댑터의 역할별 기본
     settings_path: Optional[str] = None      # 하네스 설정 파일 (claude `--settings`)
-    timeout: float = 1800.0                  # 벽시계 제한(초)
+    timeout: float = DEFAULT_NODE_TIMEOUT_SEC   # 벽시계 제한(초)
     idle_timeout: Optional[float] = None     # 침묵 제한(초). None 이면 침묵 감지를 안 한다
     round: Optional[int] = None
     task_id: Optional[str] = None
@@ -170,10 +239,10 @@ class Harness(Protocol):
         """마지막 답(보고 본문). 없으면 stderr 꼬리로 만든 '(최종 보고문 없음 …)' 또는 빈 문자열."""
 
     def limit_signal(self, session_dir: pathlib.Path) -> Optional[bool]:
-        """사용 한도에 걸려 끝났나. 구조화된 신호가 없어 모르면 None."""
+        """사용 한도에 걸려 끝났나. 모르면 None. 감독이 rc != 0 일 때 보고 end.json `fail_kind: limit` 로 적는다."""
 
     def resume_command(self, spec: SessionSpec, harness_session_id: str, message_path: str) -> Optional[Command]:
-        """끝난 세션에 한 턴 더. 못 하는 하네스는 None."""
+        """끝난 세션에 한 턴 더. 못 하는 하네스는 None (지금은 claude 만 한다)."""
 
     def probe(self) -> ProbeResult:
         """준비 점검: 실행 파일이 있고 버전을 답하는가. 공급자 응답은 `providers.py` 가 따로 본다."""

@@ -81,7 +81,7 @@ class ProjectTests(unittest.TestCase):
         a = got["알파"]
         self.assertEqual(a["requests"], {"total": 4, "done": 2, "new": 1, "active": 1})   # 거절은 빼고, 아카이브된 완료는 센다
         self.assertEqual(a["percent"], 62.5)                                              # (100+100+50+0)/4
-        self.assertEqual((a["rounds"], a["round_count"], a["first_round"], a["last_round"]), ([7, 8], 2, 7, 8))
+        self.assertEqual((a["rounds"], a["round_count"], a["last_round"]), ([7, 8], 2, 8))
         self.assertEqual(a["last_round_at"], "2026-11-11T09:00:00")
         self.assertTrue(a["summary"].startswith("## R8"))
         self.assertIn("남은 일: 배포", a["summary"])

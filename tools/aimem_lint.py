@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
-"""AIMEM.md 구조 불변식 린터 - 2단계(DB 정본). 표준 라이브러리만 사용.
+"""AIMEM.md 구조 불변식 린터. 표준 라이브러리만 사용.
 
-2단계(T-060)부터 운영 상태(2절 명부 / 3절 보드 / 4절 로그 / 4.5 대기 큐 / 6절 소유권)의 정본은
-`.aimem/aimem.db` 이고, AIMEM.md 의 그 절들은 `AIMEM-state.md` 를 가리키는 포인터 한 줄만 둔다.
-그래서 예전의 "표가 있어야 하고 형식이 맞아야 한다" 검사(ROSTER_* / BOARD_* / OWNERSHIP_* /
-SIZE_HANDOFF_LOG / SIZE_LOG_ENTRY_CHARS / REV_LOG_MISSING / HANDOFF_SECTION_MISSING)는 없앴고,
-거꾸로 **표가 남아 있으면 위반**이다.
+운영 상태(2절 명부 / 3절 보드 / 4절 로그 / 4.5 대기 큐 / 6절 소유권)의 정본은 `.aimem/aimem.db` 이고,
+AIMEM.md 의 그 절들은 `AIMEM-state.md`(로그는 `.aimem/handoff.md`)를 가리키는 포인터만 둔다 - 표가 남아 있으면 위반이다.
 
 위반 코드:
 - `lint_text`(순수 함수, 문자열만 본다): SIZE_TOTAL_LINES / REV_MISSING / REV_MULTIPLE / REV_INVALID /
-  DUPLICATE_SECTION / MANAGER_KEY_MISMATCH / STATE_TABLE_IN_AIMEM / STATE_POINTER_MISSING
-- `lint_repo`(DB·파일 대조): 위 전부 + REV_DB_MISMATCH / STATE_SNAPSHOT_STALE / STATE_SNAPSHOT_MISSING
-새 코드 5종(STATE_* / REV_DB_MISMATCH)은 MANAGER_KEY_MISMATCH 처럼 **서문에 관리자 선언이 있을 때만** 본다.
-
-T-021(REV 71)의 파서 계층(펜스 인식·중복 절 검출)은 그대로 쓴다.
+  DUPLICATE_SECTION / MANAGER_KEY_MISMATCH / STATE_TABLE_IN_AIMEM / STATE_POINTER_MISSING / HANDOFF_IN_AIMEM
+- `lint_repo`(DB·파일 대조): 위 전부 + REV_DB_MISMATCH / STATE_SNAPSHOT_STALE / STATE_SNAPSHOT_MISSING /
+  HANDOFF_SNAPSHOT_STALE
+MANAGER_KEY_MISMATCH 와 STATE_* / HANDOFF_* / REV_DB_MISMATCH 는 **서문에 관리자 선언이 있을 때만** 본다.
+절 판정은 코드펜스 안을 무시하고, 같은 절이 두 번 나오면 DUPLICATE_SECTION 이다.
 """
 
 import pathlib
@@ -23,31 +20,17 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 REV_RE = re.compile(r"\*\*REV:\s*(-?\d+)\*\*")
-# 아래 넷(SEP_RE / VALID_STATUSES / MAX_HANDOFF_ENTRIES / HANDOFF_ENTRY_RE)과 `_col_index` 는 린터
-# 규칙에서는 더 쓰지 않지만 **`tools/aimem_board.py` 가 `lint.X` 로 import 한다.** board 가 2단계로
-# 바뀔 때(다음 태스크) 함께 정리한다. 지금 지우면 board 가 죽는다(T-021 회귀와 같은 모양).
-SEP_RE = re.compile(r"^\|?[\s\-:|]+\|?$")
-VALID_STATUSES = {"TODO", "ASSIGNED", "IN-PROGRESS", "REVIEW", "DONE", "BLOCKED"}
 
-# 의미 계층 (T-021). 린터는 "누가 진짜 관리자인가"를 알 수 없다. 아래는 그 권위를
-# **검사 가능한 형태로 번역**한 것이다 - 근거와 한계는 outbox [T-021] 에 적었다.
-#
-# 관리자 세션키를 린터 소스(보호 아티팩트, S1 소유)에 못박는다. 공격자가 쓰기 가능한
-# AIMEM.md 안의 관리자 선언을 다른 식별로 바꿔치기하면(F1) 여기 값과 어긋나 잡힌다.
-# 신뢰의 뿌리를 쓰기 가능한 파일에서 코드로 옮기는 것이 요점. 관리자 키가 정당하게
-# 바뀌면 이 상수도 함께 고쳐야 한다(6.1 자기구속과 같은 성격).
-# 엔진 v2(2026-11-12): 관리자는 엔진이 띄운 `role=manager` 세션이고 id 가 `M-R<N>-<HHMMSS>` 꼴이다.
-# 못박는 것은 그 꼴을 적은 글자 `MANAGER_SESSION_FORM` 이다. 서문 관리자 선언 옆에 이 글자가 없으면 뿌리가 바뀐 것으로 본다.
+# 관리자 세션 id 꼴을 쓰기 가능한 AIMEM.md 가 아니라 이 코드에 못박는다 - 서문 선언 옆에 이 글자가 없으면 관리자 식별이 바꿔치기된 것.
 # `MANAGER_SESSION_RE` 는 실제 세션 id 를 알아보는 용도(엔진·모니터가 같은 꼴을 쓴다).
 MANAGER_SESSION_FORM = "M-R<N>-<HHMMSS>"
 MANAGER_SESSION_RE = re.compile(r"M-R\d+-\d{6}")
-# AIMEM.md 가 영어로 바뀌어도(REV 128) 같은 선언을 알아보도록 두 표기를 받는다.
+# 한국어·영어 선언을 모두 받는다.
 MANAGER_DECL_RE = re.compile(r"관리자\(단독 쓰기 권한\)|Manager \(sole write authority\)")
 
 # 크기 상한 (`5절`). 작업자가 매 턴 전문을 읽으므로 크기는 곧 턴당 비용이다. 총량만 강제한다.
 MAX_TOTAL_LINES = 800
-# board 호환용(위 주석 참조). 린터 규칙은 더 쓰지 않는다 - 4절 로그는 DB `events` 로 갔다.
-MAX_HANDOFF_ENTRIES = 12
+# 4절에 남으면 안 되는 로그 항목 머리 (`HANDOFF_IN_AIMEM`)
 HANDOFF_ENTRY_RE = re.compile(r"^- `(\d{4})-(\d{2})-\d{2}")
 
 # 절 헤딩. `## N.` (세 번째 # 이 아님). 절 종료 판정에도 쓴다.
@@ -57,7 +40,7 @@ SECTION_HEAD_RE = re.compile(r"^##(?!#)\s")
 #  4절 구간은 다음 `## ` 헤딩인 `## 4.5` 직전에서 끝난다 - 집어삼키지 않는다.)
 SECTION_45_RE = re.compile(r"^##(?!#)\s+4\.5(\D|$)")
 
-# 2단계: AIMEM.md 에서 표를 들어내고 포인터만 남기는 절. (라벨, 절 번호 - 4.5 는 문자열)
+# 표 없이 포인터만 두는 절. (라벨, 절 번호 - 4.5 는 문자열)
 STATE_SECTIONS = (("2절 세션 명부", 2), ("3절 작업 보드", 3), ("4절 핸드오프 로그", 4),
                   ("4.5 대기 큐", "4.5"), ("6절 파일 소유권", 6))
 STATE_POINTER = "AIMEM-state.md"
@@ -92,27 +75,6 @@ def _fenced_mask(lines: List[str]) -> List[bool]:
     return mask
 
 
-def _split_row(line: str) -> List[str]:
-    s = line.strip()
-    if s.startswith("|"):
-        s = s[1:]
-    if s.endswith("|"):
-        s = s[:-1]
-    return [c.strip() for c in s.split("|")]
-
-
-def _col_index(header_cells: List[str], name: str) -> Optional[int]:
-    """헤더에서 열 위치를 찾는다. **정확 일치**만 인정한다.
-
-    이전에는 부분일치(`name in cell`)라, `상태` 앞에 `상태요약` 열을 끼우면 status 검사가
-    가짜 열을 가리켰다(F7). 정확 일치로 이 바꿔치기를 막는다.
-    """
-    for i, cell in enumerate(header_cells):
-        if cell == name:
-            return i
-    return None
-
-
 def _section_spans(lines: List[str], fenced: List[bool], number: int) -> List[Tuple[int, int]]:
     """절 번호 `number` 의 **모든** (start, end) 구간을 0-indexed 로 반환한다.
 
@@ -134,56 +96,6 @@ def _section_spans(lines: List[str], fenced: List[bool], number: int) -> List[Tu
     return spans
 
 
-def _extract_tables(
-    lines: List[str], start: int, end: int, fenced: List[bool]
-) -> List[Tuple[List[str], List[Tuple[int, List[str]]]]]:
-    """구간 [start, end) 안의 **모든** markdown 표를 반환한다.
-
-    각 표: (헤더 셀, [(1-indexed 줄번호, 데이터 셀), ...]).
-    - 펜스 줄은 건너뛴다.
-    - '표'는 파이프로 시작하는 연속 줄 블록 중 **둘째 줄이 구분선**인 것만 인정한다.
-      구분선이 없는 고립 파이프 산문(F10)은 표가 아니므로 건너뛰되 오류로 삼지 않는다.
-    - 여러 표를 전부 반환하므로, 빈 디코이 표를 위에 얹어 진짜 표를 숨기는 F4 가 막힌다.
-    """
-    tables: List[Tuple[List[str], List[Tuple[int, List[str]]]]] = []
-    i = start
-    while i < end:
-        if fenced[i] or not lines[i].strip().startswith("|"):
-            i += 1
-            continue
-        block = []
-        j = i
-        while j < end and not fenced[j] and lines[j].strip().startswith("|"):
-            block.append(j)
-            j += 1
-        if len(block) >= 2 and SEP_RE.match(lines[block[1]].strip()):
-            header_cells = _split_row(lines[block[0]])
-            rows = [(k + 1, _split_row(lines[k])) for k in block[2:]]
-            tables.append((header_cells, rows))
-        i = j if j > i else i + 1
-    return tables
-
-
-def find_section(lines: List[str], number: int) -> Optional[Tuple[int, int]]:
-    """호환 공개 API: 절 `number` 의 **첫** 구간 (start, end) 0-indexed, 없으면 None.
-
-    aimem_board.py 등 외부 도구가 절을 찾을 때 쓴다. 내부 `_section_spans`(펜스 인식)
-    위에 얹으므로 **린터와 board 가 같은 기준으로 절을 찾는다**(T-024). 절이 여러 번
-    등장하면 첫 구간을 준다 - 정본은 첫 절이고, 린터가 중복 자체는 DUPLICATE_SECTION 으로 잡는다.
-    """
-    spans = _section_spans(lines, _fenced_mask(lines), number)
-    return spans[0] if spans else None
-
-
-def extract_table(lines: List[str], start: int, end: int) -> Optional[Tuple[List[str], List[Tuple[int, List[str]]]]]:
-    """호환 공개 API: 구간 [start, end) 의 **첫** 표 (header_cells, rows) 또는 None.
-
-    `_extract_tables`(펜스 인식, 구분선 필수) 위에 얹는다. 린터와 board 가 같은 표를 본다(T-024).
-    """
-    tables = _extract_tables(lines, start, end, _fenced_mask(lines))
-    return tables[0] if tables else None
-
-
 def _first_heading_index(lines: List[str], fenced: List[bool]) -> int:
     for i, line in enumerate(lines):
         if not fenced[i] and SECTION_HEAD_RE.match(line):
@@ -194,9 +106,7 @@ def _first_heading_index(lines: List[str], fenced: List[bool]) -> int:
 def lint_text(text: str, notes: Optional[List[str]] = None) -> List[Violation]:
     """AIMEM.md 본문 문자열을 검사해 위반 목록을 반환한다. 위반이 없으면 빈 리스트.
 
-    `notes` 가 주어지면, **위반이 아닌 정보/경고**(예: 게이팅으로 건너뛴 검사)를 그 리스트에
-    덧붙인다. 노트는 반환값(위반 목록)에 들어가지 않으므로 exit 코드에 영향이 없고, 노트를
-    넘기지 않는 호출자(테스트, board self-lint)의 반환값 계약도 그대로 유지된다.
+    `notes` 가 주어지면 위반이 아닌 정보(예: 건너뛴 검사)를 거기 덧붙인다 - exit 코드에 영향이 없다.
     """
     violations: List[Violation] = []
     lines = text.splitlines()
@@ -278,8 +188,7 @@ def _note_weight(lines: List[str], fenced: List[bool], notes: List[str]) -> None
 
 
 def _check_handoff_entries(lines: List[str], fenced: List[bool], violations: List[Violation]) -> None:
-    """REV 129: 4절은 관리 방법만 적는다. 로그 항목(`- \`YYYY-MM-DD\``)이 남아 있으면 문서가 다시 무거워지는 길이다 -
-    항목의 정본은 DB events 다(`aimem_db.py handoff add`). `.aimem/handoff.md` 는 최신 12건 생성물이고 밀려난 항목은 자동으로 아카이브에 내보낸다."""
+    """4절은 관리 방법만 적는다 - 로그 항목의 정본은 DB events 다(`aimem_db.py handoff add`)."""
     for s, e in _section_spans(lines, fenced, 4):
         hits = [i for i in range(s, e) if not fenced[i] and HANDOFF_ENTRY_RE.match(lines[i])]
         if hits:
@@ -317,7 +226,7 @@ def _state_section_spans(lines: List[str], fenced: List[bool], number) -> List[T
 
 
 def _check_state_sections(lines: List[str], fenced: List[bool], violations: List[Violation]) -> None:
-    """2단계(T-060): 2·3·4·4.5·6절은 표 없이 `AIMEM-state.md` 포인터만 둔다.
+    """2·3·4·4.5·6절은 표 없이 `AIMEM-state.md` 포인터만 둔다.
 
     - STATE_TABLE_IN_AIMEM: 절 구간에서 펜스 밖 `|` 로 시작하는 줄이 **2줄 이상**이면 표가 남은 것.
       (한 줄짜리 포인터에 `|` 가 섞여도 오탐이 안 나게 1줄은 봐준다. 구분선 유무는 따지지 않는다 -
@@ -346,13 +255,7 @@ def _check_state_sections(lines: List[str], fenced: List[bool], violations: List
 
 
 def lint_file(path: str, notes: Optional[List[str]] = None) -> List[Violation]:
-    """파일을 읽어 lint_text 에 넘긴다. 시그니처·반환 계약은 호출자(aimem_board.py,
-    .githooks/pre-commit)가 의존하므로 바꾸지 않는다.
-
-    아웃박스 크기 검사(OUTBOX_TOO_LARGE, T-028)는 REV 103 에서 제거했다 - `.aimem/outbox/` 는
-    `8.0`(2026-09-22)부터 과거 기록이고 쓰는 주체가 없다. 쓰는 사람이 없는 대상의 페일세이프는
-    코드만 무겁게 한다. 아웃박스 운용이 되살아나면 이 자리에 다시 붙인다.
-    """
+    """파일을 읽어 lint_text 에 넘긴다."""
     with open(path, "r", encoding="utf-8") as f:
         text = f.read()
     return lint_text(text, notes)
@@ -369,11 +272,10 @@ def _first_diff(a: List[str], b: List[str]) -> Optional[Tuple[int, str, str]]:
 
 
 def lint_repo(path, root=None, notes: Optional[List[str]] = None) -> List[Violation]:
-    """lint_file(path) + DB 대조(REV_DB_MISMATCH / STATE_SNAPSHOT_*). main() 이 이것을 부른다.
+    """lint_file(path) + DB 대조(REV_DB_MISMATCH / HANDOFF_SNAPSHOT_STALE / STATE_SNAPSHOT_*). main() 이 이것을 부른다.
 
-    `lint_text` 는 순수 함수로 두고, DB·파일을 읽는 검사는 여기에만 둔다. DB 검사도 관리자 선언이
-    있는 문서에서만 한다(나머지 2단계 규칙과 같은 게이팅). DB 가 없거나, `aimem_db` import 가
-    실패하거나, `root` 가 `aimem_db.ROOT` 가 아니면 위반이 아니라 노트 한 줄로 건너뛴다.
+    DB 검사는 관리자 선언이 있는 문서에서만 한다. DB 가 없거나, `aimem_db` import 가 실패하거나,
+    `root` 가 `aimem_db.ROOT` 가 아니면 위반이 아니라 노트 한 줄로 건너뛴다.
     """
     if notes is None:
         notes = []
@@ -426,8 +328,7 @@ def lint_repo(path, root=None, notes: Optional[List[str]] = None) -> List[Violat
                 f"`python3 tools/aimem_db.py render` 가 서문 REV 를 맞춘다(render 를 안 돌린 상태)",
             ))
 
-    # HANDOFF_SNAPSHOT_STALE (REV 132) - `.aimem/handoff.md` 는 DB events 에서 만드는 생성물이다. 손으로 고쳤거나
-    # render 를 안 돌렸으면 DB 렌더 결과와 달라진다. (정본이 하나라 "파일에만 있는 항목" 은 복구 대상이 아니라 덮일 것이다.)
+    # HANDOFF_SNAPSHOT_STALE - `.aimem/handoff.md` 는 DB events 에서 만드는 생성물이라 렌더 결과와 같아야 한다
     handoff_path = root_path / ".aimem" / "handoff.md"
     try:
         with aimem_db.connect() as con:

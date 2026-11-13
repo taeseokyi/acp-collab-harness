@@ -912,7 +912,7 @@ def _blank_keys(root):
         "generated": datetime.datetime.now().isoformat(timespec="seconds"),
         "tz": tz_info(root),
         "aimem": {}, "slots": [], "board": [], "queue": [],
-        "log": [], "runs": [], "eta": {}, "requests": [],
+        "log": [], "runs": [], "requests": [],
         "claude_usage": None,
     }
 
@@ -1115,8 +1115,8 @@ def _truncate_request_details(requests):
 def scrub_public(state, root=None):
     """공개면에서 나가면 안 되는 **키와 값**을 떼어냅니다 (`PUBLIC_FORBIDDEN`, S4 검수 5번).
 
-    **`reader.collect()` 가 아니라 여기서 떼는 이유:** `root` 는 reader 가 `.aimem/runs`
-    를 훑을 때 실제로 쓰는 값이고 `token` 은 `fleet.py` 대조의 근거입니다. 둘 다
+    **`reader.collect()` 가 아니라 여기서 떼는 이유:** `root` 는 reader 가 실행 기록을
+    훑을 때 실제로 쓰는 값이고 `token` 은 `fleet.py` 대조의 근거입니다. 둘 다
     내부에서는 필요하고 **밖으로 나가면 안 되는** 값이라, 계층의 경계인 공개 직전
     한 군데에서만 떼는 쪽이 어긋날 자리가 적습니다.
 
@@ -1251,7 +1251,7 @@ MANAGER_REPORT_MAX = 200_000
 #: 관리자 세션 id. **파일 시스템에 닿기 전에** 이 꼴만 받습니다(경로 탈출 방어) - 작업자 id(`T-…`)도 거절.
 _MGR_ID_RE = re.compile(r"\AM-R[0-9]+-[0-9]{6}(?:-[0-9]+)?\Z", re.ASCII)
 _REQ_MGR_RE = re.compile(r"\A/api/managers/(M-R[0-9]+-[0-9]{6}(?:-[0-9]+)?)\Z", re.ASCII)
-#: 세션 상태 -> 화면 어휘 (`app.js` renderManager 가 running/done/failed/killed 만 가른다)
+#: 세션 상태 -> 옛 `status` 어휘 (화면은 `session_state` 를 먼저 본다)
 _MGR_STATUS = {"running": "running", "done": "done", "failed": "failed", "timeout": "failed",
                "stalled": "failed", "lost": "failed", "killed": "killed"}
 _mgr_steps_memo = {}
@@ -1341,7 +1341,6 @@ def _manager_row(d, live=None):
     n, last = _steps_summary(d)
     rnd = meta.get("round")
     redact = _reader()._redact
-    ph = (meta.get("extra") or {}).get("phase") if isinstance(meta.get("extra"), dict) else None
     return {
         "label": redact(str(meta.get("label") or d.name)[:80]),
         "status": _MGR_STATUS.get(sstate, "failed"),
@@ -1355,7 +1354,6 @@ def _manager_row(d, live=None):
         "round": rnd if isinstance(rnd, int) and not isinstance(rnd, bool) else None,
         "session_state": sstate,
         "orphaned": bool(stt.get("orphaned")),
-        "phase": ph if ph in ("plan", "judge", "close") else None,   # 호출 방식 라운드의 호출 단계, 상주 관리자는 None
     }
 
 
@@ -1478,7 +1476,6 @@ def archive_action(payload, by, root=ROOT):
         "runs":      len(plan.get("runs") or []),
         "events":    len(plan.get("events") or []),
         "handoff":   len(plan.get("handoff") or []),
-        "relay":     len(plan.get("relay") or []),
         "log_lines": sum(int(l.get("lines") or 0) for l in (plan.get("logs") or [])),
     }
     summary["total_records"] = plan.get("total_records") or 0
@@ -1492,7 +1489,7 @@ def archive_action(payload, by, root=ROOT):
                     for k, v in out.items() if k != "files"}
     return 200, {"ok": True, "dry_run": False, "plan": summary, "moved": out,
                  "moved_counts": moved_counts}
-SLOT_HARNESSES = ("claude", "codex", "opencode")
+SLOT_HARNESSES = tuple(_fleet_rt("harness").REAL)   # 하네스 목록의 정본
 def _aimem_db(root):
     tools_dir = str(pathlib.Path(root) / "tools")
     if tools_dir not in sys.path:
@@ -1667,36 +1664,13 @@ def fleet_state(root=ROOT):
         return {"mode": None, "error": f"{type(e).__name__}: {str(e)[:120]}", "can": {a: False for a in FLEET_ACTIONS}}
 
 
-#: 고른 운영 방식을 받지 못하는 옛 엔진이 올라와 있을 때 - 말없이 버리면 사람이 고른 것과 다른 방식으로 돈다
-_STALE_ENGINE = "올라와 있는 엔진이 운영 방식을 받지 못합니다 - 모니터를 다시 띄우십시오 (고른 방식을 버리고 띄우지 않았습니다)"
-
-
-def _accepts(fn, name):
-    """엔진 함수가 키워드 `name` 을 받는지 (엔진 갱신이 화면보다 늦을 때를 위해)."""
-    try:
-        import inspect
-        ps = inspect.signature(fn).parameters
-        return name in ps or any(q.kind == q.VAR_KEYWORD for q in ps.values())
-    except (TypeError, ValueError):
-        return False
-
-
 def _policy_arg(ctl, val):
-    """(키, 오류). 운영 방침 키는 엔진이 알려 주는 선택지(`public_state()['policy']['choices']`) 안의 문자열만 받는다."""
+    """(키, 오류). 운영 방식 키는 엔진의 선택지(`fleet_ctl.POLICY_CHOICES`) 안의 문자열만 받는다."""
     if val is None:
         return None, None
     if not isinstance(val, str):
         return None, "`policy` 는 문자열이어야 합니다"
-    keys = None
-    try:
-        st = ctl.public_state() if callable(getattr(ctl, "public_state", None)) else None
-        pol = st.get("policy") if isinstance(st, dict) else None
-        if isinstance(pol, dict):
-            keys = [c.get("key") for c in pol.get("choices", []) if isinstance(c, dict)]
-    except Exception:  # noqa: BLE001
-        keys = None
-    if keys is None:
-        keys = ["cost", "quality", "speed"]
+    keys = [c["key"] for c in ctl.POLICY_CHOICES]
     if val not in keys:
         return None, f"모르는 운영 방침입니다: {val[:40]}"
     return val, None
@@ -1714,8 +1688,6 @@ def fleet_action(action, by, root=ROOT, payload=None):
         try:
             names = p.get("projects")
             names = [x for x in names if isinstance(x, str)][:50] if isinstance(names, list) else []
-            if isinstance(p.get("project"), str) and p["project"].strip():
-                names.append(p["project"])
             # 대상: 함대(fleet) · 프로젝트 여러 개(projects) · 전체(all). 아무것도 안 골랐으면 거절하고 이유를 돌려준다
             ctl = _fleet_ctl(root)
             kw = {}
@@ -1724,8 +1696,6 @@ def fleet_action(action, by, root=ROOT, payload=None):
                 if err:
                     return 400, {"ok": False, "error": err}
                 if pol is not None:
-                    if not _accepts(ctl.chain_set, "policy"):
-                        return 409, {"ok": False, "error": _STALE_ENGINE}
                     kw["policy"] = pol
             out = ctl.chain_set(p["on"], None, p.get("max_rounds"), by, projects=names,
                                 fleet_on=bool(p.get("fleet")), all_=bool(p.get("all")),
@@ -1751,8 +1721,6 @@ def fleet_action(action, by, root=ROOT, payload=None):
         if err:
             return 400, {"ok": False, "error": err}
         if pol is not None:
-            if not _accepts(ctl.launch_round, "policy"):
-                return 409, {"ok": False, "error": _STALE_ENGINE}
             rkw["policy"] = pol
     try:
         out = {"prepare": lambda: ctl.prepare(by, extra), "run": lambda: ctl.resume(by),
@@ -1786,9 +1754,9 @@ def _attempt_log(attempts, infra_attempts):
 def collect_graphs(root=ROOT, errors=None):
     """`.aimem/graph/*.json` 을 읽어 요청 트리 옆에 놓을 요약을 만듭니다.
 
-    진행율·ETA 계산은 `fleet_graph.progress()` 가 정본입니다 - 여기서 다시 계산하면
+    진행율·남은 시간 계산은 `fleet_graph.progress()` 가 정본입니다 - 여기서 다시 계산하면
     CLI 와 화면이 다른 숫자를 말하게 됩니다. 다만 `progress()` 는 **실제 저장소의**
-    `.aimem/runs` 를 표본으로 쓰므로, root 가 저장소가 아닐 때는(테스트) 부르지 않고
+    실행 기록을 표본으로 쓰므로, root 가 저장소가 아닐 때는(테스트) 부르지 않고
     상태 집계만 돌려줍니다.
     """
     errors = errors if errors is not None else []
@@ -1808,7 +1776,15 @@ def collect_graphs(root=ROOT, errors=None):
             durations = fleet_graph.harness_durations()
             prog = lambda g, _d=durations: fleet_graph.progress(g, _d)  # noqa: E731
         except Exception as e:  # noqa: BLE001
-            errors.append(f"fleet_graph 를 쓰지 못해 그래프 ETA 를 생략합니다: {type(e).__name__}: {e}")
+            errors.append(f"fleet_graph 를 쓰지 못해 그래프 남은 시간을 생략합니다: {type(e).__name__}: {e}")
+    # 그래프를 실행기 프로세스가 잡고 있나 - 엔진(`fleet_ctl.graphs_overview`)의 판정을 상태를 한 번 만들 때 한 번만 읽는다.
+    # 못 읽으면(저장소가 아니거나 오류) None = 모름 - 화면은 '실행기 없음' 처럼 보인다.
+    runners = None
+    if live:
+        try:
+            runners = {g["id"]: bool(g.get("runner")) for g in _fleet_ctl(root).graphs_overview()}
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"그래프 실행기 상태를 읽지 못했습니다: {type(e).__name__}: {str(e)[:60]}")
     out = []
     for p in sorted(gdir.glob("*.json")):
         # 노드 하나가 이상해도 `/api/state` 와 `/api/health` 가 통째로 죽지 않게,
@@ -1850,14 +1826,13 @@ def collect_graphs(root=ROOT, errors=None):
             continue
         item = {"id": g.get("id") or p.stem, "request": g.get("request"),
                 "created": g.get("created"), "updated": g.get("updated"),
-                "percent": None, "eta_seconds": None, "eta_at": None,
-                "counts": counts, "source": "counts-only", "nodes": nodes}
+                "percent": None, "eta_seconds": None,
+                "runner": runners.get(g.get("id") or p.stem, False) if runners is not None else None,
+                "counts": counts, "nodes": nodes}
         if prog is not None:
             try:
                 pr = prog(g)
-                item.update({"percent": pr.get("percent"), "eta_seconds": pr.get("eta_seconds"),
-                             "eta_at": pr.get("eta_at"), "basis": pr.get("basis"),
-                             "source": "fleet_graph.progress"})
+                item.update({"percent": pr.get("percent"), "eta_seconds": pr.get("eta_seconds")})
             except Exception as e:  # noqa: BLE001
                 errors.append(f"그래프 {item['id']} 진행율 계산 실패: {type(e).__name__}: {e}")
         out.append(item)
@@ -2050,7 +2025,7 @@ def list_projects(root=ROOT, requests=None):
                     "percent": round(100.0 * goals["done"] / goals["total"], 1) if goals else req_pct,
                     "basis": "goals" if goals else "requests", "goals": goals, "request_percent": req_pct,
                     "requests": counts, "rounds": rounds, "round_count": len(rounds),
-                    "first_round": rounds[0] if rounds else None, "last_round": last,
+                    "last_round": last,
                     "last_round_at": mine.get(last) if last is not None else None,
                     "updated": updated, "summary": summary,
                     "app": project_app(n, root) if n in have else None})

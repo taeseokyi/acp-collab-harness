@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""웹 모니터 reader 가 세션 폴더(`.aimem/sessions/<id>/`)를 옛 실행(`.aimem/runs/`)과 같은 꼴로 보이는지.
+"""웹 모니터 reader 가 세션 폴더(`.aimem/sessions/<id>/`)를 실행 한 줄로 보이는지 (옛 `.aimem/runs` 는 더는 읽지 않는다).
 
 임시 루트만 쓴다 - 진짜 `.aimem/` 는 건드리지 않고 읽지도 않는다. 진짜 하네스는 뜨지 않는다.
 """
@@ -62,15 +62,6 @@ def mk_session(root, sid, *, end=None, running=False, report=None, events=(), st
     return d
 
 
-def mk_legacy(root, rid, rc=0):
-    r = root / ".aimem" / "runs"
-    r.mkdir(parents=True, exist_ok=True)
-    (r / f"{rid}.json").write_text(json.dumps({"id": rid, "slot": "S1", "harness": "codex", "model": "x",
-                                               "started": "2026-11-12T10:00:00"}), encoding="utf-8")
-    (r / f"{rid}.out").write_text("옛 보고", encoding="utf-8")
-    (r / f"{rid}.rc").write_text(str(rc), encoding="utf-8")
-
-
 def ev(**kw):
     return json.dumps(kw, ensure_ascii=False)
 
@@ -80,7 +71,6 @@ class SessionRows(unittest.TestCase):
         self._t = tempfile.TemporaryDirectory()
         self.addCleanup(self._t.cleanup)
         self.root = pathlib.Path(self._t.name)
-        mk_legacy(self.root, "20261109-172618-S3")
         mk_session(self.root, "T-1-S2-a1-100000", running=True, started="2026-11-12T11:50:00", events=[
             ("2026-11-12T11:50:05", ev(type="text", text="시작")),
             ("2026-11-12T11:55:09", ev(type="tool", name="Bash", summary="ls")),
@@ -101,16 +91,18 @@ class SessionRows(unittest.TestCase):
         self.errors = errors
 
     def test_all_listed_with_keys(self):
-        self.assertEqual(len(self.rows), 8)
+        self.assertEqual(len(self.rows), 7)
         self.assertEqual(self.errors, [])
         for r in self.rows.values():
             self.assertTrue((LEGACY_KEYS | NEW_KEYS) <= set(r), r["id"])
 
-    def test_legacy_row_has_none_new_keys(self):
-        r = self.rows["20261109-172618-S3"]
-        self.assertEqual((r["state"], r["rc"]), ("done", 0))
-        for k in NEW_KEYS:
-            self.assertIsNone(r[k], k)
+    def test_old_runs_dir_is_not_read(self):
+        runs = self.root / ".aimem" / "runs"
+        runs.mkdir(parents=True)
+        (runs / "20261109-172618-S3.json").write_text(json.dumps({"id": "20261109-172618-S3", "slot": "S1"}), encoding="utf-8")
+        self.assertNotIn("20261109-172618-S3", {r["id"] for r in reader._collect_runs(self.root, NOW, [])})
+        d = reader.run_detail("20261109-172618-S3", self.root)
+        self.assertFalse(d["found"])
 
     def test_running(self):
         r = self.rows["T-1-S2-a1-100000"]
@@ -181,7 +173,6 @@ class SessionDetail(unittest.TestCase):
                        ("2026-11-12T11:00:04", ev(type="usage", tokens_in=1, tokens_out=1)),
                        ("2026-11-12T11:00:05", ev(type="error", text="재접속", retry=True))],
                    end={"state": "failed", "rc": 2, "ended": "2026-11-12T11:30:00", "fail_kind": "infra", "why": "x"})
-        mk_legacy(self.root, "20261109-172618-S3")
 
     def test_detail(self):
         d = reader.run_detail(RUN_ID, self.root)
@@ -202,12 +193,6 @@ class SessionDetail(unittest.TestCase):
         out = reader.run_events(RUN_ID, self.root)
         self.assertEqual(out.splitlines(), [
             "11:00:01  [text] 안녕", "11:00:02  [tool] Bash: ls", "11:00:05  [error] 재접속"])
-
-    def test_legacy_detail_unchanged(self):
-        d = reader.run_detail("20261109-172618-S3", self.root)
-        self.assertTrue(d["found"])
-        self.assertEqual((d["status"], d["rc"], d["report"]), ("done", 0, "옛 보고"))
-        self.assertEqual(reader.run_events("20261109-172618-S3", self.root), "")
 
     def test_missing_in_temp_root(self):
         d = reader.run_detail("T-999-S2-a1-123456", self.root)

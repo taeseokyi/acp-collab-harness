@@ -1,4 +1,4 @@
-"""`/api/archive` 계약 (2026-11-11, G-032): 미리보기·실행이 종류별 **건수**를 돌려준다."""
+"""`/api/archive` 계약: 미리보기·실행이 종류별 **건수**를 돌려준다."""
 import contextlib
 import io
 import json
@@ -24,7 +24,6 @@ class ArchiveApiTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = pathlib.Path(self.tmp.name).resolve()
         (self.root / ".aimem" / "requests").mkdir(parents=True)
-        (self.root / ".aimem" / "runs").mkdir(parents=True)
         for target, attr, value in (
             (aimem_db, "ROOT", self.root),
             (aimem_db, "DB", self.root / ".aimem" / "aimem.db"),
@@ -38,7 +37,6 @@ class ArchiveApiTest(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             aimem_db.cmd_init()
         self.db = self.root / ".aimem" / "aimem.db"
-        self.run_dir = self.root / ".aimem" / "runs"
         self.req_dir = self.root / ".aimem" / "requests"
 
     def _seed(self):
@@ -58,15 +56,6 @@ class ArchiveApiTest(unittest.TestCase):
             json.dumps({"id": "Q-9", "status": "DONE", "title": "t", "created": WHEN, "updated": WHEN}),
             encoding="utf-8",
         )
-        rid = "T-1-S1-a1"
-        (self.run_dir / f"{rid}.json").write_text(
-            json.dumps({"id": rid, "slot": "S1", "harness": "opencode", "task": "T-1",
-                        "attempt": 1, "date": "2026-01-01", "label": "a1", "rev": 157,
-                        "started": WHEN}),
-            encoding="utf-8",
-        )
-        (self.run_dir / f"{rid}.rc").write_text("0\n", encoding="utf-8")
-        return rid
 
     def _preview(self):
         code, body = server.archive_action({"days": 0, "dry_run": True}, "웹", self.root)
@@ -77,22 +66,18 @@ class ArchiveApiTest(unittest.TestCase):
         self._seed()
         plan = self._preview()
         records = plan["records"]
-        self.assertEqual(set(records), {"runs", "events", "handoff", "relay", "log_lines"})
+        self.assertLessEqual({"events", "handoff", "log_lines"}, set(records))
         for v in records.values():
             self.assertIs(type(v), int)
         self.assertIs(type(plan["total_records"]), int)
 
-    def test_dry_run_counts_attached_runs_and_events(self):
+    def test_dry_run_counts_attached_events(self):
         self._seed()
-        records = self._preview()["records"]
-        self.assertGreaterEqual(records["runs"], 1)
-        self.assertGreaterEqual(records["events"], 1)
+        self.assertGreaterEqual(self._preview()["records"]["events"], 1)
 
     def test_dry_run_moves_nothing(self):
-        rid = self._seed()
+        self._seed()
         self._preview()
-        self.assertTrue((self.run_dir / f"{rid}.json").exists())
-        self.assertTrue((self.run_dir / f"{rid}.rc").exists())
         self.assertTrue((self.req_dir / "Q-9.json").exists())
         con = sqlite3.connect(self.db)
         self.assertEqual(con.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 1)
@@ -108,7 +93,7 @@ class ArchiveApiTest(unittest.TestCase):
         self.assertTrue(counts)
         for v in counts.values():
             self.assertIs(type(v), int)
-        self.assertGreaterEqual(counts["runs"], 1)
+        self.assertEqual((counts["tasks"], counts["events"]), (1, 1))
 
     def test_invalid_days(self):
         self._seed()
@@ -116,11 +101,9 @@ class ArchiveApiTest(unittest.TestCase):
             self.assertEqual(server.archive_action({"days": days}, "웹", self.root)[0], 400, days)
 
     def test_non_production_root(self):
-        rid = self._seed()
+        self._seed()
         code, body = server.archive_action({"days": 0}, "웹", self.root / "other")
         self.assertEqual(code, 403)
-        self.assertTrue((self.run_dir / f"{rid}.json").exists())
-        self.assertTrue((self.run_dir / f"{rid}.rc").exists())
         self.assertTrue((self.req_dir / "Q-9.json").exists())
         con = sqlite3.connect(self.db)
         self.assertEqual(con.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 1)

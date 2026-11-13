@@ -41,8 +41,9 @@ if [ "$run_lint" -eq 1 ]; then
 fi
 
 if [ "$run_tests" -eq 1 ]; then
-    echo "pre-commit: tests/ 또는 tools/ 변경 감지 - 단위 테스트 실행"
-    if ! python3 -m unittest discover -s tests; then
+    # 바뀐 경로에 해당하는 검사만 돌린다. 전체는 푸시 전에 `python3 tools/check.py --all`.
+    echo "pre-commit: tests/ 또는 tools/ 변경 감지 - 해당 검사 실행"
+    if ! python3 tools/check.py --staged; then
         echo "pre-commit: 단위 테스트 실패. 커밋을 거부합니다." >&2
         status=1
     fi

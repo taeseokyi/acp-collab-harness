@@ -28,18 +28,14 @@ class CurrentRoundAndProject(unittest.TestCase):
         import fleet_ctl
         # 도는 관리자 세션이 없으면 라운드도 없다 (함대 모드 파일이 없을 때)
         with mock.patch.object(fleet_ctl, "mode", return_value="running"), \
-                mock.patch.object(fleet_ctl, "active_round", return_value=8, create=True):
+                mock.patch.object(fleet_ctl, "active_round", return_value=8):
             self.assertEqual(fleet.current_round(), 8)
         with mock.patch.object(fleet_ctl, "mode", return_value="running"), \
-                mock.patch.object(fleet_ctl, "active_round", return_value=None, create=True):
+                mock.patch.object(fleet_ctl, "active_round", return_value=None):
             self.assertIsNone(fleet.current_round())
         # 함대가 '실행' 이 아니면 도는 라운드가 없다 - 끝난 뒤 손으로 띄운 실행에 지난 번호를 붙이지 않는다
         with mock.patch.object(fleet_ctl, "mode", return_value="ready"), \
-                mock.patch.object(fleet_ctl, "active_round", return_value=8, create=True):
-            self.assertIsNone(fleet.current_round())
-        # active_round 가 아직 없는 fleet_ctl 이어도 죽지 않는다
-        with mock.patch.object(fleet_ctl, "mode", return_value="running"), \
-                mock.patch.object(fleet_ctl, "active_round", None, create=True):
+                mock.patch.object(fleet_ctl, "active_round", return_value=8):
             self.assertIsNone(fleet.current_round())
 
     def test_task_project_follows_task_to_request(self):
@@ -70,20 +66,19 @@ class RunRowsCarryProjectAndRound(unittest.TestCase):
     def test_reader_exposes_them_without_touching_the_id(self):
         with tempfile.TemporaryDirectory() as t:
             root = pathlib.Path(t)
-            runs = root / ".aimem" / "runs"
-            runs.mkdir(parents=True)
-            (root / "AIMEM.md").write_text("# AIMEM\n\n- **REV: 1**\n", encoding="utf-8")
-            for rid, extra in (("T-101-S1-a1-101010", {"task": "T-101", "project": "알파", "round": 7}),
-                               ("T-102-S2-a1-101011", {"task": "T-102", "project": "", "round": None}),
-                               ("T-103-S2-a1-101012", {"project": ["x"], "round": True}),
-                               ("20261109-163112-S1", {})):
-                (runs / f"{rid}.json").write_text(json.dumps(dict({"id": rid, "slot": "S1", "harness": "codex"}, **extra)),
-                                                 encoding="utf-8")
+            sroot = root / ".aimem" / "sessions"
+            for rid, meta in (("T-101-S1-a1-101010", {"task_id": "T-101", "round": 7, "extra": {"project": "알파"}}),
+                              ("T-102-S2-a1-101011", {"task_id": "T-102", "round": None, "extra": {"project": ""}}),
+                              ("T-103-S2-a1-101012", {"task_id": ["x"], "round": True, "extra": {"project": ["x"]}})):
+                d = sroot / rid
+                d.mkdir(parents=True)
+                (d / "meta.json").write_text(json.dumps(dict({"id": rid, "slot": "S1", "harness": "codex",
+                                                              "started": "2026-11-10T10:10:10"}, **meta)), encoding="utf-8")
+                (d / "end.json").write_text(json.dumps({"state": "done", "rc": 0}), encoding="utf-8")
             got = {r["id"]: (r["task"], r["project"], r["round"]) for r in reader.collect(root)["runs"]}
         self.assertEqual(got["T-101-S1-a1-101010"], ("T-101", "알파", 7))
-        self.assertEqual(got["T-102-S2-a1-101011"], ("T-102", "", None))
+        self.assertEqual(got["T-102-S2-a1-101011"], ("T-102", None, None))
         self.assertEqual(got["T-103-S2-a1-101012"], (None, None, None))       # 꼴이 다른 값은 버린다
-        self.assertEqual(got["20261109-163112-S1"], (None, None, None))       # 옛 기록
 
 
 if __name__ == "__main__":

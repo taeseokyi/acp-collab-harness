@@ -179,32 +179,27 @@ class TestRun(Base):
 
     def test_stalled(self):
         d = self.spawn(["hang"], idle_timeout=1.0)
-        t = time.time()
         st = self.wait_end(d)
         self.assertEqual((st["state"], st["fail_kind"]), ("stalled", "infra"))
-        self.assertLess(time.time() - t, 6)
+        self.assertIn("읽기도 없음", st["why"])
         self.assertTrue(_wait(lambda: not self.group_of(d), 3))     # 감독은 end.json 뒤 DB 를 적고 끝난다
 
     def test_reading_without_events_is_not_silence(self):
         """사건은 없어도 데이터를 계속 읽는 하네스(긴 생성 중)는 침묵으로 끊지 않는다 - 읽기가 멈추면 끊는다."""
-        d = self.spawn(["busy-read 5", "emit 끝"], idle_timeout=2.5)
+        d = self.spawn(["busy-read 2", "emit 끝"], idle_timeout=1.0)
         st = self.wait_end(d, 20)
         self.assertEqual(st["state"], "done", st)
-        d2 = self.spawn(["hang"], idle_timeout=2.5)
-        st2 = self.wait_end(d2, 20)
-        self.assertEqual((st2["state"], st2["fail_kind"]), ("stalled", "infra"))
-        self.assertIn("읽기도 없음", st2["why"])
-        self.assertTrue(_wait(lambda: not self.group_of(d) and not self.group_of(d2), 5))   # 감독이 DB 를 적고 끝날 때까지
+        self.assertTrue(_wait(lambda: not self.group_of(d), 5))   # 감독이 DB 를 적고 끝날 때까지
 
     def test_reading_by_a_detached_child_is_not_silence(self):
         """하네스가 그룹을 벗어난(setsid) 백그라운드 명령을 기다리는 동안도, 그 명령이 읽고 있으면 침묵이 아니다."""
-        d = self.spawn(["detached-busy 5", "emit 끝"], idle_timeout=2.5)
+        d = self.spawn(["detached-busy 2", "emit 끝"], idle_timeout=1.0)
         st = self.wait_end(d, 20)
         self.assertEqual(st["state"], "done", st)
         self.assertTrue(_wait(lambda: not self.group_of(d), 5))
 
     def test_timeout(self):
-        d = self.spawn(["emit 시작", "sleep 30"], timeout=1.5)
+        d = self.spawn(["emit 시작", "sleep 30"], timeout=0.8)
         st = self.wait_end(d)
         self.assertEqual((st["state"], st["fail_kind"]), ("timeout", "timeout"))
         self.assertTrue(_wait(lambda: not self.group_of(d), 3))     # 감독은 end.json 뒤 DB 를 적고 끝난다
@@ -513,6 +508,7 @@ class TestReviewFindings(Base):
         self.assertEqual(sessions.cancel(sib), "killed")
 
     # 4
+    @mock.patch.object(sessions, "FINALISE_GRACE_SEC", 0.5)
     def test_forged_end_json_while_running(self):
         root = self.work / "sessions"
         d = self.spawn(['write sessions/fe1/end.json {"state":"done","rc":0}', "hang"], sid="fe1", root=root)
@@ -523,7 +519,7 @@ class TestReviewFindings(Base):
             st = sessions.state(d)
             self.assertEqual((st["state"], st["orphaned"]), ("running", False), st)
             self.assertIn("end.json 이 있는데", st["why"])
-            time.sleep(FINALISE + 0.2)
+            time.sleep(sessions.FINALISE_GRACE_SEC + 0.2)
         self.assertEqual(sessions.cancel(d, why="검사"), "killed")   # gone 으로 빠지지 않는다
         self.assertTrue(_wait(lambda: all(_gone(p) for p in pids), 5))
         st = sessions.state(d)

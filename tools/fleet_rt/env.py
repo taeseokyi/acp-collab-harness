@@ -3,7 +3,6 @@
 엔진(세션을 띄울 때)과 모니터(뜰 때)가 이 파일만 읽는다. 다른 도구의 설정 파일은 읽지 않는다.
 권한이 600 이 아니면 읽지 않는다 - 키가 든 파일이 남에게 열려 있으면 쓰지 않는 편이 낫다.
 """
-import os
 import pathlib
 import re
 import stat
@@ -60,14 +59,3 @@ def env_problem(root):
     if stat.S_IMODE(st.st_mode) & 0o077:
         return f"{ENV_FILE} 권한이 600 이 아닙니다 (chmod 600 {ENV_FILE})"
     return None
-
-
-def apply_env(root, environ=None):
-    """`.env` 값을 환경에 넣는다. 이미 있는 변수는 덮지 않는다. 넣은 이름 목록을 준다."""
-    environ = os.environ if environ is None else environ
-    added = []
-    for k, v in load_env(root).items():
-        if not environ.get(k):
-            environ[k] = v
-            added.append(k)
-    return added

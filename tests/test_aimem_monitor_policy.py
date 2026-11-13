@@ -1,4 +1,4 @@
-"""운영 방침 키가 /api/fleet/round · chain 으로 엔진에 그대로 넘어가는지 (가짜 fleet_ctl)."""
+"""운영 방식 키가 /api/fleet/round · chain 으로 엔진에 그대로 넘어가는지 (가짜 fleet_ctl)."""
 import pathlib
 import sys
 import tempfile
@@ -14,24 +14,12 @@ CHOICES = [{"key": k} for k in ("cost", "quality", "speed")]
 
 class NewCtl:
     calls = []
-    @staticmethod
-    def public_state(): return {"policy": {"choices": CHOICES}}
+    POLICY_CHOICES = CHOICES
     @staticmethod
     def launch_round(by, policy=None): NewCtl.calls.append(("round", by, policy)); return {"ok": True}
     @staticmethod
     def chain_set(on, target, mx, by, projects=(), fleet_on=False, all_=False, autonomous=False, renew=False, policy=None):
         NewCtl.calls.append(("chain", on, policy)); return {"ok": True}
-
-
-class OldCtl:
-    calls = []
-    @staticmethod
-    def public_state(): return {}
-    @staticmethod
-    def launch_round(by): OldCtl.calls.append(("round", by)); return {"ok": True}
-    @staticmethod
-    def chain_set(on, target, mx, by, projects=(), fleet_on=False, all_=False, autonomous=False, renew=False):
-        OldCtl.calls.append(("chain", on)); return {"ok": True}
 
 
 class PolicyPassThrough(unittest.TestCase):
@@ -63,17 +51,6 @@ class PolicyPassThrough(unittest.TestCase):
         self.assertEqual(NewCtl.calls, [("chain", True, "quality")])
         self.go(NewCtl, "chain", {"on": False, "policy": "bogus"})
         self.assertEqual(NewCtl.calls, [("chain", False, None)])
-
-    def test_old_engine_refuses_a_chosen_policy_instead_of_dropping_it(self):
-        """고른 운영 방식을 받지 못하는 옛 엔진이면 말없이 버리고 띄우지 않는다 - 409 와 '모니터를 다시 띄우십시오'."""
-        code, out = self.go(OldCtl, "round", {"policy": "speed"})
-        self.assertEqual((code, OldCtl.calls), (409, []))
-        self.assertIn("모니터를 다시 띄우십시오", out["error"])
-        code, out = self.go(OldCtl, "chain", {"on": True, "fleet": True, "policy": "speed"})
-        self.assertEqual((code, OldCtl.calls), (409, []))
-        self.assertIn("모니터를 다시 띄우십시오", out["error"])
-        code, _ = self.go(OldCtl, "round", {})                       # 고르지 않았으면 옛 엔진도 그대로 띄운다
-        self.assertEqual((code, OldCtl.calls), (200, [("round", "웹")]))
 
 
 if __name__ == "__main__":

@@ -14,26 +14,11 @@ import subprocess
 from typing import Optional
 
 from .. import base
-from ..base import Command, Event, ProbeResult, SessionSpec
+from ..base import LIMIT_RE, Command, Event, ProbeResult, SessionSpec, one_line as _one_line, require_repo_cwd
 
 _BASE_ARGV = ["opencode", "run", "--format", "json"]
 
-# 한도·시간 초과 낱말. 구조화된 코드가 없어 문구로 알아본다.
-_LIMIT_RE = re.compile(r"\b429\b|rate[\s_-]?limit|quota|usage limit|too many requests", re.I)
 _TIMEOUT_RE = re.compile(r"timed? ?out", re.I)
-
-_NO_REPORT = "(최종 보고문 없음 - 작업자가 보고 전에 끝남. stderr 꼬리:)"
-
-
-def _require_repo_cwd(cwd) -> pathlib.Path:
-    """진짜 하네스는 함대 저장소 안에서만 띄운다.
-
-    2026-11-12 에 /tmp 검수 사본에서 진짜 작업자가 떴던 일이 있어, `tools/fleet.py` 가 있는 폴더만 허용한다.
-    """
-    p = pathlib.Path(str(cwd))
-    if not p.is_dir() or not (p / "tools" / "fleet.py").is_file():
-        raise ValueError(f"함대 저장소가 아닌 작업 폴더에서는 하네스를 띄우지 않는다: {cwd!r}")
-    return p
 
 
 def _brief_ref(brief_path: str, cwd: pathlib.Path) -> str:
@@ -48,13 +33,8 @@ def _brief_ref(brief_path: str, cwd: pathlib.Path) -> str:
 
 
 def _head(spec: SessionSpec) -> str:
-    # 슬롯·토큰·REV 를 메시지 자체에 싣는다 - 파일을 읽기 전에 '슬롯 ID 없음' 으로 빈손 종료한 전례 (fleet.py 주석)
+    # 슬롯·토큰·REV 를 메시지 자체에 싣는다 - 지시문 파일을 읽기 전에 '슬롯 없음' 으로 끝나지 않게
     return (spec.ident.strip() + " ") if spec.ident and spec.ident.strip() else ""
-
-
-def _one_line(s, limit=120) -> str:
-    s = " ".join(str(s).split())
-    return s if len(s) <= limit else s[:limit - 1] + "…"
 
 
 def _summarize_input(inp) -> str:
@@ -103,7 +83,7 @@ class OpencodeHarness:
     name = "opencode"
 
     def command(self, spec: SessionSpec) -> Command:
-        cwd = _require_repo_cwd(spec.cwd)
+        cwd = require_repo_cwd(spec.cwd, "opencode")
         argv = list(_BASE_ARGV)
         if spec.model:
             argv += ["-m", spec.model]
@@ -146,7 +126,7 @@ class OpencodeHarness:
         if t == "error":
             msg = _error_message(obj)
             data = {}
-            if _LIMIT_RE.search(msg):
+            if LIMIT_RE.search(msg):
                 data["limit"] = True
             if _TIMEOUT_RE.search(msg):
                 data["timeout"] = True
@@ -169,37 +149,20 @@ class OpencodeHarness:
         report = "".join(step_texts).strip() or last_text
         if report:
             return report
-        # 보고문 없이 끝남 - stderr 에서 도구 로그를 걷어낸 꼬리와 error 사건 문구를 보여 준다
-        sd = pathlib.Path(session_dir)
-        try:
-            err = (sd / "stderr.log").read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            err = ""
-        err = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", err)
-        kept = [l for l in err.splitlines()
-                if l.strip() and not re.match(r"^\s*(←|✗|!|\||\+|-|@|\$|>)", l)]
-        parts = kept[-25:] + _error_messages(session_dir)
-        tail = "\n".join(parts).strip()
-        return f"{_NO_REPORT}\n{tail}" if tail else ""
+        return base.no_report_tail(session_dir, _error_messages(session_dir))
 
     def limit_signal(self, session_dir) -> Optional[bool]:
         last = None
         for obj in _session_objs(session_dir):
-            if obj.get("type") == "error" and _LIMIT_RE.search(_error_message(obj)):
+            if obj.get("type") == "error" and LIMIT_RE.search(_error_message(obj)):
                 return True
             last = obj
         if last and last.get("type") == "step_finish" and (last.get("part") or {}).get("reason") == "stop":
             return False
         return None
 
-    def resume_command(self, spec: SessionSpec, harness_session_id: str, message_path: str) -> Optional[Command]:
-        cwd = _require_repo_cwd(spec.cwd)
-        argv = list(_BASE_ARGV) + ["-s", harness_session_id]
-        if spec.model:
-            argv += ["-m", spec.model]
-        msg = ("이어서 할 일이 다음 파일에 있다. 읽고 그대로 수행하라(파일 자체는 수정하지 말라): "
-               + _brief_ref(message_path, cwd))
-        return Command(argv=argv + [msg], cwd=str(spec.cwd), stdin_path=None)
+    def resume_command(self, spec, harness_session_id, message_path):
+        return None                     # 작업자는 일회성이라 잇지 않는다
 
     def probe(self) -> ProbeResult:
         exe = shutil.which("opencode")

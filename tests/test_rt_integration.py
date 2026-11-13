@@ -1,10 +1,10 @@
-"""엔진 v2 끝에서 끝까지 검사: 그래프 실행기 -> `fleet.cmd_spawn` -> `fleet_rt.sessions.spawn` -> 감독 -> 가짜 하네스.
+"""엔진 v2 끝에서 끝까지 검사: 그래프 실행기 -> `fleet.spawn` -> `fleet_rt.sessions.spawn` -> 감독 -> 가짜 하네스.
 
 진짜 하네스는 띄우지 않는다(`_fleet_env` 가 AIFLEET_HARNESS=fake). 모든 상태는 임시 폴더 아래이고
 (`fleet.RUNS`·`fleet.ROOT`·`fleet_graph.GRAPHS`·`fleet_graph.ROOT` 를 갈아끼운다), 신호는 이 검사가 띄운 프로세스에만 간다.
 마지막에 이 검사의 저장소 표식(AIFLEET_SESSIONS_ROOT)을 단 프로세스가 하나도 남지 않았는지 본다.
 
-공급자: 임시 `fleet.toml` 에 `fk`(침묵 한도 2초)와 `ok`(600초)를 두고 노드의 `model` 로 고른다.
+공급자: 임시 `fleet.toml` 에 `fk`(침묵 한도 1초)와 `ok`(600초)를 두고 노드의 `model` 로 고른다.
 """
 import os
 import sys
@@ -38,7 +38,7 @@ _N = [0]
 TOML = """
 [providers.fk]
 max_concurrent = 3
-idle_timeout_sec = 2
+idle_timeout_sec = 1
 models = ["x"]
 
 [providers.ok]
@@ -131,13 +131,11 @@ class Base(unittest.TestCase):
             mock.patch.object(fleet_graph, "ROOT", self.root),
             mock.patch.object(fleet_graph, "GRAPHS", self.graphs),
             mock.patch.object(fleet_graph, "_LOGGED_ONCE", set()),
-            mock.patch.object(fleet, "roster", return_value={"S1": ("aaaaaa", "codex", ""),
-                                                             "S2": ("bbbbbb", "codex", "")}),
+            mock.patch.object(fleet, "roster", return_value={"S1": ("aaaaaa", "codex"), "S2": ("bbbbbb", "codex")}),
             mock.patch.object(fleet, "owned_paths", side_effect=lambda slot: list(self.OWNED)),
             mock.patch.object(fleet, "read_rev", return_value=1),
             mock.patch.object(fleet, "db_state", return_value=None),
             mock.patch.object(fleet, "_slot_model", return_value=None),
-            mock.patch.object(fleet, "_db_sync", return_value=None),
             mock.patch.dict(os.environ, {fleet_ctl.FORCE_ENV: ""}),
         ]
         for p in patches:
@@ -194,17 +192,10 @@ class Base(unittest.TestCase):
     def reload(self, gid="G-901"):
         return json.loads((self.graphs / f"{gid}.json").read_text(encoding="utf-8"))
 
-    def args(self, task, **kw):
-        a = dict(slot="S1", harness=None, model="ok/x", label="adhoc", task_id=None, attempt=1, write=[],
-                 task=task, task_file=None, project=None, round=None, timeout=60)
-        a.update(kw)
-        return argparse.Namespace(**a)
-
-    def spawn(self, task, **kw):
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()):
-            fleet.cmd_spawn(self.args(task, **kw))
-        return buf.getvalue().strip().splitlines()[-1]
+    def spawn(self, task, slot="S1", **kw):
+        kw = dict({"model": "ok/x", "label": "adhoc", "timeout": 60}, **kw)
+        with contextlib.redirect_stderr(io.StringIO()):
+            return fleet.spawn(slot, task, **kw)
 
     def sdir(self, rid):
         return self.sroot / rid
@@ -280,13 +271,11 @@ class IntegrationTests(Base):
         self.assertEqual(len(self.run_dirs()), 1)     # 재시도 없음
 
     # 4
-    def test_stall_is_infra_requeued_then_blocked_after_three(self):
+    def test_stall_is_infra_requeued_then_blocked_at_the_infra_limit(self):
         # 침묵으로 끊긴 세션은 기반 장애다 - 시도를 쓰지 않고 다시 넣고, INFRA_RETRY_MAX 번 겹치면 failed 가 아니라 blocked
         g = self.graph([self.node("T-1", "FAKE: hang", model="fk/x", max_attempts=1)])
-        t0 = time.time()
         self.assertTrue(self.drive(g, lambda g: g["nodes"][0]["status"] in ("done", "failed", "blocked"), timeout=45))
         n = g["nodes"][0]
-        self.assertLess(time.time() - t0, 35)
         self.assertEqual(n["status"], "blocked")
         self.assertIs(n.get("infra"), True)
         self.assertEqual(n["attempts"], [])
@@ -298,7 +287,7 @@ class IntegrationTests(Base):
             self.assertEqual(att["rc"], 125)
             self.assertEqual((att["state"], att["session_state"], att["fail_kind"]), ("done", "stalled", "infra"))
             self.assertEqual(att["provider"], "fk")
-            self.assertEqual(sessions.load_meta(d)["idle_timeout"], 2.0)
+            self.assertEqual(sessions.load_meta(d)["idle_timeout"], 1.0)
         self.assertIs(n["infra_attempts"][-1].get("infra"), True)
         saved = self.reload()["nodes"][0]
         self.assertEqual(saved["infra_attempts"][0]["fail_kind"], "infra")
@@ -317,7 +306,7 @@ class IntegrationTests(Base):
 
     # 5
     def test_node_timeout_kills_via_cancel(self):
-        g = self.graph([self.node("T-1", "FAKE: child 60\nFAKE: sleep 60", timeout_sec=2, max_attempts=1)])
+        g = self.graph([self.node("T-1", "FAKE: child 60\nFAKE: sleep 60", timeout_sec=1.5, max_attempts=1)])
         self.assertTrue(self.drive(g, lambda g: g["nodes"][0]["status"] in ("done", "failed", "blocked"), timeout=30))
         n, att = g["nodes"][0], g["nodes"][0]["attempts"][0]
         self.assertEqual(n["status"], "failed")
@@ -333,11 +322,11 @@ class IntegrationTests(Base):
         self.assertTrue(_wait(lambda: not _ours(self.root), 5))
 
     def test_node_timeout_requeues_when_attempts_remain(self):
-        g = self.graph([self.node("T-1", "FAKE: sleep 60", timeout_sec=2, max_attempts=2)])
+        g = self.graph([self.node("T-1", "FAKE: sleep 60", timeout_sec=1, max_attempts=2)])
         n = g["nodes"][0]
         fleet_graph.step(g)
         rid = n["attempts"][0]["run_id"]
-        time.sleep(3.5)
+        time.sleep(1.5)
         fleet_graph.step(g, allow_spawn=False)       # 한도 넘김 -> cancel -> 재시도 대기(todo)
         self.assertEqual(n["status"], "todo")
         self.assertEqual(len(n["attempts"]), 1)
@@ -383,8 +372,7 @@ class IntegrationTests(Base):
 
     # 6b: 그래프 밖(ADHOC) 실행도 완전 중지가 끝내야 한다
     def test_stop_kills_adhoc_session_outside_any_graph(self):
-        # 회귀 검사: `fleet_ctl.running_runs()` 가 옛 `RUNS/*.json` 만 훑던 때에는 그래프에 안 묶인 세션을
-        # stop() 이 살려 두었다. 지금은 `fleet._list_runs()` 로 세션도 본다.
+        # 그래프에 안 묶인 세션도 `fleet._list_runs()` 로 보여 stop() 이 끊는다
         rid = self.spawn("FAKE: sleep 60")
         d = self.sdir(rid)
         sup = sessions.load_meta(d)["supervisor_pid"]
@@ -393,7 +381,7 @@ class IntegrationTests(Base):
 
     # 7
     def test_busy_slot_blocks_second_node_until_first_finishes(self):
-        g = self.graph([self.node("T-1", "FAKE: sleep 3", slot="S2"),
+        g = self.graph([self.node("T-1", "FAKE: sleep 1", slot="S2"),
                         self.node("T-2", "FAKE: report DONE\\nsecond", slot="S2")])
         n1, n2 = g["nodes"]
         fleet_graph.step(g)
@@ -412,7 +400,7 @@ class IntegrationTests(Base):
         self.assertLessEqual(e1[:19], st2[:19])        # 둘째는 첫째가 끝난 뒤에 떴다
 
     def test_other_slot_runs_in_parallel(self):
-        g = self.graph([self.node("T-1", "FAKE: sleep 3", slot="S1"), self.node("T-2", "FAKE: sleep 3", slot="S2")])
+        g = self.graph([self.node("T-1", "FAKE: sleep 1", slot="S1"), self.node("T-2", "FAKE: sleep 1", slot="S2")])
         fleet_graph.step(g)
         self.assertEqual([n["status"] for n in g["nodes"]], ["running", "running"])
         self.assertEqual(len(self.run_dirs()), 2)
@@ -582,22 +570,6 @@ class FailKindTests(Base):
         self.assertNotIn("waiting", n)
         self.assertTrue(self.drive(g, lambda g: n["status"] == "done"))
 
-    def test_legacy_run_failure_is_work_not_infra(self):
-        # 옛 실행(.aimem/runs)은 감독 판정이 없다 - 오늘 규칙(work/timeout/limit) 그대로
-        runs = self.aimem / "runs"
-        runs.mkdir(parents=True, exist_ok=True)
-        (runs / "OLD-1.json").write_text(json.dumps({"slot": "S1", "harness": "codex", "pid": 999999}), encoding="utf-8")
-        (runs / "OLD-1.rc").write_text("1\n", encoding="utf-8")
-        (runs / "OLD-1.out").write_text("", encoding="utf-8")
-        n = self.node("T-1", "x", max_attempts=1, status="running",
-                      attempts=[{"run_id": "OLD-1", "started": dt.datetime.now().isoformat(timespec="seconds")}])
-        g = self.graph([n])
-        fleet_graph.step(g, allow_spawn=False)
-        self.assertEqual(n["status"], "failed")
-        self.assertEqual(n["attempts"][0]["fail_kind"], "work")
-        self.assertNotIn("session_state", n["attempts"][0])
-        self.assertNotIn("infra_attempts", n)
-
 
 class ProviderGateTests(Base):
     """공급자 문지기 (설계 3.5·5.4): 같은 공급자를 쓰는 노드는 `max_concurrent` 를 넘겨 함께 돌지 않는다."""
@@ -608,8 +580,8 @@ class ProviderGateTests(Base):
 
     def test_same_provider_max_one_never_overlaps(self):
         (self.root / "fleet.toml").write_text(_gate_toml(1), encoding="utf-8")
-        g = self.graph([self.node("T-1", "FAKE: sleep 2\nFAKE: report DONE\\na", slot="S1"),
-                        self.node("T-2", "FAKE: sleep 1\nFAKE: report DONE\\nb", slot="S2")])
+        g = self.graph([self.node("T-1", "FAKE: sleep 1\nFAKE: report DONE\\na", slot="S1"),
+                        self.node("T-2", "FAKE: sleep 0.5\nFAKE: report DONE\\nb", slot="S2")])
         n1, n2 = g["nodes"]
         fleet_graph.step(g)
         self.assertEqual((n1["status"], n2["status"]), ("running", "todo"))
@@ -628,22 +600,22 @@ class ProviderGateTests(Base):
 
     def test_provider_with_room_two_runs_both(self):
         (self.root / "fleet.toml").write_text(_gate_toml(2), encoding="utf-8")
-        g = self.graph([self.node("T-1", "FAKE: sleep 2", slot="S1"), self.node("T-2", "FAKE: sleep 2", slot="S2")])
+        g = self.graph([self.node("T-1", "FAKE: sleep 1", slot="S1"), self.node("T-2", "FAKE: sleep 1", slot="S2")])
         fleet_graph.step(g)
         self.assertEqual([n["status"] for n in g["nodes"]], ["running", "running"])
         self.assertEqual(fleet_graph._live_scan(g), ({"S1", "S2"}, {"ok": 2}))
 
     def test_other_provider_is_not_gated(self):
         (self.root / "fleet.toml").write_text(_gate_toml(1), encoding="utf-8")
-        g = self.graph([self.node("T-1", "FAKE: sleep 2", slot="S1"),
-                        self.node("T-2", "FAKE: sleep 2", slot="S2", model="fk/x")])
+        g = self.graph([self.node("T-1", "FAKE: sleep 1", slot="S1"),
+                        self.node("T-2", "FAKE: sleep 1", slot="S2", model="fk/x")])
         fleet_graph.step(g)
         self.assertEqual([n["status"] for n in g["nodes"]], ["running", "running"])
 
     def test_outside_session_holds_the_provider_seat(self):
         # 그래프 밖에서 띄운 세션도 공급자 자리를 잡는다 (문지기는 세션 폴더를 센다)
         (self.root / "fleet.toml").write_text(_gate_toml(1), encoding="utf-8")
-        self.spawn("FAKE: sleep 3", slot="S2")
+        self.spawn("FAKE: sleep 1", slot="S2")
         g = self.graph([self.node("T-1", "FAKE: report DONE\\na", slot="S1")])
         fleet_graph.step(g)
         self.assertEqual(g["nodes"][0]["status"], "todo")

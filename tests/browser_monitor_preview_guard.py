@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """T-185 브라우저 실측: 미리보기 보관함이 엉뚱한 쪽의 put 을 무시하는지 잰다."""
-import http.server
 import json
 import pathlib
 import sys
-import threading
-from contextlib import contextmanager
+import tempfile
 
 from playwright.sync_api import sync_playwright
 
@@ -13,6 +11,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
 from aimem_monitor import server  # noqa: E402
+import _monitor_fixture           # noqa: E402
 
 
 class Checks:
@@ -34,23 +33,6 @@ class Checks:
                 failures += 1
         print(f"통과 {len(self.results) - failures} / 전체 {len(self.results)}")
         return failures
-
-
-@contextmanager
-def monitor_server():
-    handler = type("H", (server.Handler,), {"root": ROOT, "require_auth": False, "tls": False,
-                                             "access_token": None, "guard": server.LoginGuard(),
-                                             "timeout": 5, "log_message": lambda *a, **k: None})
-    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    httpd.daemon_threads = True
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{httpd.server_address[1]}"
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
-        thread.join(timeout=3)
 
 
 def read_part(page, part):
@@ -160,13 +142,15 @@ def scenario(browser, base, checks):
 def main():
     checks = Checks()
     try:
-        with monitor_server() as base:
-            with sync_playwright() as pw:
-                browser = pw.chromium.launch()
-                try:
-                    scenario(browser, base, checks)
-                finally:
-                    browser.close()
+        with tempfile.TemporaryDirectory() as tmp:
+            _monitor_fixture.write_wordle_project(tmp)         # 운영 projects/ 를 읽지 않는다
+            with _monitor_fixture.serve(server, tmp) as (_, base):
+                with sync_playwright() as pw:
+                    browser = pw.chromium.launch()
+                    try:
+                        scenario(browser, base, checks)
+                    finally:
+                        browser.close()
     except Exception as exc:
         checks.ok("검사 실행", False, f"{type(exc).__name__}: {exc}")
     return checks.finish()

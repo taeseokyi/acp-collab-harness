@@ -51,7 +51,7 @@ def monitor_server(root=None):
                                             "timeout": 5, "log_message": lambda *a, **k: None})
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     httpd.daemon_threads = True
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread = threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     try:
         yield f"http://127.0.0.1:{httpd.server_address[1]}"
@@ -402,31 +402,19 @@ def write_fixed_graph(root):
 
 
 def write_fixed_runs(root):
-    """프로젝트가 붙은 실행과 안 붙은 실행을 임시 저장소에 하나씩 씁니다."""
-    runs_dir = root / ".aimem" / "runs"
-    runs_dir.mkdir(parents=True, exist_ok=True)
+    """프로젝트가 붙은 실행과 안 붙은 실행을 임시 저장소의 세션 폴더로 하나씩 씁니다."""
     for run_id, project, label in (
         ("T-901-S3-a1-000001", "데모프로젝트", "임시 실행 (프로젝트 있음)"),
         ("T-901-S3-a1-000002", "", "임시 실행 (프로젝트 없음)"),
     ):
-        data = {
-            "id": run_id,
-            "slot": "S3",
-            "harness": "opencode",
-            "task": "T-901",
-            "attempt": 1,
-            "date": "2026-11-01",
-            "label": label,
-            "rev": 159,
-            "write": [],
-            "started": "2026-11-01T00:00:01",
-            "project": project,
-            "round": 9,
-        }
-        (runs_dir / f"{run_id}.json").write_text(
-            json.dumps(data, ensure_ascii=False), encoding="utf-8"
-        )
-        (runs_dir / f"{run_id}.rc").write_text("0\n", encoding="utf-8")
+        d = root / ".aimem" / "sessions" / run_id
+        d.mkdir(parents=True, exist_ok=True)
+        meta = {"id": run_id, "role": "worker", "slot": "S3", "harness": "opencode", "task_id": "T-901", "label": label,
+                "round": 9, "started": "2026-11-01T00:00:01", "write_paths": [], "extra": {"rev": "159", "project": project},
+                "supervisor_pid": 2 ** 22 + 12345}
+        (d / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+        (d / "end.json").write_text(json.dumps({"state": "done", "rc": 0, "ended": "2026-11-01T00:01:00"}), encoding="utf-8")
+        (d / "report.md").write_text("DONE", encoding="utf-8")
 
 
 FIXED_ROUND = {"round": 1, "at": "2026-11-05T09:30:00", "brief": "BRIEF-fixed.md",
@@ -637,27 +625,23 @@ def request_tree_scenario(browser, base, checks):
             f"끝난 요청 수={count_match.group(1) if count_match else None}",
         )
 
+        checks.ok("정리 단추 이름은 '끝난 요청·그래프 정리'",
+                  "끝난 요청·그래프 정리" in " ".join(archive_button.inner_text().split()), archive_button.inner_text())
         archive_button.click()
         panel = page.locator("#detail-overlay")
         panel.locator("h2").first.wait_for(state="visible", timeout=10000)
         title = panel.locator("h2").first.inner_text()
-        panel_checks = []
-        for keyword in ("실행 기록", "이벤트", "핸드오프"):
-            found = any(
-                li.is_visible() and keyword in li.inner_text()
-                for li in panel.locator(".archive-intro li").all()
-            )
-            panel_checks.append((keyword, found))
+        intro = panel.locator(".archive-intro").first.inner_text()
+        panel_checks = [("짧은 안내", len(intro) < 120 and ".aimem/archive/" in intro and "미리보기" in intro),
+                        ("옛 전달 기록 줄 없음", panel.locator(".archive-intro li").count() == 0 and "relay" not in panel.inner_text())]
         page.wait_for_selector(".archive-out p.hint", state="visible", timeout=15000)
         preview_line = page.locator(".archive-out p.hint").first
         preview_text = preview_line.inner_text()
-        runs_match = re.search(r"실행 기록\s+(\d+)건", preview_text)
         events_match = re.search(r"이벤트\s+(\d+)건", preview_text)
         checks.ok(
-            "패널이 새 종류를 설명한다",
+            "정리 패널은 한 문장 안내 + 미리보기 목록이다",
             all(found for _, found in panel_checks)
             and preview_line.is_visible()
-            and runs_match is not None
             and events_match is not None,
             f"설명 {panel_checks}, 미리보기 줄={preview_text!r}",
         )
@@ -888,6 +872,27 @@ def run_project_tag_scenario(browser, base, checks):
         ctx.close()
 
 
+def archive_apply_scenario(browser, base, checks):
+    """미리보기가 곧 확인이다 - '실행' 을 누르면 확인창 없이 옮기고 결과를 보인다. (임시 저장소의 끝난 요청을 옮기므로 마지막에 돈다)"""
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    dialogs = []
+    page.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
+    try:
+        page.goto(base + "/", wait_until="load")
+        page.locator("#archive-open").first.click()
+        page.wait_for_selector(".archive-out p.hint", state="visible", timeout=15000)
+        apply = page.locator(".archive-actions .btn-primary")
+        enabled = apply.is_enabled()
+        if enabled:
+            apply.click()
+            page.wait_for_function("() => /^옮김/.test((document.querySelector('.archive-out p') || {}).textContent || '')", timeout=15000)
+        checks.ok("정리 실행은 확인창 없이 바로 옮긴다", enabled and not dialogs,
+                  f"실행 단추 활성={enabled}, 확인창={dialogs}, 결과={page.locator('.archive-out p').first.inner_text()!r}")
+    finally:
+        ctx.close()
+
+
 def wide_truncated_title_scenario(browser, base, checks):
     """넓은 폭(1280px, 표 배치)에서 옆으로 잘린 제목을 눌러 전문이 그려지는가 - 카드 배치 대체 갈래가 아닌 원래 갈래."""
     ctx = browser.new_context(viewport={"width": 1280, "height": 900})
@@ -964,6 +969,7 @@ def main():
                             graph_title_expand_scenario(browser, temp_base, checks)
                             run_project_tag_scenario(browser, temp_base, checks)
                             wide_truncated_title_scenario(browser, temp_base, checks)
+                            archive_apply_scenario(browser, temp_base, checks)
             finally:
                 browser.close()
     except Exception as exc:

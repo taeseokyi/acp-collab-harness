@@ -4,12 +4,10 @@
 T-134 의 경로 티켓(/app/~<티켓>/<이름>/…) 고침이 진짜인지 인증을 켠 서버에서 확인한다.
 뼈대는 tests/browser_monitor_app.py 에서 복사했고, 서버만 require_auth=True 로 띄운다.
 """
-import http.server
 import pathlib
 import shutil
 import sys
 import tempfile
-import threading
 import time
 from contextlib import contextmanager
 from urllib.parse import urljoin
@@ -20,6 +18,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
 from aimem_monitor import server          # noqa: E402
+import _monitor_fixture                   # noqa: E402
 
 
 TOKEN = "a" * 64                      # 접근 토큰 (64자 16진수 꼴)
@@ -54,28 +53,14 @@ def monitor_server():
     루트를 저장소로 두면 로그인 기록이 운영 `.aimem/access.log` 에 남습니다 (R11 T-138).
     """
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="browser-monitor-auth-"))
-    (tmp / ".aimem").mkdir()
-    shutil.copy(ROOT / ".aimem" / "aimem.db", tmp / ".aimem" / "aimem.db")
-    shutil.copy(ROOT / "AIMEM.md", tmp / "AIMEM.md")
     allowed = tmp / server.GITHUB_ALLOW_FILE
     allowed.parent.mkdir(parents=True, exist_ok=True)
     allowed.write_text(GITHUB_LOGIN + "\n", encoding="utf-8")
-    (tmp / "projects" / "웹워들").mkdir(parents=True)
-    shutil.copy(ROOT / "projects" / "웹워들" / "app.json", tmp / "projects" / "웹워들" / "app.json")
-    shutil.copytree(ROOT / "projects" / "웹워들" / "web", tmp / "projects" / "웹워들" / "web")
-    handler = type("H", (server.Handler,), {"root": tmp, "require_auth": True, "tls": False,
-                                             "access_token": TOKEN, "guard": server.LoginGuard(),
-                                             "timeout": 5, "log_message": lambda *a, **k: None})
-    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    httpd.daemon_threads = True
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
+    _monitor_fixture.write_wordle_project(tmp)             # 운영 projects/·.aimem/ 을 읽지 않는다
     try:
-        yield f"http://127.0.0.1:{httpd.server_address[1]}", tmp
+        with _monitor_fixture.serve(server, tmp, require_auth=True, access_token=TOKEN) as (_, base):
+            yield base, tmp
     finally:
-        httpd.shutdown()
-        httpd.server_close()
-        thread.join(timeout=3)
         shutil.rmtree(tmp, ignore_errors=True)
 
 

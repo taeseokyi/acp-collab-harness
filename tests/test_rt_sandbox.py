@@ -68,8 +68,8 @@ class CleanEnv(unittest.TestCase):
 
     def test_without_bwrap_the_command_line_is_unchanged_and_says_so(self):
         with mock.patch.object(sandbox, "available", return_value=(False, "bwrap 이 없습니다")):
-            argv, note = sandbox.wrap(["bash", "-lc", "true"], "/x")
-        self.assertEqual(argv, ["bash", "-lc", "true"])
+            argv, note = sandbox.wrap(["bash", "-c", "true"], "/x")
+        self.assertEqual(argv, ["bash", "-c", "true"])
         self.assertIn("울타리 없이", note)
 
 
@@ -100,7 +100,7 @@ class Confined(Base):
     def test_the_command_line(self):
         (self.root / ".env").write_text("X=1\n", encoding="utf-8")
         (self.root / ".aimem" / "tls").mkdir()
-        argv, note = sandbox.wrap(["bash", "-lc", "true"], self.root)
+        argv, note = sandbox.wrap(["bash", "-c", "true"], self.root)
         self.assertEqual(note, "")
         r = str(self.root)
         joined = " ".join(argv)
@@ -109,7 +109,7 @@ class Confined(Base):
             self.assertIn(part, joined)
         # 가리기는 저장소 쓰기 묶기 뒤 (앞이면 다시 보인다)
         self.assertLess(joined.index(f"--bind {r} {r}"), joined.index(f"/dev/null {r}/.env"))
-        self.assertEqual(argv[-3:], ["bash", "-lc", "true"])
+        self.assertEqual(argv[-3:], ["bash", "-c", "true"])
 
     def test_writes_inside_the_repo_and_tmp_work(self):
         tmpf = pathlib.Path(tempfile.gettempdir()) / f"rt-sandbox-{os.getpid()}-{time.time_ns()}.txt"

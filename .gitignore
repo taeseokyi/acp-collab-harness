@@ -58,3 +58,7 @@ projects/*/**/__pycache__/
 .aimem/fleet-chain.watch.json
 .aimem/fleet-chain.log
 .aimem/fleet-launch.lock
+
+# 옛 실행·전달 기록을 옮겨 둔 곳 (엔진 v2 이전, 용량이 커서 커밋하지 않는다)
+.aimem/archive/runs-*/
+.aimem/archive/relay-*/

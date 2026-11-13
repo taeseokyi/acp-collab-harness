@@ -50,12 +50,10 @@ max_concurrent = 3
 models = ["x"]
 
 [harness.claude]
-binary = "claude"
 providers = ["anthropic"]
 default_model = "sonnet"
 
 [harness.codex]
-binary = "codex"
 providers = ["fk", "ok"]
 default_model = "ok/x"
 """
@@ -236,8 +234,9 @@ class LaunchAndStop(Base):
         m = st["manager"]
         self.assertEqual((m["round"], m["session"], m["by"], m["workspace"]), (8, sid, "test", "rounds/R8"))
         self.assertIn(m["state"], ("launching", "running"))
-        self.assertEqual(set(m), {"round", "label", "session", "state", "by", "at", "ended", "brief", "workspace", "last_event_at",
+        self.assertEqual(set(m), {"round", "label", "session", "state", "by", "at", "ended", "brief", "workspace", "last_event_at", "model",
                                   "policy"})
+        self.assertEqual(m["model"], rt_manager.MANAGER_MODEL)
         self.assertEqual(m["policy"], "cost")                      # 고르지 않으면 기본값 (정책 파일이 없어도 cost 는 뜬다)
         self.assertNotIn("relay", st)
         self.assertFalse(st["idle"])
@@ -643,10 +642,10 @@ class ReviewFixes(Base):
         b = {"round": 1, "file": fleet_ctl.STANDARD_BRIEF, "standard": True}
         self.brief()
         p = fleet_ctl._round_brief_path(b, dt.datetime.now())
-        fleet_ctl._write_round_record(1, dt.datetime.now(), "x")
+        with self.assertRaises(ValueError):                                 # 라운드 기록 링크는 거절한다 (`roundrec`)
+            fleet_ctl._write_round_record(1, dt.datetime.now(), "x")
         self.assertEqual(outside.read_text(encoding="utf-8"), "밖의 파일")
         self.assertFalse(p.is_symlink())
-        self.assertFalse((self.root / "rounds" / "R1" / "round.json").is_symlink())
 
     # ---- 2·6. 관리자 세션의 환경과 도구
     def test_the_manager_gets_nothing_from_env_file_and_the_deny_list(self):
@@ -765,6 +764,28 @@ class LeftoversWhenTheManagerEnds(Base):
         fleet_ctl.set_mode("running", "test")
         got = fleet_ctl.halt_round_leftovers(n, "검사")
         self.assertEqual([(h["kind"], h["graph"], h["node"], h["status"]) for h in got], [("node", "G-4", "T-908", "todo")])
+
+
+class WatchDeadline(unittest.TestCase):
+    def test_a_resumed_manager_restarts_the_wait_and_the_message_says_the_real_wait(self):
+        tmp = pathlib.Path(tempfile.mkdtemp(dir=BASE))
+        t0 = time.time()
+
+        def record(n):                       # 0.25초 뒤 관리자를 이었다 (라운드 기록의 session 이 바뀜)
+            return {"session": "M-R5-000001" if time.time() - t0 < 0.25 else "M-R5-000002"}
+        stops = []
+        with mock.patch.object(fleet_ctl, "_aimem_dir", lambda: tmp), \
+                mock.patch.object(fleet_ctl, "_round_record", side_effect=record), \
+                mock.patch.object(fleet_ctl, "_round_manager_running", return_value=True), \
+                mock.patch.object(fleet_ctl, "mode", return_value="running"), \
+                mock.patch.object(fleet_ctl, "chain_state", return_value={"on": True}), \
+                mock.patch.object(fleet_ctl, "_chain_stop", side_effect=lambda st, kind, why, n=None: stops.append((kind, why))):
+            self.assertEqual(fleet_ctl._watch(5, poll=0.02, wait=0.4), 1)
+        self.assertGreaterEqual(time.time() - t0, 0.6)                     # 0.25 + 새 시한 0.4
+        self.assertEqual([k for k, _ in stops], ["wait"])
+        self.assertIn(fleet_ctl._dur(0.4), stops[0][1])
+        self.assertEqual(fleet_ctl.chain_wait_sec(), rt_manager.MANAGER_TIMEOUT_SEC + fleet_ctl.CHAIN_WAIT_SLACK_SEC)
+        self.assertEqual(fleet_ctl._dur(6 * 3600 + 600), "6시간 10분")
 
 
 class ResumeAfterTransientApiError(Base):

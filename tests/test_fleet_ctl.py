@@ -97,6 +97,54 @@ class FleetCtlTest(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn(fleet_ctl.FORCE_ENV, why)
 
+    def test_prepare_renders_the_snapshot_before_running_the_linter(self):
+        # 낡은 스냅샷 + 맞는 REV: 다시 만든 뒤 린터를 돌리므로 통과하고, 손으로 하던 REV 비교 줄은 없다.
+        fresh = []
+        fake_db = mock.Mock(render=lambda: fresh.append(True))
+
+        def lint(argv, **_kw):
+            ok = bool(fresh)
+            return mock.Mock(returncode=0 if ok else 1, stdout="위반 0건" if ok else "STATE_SNAPSHOT_STALE", stderr="")
+        with mock.patch.dict(sys.modules, {"aimem_db": fake_db}), \
+                mock.patch.object(fleet_ctl.subprocess, "run", side_effect=lint):
+            checks = fleet_ctl._rev_lint_checks()
+        self.assertEqual([(c["name"], c["ok"]) for c in checks], [("AIMEM 린터", True)])
+
+    def test_round_record_update_keeps_every_concurrent_writer(self):
+        import threading
+        from fleet_rt import roundrec
+        d = self.tmp / "rounds" / "R5"
+        roundrec.update(d, lambda rec: {"round": 5, "hits": []})
+
+        def add(k):
+            for i in range(5):
+                roundrec.update(d, lambda rec: {**rec, "hits": rec["hits"] + [f"{k}-{i}"]})
+        ts = [threading.Thread(target=add, args=(k,)) for k in range(8)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        self.assertEqual(len(roundrec.read(d)["hits"]), 40)
+        self.assertEqual([p.name for p in d.iterdir() if p.name.endswith(".tmp")], [])
+        self.assertIsNone(roundrec.update(d, lambda rec: None))              # None 이면 쓰지 않는다
+        self.assertEqual(roundrec.read(d)["round"], 5)
+
+    def test_round_record_update_refuses_symlinks(self):
+        from fleet_rt import roundrec
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        (self.tmp / "rounds").mkdir()
+        (self.tmp / "rounds" / "R6").symlink_to(outside)
+        with self.assertRaises(ValueError):
+            roundrec.update(self.tmp / "rounds" / "R6", lambda rec: {"x": 1})
+        d = self.tmp / "rounds" / "R7"
+        d.mkdir()
+        (d / "round.json").symlink_to(outside / "planted.json")
+        with self.assertRaises(ValueError):
+            roundrec.update(d, lambda rec: {"x": 1})
+        self.assertEqual(list(outside.iterdir()), [])
+        self.assertEqual(roundrec.read(d), {})
+
     # -------------------------------------------------------------- fleet.py spawn
     def test_fleet_spawn_refuses_when_paused(self):
         fleet_ctl.set_mode("paused", "test")
@@ -136,7 +184,6 @@ class FleetCtlTest(unittest.TestCase):
         self.assertEqual(a["status"], "todo")
         self.assertEqual(a["attempts"], [])                       # 재시도 횟수로 세지 않음
         self.assertEqual(a["stopped_attempts"][0]["state"], "stopped")
-        self.assertTrue((self.runs / "T-1-S2-a1-000000.lost").exists())
 
     def test_halt_refused_kill_goes_blocked(self):
         att = {"run_id": "T-2-S2-a1-000000", "started": self._now()}
@@ -201,26 +248,19 @@ class FleetCtlTest(unittest.TestCase):
             b = fleet_ctl.latest_brief()                                   # 번호는 쓰인 것 중 가장 큰 것 다음
             self.assertEqual((b["round"], b["standard"]), (13, True))
 
-    def test_rounds_recorded_in_handoff_log_count_as_used(self):
-        # 라운드 기록 폴더도 관리자 세션도 없는 옛 라운드(R6 이전)의 브리프를 다시 고르면 안 된다.
-        import sqlite3
-        con = sqlite3.connect(self.tmp / "aimem.db")
-        with con:
-            con.execute("CREATE TABLE events(at TEXT, actor TEXT, rev INTEGER, kind TEXT, body TEXT)")
-            con.executemany("INSERT INTO events VALUES('t',?,1,?,'b')",
-                            [("관리자(R6)", "handoff"), ("Manager (R5)", "handoff"), ("Claude Code", "handoff"),
-                             ("관리자(R9)", "task")])
-        con.close()
-        self.assertEqual(fleet_ctl._db_rounds(), {5, 6})
+    def test_brief_below_a_used_round_is_never_reused(self):
+        # 라운드 번호는 뒤로 가지 않는다 - 기록 폴더가 없는 옛 라운드(R6)의 브리프도 다시 고르지 않는다.
         repo = self.tmp / "repo"
         briefs = repo / ".aimem" / "briefs"
         briefs.mkdir(parents=True)
         (briefs / "manager-round6-2026-11-10.md").write_text("x", encoding="utf-8")
         (briefs / fleet_ctl.STANDARD_BRIEF).write_text("x", encoding="utf-8")
+        (repo / "rounds" / "R7").mkdir(parents=True)
+        (repo / "rounds" / "R7" / "round.json").write_text('{"round": 7}', encoding="utf-8")
         with mock.patch.object(fleet, "ROOT", repo), mock.patch.object(fleet_ctl, "manager_sessions", return_value=[]):
             b = fleet_ctl.latest_brief()
-            self.assertEqual((b["round"], b["standard"]), (7, True))
-            self.assertEqual(fleet_ctl.public_state()["brief"]["round"], 7)
+            self.assertEqual((b["round"], b["standard"]), (8, True))
+            self.assertEqual(fleet_ctl.public_state()["brief"]["round"], 8)
 
     def test_round_record_lists_open_requests_and_their_projects(self):
         repo = self.tmp / "repo"
@@ -292,6 +332,24 @@ class ChainTest(unittest.TestCase):
         con.executemany("INSERT INTO queue(pos, task) VALUES(?, ?)", list(enumerate(tasks, 1)))
         con.commit(); con.close()
 
+    def test_queue_items_read_the_db_beside_the_runs_not_the_repo(self):
+        import sqlite3
+        self.queue("저장소 쪽")
+        other = self.repo / "state"
+        other.mkdir()
+        con = sqlite3.connect(other / "aimem.db")
+        with con:
+            con.execute("CREATE TABLE queue(pos INTEGER PRIMARY KEY, task TEXT)")
+            con.execute("INSERT INTO queue VALUES(1, '임시 쪽')")
+        con.close()
+        with mock.patch.object(fleet_ctl, "_aimem_dir", lambda: other):
+            self.assertEqual(fleet_ctl._queue_items(), [(1, "임시 쪽")])
+
+    def test_public_state_carries_chain_limits(self):
+        self.assertEqual(fleet_ctl.public_state()["chain"]["limits"],
+                         {"default": fleet_ctl.CHAIN_DEFAULT_ROUNDS, "max": fleet_ctl.CHAIN_MAX_ROUNDS,
+                          "hard": fleet_ctl.CHAIN_HARD_ROUNDS})
+
     def test_queue_is_remaining_fleet_work(self):
         """큐에 일이 남았으면 '끝났습니다' 가 아니다 (2026-11-12 태석님: "큐에 8건은 왜 남았어?")."""
         self.progress(2, 2)
@@ -345,7 +403,8 @@ class ChainTest(unittest.TestCase):
         self.assertEqual((st["chain"]["on"], st["chain"]["all"], st["chain"]["projects"]), (True, True, []))
         fleet_ctl.chain_set(False, by="test")
         self.assertFalse(fleet_ctl.chain_set(True, "../x", 3)["ok"])
-        self.assertFalse(fleet_ctl.chain_set(True, "알파", -2)["ok"])              # 0 은 '상한 없이' 라 받는다
+        self.assertFalse(fleet_ctl.chain_set(True, "알파", -2)["ok"])
+        self.assertFalse(fleet_ctl.chain_set(True, "알파", 0)["ok"])
         self.assertFalse(fleet_ctl.chain_set(True, "알파", fleet_ctl.CHAIN_MAX_ROUNDS + 1)["ok"])
         self.assertFalse(fleet_ctl.chain_state()["on"])
         self.progress(2, 5)
@@ -459,7 +518,7 @@ class ChainTest(unittest.TestCase):
         # 켤 때: 대상 검사
         st = fleet_ctl.chain_set(True, None, 3, "t", projects=["베타", "알파", "알파"])["chain"]
         self.assertEqual((st["all"], st["fleet"], st["projects"], st["label"]), (False, False, ["베타", "알파"], "프로젝트 베타 + 프로젝트 알파"))
-        self.assertEqual(fleet_ctl.chain_set(True, "알파", 3, "t")["chain"]["projects"], ["알파"])        # 옛 인자도 받는다
+        self.assertEqual(fleet_ctl.chain_set(True, "알파", 3, "t")["chain"]["projects"], ["알파"])        # 프로젝트 하나를 위치 인자로
         self.assertTrue(fleet_ctl.chain_set(True, None, 3, "t")["chain"]["all"])                          # 아무것도 안 주면 전체
         st = fleet_ctl.chain_set(True, None, 3, "t", fleet_on=True, projects=[])["chain"]
         self.assertEqual((st["all"], st["fleet"], st["projects"], st["open_requests"], st["goals_done"], st["label"]),
@@ -492,8 +551,7 @@ class ChainTest(unittest.TestCase):
         self.assertEqual((st["max_rounds"], st["renew"], st["cycles"], st["total_rounds"]), (3, True, 0, 0))
         self.assertFalse(fleet_ctl.chain_set(True, None, 11, "t", all_=True, renew=True)["ok"])      # 상한 자체는 1~10
         self.assertFalse(fleet_ctl.chain_set(True, None, -1, "t", all_=True)["ok"])
-        old = fleet_ctl.chain_set(True, None, 0, "t", all_=True)["chain"]                            # 옛 호출: 0 = 기본 상한 + 이어 감
-        self.assertEqual((old["max_rounds"], old["renew"]), (fleet_ctl.CHAIN_DEFAULT_ROUNDS, True))
+        self.assertFalse(fleet_ctl.chain_set(True, None, 0, "t", all_=True)["ok"])
         fleet_ctl.chain_set(True, None, 3, "t", all_=True, renew=True)
         seen = []
         with mock.patch.object(fleet_ctl, "launch_round", return_value={"ok": True, "round": 0}) as launch:
@@ -546,7 +604,7 @@ class ChainTest(unittest.TestCase):
         self.assertIn("연달아 두 번째", out["why"])
         self.assertFalse(fleet_ctl.chain_state()["on"])
         # 자율이 아니면 첫 번째에서 멈춘다 (전과 같다)
-        fleet_ctl.chain_set(True, None, 0, "t", all_=True); self.report(5, "BLOCKED")
+        fleet_ctl.chain_set(True, None, 3, "t", all_=True, renew=True); self.report(5, "BLOCKED")
         self.assertEqual(fleet_ctl.chain_decide(5)["action"], "stop")
 
     def test_a_stop_records_which_kind_it_was(self):
@@ -642,14 +700,14 @@ class ChainTest(unittest.TestCase):
             for bad in (None, {}, {"on": "yes"}, {"on": 1}):
                 code, out = server.fleet_action("chain", "웹(test)", self.repo, bad)
                 self.assertEqual((code, out["ok"]), (400, False), bad)
-            code, out = server.fleet_action("chain", "웹(test)", self.repo, {"on": True, "project": "../x", "max_rounds": 3})
+            code, out = server.fleet_action("chain", "웹(test)", self.repo, {"on": True, "projects": ["../x"], "max_rounds": 3})
             self.assertEqual(code, 400)
-            code, out = server.fleet_action("chain", "웹(test)", self.repo, {"on": True, "project": "알파", "max_rounds": 4})
+            code, out = server.fleet_action("chain", "웹(test)", self.repo, {"on": True, "projects": ["알파"], "max_rounds": 4})
             self.assertEqual((code, out["chain"]["on"], out["chain"]["max_rounds"], out["chain"]["by"]), (200, True, 4, "웹(test)"))
             self.assertTrue(fleet_ctl.public_state()["chain"]["on"])
             code, out = server.fleet_action("chain", "웹(test)", self.repo, {"on": False})
             self.assertEqual((code, out["chain"]["on"]), (200, False))
-        code, out = server.fleet_action("chain", "웹(test)", self.repo, {"on": True, "project": "알파"})   # 운영 저장소가 아니면 거절
+        code, out = server.fleet_action("chain", "웹(test)", self.repo, {"on": True, "projects": ["알파"]})   # 운영 저장소가 아니면 거절
         self.assertEqual(code, 409)
 
     def test_last_round_summary_comes_from_the_round_record_and_report(self):
@@ -709,8 +767,10 @@ class CanStopTest(unittest.TestCase):
             self.assertTrue(st["idle"])
             self.assertEqual((st["can"]["round"], st["can"]["prepare"], st["can"]["run"]), (True, True, False))
             self.assertTrue(fleet_ctl.round_over())
-            # 관리자가 아직 살아 있으면 끝난 것이 아니다 (옛 호출: 모니터가 넘겨준 값도 받는다)
-            st = fleet_ctl.public_state(manager_running_now=True)
+            # 관리자가 아직 살아 있으면 끝난 것이 아니다
+            alive = [{"id": "M-R8-120000", "label": "m", "round": 8, "status": "running", "why": None}]
+            with mock.patch.object(fleet_ctl, "manager_sessions", return_value=alive):
+                st = fleet_ctl.public_state()
             self.assertEqual((st["idle"], st["can"]["round"], st["can"]["prepare"]), (False, False, False))
             # 띄우는 중(라운드 기록에 관리자 id 는 있는데 세션 폴더가 아직 없다)에도 끝난 것이 아니다 - 두 번 띄우지 않게
             fleet_ctl._write_round_record(9, dt.datetime.now(), "x", session="M-R9-120000")

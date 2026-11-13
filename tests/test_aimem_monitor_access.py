@@ -119,7 +119,7 @@ class RevokedAuditTest(unittest.TestCase):
         self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.httpd.daemon_threads = True
         self.port = self.httpd.server_address[1]
-        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         self.thread.start()
         with server._revoked_lock:
             server._revoked_last.clear()
@@ -258,7 +258,7 @@ class PlainHttpOnTlsPortTest(unittest.TestCase):
         cls.httpd.ssl_context = server.build_ssl_context(cls.root)
         cls.httpd.daemon_threads = True
         cls.port = cls.httpd.server_address[1]
-        cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
+        cls.thread = threading.Thread(target=cls.httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         cls.thread.start()
 
     @classmethod
@@ -365,7 +365,7 @@ class PwaAssetsTest(unittest.TestCase):
         cls.httpd.ssl_context = server.build_ssl_context(cls.root)
         cls.httpd.daemon_threads = True
         cls.port = cls.httpd.server_address[1]
-        cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
+        cls.thread = threading.Thread(target=cls.httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         cls.thread.start()
 
     @classmethod

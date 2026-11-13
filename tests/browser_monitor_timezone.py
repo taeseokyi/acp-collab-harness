@@ -5,20 +5,18 @@
 """
 import _fleet_env  # noqa: F401
 import datetime
-import http.server
 import json
 import pathlib
 import re
 import sys
 import tempfile
-import threading
-from contextlib import contextmanager
 from zoneinfo import ZoneInfo
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from aimem_monitor import server  # noqa: E402
+import _monitor_fixture  # noqa: E402
 
 
 class Checks:
@@ -30,21 +28,6 @@ class Checks:
             print(f"[{'OK' if p else 'FAIL'}] {goal}" + (f" - {detail}" if detail else ""))
         print(f"통과 {len(self.results) - failures} / 전체 {len(self.results)}")
         return failures
-
-
-@contextmanager
-def monitor_server(root):
-    handler = type("H", (server.Handler,), {"root": root, "require_auth": False, "tls": False,
-                                            "access_token": None, "guard": server.LoginGuard(),
-                                            "timeout": 5, "log_message": lambda *a, **k: None})
-    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    httpd.daemon_threads = True
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{httpd.server_address[1]}"
-    finally:
-        httpd.shutdown(); httpd.server_close(); thread.join(timeout=3)
 
 
 def kst(delta_sec=0, frac=False):
@@ -88,11 +71,14 @@ def run_zone(p, base, tzid, c):
         agos = [int(x) for x in re.findall(r"마지막 사건 (\d+)초 전", text)]
         c.ok(f"[{tzid}] 마지막 사건이 초 단위 (25~60초)", agos and all(25 <= a <= 60 for a in agos), str(agos))
         c.ok(f"[{tzid}] 9시간 어긋남 없음", not re.search(r"마지막 사건 \d+시간", text))
-        c.ok(f"[{tzid}] 그래프가 멈춤으로 안 뜸", page.locator(".badge", has_text="멈춤").count() == 0)
+        c.ok(f"[{tzid}] 그래프 상태는 갱신 시각이 아니라 실행기로 정한다 (runner 없음 -> '실행기 없음')",
+             page.locator(".badge", has_text="멈춤").count() == 0 and page.locator(".graph-head .badge", has_text="실행기 없음").count() == 1)
         c.ok(f"[{tzid}] 관리자 시작 시각이 한국 시계 숫자", ("시작 " + state["managers"]["sessions"][0]["started"].replace("T", " ")[:16]) in text,
              state["managers"]["sessions"][0]["started"])
-        g_upd = (datetime.datetime.now(ZoneInfo("Asia/Seoul")) - datetime.timedelta(seconds=600)).strftime("%Y-%m-%d %H:%M")
-        c.ok(f"[{tzid}] Z 붙은 그래프 갱신 시각이 한국 시계로 변환", ("갱신 " + g_upd) in page.text_content("body"), g_upd)
+        now = datetime.datetime.now(ZoneInfo("Asia/Seoul"))
+        # 분 경계에서 한 분 어긋날 수 있다 (상태를 꾸민 때와 지금의 차이)
+        g_upd = [(now - datetime.timedelta(seconds=600 + d)).strftime("%Y-%m-%d %H:%M") for d in (0, 60)]
+        c.ok(f"[{tzid}] Z 붙은 그래프 갱신 시각이 한국 시계로 변환", any(("갱신 " + g) in page.text_content("body") for g in g_upd), str(g_upd))
     finally:
         ctx.close(); browser.close()
 
@@ -102,7 +88,7 @@ def main():
     with tempfile.TemporaryDirectory() as td, sync_playwright() as p:
         root = pathlib.Path(td)
         (root / ".aimem").mkdir()
-        with monitor_server(root) as base:
+        with _monitor_fixture.serve(server, root) as (_, base):
             for tzid in ("UTC", "America/New_York"):
                 run_zone(p, base, tzid, c)
     return 1 if c.finish() else 0

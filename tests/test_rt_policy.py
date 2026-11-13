@@ -41,12 +41,10 @@ max_concurrent = 3
 models = ["x"]
 
 [harness.claude]
-binary = "claude"
 providers = ["anthropic"]
 default_model = "sonnet"
 
 [harness.codex]
-binary = "codex"
 providers = ["ok"]
 default_model = "ok/x"
 """
@@ -86,19 +84,17 @@ def _wait(pred, timeout=10.0, step=0.05):
 
 
 class Base(unittest.TestCase):
-    MODE = "resident"
-
     def setUp(self):
         _N[0] += 1
         self.root = BASE / f"t{_N[0]}"
         self.aimem = self.root / ".aimem"
         self.briefs = self.aimem / "briefs"
         self.briefs.mkdir(parents=True)
-        (self.root / "fleet.toml").write_text(TOML + f'\n[manager]\nmode = "{self.MODE}"\n', encoding="utf-8")
+        (self.root / "fleet.toml").write_text(TOML, encoding="utf-8")
         self.sroot = self.aimem / "sessions"
         self.graphs = self.aimem / "graph"
         self.graphs.mkdir()
-        self.watchers, self.drivers = [], []
+        self.watchers = []
         patches = [
             mock.patch.object(fleet, "ROOT", self.root),
             mock.patch.object(fleet, "RUNS", self.aimem / "runs"),
@@ -111,11 +107,8 @@ class Base(unittest.TestCase):
             mock.patch.object(fleet, "db_state", return_value=None),
             mock.patch.object(fleet, "owned_paths", return_value=[]),
             mock.patch.object(fleet_ctl, "_rev_lint_checks", return_value=[]),
-            mock.patch.object(fleet_ctl, "_CHAIN_ARMED", [False]),
             mock.patch.object(fleet_ctl, "_start_watcher",
                               side_effect=lambda n, close_only=False: self.watchers.append((n, close_only)) or True),
-            mock.patch.object(fleet_ctl, "_start_driver",
-                              side_effect=lambda n, close_only=False: self.drivers.append((n, close_only)) or True),
             mock.patch.dict(os.environ, {fleet_ctl.FORCE_ENV: ""}),
         ]
         for p in patches:
@@ -277,55 +270,7 @@ class Chain(Base):
         lr.assert_called_once_with("이어 달리기", policy=None)
 
 
-class Calls(Base):
-    MODE = "calls"
-
-    def setUp(self):
-        super().setUp()
-        for phase in ("plan", "judge", "close"):
-            (self.briefs / f"manager-call-{phase}.md").write_text(f"# R{{round}} 호출 {phase}\n", encoding="utf-8")
-
-    def test_every_call_gets_the_policy_text(self):
-        self.policies("quality")
-        out = self.launch("quality")
-        self.assertTrue(out["ok"], out)
-        self.assertEqual(out["policy"], "quality")
-        n = out["round"]
-        self.assertEqual(self.drivers, [(n, True)])
-        self.assertEqual(self.record(n)["policy"], "quality")
-        frozen = (self.root / "rounds" / f"R{n}" / "policy.md").read_text(encoding="utf-8")
-        (self.graphs / "G-001.json").write_text(json.dumps({"id": "G-001", "round": n, "created": fleet_ctl._now(), "nodes": [
-            {"id": "T-1", "title": "t", "slot": "S2", "status": "todo", "attempts": [], "deps": []}]}), encoding="utf-8")
-        sent = []
-        steps = iter([("done", "NEXT: RUN G-001"), ("done", "NEXT: CLOSE"), "close"])
-
-        def spawn_call(n_, phase, sid, name, text, at, by):
-            sent.append((phase, text))
-            st = next(steps)
-            if st == "close":
-                (self.root / "rounds" / f"R{n}" / "REPORT.md").write_text("상태: DONE\n", encoding="utf-8")
-                st = ("done", "NEXT: CLOSE")
-            d = self.sroot / sid
-            d.mkdir(parents=True)
-            (d / "meta.json").write_text(json.dumps({"id": sid, "role": "manager", "round": n, "harness": "claude", "label": sid,
-                                                     "started": fleet_ctl._now(), "supervisor_pid": 999999, "proc_start": 1,
-                                                     "extra": {"by": by, "phase": phase}}), encoding="utf-8")
-            (d / "end.json").write_text(json.dumps({"state": st[0], "rc": 0, "ended": fleet_ctl._now()}), encoding="utf-8")
-            (d / "report.md").write_text(st[1], encoding="utf-8")
-            return st
-
-        def run_graphs(n_, gids):
-            f = self.graphs / "G-001.json"
-            g = json.loads(f.read_text(encoding="utf-8"))
-            g["nodes"][0]["status"] = "done"
-            f.write_text(json.dumps(g), encoding="utf-8")
-            return "done"
-        fleet_ctl._drive(n, True, spawn_call=spawn_call, run_graphs=run_graphs, poll=0.01, chain_wait=2)
-        self.assertEqual([p for p, _ in sent], ["plan", "judge", "close"])
-        for phase, text in sent:
-            self.assertTrue(text.endswith("\n\n" + frozen), phase)
-            self.assertEqual((self.root / "rounds" / f"R{n}" / f"brief-{phase}.md").read_text(encoding="utf-8"), text)
-
+class FrozenPolicy(Base):
     def test_a_policy_link_planted_in_the_round_folder_is_not_followed(self):
         self.policies("quality")
         out = self.launch("quality")

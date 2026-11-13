@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from fleet_rt import base
 from fleet_rt.base import SessionSpec
 from fleet_rt.harness import claude as claude_h
 
@@ -35,7 +36,7 @@ def _result(**kw):
 
 class CommandTest(unittest.TestCase):
     def test_worker_argv(self):
-        c = claude_h.ADAPTER.command(_spec(model="anthropic/opus"))
+        c = claude_h.ADAPTER.command(_spec(model="opus"))     # 접두 떼기는 `fleet.normalize_model` 이 spawn 에서 한 번
         self.assertEqual(c.argv, ["claude", "-p", "--model", "opus", "--output-format", "stream-json", "--verbose",
                                   "--permission-mode", "acceptEdits", "--allowedTools", claude_h.WORKER_TOOLS])
         self.assertEqual(c.stdin_path, "/x/brief.md")
@@ -45,7 +46,7 @@ class CommandTest(unittest.TestCase):
 
     def test_default_model_tools_settings(self):
         c = claude_h.ADAPTER.command(_spec(tools="Read,Grep", settings_path="/s.json"))
-        self.assertEqual(c.argv[3], "sonnet")
+        self.assertNotIn("--model", c.argv)                   # 모델은 spawn 이 fleet.toml 기본으로 채운다 - 어댑터 기본은 없다
         self.assertEqual(c.argv[c.argv.index("--allowedTools") + 1], "Read,Grep")
         self.assertEqual(c.argv[-2:], ["--settings", "/s.json"])
         self.assertNotIn("--session-id", c.argv)
@@ -94,10 +95,10 @@ class CommandTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 claude_h.ADAPTER.command(_spec(cwd=tmp))
             with self.assertRaises(ValueError):
-                claude_h._require_repo_cwd(tmp + "/nope")
+                base.require_repo_cwd(tmp + "/nope", "claude")
             (pathlib.Path(tmp) / "tools").mkdir()
             (pathlib.Path(tmp) / "tools" / "fleet.py").write_text("")
-            claude_h._require_repo_cwd(tmp)
+            base.require_repo_cwd(tmp, "claude")
             self.assertEqual(claude_h.ADAPTER.command(_spec(cwd=tmp)).cwd, tmp)
 
 

@@ -11,6 +11,7 @@ import json
 import os
 import pathlib
 import re
+import sqlite3
 import sys
 import tempfile
 import time
@@ -18,6 +19,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools"))
 
+import aimem_db
 from aimem_monitor import PROGRESS_WEIGHTS, REQUEST_DETAIL_MAX, STATE_KEYS
 
 try:
@@ -35,7 +37,6 @@ EXPECTED_KEYS = {
     "queue",
     "log",
     "runs",
-    "eta",
     "requests",
     "errors",
 }
@@ -63,42 +64,35 @@ AIMEM_FIXTURE = """# AIMEM.md - 공유 작업 메모리
 
 - **REV: 109** (개정 번호)
 - 최종 갱신: 2026-11-09 16:40 KST
-
-## 1. 현재 목표
-
-- **목표 (라운드 3, 2026-11-09~):** 함대 모니터링 웹 UI 를 만든다
-- **상태:** 진행 중
-
-## 2. 세션 명부
-
-| 슬롯 | 확인토큰 | 하네스   | 역할 | 세션키 | 비고 |
-| ---- | -------- | -------- | ---- | ------ | ---- |
-| S1 | `a41f0c` | claude | 린터 / 보드 CLI | - | CLI 작업자 |
-| S2 | `d27e93` | codex | 테스트 / 파이프라인 | - | CLI 작업자 |
-
-## 3. 작업 보드
-
-| ID | 태스크 | 담당 슬롯 | 상태 | 이어받음 | 산출물 |
-| -- | ------ | --------- | ---- | -------- | ------ |
-| T-036 | 데이터 계층 | S1 | REVIEW | - | `reader.py` |
-| T-039 | 서버 | 관리자 | DONE | - | `server.py` |
-| T-040 | 미배정 작업 | 미배정 | TODO | - | - |
-
-## 4. 핸드오프 로그
-
-- `2026-11-09 16:40` 관리자: **REV 109.** 최신 항목이다
-- `2026-11-09 15:00` 관리자: **REV 108.** 그 앞 항목이다
-
-## 4.5 대기 큐
-
-| 순서 | 태스크 | 후보 슬롯 | 이어받음 | 비고 |
-| ---- | ------ | --------- | -------- | ---- |
-| 1 | 통합 검수 | S3 | T-036 | 라운드 4 |
 """
+
+LONG_TEXT = "가" * 1200
 
 
 def write_aimem(root, text):
     (root / "AIMEM.md").write_text(text, encoding="utf-8")
+
+
+def seed_db(root):
+    """운영 상태 DB(명부·보드·큐·핸드오프)를 임시 저장소에 만든다. 호출 전에 `aimem_db.DB` 를 그 경로로 patch 해 둘 것."""
+    with contextlib.redirect_stdout(io.StringIO()):
+        aimem_db.cmd_init()
+    con = sqlite3.connect(root / ".aimem" / "aimem.db")
+    with con:
+        con.execute("INSERT INTO meta(key,value) VALUES('rev','109')")
+        con.executemany("INSERT INTO slots(slot,token,harness,role,note) VALUES(?,?,?,?,?)", [
+            ("S1", "a41f0c", "claude", "린터 / 보드 CLI", "CLI 작업자"),
+            ("S2", "d27e93", "codex", "테스트 / 파이프라인", "CLI 작업자")])
+        con.executemany("INSERT INTO tasks(id,title,slot,status,inherited,artifacts) VALUES(?,?,?,?,?,?)", [
+            ("T-036", "데이터 계층", "S1", "REVIEW", "-", "`reader.py`"),
+            ("T-039", "서버", "관리자", "DONE", "-", "`server.py`"),
+            ("T-040", "미배정 작업", "미배정", "TODO", "-", "-")])
+        con.execute("INSERT INTO queue(pos,task,slot_hint,inherited,note) VALUES(1,'통합 검수','S3','T-036','라운드 4')")
+        con.executemany("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)", [
+            ("2026-11-09T16:40:00", "관리자", 109, "handoff", "- `2026-11-09 16:40` 관리자: **REV 109.** 최신 항목이다"),
+            ("2026-11-09T15:00:00", "관리자", 108, "handoff", "- `2026-11-09 15:00` 관리자: **REV 108.** 그 앞 항목이다"),
+            ("2026-11-09T14:00:00", "관리자", 107, "handoff", "- `2026-11-09 14:00` 관리자: " + LONG_TEXT)])
+    con.close()
 
 
 def add_run(
@@ -109,41 +103,24 @@ def add_run(
     harness="codex",
     model="kistillm",
     label="계약 테스트",
-    rev="109",
-    write_path="tests/test_aimem_monitor.py",
     started="2026-11-09T16:31:12",
-    pid=None,
     rc=None,
     elapsed=None,
-    out=None,
+    report=None,
 ):
-    runs_dir = root / ".aimem" / "runs"
-    runs_dir.mkdir(parents=True, exist_ok=True)
-    data = {
-        "id": run_id,
-        "slot": slot,
-        "harness": harness,
-        "model": model,
-        "label": label,
-        "rev": rev,
-        "write": write_path,
-        "started": started,
-        "brief": "픽스처",
-    }
-    if pid is not None:
-        data["pid"] = pid
-    (runs_dir / f"{run_id}.json").write_text(
-        json.dumps(data, ensure_ascii=False), encoding="utf-8"
-    )
+    """세션 폴더 하나 - rc 가 있으면 끝난 것(end.json), 없으면 감독이 사라진 lost."""
+    d = root / ".aimem" / "sessions" / run_id
+    d.mkdir(parents=True, exist_ok=True)
+    meta = {"id": run_id, "role": "worker", "harness": harness, "model": model, "slot": slot, "label": label,
+            "started": started, "write_paths": ["tests/test_aimem_monitor.py"], "extra": {"rev": "109"},
+            "supervisor_pid": 2 ** 22 + 12345}   # 없는 pid
+    (d / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
     if rc is not None:
-        rc_path = runs_dir / f"{run_id}.rc"
-        rc_path.write_text(f"{rc}\n", encoding="utf-8")
-        if elapsed is not None:
-            start = datetime.datetime.fromisoformat(started).timestamp()
-            stamp = start + elapsed
-            os.utime(rc_path, (stamp, stamp))
-    if out is not None:
-        (runs_dir / f"{run_id}.out").write_text(out, encoding="utf-8")
+        ended = datetime.datetime.fromisoformat(started) + datetime.timedelta(seconds=elapsed or 0)
+        (d / "end.json").write_text(json.dumps({"state": "done" if rc == 0 else "failed", "rc": rc,
+                                                "ended": ended.isoformat(timespec="seconds")}), encoding="utf-8")
+    if report is not None:
+        (d / "report.md").write_text(report, encoding="utf-8")
 
 
 def add_request(root, request_id, payload):
@@ -167,31 +144,15 @@ def base_request(request_id, subtasks):
 
 
 def build_fixture(root):
+    (root / ".aimem").mkdir(parents=True, exist_ok=True)
     write_aimem(root, AIMEM_FIXTURE)
+    seed_db(root)
 
-    add_run(
-        root,
-        "a",
-        harness="claude",
-        model="claude-sonnet",
-        rc=0,
-        elapsed=20,
-        out=json.dumps({"result": "DONE 어쩌고"}, ensure_ascii=False),
-    )
-    add_run(root, "b", harness="codex", rc=0, elapsed=50, out="DONE codex 보고\n둘째 줄")
-    add_run(
-        root,
-        "c",
-        harness="claude",
-        model="claude-sonnet",
-        rc=0,
-        elapsed=40,
-        out=json.dumps({"result": "DONE 두 번째"}, ensure_ascii=False),
-    )
-    add_run(root, "d", harness="codex", rc=2, elapsed=10, out="FAILED 보고")
-    add_run(root, "e", harness="codex", pid=os.getpid())
-    add_run(root, "f", harness="codex", pid=999999)
-    add_run(root, "g", harness="opencode", out="> model · 진행로그\n진행 로그 첫 줄\n본문")
+    add_run(root, "T-1-S1-a1-100001", harness="claude", model="claude-sonnet", rc=0, elapsed=20, report="DONE 어쩌고")
+    add_run(root, "T-2-S2-a1-100002", harness="codex", rc=0, elapsed=50, report="DONE codex 보고\n둘째 줄")
+    add_run(root, "T-3-S1-a1-100003", harness="claude", model="claude-sonnet", rc=0, elapsed=40, report="DONE 두 번째")
+    add_run(root, "T-4-S2-a1-100004", harness="codex", rc=2, elapsed=10, report="FAILED 보고")
+    add_run(root, "T-6-S2-a1-100006", harness="codex")   # end.json 없고 감독 사라짐 -> lost
 
     add_request(
         root,
@@ -220,6 +181,21 @@ def build_fixture(root):
     )
 
 
+class FixtureRoot(unittest.TestCase):
+    """임시 저장소 + 그 DB 를 `aimem_db` 의 정본으로 patch. 진짜 저장소는 읽지 않는다."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name)
+        (self.root / ".aimem").mkdir()
+        for name, value in (("DB", self.root / ".aimem" / "aimem.db"), ("ROOT", self.root)):
+            p = mock.patch.object(aimem_db, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        build_fixture(self.root)
+
+
 def entry_by_id(items, key, value):
     for item in items:
         if item.get(key) == value:
@@ -228,15 +204,7 @@ def entry_by_id(items, key, value):
 
 
 @unittest.skipIf(reader is None, "reader.py 아직 없음")
-class TestStateContract(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = pathlib.Path(self.tmp.name)
-        build_fixture(self.root)
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
+class TestStateContract(FixtureRoot):
     def collect(self):
         return reader.collect(self.root)
 
@@ -258,12 +226,11 @@ class TestStateContract(unittest.TestCase):
         aimem = state["aimem"]
         self.assertIsInstance(aimem, dict)
         self.assertEqual(aimem["rev"], 109)
-        self.assertIsInstance(aimem["lines"], int)
-        self.assertEqual(aimem["lines"], len(AIMEM_FIXTURE.splitlines()))
+        self.assertEqual(set(aimem), {"rev", "updated"})
         self.assertIsInstance(aimem["updated"], str)
         self.assertIn("2026-11-09", aimem["updated"])
 
-    def test_slots_discard_session_key_and_skip_table_noise(self):
+    def test_slots_keys_and_values(self):
         slots = self.collect()["slots"]
         self.assertEqual(len(slots), 2)
         for entry in slots:
@@ -280,8 +247,6 @@ class TestStateContract(unittest.TestCase):
         self.assertEqual(s1["role"], "린터 / 보드 CLI")
         self.assertEqual(s2["role"], "테스트 / 파이프라인")
         self.assertEqual(s1["note"], "CLI 작업자")
-        self.assertNotIn("슬롯", {entry["slot"] for entry in slots})
-        self.assertNotIn("----", {entry["slot"] for entry in slots})
 
     def test_board_includes_manager_and_unassigned_rows(self):
         board = self.collect()["board"]
@@ -315,12 +280,7 @@ class TestStateContract(unittest.TestCase):
         self.assertEqual(entry["note"], "라운드 4")
 
     def test_log_is_newest_first_and_untruncated(self):
-        long_text = "가" * 1200
-        fixture = AIMEM_FIXTURE.replace(
-            "## 4.5 대기 큐",
-            "- `2026-11-09 14:00` 관리자: " + long_text + "\n\n## 4.5 대기 큐",
-        )
-        write_aimem(self.root, fixture)
+        long_text = LONG_TEXT
         log = self.collect()["log"]
         self.assertEqual(len(log), 3)
         for entry in log:
@@ -343,32 +303,19 @@ class TestStateContract(unittest.TestCase):
         for entry in runs:
             self.assertTrue(RUN_KEYS.issubset(entry.keys()))
             self.assertIsInstance(entry["report_head"], str)
-            self.assertIn(entry["state"], ("running", "done", "lost", "unknown"))
+            self.assertIn(entry["state"], ("running", "done", "lost"))
             self.assertTrue(entry["rc"] is None or isinstance(entry["rc"], int))
-        self.assertEqual(entry_by_id(runs, "id", "a")["state"], "done")
-        self.assertEqual(entry_by_id(runs, "id", "a")["rc"], 0)
-        self.assertEqual(entry_by_id(runs, "id", "d")["state"], "done")
-        self.assertEqual(entry_by_id(runs, "id", "d")["rc"], 2)
-        self.assertEqual(entry_by_id(runs, "id", "e")["state"], "running")
-        self.assertEqual(entry_by_id(runs, "id", "f")["state"], "lost")
-        self.assertEqual(entry_by_id(runs, "id", "g")["state"], "unknown")
-        self.assertEqual(entry_by_id(runs, "id", "a")["elapsed_sec"], 20)
-        self.assertEqual(entry_by_id(runs, "id", "b")["elapsed_sec"], 50)
-        self.assertEqual(entry_by_id(runs, "id", "c")["elapsed_sec"], 40)
-
-    def test_report_head_unwraps_harness_formats(self):
-        runs = self.collect()["runs"]
-        claude = entry_by_id(runs, "id", "a")["report_head"]
-        codex = entry_by_id(runs, "id", "b")["report_head"]
-        opencode = entry_by_id(runs, "id", "g")["report_head"]
-        self.assertIn("DONE 어쩌고", claude)
-        self.assertNotIn('{"result"', claude)
-        self.assertIn("DONE codex 보고", codex)
-        self.assertIn("진행 로그 첫 줄", opencode)
-        self.assertNotIn("> model", opencode)
+        a = entry_by_id(runs, "id", "T-1-S1-a1-100001")
+        self.assertEqual((a["state"], a["rc"], a["elapsed_sec"]), ("done", 0, 20))
+        self.assertIn("DONE 어쩌고", a["report_head"])
+        d = entry_by_id(runs, "id", "T-4-S2-a1-100004")
+        self.assertEqual((d["state"], d["rc"], d["session_state"]), ("done", 2, "failed"))   # 옛 state 는 failed 를 done 으로 접는다
+        self.assertEqual(entry_by_id(runs, "id", "T-6-S2-a1-100006")["state"], "lost")
+        self.assertEqual(entry_by_id(runs, "id", "T-2-S2-a1-100002")["elapsed_sec"], 50)
+        self.assertEqual(entry_by_id(runs, "id", "T-3-S1-a1-100003")["elapsed_sec"], 40)
 
     def test_eta_by_harness_medians(self):
-        eta = self.collect()["eta"]
+        eta = reader.median_durations(self.collect()["runs"])
         self.assertEqual(set(eta), {"by_harness", "overall"})
         claude = eta["by_harness"]["claude"]
         codex = eta["by_harness"]["codex"]
@@ -407,7 +354,6 @@ class TestStateContract(unittest.TestCase):
         self.assertEqual(r1["eta_sec"], 50)
         self.assertIsInstance(r1["eta_basis"], str)
         self.assertTrue(r1["eta_basis"].strip())
-        self.assertTrue(r1["eta_at"] is None or isinstance(r1["eta_at"], str))
         r2 = entry_by_id(requests, "id", "R-2")
         self.assertIsNone(r2["eta_sec"])
         self.assertTrue(r2["eta_basis"].strip())
@@ -419,7 +365,7 @@ class TestStateContract(unittest.TestCase):
         r1 = entry_by_id(requests, "id", "R-1")
         for key in ("id", "created", "requester", "title", "detail", "status", "subtasks"):
             self.assertIn(key, r1)
-        for key in ("progress_pct", "eta_sec", "eta_at", "eta_basis"):
+        for key in ("progress_pct", "eta_sec", "eta_basis"):
             self.assertIn(key, r1)
         self.assertEqual(r1["created"], "2026-11-09 16:45")
         self.assertEqual(r1["requester"], "관리자")
@@ -482,13 +428,18 @@ class TestBrokenInputs(unittest.TestCase):
 
 
 @unittest.skipIf(reader is None, "reader.py 아직 없음")
-class TestRealRepositorySmoke(unittest.TestCase):
-    def test_real_repository_collects_without_errors(self):
-        repo = pathlib.Path(__file__).resolve().parent.parent
-        state = reader.collect(repo)
-        self.assertIsInstance(state, dict)
+class TestFixtureSmoke(FixtureRoot):
+    def test_fixture_collects_without_errors(self):
+        state = reader.collect(self.root)
         self.assertTrue(EXPECTED_KEYS.issubset(state.keys()))
         self.assertEqual(state["errors"], [])
+
+    def test_missing_db_shows_one_error_and_empty_lists(self):
+        (self.root / ".aimem" / "aimem.db").unlink()
+        state = reader.collect(self.root)
+        self.assertTrue(any("DB" in e for e in state["errors"]), state["errors"])
+        self.assertEqual((state["slots"], state["board"], state["queue"], state["log"]), ([], [], [], []))
+        self.assertFalse((self.root / ".aimem" / "aimem.db").exists())   # 읽기 전용 - 없는 DB 를 만들지 않는다
 
 
 # ---------------------------------------------------------------------------
@@ -513,13 +464,7 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 PUBLIC_SLOT_KEYS = SLOT_KEYS - {"token"}
 
 
-def _real_tokens():
-    """`aimem_db.py state` 의 `slots[].token` - 공개면에 나가면 안 되는 실제 값."""
-    out = subprocess.run([sys.executable, str(REPO / "tools" / "aimem_db.py"), "state"],
-                         capture_output=True, text=True, timeout=60, cwd=str(REPO))
-    if out.returncode != 0:
-        raise unittest.SkipTest("aimem_db.py state 실패: " + out.stderr[-200:])
-    return [s["token"] for s in json.loads(out.stdout)["slots"] if len(s.get("token") or "") >= 4]
+FIXTURE_TOKENS = ["a41f0c", "d27e93"]   # `seed_db` 의 확인토큰 - 공개면에 나가면 안 되는 값
 
 
 class _Srv:
@@ -535,7 +480,7 @@ class _Srv:
         self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.httpd.daemon_threads = True
         self.port = self.httpd.server_address[1]
-        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         self.thread.start()
 
     def close(self):
@@ -559,13 +504,13 @@ class _Srv:
 
 
 @unittest.skipIf(server is None, "server.py 아직 없음")
-class TestPublicStateLeaks(unittest.TestCase):
-    """`/api/state` 에서 `root`·`slots[].token` 이 빠진다 (항목 1~5)."""
+class TestPublicStateLeaks(FixtureRoot):
+    """`/api/state` 에서 `root`·`slots[].token` 이 빠진다 (항목 1~5). 임시 저장소로 돌린다."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.tokens = _real_tokens()
-        cls.state = server.collect_state(REPO)
+    def setUp(self):
+        super().setUp()
+        self.tokens = FIXTURE_TOKENS
+        self.state = server.collect_state(self.root)
 
     # 1
     def test_collect_state_has_no_root_key(self):
@@ -585,7 +530,7 @@ class TestPublicStateLeaks(unittest.TestCase):
     # 3
     def test_http_body_contains_neither_repo_path_nor_slot_tokens(self):
         self.assertGreater(len(self.tokens), 0, "비교할 확인토큰이 없다")
-        srv = _Srv(REPO)
+        srv = _Srv(self.root)
         try:
             status, body = srv.req("GET", "/api/state")
         finally:
@@ -593,8 +538,8 @@ class TestPublicStateLeaks(unittest.TestCase):
         self.assertEqual(status, 200)
         text = body.decode("utf-8")
         json.loads(text)   # 본문이 유효한 JSON 이다
-        self.assertNotIn(str(REPO), text, "저장소 절대경로가 응답 본문 어딘가에 남았다")
-        self.assertNotIn(str(REPO).replace("/", "\\/"), text)
+        self.assertNotIn(str(self.root), text, "저장소 절대경로가 응답 본문 어딘가에 남았다")
+        self.assertNotIn(str(self.root).replace("/", "\\/"), text)
         for tok in self.tokens:
             self.assertNotIn(tok, text, f"확인토큰 {tok[:2]}**** 이 응답 본문에 남았다")
 
@@ -611,10 +556,10 @@ class TestPublicStateLeaks(unittest.TestCase):
 
     # 5
     def test_failure_branch_and_normal_branch_have_same_top_level_keys(self):
-        normal = server.collect_state(REPO)
+        normal = server.collect_state(self.root)
         with mock.patch.object(server, "_reader") as rd:
             rd.return_value.collect.side_effect = RuntimeError("의도된 실패")
-            failed = server.collect_state(REPO)
+            failed = server.collect_state(self.root)
         self.assertTrue(failed["errors"], "실패 분기가 errors 를 남기지 않았다")
         self.assertEqual(set(failed), set(normal),
                          f"어긋난 키: {sorted(set(failed) ^ set(normal))}")
@@ -622,11 +567,11 @@ class TestPublicStateLeaks(unittest.TestCase):
             self.assertNotIn("root", branch)
 
     def test_non_dict_and_sparse_reader_results_also_match(self):
-        normal = set(server.collect_state(REPO))
+        normal = set(server.collect_state(self.root))
         for bad in ("문자열", {}, {"runs": []}):
             with self.subTest(bad=bad), mock.patch.object(server, "_reader") as rd:
                 rd.return_value.collect.return_value = bad
-                self.assertEqual(set(server.collect_state(REPO)), normal)
+                self.assertEqual(set(server.collect_state(self.root)), normal)
 
 
 @unittest.skipIf(server is None, "server.py 아직 없음")
@@ -864,15 +809,13 @@ class ClosedRequestContractTests(unittest.TestCase):
                "overall": {"median_sec": 100, "samples": 3}}
         req = base_request("R-X", subs)
         req["status"] = status
-        return reader._estimate(req, {}, {"S1": "claude"}, eta, datetime.datetime(2026, 11, 10, 12, 0, 0))
+        return reader._estimate(req, {}, {"S1": "claude"}, eta)
 
     def test_done_request_is_100_and_has_no_eta_even_with_review_subtasks(self):
         subs = [{"id": "T-1", "status": "REVIEW", "slot": "S1"}, {"id": "T-2", "status": "DONE", "slot": "S1"}]
         out = self._estimate("DONE", subs)
         self.assertEqual(out["progress_pct"], 100.0)
         self.assertIsNone(out["eta_sec"])
-        self.assertIsNone(out["eta_at"])
-        self.assertEqual(out["eta_over"], [])
         self.assertIn("DONE", out["eta_basis"])
         # 열린 요청은 예전 그대로 (REVIEW 0.8 + DONE 1.0 = 90%, ETA 있음)
         out = self._estimate("IN-PROGRESS", subs)
@@ -887,16 +830,15 @@ class ClosedRequestContractTests(unittest.TestCase):
     def test_eta_none_before_split(self):
         # 분담 전(서브태스크 0) 요청은 ETA 를 0 이 아니라 '없음' 으로 낸다
         eta = {"by_harness": {}, "overall": {"median_sec": 100, "samples": 3}}
-        out = reader._estimate({"status": "NEW", "subtasks": []}, {}, {}, eta, datetime.datetime.now())
+        out = reader._estimate({"status": "NEW", "subtasks": []}, {}, {}, eta)
         self.assertIsNone(out["eta_sec"])
-        self.assertIsNone(out["eta_at"])
         self.assertIn("분담 전", out["eta_basis"])
 
     def test_eta_zero_when_all_subtasks_done(self):
         # 서브태스크가 있고 전부 DONE 이면 ETA 0 이다
         eta = {"by_harness": {}, "overall": {"median_sec": 100, "samples": 3}}
         req = {"status": "IN-PROGRESS", "subtasks": [{"id": "T-1", "status": "DONE", "slot": "S2"}]}
-        out = reader._estimate(req, {}, {}, eta, datetime.datetime.now())
+        out = reader._estimate(req, {}, {}, eta)
         self.assertEqual(out["eta_sec"], 0)
 
     def test_scrub_public_drops_request_keys_outside_contract(self):
@@ -910,32 +852,12 @@ class ClosedRequestContractTests(unittest.TestCase):
 
 @unittest.skipIf(reader is None, "reader.py 아직 없음")
 class EnglishAimemLabelsTest(unittest.TestCase):
-    """REV 128: AIMEM.md 가 영어로 바뀌어도 reader 가 REV·갱신 시각을 읽는다 (한국어 라벨도 그대로 받는다)."""
+    """REV 128: AIMEM.md 가 영어로 바뀌어도 reader 가 갱신 시각을 읽는다 (한국어 라벨도 그대로 받는다)."""
 
-    def test_parse_english_header(self):
-        lines = ["# AIMEM.md - Shared Working Memory", "", "- **REV: 128** (revision number)",
-                 "- Last updated: 2026-11-10 19:00 KST", "", "## 1. Current Goal", "",
-                 "- **Goal (round 4):** one screen", "  for the fleet", "- **Status:** operating", "",
-                 "## 2. Session Roster", ""]
-        errors = []
-        a = reader._parse_aimem(lines, errors)
-        self.assertEqual((a["rev"], a["updated"]), (128, "2026-11-10 19:00 KST"))
-        self.assertEqual(errors, [])
-
-
-@unittest.skipIf(reader is None, "reader.py 아직 없음")
-class HandoffFileFallbackTest(unittest.TestCase):
-    """REV 129: DB 가 없을 때 로그는 .aimem/handoff.md 를 먼저 읽고, 그 파일이 없으면 AIMEM.md 4절을 읽는다."""
-
-    def test_handoff_file_preferred_over_section_4(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = pathlib.Path(tmp)
-            (root / ".aimem").mkdir()
-            (root / "AIMEM.md").write_text("# A\n\n- **REV: 1** (x)\n\n## 4. Handoff Log\n\n- `2026-01-01 00:00` old: in aimem\n\n## 4.5 Q\n", encoding="utf-8")
-            lines = (root / "AIMEM.md").read_text(encoding="utf-8").splitlines()
-            self.assertEqual([e["text"] for e in reader._parse_log(lines, root)], ["old: in aimem"])
-            (root / ".aimem" / "handoff.md").write_text("# Handoff Log (live)\n\nintro\n\n- `2026-11-10 19:00` new: in file\n  continued\n", encoding="utf-8")
-            self.assertEqual(reader._parse_log(lines, root), [{"when": "2026-11-10 19:00", "text": "new: in file continued"}])
+    def test_updated_line_in_both_languages(self):
+        self.assertEqual(reader._aimem_updated("- **REV: 128** (x)\n- Last updated: 2026-11-10 19:00 KST\n"), "2026-11-10 19:00 KST")
+        self.assertEqual(reader._aimem_updated("- 최종 갱신: 2026-11-09 16:40 KST\n"), "2026-11-09 16:40 KST")
+        self.assertEqual(reader._aimem_updated("# 갱신 줄 없음"), "")
 
 
 ISO_LINE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} ")

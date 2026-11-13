@@ -27,10 +27,9 @@ git config core.hooksPath   # ".githooks" 가 출력되어야 함
 - **`AIMEM.md` 가 스테이징에 포함되면** `python3 tools/aimem_lint.py AIMEM.md` 를 돌립니다.
   구조 불변식(REV 유일성, 세션 명부 슬롯/토큰 중복, 작업 보드 상태값·소유 슬롯 존재,
   파일 소유권 유효성 등)을 위반하면 위반 목록을 그대로 보여주고 커밋을 거부(exit 1)합니다.
-- **`tests/` 또는 `tools/` 아래 파일이 스테이징에 포함되면**
-  `python3 -m unittest discover -s tests` 를 돌립니다. 실패하면 커밋을 거부합니다.
-- `python3` 이 PATH 에 없으면 (검사가 필요한 커밋에 한해) 명확한 오류와 함께 커밋을 거부합니다.
-  검사 자체를 건너뛰고 통과시키지 않습니다 - 조용히 넘어가면 훅의 목적이 사라지기 때문입니다.
+- **`tests/` 또는 `tools/` 아래 파일이 스테이징에 포함되면** `python3 tools/check.py --staged` 를 돌립니다.
+  바뀐 경로에 해당하는 검사 파일만 고릅니다(경로 → 검사 표는 `tools/check.py` 의 `MAP`). 실패하면 커밋을 거부합니다.
+- **전체 검사는 푸시 전에** `python3 tools/check.py --all` 로 한 번 돌립니다.
 
 ## 우회 방법 (`--no-verify`)이 정당한 경우
 

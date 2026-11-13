@@ -58,17 +58,14 @@ max_concurrent = 8
 models = ["y"]
 
 [harness.claude]
-binary = "claude"
 providers = ["anthropic"]
 default_model = "sonnet"
 
 [harness.codex]
-binary = "codex"
 providers = ["one", "wide"]
 default_model = "one/x"
 
 [harness.opencode]
-binary = "opencode"
 providers = ["wide"]
 default_model = "wide/y"
 """
@@ -147,8 +144,6 @@ class Base(unittest.TestCase):
             mock.patch.object(aimem_db, "DB", self.db),
             mock.patch.object(fleet_ctl, "_rev_lint_checks", return_value=[]),
             mock.patch.object(fleet_ctl, "_start_watcher", return_value=True),
-            mock.patch.object(fleet_ctl, "_start_driver", return_value=True),
-            mock.patch.object(fleet_ctl, "_CHAIN_ARMED", [False]),
             mock.patch.dict(os.environ, {fleet_ctl.FORCE_ENV: ""}),
         ]
         for p in patches:
@@ -318,7 +313,6 @@ class ManagerHoldsNoSeat(Base):
         busy, by_prov = fleet_graph._live_scan(g)
         self.assertEqual(by_prov, {"anthropic": 3})                     # 관리자(anthropic)는 세지 않았다
         self.assertEqual(sessions.state(self.sroot / out["session"])["state"], "running")
-        self.assertEqual(rt_providers.running_by_provider(self.sroot), {"anthropic": 3})
         self.assertTrue(self.drive(g, lambda g: all(n["status"] == "done" for n in g["nodes"])))
         fleet_ctl.stop("test")
 

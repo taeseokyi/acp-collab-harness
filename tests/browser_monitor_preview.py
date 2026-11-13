@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """T-184 브라우저 실측: 모니터 미리보기 칸에서 보관함 기록이 남고 칸이 섞이지 않는지 잰다."""
 import re
-import http.server
 import json
 import pathlib
 import shutil
 import sys
 import tempfile
-import threading
-from contextlib import contextmanager
 from urllib.parse import quote
 
 from playwright.sync_api import expect, sync_playwright
@@ -17,6 +14,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
 from aimem_monitor import server          # noqa: E402
+import _monitor_fixture                   # noqa: E402
 
 
 class Checks:
@@ -38,24 +36,6 @@ class Checks:
                 failures += 1
         print(f"통과 {len(self.results) - failures} / 전체 {len(self.results)}")
         return failures
-
-
-@contextmanager
-def monitor_server(root):
-    """인증 끈 평문 http 모니터를 임시 포트에 띄웁니다."""
-    handler = type("H", (server.Handler,), {"root": root, "require_auth": False, "tls": False,
-                                             "access_token": None, "guard": server.LoginGuard(),
-                                             "timeout": 5, "log_message": lambda *a, **k: None})
-    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    httpd.daemon_threads = True
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{httpd.server_address[1]}"
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
-        thread.join(timeout=3)
 
 
 def part_for(name):
@@ -222,8 +202,7 @@ def main():
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="aimem-preview-"))
     root = tmp / "root"
     try:
-        (root / "projects").mkdir(parents=True)
-        shutil.copytree(ROOT / "projects/웹워들", root / "projects/웹워들")
+        _monitor_fixture.write_wordle_project(root)            # 운영 projects/ 를 읽지 않는다
 
         fake_dir = root / "projects/웹워들-가짜"
         (fake_dir / "web").mkdir(parents=True)
@@ -238,14 +217,8 @@ def main():
             'if(d&&d.aimem==="store.v1"&&d.op==="snapshot")snap.textContent=JSON.stringify(d.items);});'
             'parent.postMessage({aimem:"store.v1",op:"ready"},"*");', encoding="utf-8")
 
-        (root / ".aimem").mkdir()
-        for name in ("aimem.db", "aimem.db-wal", "aimem.db-shm"):
-            src = ROOT / ".aimem" / name
-            if src.exists():
-                shutil.copy2(src, root / ".aimem" / name)
-
         try:
-            with monitor_server(root) as base, sync_playwright() as pw:
+            with _monitor_fixture.serve(server, root) as (_, base), sync_playwright() as pw:
                 browser = pw.chromium.launch()
                 try:
                     _, page = webwordle_checks(browser, base, checks)

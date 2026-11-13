@@ -1,4 +1,4 @@
-"""시간대 하나로 통일: `fleet.toml` `[time] zone` (기본 Asia/Seoul).
+"""시간대 하나로 통일: `fleet.toml` `[time] zone` (기본은 `config.DEFAULT_TIME_ZONE`).
 
 엔진 프로세스가 뜰 때 `apply(root)` 를 한 번 부르면 이 프로세스와 그 자식(감독·하네스·작업자의 명령)이 모두
 같은 시간대로 시각을 적는다 - `datetime.now()`·로그·`date` 가 기계 설정과 상관없이 같은 시계를 쓴다.
@@ -13,7 +13,8 @@ def zone_name(root):
         from . import config  # noqa: PLC0415
         return config.load(root).time_zone()
     except Exception:  # noqa: BLE001 - 설정이 깨져도 시간 때문에 엔진이 멈추면 안 된다
-        return "Asia/Seoul"
+        from .config import DEFAULT_TIME_ZONE  # noqa: PLC0415
+        return DEFAULT_TIME_ZONE
 
 
 def apply(root):

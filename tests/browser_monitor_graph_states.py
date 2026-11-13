@@ -5,14 +5,12 @@
 """
 import _fleet_env  # noqa: F401
 import contextlib
-import http.server
 import io
 import json
 import pathlib
 import sqlite3
 import sys
 import tempfile
-import threading
 from contextlib import contextmanager
 from unittest import mock
 from playwright.sync_api import sync_playwright
@@ -20,6 +18,7 @@ from playwright.sync_api import sync_playwright
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from aimem_monitor import server  # noqa: E402
+import _monitor_fixture  # noqa: E402
 
 
 class Checks:
@@ -31,21 +30,6 @@ class Checks:
             print(f"[{'OK' if p else 'FAIL'}] {goal}" + (f" - {detail}" if detail else ""))
         print(f"통과 {len(self.results) - failures} / 전체 {len(self.results)}")
         return failures
-
-
-@contextmanager
-def monitor_server(root):
-    handler = type("H", (server.Handler,), {"root": root, "require_auth": False, "tls": False,
-                                            "access_token": None, "guard": server.LoginGuard(),
-                                            "timeout": 5, "log_message": lambda *a, **k: None})
-    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    httpd.daemon_threads = True
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{httpd.server_address[1]}"
-    finally:
-        httpd.shutdown(); httpd.server_close(); thread.join(timeout=3)
 
 
 @contextmanager
@@ -91,6 +75,9 @@ def build(root):
     ]
     (gd / "G-1.json").write_text(json.dumps({"id": "G-1", "request": "그래프 상태 검사", "created": now, "updated": now,
                                               "nodes": nodes}, ensure_ascii=False), encoding="utf-8")
+    # 끝나지 않았는데 실행기가 없는 그래프 - 대기 요약에 들지 않고 '실행기 없음' 으로 보인다
+    (gd / "G-2.json").write_text(json.dumps({"id": "G-2", "request": "실행기 없는 그래프", "created": now, "updated": now,
+                                              "nodes": [node("M1", "todo", waiting="provider:kisti")]}, ensure_ascii=False), encoding="utf-8")
     con = sqlite3.connect(str(root / ".aimem" / "aimem.db"))
     for tid, st in (("N1", "TODO"), ("N5", "BLOCKED"), ("N6", "BLOCKED"), ("N7", "REVIEW")):
         con.execute("INSERT OR REPLACE INTO tasks(id, title, slot, status, inherited, artifacts, created, updated)"
@@ -113,12 +100,20 @@ def scenario(browser, base, checks, width):
         page.wait_for_selector("#graphs-list .graph-block", state="attached", timeout=15000)
         page.wait_for_timeout(300)
         fc = page.locator("#fleet-control").inner_text()
-        checks.ok(f"[{width}] 함대 요약: 공급자 kisti 자리 대기 2건", "공급자 kisti 자리 대기 2건" in fc, fc[:200])
+        checks.ok(f"[{width}] 함대 요약: 공급자 kisti 자리 대기 2건 (실행기 없는 G-2 의 대기는 빼고)", "공급자 kisti 자리 대기 2건" in fc, fc[:200])
         checks.ok(f"[{width}] 함대 요약: 공급자 장애로 멈춘 노드 1건", "공급자 장애로 멈춘 노드 1건" in fc)
         sw = page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth")
         checks.ok(f"[{width}] 함대 탭 가로 넘침 없음", sw <= 0, str(sw))
         page.click("#tab-requests")
         page.wait_for_selector("#graphs-list .graph-block", state="visible", timeout=15000)
+        def badge_of(gid):
+            return page.locator("#graphs-list .graph-block", has_text=gid).first.locator(".graph-head .badge").inner_text().strip()
+        checks.ok(f"[{width}] 실행기가 잡은 그래프는 '실행 중'", badge_of("G-1") == "실행 중", badge_of("G-1"))
+        checks.ok(f"[{width}] 실행기 없는 미완 그래프는 '실행기 없음'", badge_of("G-2") == "실행기 없음", badge_of("G-2"))
+        g2 = page.locator("#graphs-list .graph-block", has_text="G-2").first.locator(".graph-head .graph-meta").inner_text()
+        checks.ok(f"[{width}] 실행기 없으면 남은 시간을 말하지 않는다", "남은" not in g2, g2)
+        c1 = page.locator("#graphs-list .graph-block", has_text="G-1").first.locator(".graph-counts").inner_text()
+        checks.ok(f"[{width}] 개수 줄: 공급자 장애는 막힘과 따로", "공급자 장애 1" in c1 and "막힘" not in c1 and "실패 1" in c1, c1)
         notes = page.locator("#graphs-list .graph-note")
         by = {}
         for i in range(notes.count()):
@@ -171,7 +166,9 @@ def main():
     with temp_db(root):
         build(root)
         with mock.patch.object(server, "fleet_state", lambda *a, **k: FLEET), \
-                monitor_server(root) as base, sync_playwright() as pw:
+                mock.patch.object(server, "_fleet_ctl", return_value=mock.Mock(graphs_overview=lambda: [
+                    {"id": "G-1", "runner": 4242}, {"id": "G-2", "runner": None}])), \
+                _monitor_fixture.serve(server, root) as (_, base), sync_playwright() as pw:
             browser = pw.chromium.launch()
             try:
                 for w in (1280, 360):

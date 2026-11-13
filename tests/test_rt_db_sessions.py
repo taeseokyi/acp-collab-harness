@@ -29,8 +29,7 @@ class SessionsDbTest(unittest.TestCase):
         for p in [mock.patch.object(aimem_db, "ROOT", self.root),
                   mock.patch.object(aimem_db, "DB", self.root / ".aimem" / "aimem.db"),
                   mock.patch.object(aimem_db, "AIMEM", self.root / "AIMEM.md"),
-                  mock.patch.object(aimem_db, "HANDOFF", self.root / ".aimem" / "handoff.md"),
-                  mock.patch.object(aimem_db, "STATE_MD", self.root / "AIMEM-state.md")]:
+                  mock.patch.object(aimem_db, "HANDOFF", self.root / ".aimem" / "handoff.md")]:
             p.start()
             self.addCleanup(p.stop)
         self.sdir = self.root / ".aimem" / "sessions"
@@ -113,7 +112,6 @@ class SessionsDbTest(unittest.TestCase):
         self.assertEqual(new["brief_path"], str(self.sdir / "new" / "brief.md"))
         self.assertEqual([s["id"] for s in st["sessions"]], ["new"])
         self.assertEqual(st["sessions"][0]["write_paths"], ["a/b"])
-        self.assertIn("new", aimem_db.render_text())   # 렌더가 합친 목록을 그대로 읽는다
 
     def test_archive_moves_old_finished_only(self):
         end = {"state": "done", "rc": 0, "ended": "2020-01-01T10:05:00"}
@@ -143,7 +141,7 @@ class SessionsDbTest(unittest.TestCase):
     def test_apply_refuses_without_end_json(self):
         d = self.mk("sneaky", dead_pid(), started="2020-01-01T10:00:00")
         out = aimem_db.archive_apply({"cutoff": "2021-01-01T00:00:00", "tasks": [], "requests": [], "graphs": [],
-                                      "runs": [], "events": [], "handoff": [], "relay": [], "logs": [],
+                                      "events": [], "handoff": [], "relay": [], "logs": [],
                                       "sessions": [{"id": "sneaky", "when": "2020-01-01T10:00:00"}]})
         self.assertEqual(out["sessions"], [])
         self.assertTrue(d.is_dir())

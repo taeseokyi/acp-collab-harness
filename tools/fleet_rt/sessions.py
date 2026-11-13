@@ -10,8 +10,7 @@
                      중간 프로세스는 바로 끝나고 spawn 이 거둔다.
 
 감독이 부른 쪽의 자식이 아니게 하는 까닭: 오래 사는 호출자(그래프 실행기·모니터)가 끝난 감독을 거두지 않으면
-좀비가 쌓이고, 좀비는 `os.kill(pid, 0)` 에 '살아 있음' 으로 보인다(지금 `_run_state` 의 결함). 감독의
-부모는 init 이 되어 바로 거두어진다.
+좀비가 쌓이고, 좀비는 `os.kill(pid, 0)` 에 '살아 있음' 으로 보인다. 감독의 부모는 init 이 되어 바로 거두어진다.
 
 meta.json 과의 경합: spawn 은 meta.json 을 pid 칸이 빈 채(null) 먼저 쓰고, 감독을 띄우고, pid·pgid·시작 시각을
 채워 **다시** 쓴다(둘 다 tmp + os.replace). 감독은 meta.json 의 `supervisor_pid` 가 자기 pid 가 될 때까지
@@ -49,14 +48,11 @@ import time
 
 from . import harness
 from .env import session_key_name
-from .base import (ENV_ROLE, ENV_ROOT, ENV_SESSION, END_STATES, SESSION_COLUMNS, SESSIONS_DDL, Event,
-                   SessionSpec, read_event_lines)
+from .base import (ENV_ROLE, ENV_ROOT, ENV_SESSION, END_STATES, SESSION_COLUMNS, SESSIONS_DDL, TERM_GRACE_SEC, Event,
+                   SessionSpec, parse_status, read_event_lines)
 
 TOOLS_DIR = pathlib.Path(__file__).resolve().parent.parent
-#: cancel 이 SIGTERM 뒤 그룹이 사라지기를 기다리는 시간. 감독 자신의 유예(run.HARNESS_GRACE_SEC)보다 길어야
-#: 감독이 하네스를 KILL 하고 end.json 을 제 손으로 쓸 틈이 생긴다.
-KILL_GRACE_SEC = 5.0
-#: SIGKILL 뒤 그룹이 사라지기를 기다리는 시간.
+#: SIGKILL 뒤 그룹이 사라지기를 기다리는 시간. cancel 은 TERM 뒤에도 감독의 유예에 이만큼 더 기다린다(감독이 end.json 을 쓰게).
 KILL_WAIT_SEC = 2.0
 #: meta.json 의 pid 칸이 아직 비었을 때 '띄우는 중' 으로 봐 주는 시간. 넘으면 lost.
 SPAWN_WINDOW_SEC = 15.0
@@ -67,7 +63,6 @@ FINALISE_GRACE_SEC = 3.0
 INDEX_TTL_SEC = 1.0
 #: 폴더 mtime 과 색인 시각을 비교할 때의 여유 (커널 mtime 은 거친 시계라 몇 ms 늦을 수 있다).
 _MTIME_SLACK = 0.05
-REPORT_STATUSES = ("DONE", "PARTIAL", "BLOCKED", "REJECT", "NEEDS-LOCK", "NEEDS-APPROVAL")
 _ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 #: 세션 폴더 -> 마지막 cancel 이 refused/foreign 을 낸 까닭 (로그용).
@@ -203,8 +198,7 @@ def group_members(pgid, exclude=()):
 
 
 def _pgroup_alive(pgid):
-    """그룹에 살아 있는 프로세스가 있는지. 리더가 좀비면 죽은 것으로 보고 나머지 구성원을 /proc 에서 찾는다
-    (`fleet_graph._pgroup_alive` 와 같은 규칙 - killpg(pgid, 0) 은 좀비 그룹에도 성공한다)."""
+    """그룹에 살아 있는 프로세스가 있는지. killpg(pgid, 0) 은 좀비 리더에도 성공하므로 나머지 구성원을 /proc 에서 찾는다."""
     try:
         os.killpg(pgid, 0)
     except OSError:
@@ -572,7 +566,7 @@ def report(session_dir_):
 # ---- 끊기 ----
 
 def _signal_pids(pids, starts):
-    """pid 하나씩 TERM → (최대 3초) → KILL. 보내기 직전마다 시작 시각을 다시 본다(그 사이 pid 재사용 방지)."""
+    """pid 하나씩 TERM → (최대 TERM_GRACE_SEC) → KILL. 보내기 직전마다 시작 시각을 다시 본다(pid 재사용 방지)."""
     sent = []
     for p in pids:
         if proc_start(p) == starts.get(p):
@@ -581,7 +575,7 @@ def _signal_pids(pids, starts):
                 sent.append(p)
             except OSError:
                 pass
-    deadline = time.time() + 3.0
+    deadline = time.time() + TERM_GRACE_SEC
     while time.time() < deadline and any(_proc_state(p) not in (None, "Z") and proc_start(p) == starts.get(p)
                                          for p in sent):
         time.sleep(0.1)
@@ -613,7 +607,7 @@ def _session_remnants(d):
 
 
 def end_remnants(session_dir_):
-    """이 세션 표식을 단 남은 프로세스를 pid 하나씩 끝낸다(TERM → 3초 → KILL, 나·조상 제외). 끝낸 pid 목록.
+    """이 세션 표식을 단 남은 프로세스를 pid 하나씩 끝낸다(TERM → 유예 → KILL, 나·조상 제외). 끝낸 pid 목록.
     감독이 마감 직전에, cancel 이 그룹을 끝낸 뒤에 부른다 - setsid 로 그룹을 빠져나간 손자를 잡는 자리다."""
     rem = _session_remnants(session_dir_)
     return _signal_pids(list(rem), rem) if rem else []
@@ -642,7 +636,7 @@ def cancel(session_dir_, why=""):
     - foreign: meta 의 pid 가 이 세션 프로세스가 아님(pid 재사용·복사된 폴더·위조된 meta) - 신호를 안 보냈다
 
     신호를 받는 프로세스는 모두 **이 폴더의 환경 표식**(저장소·id)을 단 것뿐이다:
-    1. 감독이 그 감독인 채 살아 있으면(시작 시각 + 표식) 그룹에 TERM, 5초 뒤 남으면 KILL (감독이 세션 리더일 때만)
+    1. 감독이 그 감독인 채 살아 있으면(시작 시각 + 표식) 그룹에 TERM, 유예 뒤 남으면 KILL (감독이 세션 리더일 때만)
     2. 그 뒤(또는 감독이 없으면 바로) 표식을 단 남은 프로세스를 pid 하나씩 - setsid 한 손자, 감독 없이 남은 하네스,
        meta.json 이 깨진 세션의 프로세스
 
@@ -697,7 +691,7 @@ def cancel(session_dir_, why=""):
                 pass
             except OSError as e:
                 return refuse("refused", f"SIGTERM 실패: {e.__class__.__name__}")
-            deadline = time.time() + KILL_GRACE_SEC
+            deadline = time.time() + TERM_GRACE_SEC + KILL_WAIT_SEC
             while time.time() < deadline and _pgroup_alive(pgid):
                 time.sleep(0.1)
             if _pgroup_alive(pgid):
@@ -832,14 +826,6 @@ def db_upsert(db_path, row):
         return False
 
 
-def _report_status(text):
-    for ln in (text or "").splitlines():
-        if ln.strip():
-            word = ln.split()[0].strip("*#`:.,[]()")
-            return word if word in REPORT_STATUSES else None
-    return None
-
-
 def _num_sum(a, b):
     if b is None or isinstance(b, bool) or not isinstance(b, (int, float)):
         return a
@@ -882,7 +868,7 @@ def index_row(session_dir_, live=None):
         "model": meta.get("model"), "provider": meta.get("provider"),
         "pid": meta.get("supervisor_pid"), "pgid": meta.get("pgid"), "harness_session_id": hsid,
         "state": st["state"], "started": meta.get("started"), "ended": st["ended"],
-        "last_event_at": st["last_event_at"], "rc": st["rc"], "report_status": _report_status(rep),
+        "last_event_at": st["last_event_at"], "rc": st["rc"], "report_status": parse_status(rep),
         "tokens_in": tin, "tokens_out": tout, "cost_usd": cost, "fail_kind": st["fail_kind"],
         "attempt": meta.get("attempt"), "label": meta.get("label"),
         "write_paths": json.dumps(wp if isinstance(wp, list) else [], ensure_ascii=False), "dir": str(d)}

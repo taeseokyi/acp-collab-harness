@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """AIMEM 운영 상태 저장소 - SQLite (표준 라이브러리만). 태석님 결정 2026-11-09 18:25.
 
-AIMEM.md 는 **규약 본문**만 남기고, 운영 상태(명부·보드·큐·소유권·로그·요청·그래프·실행)는 `.aimem/aimem.db` 가 정본이다.
-마크다운의 2·3·4·4.5·6절은 `render` 가 DB 에서 뽑는 **읽기 전용 스냅샷**(`AIMEM-state.md`)이다.
+AIMEM.md 는 **규약 본문**만 남기고, 운영 상태(명부·보드·큐·소유권·로그·요청·세션)는 `.aimem/aimem.db` 가 정본이다.
+`AIMEM-state.md` 는 `render` 가 DB 에서 뽑는 읽기 전용 스냅샷(명부·보드·큐·소유권·요청)이다.
 
   python3 tools/aimem_db.py init                  # 스키마 생성 (멱등)
-  python3 tools/aimem_db.py migrate               # AIMEM.md 표 + .aimem/{runs,graph,requests} JSON 을 적재 (멱등 upsert)
+  python3 tools/aimem_db.py migrate               # 파일에서 DB 를 맞춘다: 요청 JSON·handoff.md·세션 폴더 (멱등 upsert)
   python3 tools/aimem_db.py render                # AIMEM-state.md 스냅샷 생성
   python3 tools/aimem_db.py check --slot S2 --token d27e93 --rev 112   # 작업자 0.1 세 줄 검사
   python3 tools/aimem_db.py state                 # 웹 UI 용 JSON 한 덩어리
@@ -20,9 +20,13 @@ import pathlib
 import re
 import sqlite3
 import sys
+import tempfile
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from fleet_rt.harness import REAL as HARNESSES  # noqa: E402 - 하네스 목록의 정본
+from fleet_rt import sessions as _rt_sessions  # noqa: E402 - 세션 폴더 → 색인 행의 정본
 
 try:    # 시각은 설정 시간대 하나로 (`fleet.toml` `[time] zone`)
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
     from fleet_rt import timezone as _rt_tz
     _rt_tz.apply(pathlib.Path(__file__).resolve().parent.parent)
 except Exception:  # noqa: BLE001
@@ -31,10 +35,8 @@ except Exception:  # noqa: BLE001
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DB = ROOT / ".aimem" / "aimem.db"
 AIMEM = ROOT / "AIMEM.md"
-#: 핸드오프 로그 (REV 132). **정본은 DB `events(kind='handoff')` 하나다.** `.aimem/handoff.md` 는 거기서 만드는
-#: 읽기 전용 생성물(최신 HANDOFF_MAX 건)이고, 창에서 밀려난 항목은 같은 트랜잭션에서 월별 아카이브로 내보낸다.
-#: 저장소가 하나라 파일·DB 불일치가 생길 수 없고, 동시 쓰기는 SQLite 쓰기 트랜잭션이 직렬화한다 -
-#: REV 131 의 파일 잠금·멱등 롤오버·대조 검사는 두 곳에 쓰던 구조의 비용이었으므로 걷어냈다.
+#: 핸드오프 로그의 정본은 DB `events(kind='handoff')` 하나다. `.aimem/handoff.md` 는 최신 HANDOFF_MAX 건 생성물이고,
+#: 창에서 밀려난 항목은 같은 쓰기 트랜잭션에서 월별 아카이브로 내보낸다.
 HANDOFF = ROOT / ".aimem" / "handoff.md"
 HANDOFF_MAX = 12          # handoff.md 에 보이는 최신 항목 수 (AIMEM.md 5절)
 HANDOFF_ENTRY_MAX = 1200  # 항목당 문자 수 상한 (5절). `handoff add --allow-long` 으로만 넘긴다
@@ -45,6 +47,25 @@ HANDOFF_HEADER = ("# Handoff Log (generated)\n\n"
                   "Add an entry with `python3 tools/aimem_db.py handoff add`. Newest first, latest "
                   f"{HANDOFF_MAX}; older entries are exported to `.aimem/archive/handoff-YYYY-MM.md`. "
                   "The protocol is AIMEM.md Section 4.\n\n")
+
+
+#: 태스크·요청 상태 어휘 (CLI choices 와 검사가 같이 쓴다)
+TASK_STATUSES = ("TODO", "ASSIGNED", "IN-PROGRESS", "REVIEW", "DONE", "BLOCKED")
+REQUEST_STATUSES = ("NEW", "PLANNED", "IN-PROGRESS", "DONE", "REJECTED")
+
+
+def _write_atomic(path, text):
+    """같은 폴더의 고유 임시 파일에 쓰고 바꿔 넣는다 - 동시에 쓰는 이끼리 임시 파일을 밟지 않게."""
+    path = pathlib.Path(path)
+    fd, tmp = tempfile.mkstemp(prefix=f"{path.name}.", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def parse_handoff_entries(text):
@@ -135,9 +156,7 @@ def _sync_handoff_files(con):
     text = render_handoff_text(con)
     if not handoff.exists() or handoff.read_text(encoding="utf-8") != text:
         handoff.parent.mkdir(parents=True, exist_ok=True)
-        tmp = handoff.with_name(f"{handoff.name}.{os.getpid()}.tmp")
-        tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, handoff)   # 반쯤 쓰인 파일이 남지 않는다
+        _write_atomic(handoff, text)
     return exported
 
 
@@ -227,8 +246,6 @@ def cmd_handoff(a):
     return 0
 
 
-STATE_MD = ROOT / "AIMEM-state.md"
-
 SCHEMA = """
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
@@ -290,50 +307,16 @@ def _now():
     return dt.datetime.now().isoformat(timespec="seconds")
 
 
-def _sessions_ddl():
-    """`sessions` 표 정의는 `fleet_rt.base` 한 곳에 있다. 패키지가 없어도 이 도구는 떠야 하므로 늦게·안전하게 불러온다."""
-    tools = str(pathlib.Path(__file__).resolve().parent)
-    if tools not in sys.path:
-        sys.path.append(tools)
-    try:
-        from fleet_rt.base import SESSIONS_DDL
-        return SESSIONS_DDL
-    except ImportError:
-        return ""
-
-
 def cmd_init(a=None):
+    from fleet_rt.base import SESSIONS_DDL  # noqa: PLC0415 - `sessions` 표 정의는 `fleet_rt.base` 한 곳
     with connect() as con:
         con.executescript(SCHEMA)
-        con.executescript(_sessions_ddl())
+        con.executescript(SESSIONS_DDL)
     print(f"ok: {DB}")
     return 0
 
 
-# ----------------------------------------------------------------- 적재 (마크다운 표 → DB)
-def _table_rows(text, heading_re):
-    """`## N. 제목` 절 안의 첫 표를 행 리스트(셀 리스트)로. 헤더/구분선 제외."""
-    m = re.search(heading_re, text, re.M)
-    if not m:
-        return []
-    body = text[m.end():]
-    nxt = re.search(r"^## ", body, re.M)
-    body = body[:nxt.start()] if nxt else body
-    rows = []
-    for line in body.splitlines():
-        if not line.startswith("|"):
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if all(re.fullmatch(r"-{2,}", c) for c in cells if c):
-            continue
-        rows.append(cells)
-    return rows[1:] if rows else []
-
-
-def _strip_code(s):
-    return s.strip().strip("`").strip()
-
-
+# ----------------------------------------------------------------- 적재 (파일 → DB)
 def load_request_files(con, now=None):
     """`.aimem/requests/*.json` 을 requests 표에 적재합니다(멱등 upsert). 적재한 건수.
 
@@ -363,19 +346,6 @@ def load_request_files(con, now=None):
 
 
 # ----------------------------------------------------------------- 세션 색인 (폴더 -> sessions 표)
-def _session_pid_alive(pid):
-    """`/proc/<pid>` 가 있고 좀비가 아니면 산 것. 끝난 자식을 아직 못 거둔 좀비는 산 것으로 치지 않는다."""
-    try:
-        pid = int(pid)
-        if pid <= 0:
-            return False
-        stat = pathlib.Path(f"/proc/{pid}/stat").read_text(errors="replace")
-    except (TypeError, ValueError, OSError):
-        return False
-    # 두 번째 칸(comm)에 공백·괄호가 들어갈 수 있어 마지막 ')' 뒤를 본다
-    return stat.rpartition(")")[2].split()[:1] != ["Z"]
-
-
 def _read_json_file(p):
     try:
         d = json.loads(pathlib.Path(p).read_text(encoding="utf-8"))
@@ -385,43 +355,12 @@ def _read_json_file(p):
 
 
 def session_row_from_dir(d):
-    """세션 폴더 하나를 `sessions` 표의 한 행(dict)으로. `meta.json` 이 없으면 None.
-
-    상태: end.json 이 있으면 그 state, 없으면 감독 pid 가 살았으면 running, 아니면 lost.
-    `fleet_rt.sessions.index_row` 가 있으면 그쪽이 정본이라 먼저 쓴다 (규칙이 둘로 갈라지지 않게)."""
+    """세션 폴더 하나를 `sessions` 표의 한 행(dict)으로 - 규칙은 `fleet_rt.sessions.index_row` 한 곳. `meta.json` 이 없으면 None."""
     d = pathlib.Path(d)
     if not (d / "meta.json").is_file():
         return None
-    try:
-        from fleet_rt import sessions as _rt_sessions
-        fn = getattr(_rt_sessions, "index_row", None)
-        if fn:
-            row = fn(d)
-            if isinstance(row, dict) and row.get("id"):
-                return row
-    except Exception:
-        pass
-    meta = _read_json_file(d / "meta.json")
-    if not meta:
-        return None
-    end = _read_json_file(d / "end.json")
-    sup = meta.get("supervisor_pid")
-    if end is not None:
-        state = end.get("state") or "done"
-    else:
-        state = "running" if _session_pid_alive(sup) else "lost"
-    wp = meta.get("write_paths")
-    return {"id": meta.get("id") or d.name, "role": meta.get("role") or "worker", "round": meta.get("round"),
-            "task_id": meta.get("task_id"), "slot": meta.get("slot"), "harness": meta.get("harness") or "?",
-            "model": meta.get("model"), "provider": meta.get("provider"), "pid": sup,
-            "pgid": meta.get("supervisor_pgid") or meta.get("pgid"),
-            "harness_session_id": (end or {}).get("harness_session_id") or meta.get("harness_session_id"),
-            "state": state, "started": meta.get("started") or meta.get("supervisor_started"),
-            "ended": (end or {}).get("ended"), "last_event_at": None, "rc": (end or {}).get("rc"),
-            "report_status": (end or {}).get("report_status"), "tokens_in": None, "tokens_out": None, "cost_usd": None,
-            "fail_kind": (end or {}).get("fail_kind"), "attempt": meta.get("attempt") or 1,
-            "label": meta.get("label"), "write_paths": json.dumps(wp if isinstance(wp, list) else [], ensure_ascii=False),
-            "dir": str(d)}
+    row = _rt_sessions.index_row(d)
+    return row if isinstance(row, dict) and row.get("id") else None
 
 
 def index_sessions(con):
@@ -452,155 +391,23 @@ _SESSION_COLS = ("id", "role", "round", "task_id", "slot", "harness", "model", "
 
 
 def migrate(verbose=True):
+    """파일에서 DB 를 맞춘다(멱등): 스키마, 비었을 때만 REV 씨앗, `.aimem/handoff.md` 복구, 요청 파일, 세션 색인."""
     cmd_init()
     text = AIMEM.read_text(encoding="utf-8") if AIMEM.exists() else ""
     now = _now()
     with connect() as con:
-        # **REV 는 DB 가 정본이다 (2단계, REV 114~).** 마크다운 서문에서는 DB 에 아직
-        # REV 가 없을 때만 **씨앗으로** 읽는다. 예전처럼 매번 덮어쓰면 `event --bump`
-        # 로 올린 REV 가 `migrate` 한 번에 되돌아간다 - 실제로 114 가 113 으로
-        # 내려갔다(REV 114 실측). 서문을 DB 에 맞추는 쪽은 `render` 가 한다.
+        # REV 의 정본은 DB 다 - 서문 값은 DB 에 REV 가 없을 때만 씨앗으로 읽는다 (덮으면 올린 REV 가 되돌아간다)
         rev_m = re.search(r"- \*\*REV: (\d+)\*\*", text)
         if rev_m and rev(con) is None:
             con.execute("INSERT INTO meta(key,value) VALUES('rev',?)", (rev_m.group(1),))
         con.execute("INSERT INTO meta(key,value) VALUES('migrated_at',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (now,))
-        # 2절 명부: 슬롯|토큰|하네스|역할|세션키|비고
-        n_slots = 0
-        for cells in _table_rows(text, r"^## 2\. 세션 명부"):
-            if len(cells) < 4 or not re.fullmatch(r"S\d+", cells[0]):
-                continue
-            slot, token, harness, role = cells[0], _strip_code(cells[1]), cells[2], cells[3]
-            note = cells[5] if len(cells) > 5 else ""
-            # 모델은 DB `slots.model` 이 유일한 정본이다 - 마크다운 표엔 칸이 없으니 새 슬롯은 비워 두고, 이미 있는 값은 덮지 않는다.
-            con.execute("""INSERT INTO slots(slot,token,harness,model,role,note,updated) VALUES(?,?,?,?,?,?,?)
-                ON CONFLICT(slot) DO UPDATE SET token=excluded.token,harness=excluded.harness,
-                role=excluded.role,note=excluded.note,updated=excluded.updated""", (slot, token, harness, None, role, note, now))
-            n_slots += 1
-        # 6절 소유권: 경로|소유|비고
-        n_own = 0
-        for cells in _table_rows(text, r"^## 6\. 파일 소유권"):
-            if len(cells) < 2:
-                continue
-            pat = _strip_code(cells[0])
-            if not pat or pat in ("경로 패턴",):
-                continue
-            # `_table_rows` 는 **다음 `##` 까지**를 한 절로 본다. 6절 안에는 `### 아카이브
-            # 수명주기` 가 있어 그 표(대상|옮길 곳|언제)가 소유권으로 섞여 들어왔다
-            # (S4 검수 6번: `'4절` 핸드오프 로그'` 같은 쓰레기 4행). 소유 칸이 슬롯·관리자·
-            # 미배정·해당 슬롯 중 하나가 아니면 소유권 행이 아니다.
-            if not re.fullmatch(r"S\d+|관리자(\(.*\))?|미배정|해당 슬롯", cells[1].strip()):
-                continue
-            con.execute("""INSERT INTO ownership(path_pattern,owner,note) VALUES(?,?,?)
-                ON CONFLICT(path_pattern) DO UPDATE SET owner=excluded.owner,note=excluded.note""",
-                        (pat, cells[1], cells[2] if len(cells) > 2 else ""))
-            n_own += 1
-        # 3절 보드: ID|태스크|담당|상태|이어받음|산출물
-        n_tasks = 0
-        for cells in _table_rows(text, r"^## 3\. 작업 보드"):
-            if len(cells) < 4 or not re.fullmatch(r"T-\d+\w*", cells[0]):
-                continue
-            con.execute("""INSERT INTO tasks(id,title,slot,status,inherited,artifacts,created,updated) VALUES(?,?,?,?,?,?,?,?)
-                ON CONFLICT(id) DO UPDATE SET title=excluded.title,slot=excluded.slot,status=excluded.status,
-                inherited=excluded.inherited,artifacts=excluded.artifacts,updated=excluded.updated""",
-                        (cells[0], cells[1], cells[2], cells[3], cells[4] if len(cells) > 4 else "",
-                         cells[5] if len(cells) > 5 else "", now, now))
-            n_tasks += 1
-        # 4.5 큐. **표가 사라졌으면 손대지 않습니다** - 2단계에서 AIMEM.md 가 포인터 한 줄로
-        # 바뀌면 `DELETE` 만 돌아 큐가 통째로 날아갑니다(마크다운이 더 이상 정본이 아닌데도).
-        queue_rows = _table_rows(text, r"^## 4\.5 대기 큐")
-        pos = 0
-        if not queue_rows:
-            pos = con.execute("SELECT COUNT(*) AS n FROM queue").fetchone()["n"]
-            queue_rows = []
-        else:
-            con.execute("DELETE FROM queue")
-        for cells in queue_rows:
-            if len(cells) < 2 or not cells[1] or cells[0] in ("순서",):
-                continue
-            pos += 1
-            con.execute("INSERT INTO queue(pos,task,slot_hint,inherited,note) VALUES(?,?,?,?,?)",
-                        (pos, cells[1], cells[2] if len(cells) > 2 else "", cells[3] if len(cells) > 3 else "", cells[4] if len(cells) > 4 else ""))
-        # 핸드오프 로그 → events(kind='handoff'). 정본 파일은 .aimem/handoff.md (REV 129); AIMEM.md 4절에 남은 옛 항목도 받는다
         entries = parse_handoff_entries(HANDOFF.read_text(encoding="utf-8")) if HANDOFF.exists() else []
-        m = re.search(r"^## 4\. (?:핸드오프 로그|Handoff Log)", text, re.M)
-        if m:
-            body = text[m.end():]
-            nxt = re.search(r"^## ", body, re.M)
-            entries += parse_handoff_entries(body[:nxt.start()] if nxt else body)
         n_ev = _import_handoff_entries(con, entries)
-        # 요청 JSON
         n_req = load_request_files(con, now)
-        # 그래프 JSON
-        n_g = 0
-        for f in sorted((ROOT / ".aimem" / "graph").glob("*.json")) if (ROOT / ".aimem" / "graph").exists() else []:
-            if f.name.endswith("-nodes.json") or f.name.startswith("."):
-                continue
-            try:
-                g = json.loads(f.read_text(encoding="utf-8"))
-            except ValueError:
-                continue
-            if "nodes" not in g:
-                continue
-            con.execute("""INSERT INTO graphs(id,request,concurrency,created,updated,raw) VALUES(?,?,?,?,?,?)
-                ON CONFLICT(id) DO UPDATE SET request=excluded.request,concurrency=excluded.concurrency,updated=excluded.updated,raw=excluded.raw""",
-                        (g.get("id") or f.stem, g.get("request"), g.get("concurrency"), g.get("created"), g.get("updated"), json.dumps(g, ensure_ascii=False)))
-            for n in g["nodes"]:
-                tid = n["id"] if re.fullmatch(r"T-\d+\w*", str(n.get("id", ""))) else None
-                con.execute("""INSERT INTO nodes(graph_id,node_id,task_id,title,slot,deps,verify,max_attempts,status,attempts)
-                    VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(graph_id,node_id) DO UPDATE SET task_id=excluded.task_id,title=excluded.title,
-                    slot=excluded.slot,deps=excluded.deps,verify=excluded.verify,max_attempts=excluded.max_attempts,status=excluded.status,attempts=excluded.attempts""",
-                            (g.get("id") or f.stem, n.get("id"), tid, n.get("title"), n.get("slot"), json.dumps(n.get("deps") or []),
-                             n.get("verify"), n.get("max_attempts"), n.get("status"), len(n.get("attempts") or [])))
-            n_g += 1
-        # 실행 JSON (+ rc/lost)
-        n_runs = 0
-        runs_dir = ROOT / ".aimem" / "runs"
-        for f in sorted(runs_dir.glob("*.json")) if runs_dir.exists() else []:
-            try:
-                d = json.loads(f.read_text(encoding="utf-8"))
-            except ValueError:
-                continue
-            rid = d.get("id") or f.stem
-            rc_f, lost_f = runs_dir / f"{rid}.rc", runs_dir / f"{rid}.lost"
-            rc = None
-            state = "running"
-            ended = None
-            if lost_f.exists():
-                state = "lost"
-                try:
-                    ended = json.loads(lost_f.read_text(encoding="utf-8")).get("ended")
-                except ValueError:
-                    pass
-            elif rc_f.exists():
-                try:
-                    rc = int(rc_f.read_text().strip() or -1)
-                except ValueError:
-                    rc = -1
-                state = "done"
-                ended = dt.datetime.fromtimestamp(rc_f.stat().st_mtime).isoformat(timespec="seconds")
-            else:
-                pid = d.get("pid")
-                if pid:
-                    try:
-                        import os
-                        os.kill(pid, 0)
-                    except OSError:
-                        state = "lost"
-            task = d.get("task")
-            if not task:
-                mm = re.match(r"(T-\d+\w*)", d.get("label") or "")
-                task = mm.group(1) if mm else None
-            con.execute("""INSERT INTO runs(id,task_id,slot,harness,model,attempt,label,write_paths,pid,started,ended,rc,state,brief_path,rev)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET task_id=COALESCE(excluded.task_id,runs.task_id),
-                ended=excluded.ended,rc=excluded.rc,state=excluded.state,model=excluded.model,label=excluded.label""",
-                        (rid, task, d.get("slot"), d.get("harness"), d.get("model"), d.get("attempt") or 1, d.get("label"),
-                         json.dumps(d.get("write") or [], ensure_ascii=False), d.get("pid"), d.get("started"), ended, rc, state,
-                         d.get("brief"), d.get("rev")))
-            n_runs += 1
         n_sess = index_sessions(con)
         con.commit()
     if verbose:
-        print(f"migrate: slots {n_slots} / ownership {n_own} / tasks {n_tasks} / queue {pos} / events +{n_ev} / requests {n_req} / graphs {n_g} / runs {n_runs} / sessions {n_sess}")
+        print(f"migrate: events +{n_ev} / requests {n_req} / sessions {n_sess}")
     return 0
 
 
@@ -628,36 +435,27 @@ def state_dict():
             "tasks": rows("SELECT * FROM tasks ORDER BY id"),
             "queue": rows("SELECT * FROM queue ORDER BY pos"),
             "requests": rows("SELECT id,title,requester,status,created,updated FROM requests ORDER BY created"),
-            "graphs": rows("SELECT id,request,concurrency,created,updated FROM graphs ORDER BY id"),
-            "nodes": rows("SELECT * FROM nodes ORDER BY graph_id,node_id"),
             "runs": rows("SELECT * FROM runs ORDER BY started"),
             "sessions": session_rows(),
-            # 최근 50건 **더하기** 핸드오프 최근 12건. 합집합인 이유: `task`/`queue`/
-            # `ownership` 이벤트가 한 라운드에 수십 건 쌓이면 `LIMIT 50` 안에서 핸드오프가
-            # 밀려나, 웹 화면의 `4절` 로그가 2건으로 줄었다(REV 114 실측). 12 는
-            # `5절` 의 "`4절` 로그 항목 수 12건" 상한과 같은 수다.
-            "events": rows("""
+            # 최근 50건에 핸드오프 최근 HANDOFF_MAX 건을 더한다 - 다른 이벤트에 밀려 화면의 로그가 비지 않게
+            "events": rows(f"""
                 SELECT seq,at,actor,rev,kind,body FROM events
                  WHERE seq IN (SELECT seq FROM events ORDER BY seq DESC LIMIT 50)
-                    OR seq IN (SELECT seq FROM events WHERE kind='handoff' ORDER BY seq DESC LIMIT 12)
+                    OR seq IN (SELECT seq FROM events WHERE kind='handoff' ORDER BY seq DESC LIMIT {HANDOFF_MAX})
                  ORDER BY seq DESC"""),
         }
         for r in out["runs"]:
             r["write_paths"] = json.loads(r["write_paths"] or "[]")
         for r in out["sessions"]:
             r["write_paths"] = json.loads(r["write_paths"] or "[]")
-        # 화면은 아직 `runs` 키 하나를 읽는다: 옛 실행 + 새 세션을 같은 꼴로 합쳐 시작 시각 순(새것이 뒤)으로 준다
-        # 관리자 세션은 뺀다 - 작업자 실행이 아니고, 관리자가 라운드를 닫으며 뜬 스냅샷에 자기 자신이
-        # `running` 으로 찍혀 끝나자마자 스냅샷이 낡는다 (R21 실측: STATE_SNAPSHOT_STALE)
+        # `runs` 는 옛 실행 표 + 세션을 같은 꼴로 합쳐 시작 시각 순(새것이 뒤)으로 준다
         out["runs"] += [{"id": r["id"], "task_id": r["task_id"], "slot": r["slot"], "harness": r["harness"],
                          "model": r["model"], "attempt": r["attempt"], "label": r["label"],
                          "write_paths": r["write_paths"], "pid": r["pid"], "started": r["started"], "ended": r["ended"],
                          "rc": r["rc"], "state": r["state"], "report_status": r["report_status"],
                          "brief_path": str(pathlib.Path(r["dir"]) / "brief.md") if r["dir"] else None, "rev": None}
-                        for r in out["sessions"] if r.get("role") != "manager"]
+                        for r in out["sessions"]]
         out["runs"].sort(key=lambda r: r["started"] or "")
-        for n in out["nodes"]:
-            n["deps"] = json.loads(n["deps"] or "[]")
     return out
 
 
@@ -706,7 +504,9 @@ STAMP_PREFIX = "- 정본은 `.aimem/aimem.db` 입니다."
 
 
 def render_text():
-    """스냅샷 본문을 문자열로. 파일을 쓰지 않습니다 - 린터가 현물과 대조할 때 씁니다."""
+    """스냅샷 본문을 문자열로 (파일은 쓰지 않는다 - 린터가 현물과 대조할 때 쓴다).
+
+    명부·보드·큐·소유권·요청만 싣는다. 이벤트·실행·세션은 세션이 뜨고 질 때마다 바뀌어 스냅샷을 늘 낡게 만든다."""
     s = state_dict()
     L = [f"# AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)",
          "", f"{STAMP_PREFIX} 이 파일을 손으로 고치지 마십시오. 생성 {s['generated']} / REV {s['rev']}", "",
@@ -716,9 +516,6 @@ def render_text():
     L += ["", "## 3. 작업 보드", "", "| ID | 요청 | 태스크 | 담당 | 상태 | 산출물 |", "| --- | --- | --- | --- | --- | --- |"]
     for t in s["tasks"]:
         L.append(f"| {t['id']} | {t['request_id'] or '-'} | {t['title'] or ''} | {t['slot'] or '-'} | {t['status']} | {t['artifacts'] or ''} |")
-    L += ["", "## 4. 이벤트 로그 (최신 50)", ""]
-    for e in s["events"]:
-        L.append(f"- `{e['at']}` {e['actor'] or ''} [{e['kind']}] REV {e['rev'] or '-'}: {(e['body'] or '').replace(chr(10), ' ')[:300]}")
     L += ["", "## 4.5 대기 큐", "", "| 순서 | 태스크 | 후보 슬롯 | 비고 |", "| --- | --- | --- | --- |"]
     for q in s["queue"]:
         L.append(f"| {q['pos']} | {q['task']} | {q['slot_hint'] or ''} | {q['note'] or ''} |")
@@ -728,9 +525,6 @@ def render_text():
     L += ["", "## 요청", "", "| id | 제목 | 요청자 | 상태 | 생성 |", "| --- | --- | --- | --- | --- |"]
     for q in s["requests"]:
         L.append(f"| {q['id']} | {q['title'] or ''} | {q['requester'] or ''} | {q['status']} | {q['created'] or ''} |")
-    L += ["", "## 실행 (최근 30)", "", "| run id | 태스크 | 슬롯 | 하네스 | 모델 | 시도 | 상태 | rc | 시작 | 끝 |", "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
-    for r in s["runs"][-30:]:
-        L.append(f"| {r['id']} | {r['task_id'] or '-'} | {r['slot']} | {r['harness']} | {r['model'] or ''} | {r['attempt']} | {r['state']} | {'' if r['rc'] is None else r['rc']} | {(r['started'] or '')[11:19]} | {(r['ended'] or '')[11:19]} |")
     return "\n".join(L) + "\n"
 
 
@@ -746,7 +540,7 @@ def sync_rev_in_aimem():
     text = aimem.read_text(encoding="utf-8")
     new = re.sub(r"- \*\*REV: \d+\*\*", f"- **REV: {cur}**", text, count=1)
     if new != text:
-        # REV 가 바뀐 그 render 가 '최종 갱신' 줄도 맞춘다 - 손으로 고치다 잊히던 줄이다 (REV 129)
+        # REV 가 바뀐 그 render 가 '최종 갱신' 줄도 맞춘다
         stamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M") + " KST"
         new = re.sub(r"^- (최종 갱신|Last updated): .*$", lambda m: f"- {m.group(1)}: {stamp}", new, count=1, flags=re.M)
         aimem.write_text(new, encoding="utf-8")
@@ -759,13 +553,13 @@ def render(sync_aimem=True):
     state_md = ROOT / "AIMEM-state.md"
     state_md.write_text(body, encoding="utf-8")
     bumped = sync_rev_in_aimem() if sync_aimem else None
-    handoff_sync()   # .aimem/handoff.md 도 DB 에서 만드는 생성물이다 (REV 132)
+    handoff_sync()   # .aimem/handoff.md 도 DB 에서 만드는 생성물이다
     print(f"render: {state_md} ({body.count(chr(10))} lines)"
           + (f" / AIMEM.md 서문 REV -> {bumped}" if bumped else ""))
     return 0
 
 
-# ----------------------------------------------------------------- 쓰기 명령 (관리자용, 2단계에서 마크다운 편집을 대체)
+# ----------------------------------------------------------------- 쓰기 명령 (관리자용)
 def _upsert(con, table, key_col, key, fields, defaults):
     """있으면 **준 필드만** 고치고, 없으면 기본값을 채워 넣습니다.
 
@@ -803,7 +597,7 @@ def cmd_task(a):
                         (now, a.actor, rev(con), "task", f"{a.id} {a.status or ''} {a.slot or ''} {a.title or ''}".strip()))
             con.commit(); print(f"task {a.id} {what}")
             if a.request:
-                note_round_request(a.request)     # 라운드 도중 들어온 요청도 그 라운드 기록에 (REV 148)
+                note_round_request(a.request)     # 라운드 도중 들어온 요청도 그 라운드 기록에
         elif a.action == "list":
             for r in con.execute("SELECT id,request_id,slot,status,title FROM tasks ORDER BY id"):
                 print(f"  {r['id']:<7} {r['status']:<11} {r['slot'] or '-':<4} {r['request_id'] or '-':<22} {r['title'] or ''}")
@@ -811,8 +605,7 @@ def cmd_task(a):
 
 
 def _sync_request_file(req_id, status=None, title=None, detail=None, project=None):
-    """`migrate` 는 `.aimem/requests/*.json` 을 다시 적재합니다 - DB 만 고치면 다음 migrate 가
-    옛 값으로 되돌립니다. 그래서 요청 파일도 같은 값으로 맞춥니다 (있을 때만)."""
+    """요청 파일도 같은 값으로 맞춘다 (있을 때만) - `migrate` 가 파일에서 다시 적재해 DB 만 고치면 되돌아간다."""
     d = ROOT / ".aimem" / "requests"
     if not d.exists():
         return False
@@ -826,23 +619,22 @@ def _sync_request_file(req_id, status=None, title=None, detail=None, project=Non
         for k, v in (("status", status), ("title", title), ("detail", detail), ("project", project)):
             if v is not None:
                 obj[k] = v
-        tmp = f.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-        os.replace(tmp, f)
+        _write_atomic(f, json.dumps(obj, ensure_ascii=False, indent=1) + "\n")
         return True
     return False
 
 
-#: 프로젝트 이름 = `projects/` 아래 폴더 하나의 이름. `aimem_monitor.PROJECT_NAME_RE` 와 같은 식 (테스트가 대조한다)
-PROJECT_NAME_RE = r"\A[0-9A-Za-z가-힣][0-9A-Za-z가-힣_-]{0,39}\Z"
+from fleet_rt.base import PROJECT_NAME_RE  # noqa: E402 - 정의는 한 곳
+
+
+class _NoChange(Exception):
+    """`roundrec.update` 의 fn 이 쓰지 않고 빠져나갈 때."""
 
 
 def note_round_request(req_id, n=None):
-    """라운드 **도중에** 다루게 된 요청을 그 라운드의 `rounds/R<N>/round.json` 에 덧붙입니다 (REV 148).
+    """라운드 도중에 다루게 된 요청(과 그 프로젝트)을 도는 라운드의 `rounds/R<N>/round.json` 에 덧붙인다.
 
-    `round.json` 은 라운드를 띄우는 순간의 열린 요청만 담습니다(`fleet_ctl._write_round_record`). 그 뒤에 들어온
-    요청을 관리자가 태스크에 잇거나(`task set --request`) 직접 만들면(`request set`) 그 프로젝트가 '거친 라운드' 에서
-    빠졌습니다. 도는 라운드가 없거나 기록 파일이 없으면 아무것도 하지 않습니다. 실패해도 부른 명령은 막지 않습니다.
+    도는 라운드나 기록 파일이 없거나 실패한 라운드면 아무것도 하지 않는다. 기록 보강은 덤이라 실패해도 부른 명령을 막지 않는다.
     """
     try:
         if not req_id:
@@ -854,35 +646,36 @@ def note_round_request(req_id, n=None):
             n = fleet.current_round()
         if n is None:
             return False
-        f = ROOT / "rounds" / f"R{int(n)}" / "round.json"
-        rec = json.loads(f.read_text(encoding="utf-8"))
-        if not isinstance(rec, dict) or rec.get("state") == "failed":
+        rdir = ROOT / "rounds" / f"R{int(n)}"
+        if not (rdir / "round.json").is_file():
             return False
         project = ""
-        rdir = ROOT / ".aimem" / "requests"
-        for q in (sorted(rdir.glob("*.json")) if rdir.exists() else []):
-            try:
-                obj = json.loads(q.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
-            if isinstance(obj, dict) and obj.get("id") == req_id:
+        qdir = ROOT / ".aimem" / "requests"
+        for q in (sorted(qdir.glob("*.json")) if qdir.exists() else []):
+            obj = _read_json_file(q)
+            if obj and obj.get("id") == req_id:
                 project = obj.get("project") if isinstance(obj.get("project"), str) else ""
                 break
-        reqs = rec.get("requests") if isinstance(rec.get("requests"), list) else []
-        projs = rec.get("projects") if isinstance(rec.get("projects"), list) else []
-        changed = False
-        if req_id not in reqs:
-            reqs.append(req_id); changed = True
-        if project and re.match(PROJECT_NAME_RE, project) and project not in projs:
-            projs = sorted(set(projs) | {project}); changed = True
-        if not changed:
-            return False
-        rec["requests"], rec["projects"] = reqs, projs
-        tmp = f.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(rec, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-        os.replace(tmp, f)
+
+        def add(rec):
+            if not rec or rec.get("state") == "failed":
+                raise _NoChange
+            reqs = rec.get("requests") if isinstance(rec.get("requests"), list) else []
+            projs = rec.get("projects") if isinstance(rec.get("projects"), list) else []
+            changed = False
+            if req_id not in reqs:
+                reqs.append(req_id); changed = True
+            if project and re.match(PROJECT_NAME_RE, project) and project not in projs:
+                projs = sorted(set(projs) | {project}); changed = True
+            if not changed:
+                raise _NoChange
+            rec["requests"], rec["projects"] = reqs, projs
+            return rec
+
+        from fleet_rt import roundrec  # noqa: PLC0415 - round.json 은 엔진과 같은 잠금으로 쓴다
+        roundrec.update(rdir, add)
         return True
-    except Exception:  # noqa: BLE001 - 기록 보강은 덤이다. 태스크·요청 쓰기를 막지 않는다
+    except Exception:  # noqa: BLE001 - _NoChange 포함. 기록 보강은 태스크·요청 쓰기를 막지 않는다
         return False
 
 
@@ -917,7 +710,7 @@ def cmd_request(a):
                        "title": row["title"] or "", "detail": row["detail"] or "", "status": row["status"], "subtasks": []}
                 (rdir / f"{a.id}.json").write_text(json.dumps(rec, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
                 synced = True
-            note_round_request(a.id)              # 관리자가 라운드 도중 만든 요청도 그 라운드 기록에 (REV 148)
+            note_round_request(a.id)              # 관리자가 라운드 도중 만든 요청도 그 라운드 기록에
             print(f"request {a.id} {what}" + (" (요청 파일도 맞춤)" if synced else "") + (f" [프로젝트 {project}]" if project else ""))
         elif a.action == "list":
             # 프로젝트는 요청 파일(.aimem/requests/*.json)의 `project` - 결과물이 쌓일 `projects/<이름>/` (빈 값 = 함대 자체)
@@ -1003,19 +796,18 @@ def _monitor_log_held():
 def archive_plan(days=14, now=None):
     """무엇을 내릴지 계산만 한다 (파일·DB 를 건드리지 않는다). 태스크·요청·그래프와 그 기록.
 
-    기준 시각은 **포함**(`<=`)이다 - `<` 였을 때 `--days 0` 이 같은 초에 끝난 행을 빠뜨려 두 번 돌려야 했다(REV 119 메모).
-    시각은 모두 초 단위 ISO(`_now()`, 요청 파일은 `_iso` 로 정규화)라 문자열 비교로 충분하다."""
+    기준 시각은 포함(`<=`)이라 `--days 0` 이 같은 초에 끝난 것도 내린다. 시각은 모두 초 단위 ISO 라 문자열 비교로 충분하다."""
     now = now or dt.datetime.now()
     cutoff = (now - dt.timedelta(days=days)).isoformat(timespec="seconds")
     plan = {"days": days, "cutoff": cutoff, "tasks": [], "requests": [], "graphs": [],
-            "runs": [], "sessions": [], "events": [], "handoff": [], "relay": [], "logs": [], "total_records": 0}
+            "sessions": [], "events": [], "handoff": [], "relay": [], "logs": [], "total_records": 0}
     with connect() as con:
         for r in con.execute("SELECT id,title,slot,status,inherited,artifacts,updated FROM tasks "
                              "WHERE status='DONE' AND COALESCE(updated,created,'') <= ? ORDER BY id", (cutoff,)):
             plan["tasks"].append(dict(r))
         task_status = {r["id"]: r["status"] for r in con.execute("SELECT id,status FROM tasks")}
         request_ids = {r["id"] for r in con.execute("SELECT id FROM requests")}
-        graph_ids = {r["id"] for r in con.execute("SELECT id FROM graphs")}
+        graph_ids = set()
         protected_ids = {r["id"] for r in con.execute(
             "SELECT id FROM requests WHERE upper(COALESCE(status,'')) NOT IN ('DONE','REJECTED')")}
         for r in con.execute("SELECT task FROM queue"):
@@ -1041,7 +833,6 @@ def archive_plan(days=14, now=None):
                 plan["requests"].append({"id": rid, "file": f.name, "status": d.get("status"), "title": d.get("title"), "when": when})
     gdir = ROOT / ".aimem" / "graph"
     open_graph_ids = set()
-    graph_run_ids = set()
     if gdir.is_dir():
         for f in sorted(gdir.glob("*.json")):
             try:
@@ -1061,9 +852,7 @@ def archive_plan(days=14, now=None):
                     inputs = sorted(x.name for x in (gdir / "inputs").glob(f"{gid}-*")) if (gdir / "inputs").is_dir() else []
                     for n in nodes:
                         for key in (n.get("id"), n.get("task")):
-                            # `task` 는 입력 파일 이름일 수도, **지시 본문 전체**일 수도 있다. 본문을 파일 이름으로 쓰면
-                            # `File name too long` 으로 죽었다 (2026-11-11 태석님: "지금 끝난 것 전부" 미리보기가 안 됨 -
-                            # 14일 기준에서는 최근 그래프가 걸러져 안 드러났다). 파일 이름 꼴일 때만 찾는다.
+                            # `task` 는 지시 본문 전체일 수도 있어 파일 이름 꼴일 때만 찾는다
                             if not isinstance(key, str) or not _ARCHIVE_ID_RE.fullmatch(key):
                                 continue
                             try:
@@ -1075,19 +864,11 @@ def archive_plan(days=14, now=None):
                                            "counts": {k: sum(1 for n in nodes if n.get("status") == k) for k in ARCHIVE_TERMINAL_NODE},
                                            "side_files": side, "inputs": inputs})
                     archived = True
-                    for n in nodes:
-                        for attempt in n.get("attempts") or []:
-                            if isinstance(attempt, dict) and attempt.get("run_id"):
-                                graph_run_ids.add(str(attempt["run_id"]))
-                        if n.get("run_id"):
-                            graph_run_ids.add(str(n["run_id"]))
             if not archived:
                 protected_ids.add(gid)
                 for n in nodes:
                     for key in (n.get("id"), n.get("task")):
-                        # `task` 는 **지시 본문 전체**일 수도 있다. 본문을 식별자로 넣으면 아래 `_mentions`
-                        # 가 이벤트마다 수천 자를 `re.escape` 해 미리보기가 15초 걸렸고(2026-11-12 실측),
-                        # 어차피 어떤 본문과도 맞지 않아 지키지도 못한다. 식별자 꼴일 때만 넣는다.
+                        # `task` 는 지시 본문 전체일 수도 있어 식별자 꼴일 때만 지킨다
                         if isinstance(key, str) and _ARCHIVE_ID_RE.fullmatch(key):
                             protected_ids.add(key)
                     for attempt in n.get("attempts") or []:
@@ -1099,64 +880,7 @@ def archive_plan(days=14, now=None):
     protected_ids = {i for i in protected_ids if isinstance(i, str) and _ARCHIVE_ID_RE.fullmatch(i)}
     plan["tasks"] = [r for r in plan["tasks"] if r["id"] not in protected_ids]
     archived_task_ids = {r["id"] for r in plan["tasks"]}
-    run_dir = ROOT / ".aimem" / "runs"
-    seen_runs = set()
-    if run_dir.is_dir():
-        for f in sorted(run_dir.glob("*.json")):
-            try:
-                meta = json.loads(f.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
-            rid = meta.get("id") or f.stem
-            if not rid or rid in seen_runs:
-                continue
-            if not (run_dir / f"{rid}.rc").exists():
-                continue
-            task = meta.get("task")
-            if rid in protected_ids or (isinstance(task, str) and task in protected_ids):
-                continue
-            if isinstance(task, str) and task in task_status and task_status[task] != "DONE":
-                continue
-            started = _iso(meta.get("started"))
-            attached = isinstance(task, str) and task in archived_task_ids
-            if rid in graph_run_ids:
-                attached = True
-            if not attached and (not isinstance(task, str) or task not in task_status):
-                if started and started <= cutoff:
-                    attached = True
-            if not attached:
-                continue
-            files = sorted(x.name for x in run_dir.iterdir()
-                           if x.name.startswith(f"{rid}.") and x.is_file())
-            seen_runs.add(rid)
-            plan["runs"].append({"id": rid, "task": task, "when": started, "files": files})
-
-        orphans = {}
-        for f in run_dir.iterdir():
-            if not f.is_file():
-                continue
-            rid = f.name.split(".", 1)[0]
-            if not rid or not (f.name == f"{rid}.rc" or f.name == f"{rid}.out"):
-                continue
-            if (run_dir / f"{rid}.json").exists() or rid in seen_runs:
-                continue
-            orphans.setdefault(rid, []).append(f)
-        for rid, fs in sorted(orphans.items()):
-            if rid in protected_ids:
-                continue
-            try:
-                when = max(dt.datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")
-                           for f in fs)
-            except OSError:
-                continue
-            if _iso(when) > cutoff:
-                continue
-            files = sorted(x.name for x in run_dir.iterdir()
-                           if x.name.startswith(f"{rid}.") and x.is_file())
-            seen_runs.add(rid)
-            plan["runs"].append({"id": rid, "task": None, "when": when, "files": files})
-
-    # 세션 폴더: 런 파일과 같은 나이 규칙. **end.json 이 없는 세션은 절대 안 옮긴다** (돌고 있거나 lost 판정 전이다)
+    # 세션 폴더. **end.json 이 없는 세션은 절대 안 옮긴다** (돌고 있거나 lost 판정 전이다)
     sess_dir = ROOT / ".aimem" / "sessions"
     for d in sorted(sess_dir.iterdir()) if sess_dir.is_dir() else []:
         if not d.is_dir() or not (d / "end.json").is_file() or not _ARCHIVE_ID_RE.fullmatch(d.name):
@@ -1269,17 +993,17 @@ def archive_plan(days=14, now=None):
                 moved += 1
         plan["logs"].append({"file": log_path.name, "lines": moved})
 
-    plan["total_records"] = (len(plan["runs"]) + len(plan["sessions"]) + len(plan["events"]) + len(plan["handoff"])
+    plan["total_records"] = (len(plan["sessions"]) + len(plan["events"]) + len(plan["handoff"])
                              + len(plan["relay"]) + sum(x["lines"] for x in plan["logs"]))
     plan["total"] = len(plan["tasks"]) + len(plan["requests"]) + len(plan["graphs"])
     return plan
 
 
 def archive_apply(plan, actor="관리자"):
-    """계획대로 옮긴다. 태스크·이벤트는 아카이브에 먼저 쓰고 확인한 뒤 DB 에서 내린다; 요청·그래프·실행 파일은 이동."""
+    """계획대로 옮긴다. 태스크·이벤트는 아카이브에 먼저 쓰고 확인한 뒤 DB 에서 내린다; 요청·그래프·세션 폴더는 이동."""
     arch = ROOT / ".aimem" / "archive"
     arch.mkdir(parents=True, exist_ok=True)
-    out = {"tasks": [], "requests": [], "graphs": [], "runs": [], "sessions": [], "events": [],
+    out = {"tasks": [], "requests": [], "graphs": [], "sessions": [], "events": [],
            "handoff": [], "relay": [], "log_lines": 0, "files": 0}
     moved_any = False
     cell = lambda v: str(v or "-").replace("|", "\\|").replace("\n", " ")
@@ -1344,25 +1068,6 @@ def archive_apply(plan, actor="관리자"):
             if src.exists():
                 src.replace(dest / "inputs" / name); out["files"] += 1; moved_any = True
         out["graphs"].append(g["id"])
-
-    run_dir = ROOT / ".aimem" / "runs"
-    for r in plan.get("runs", []):
-        month = (r["when"][:7] if r.get("when") else plan["cutoff"][:7]) or "undated"
-        dest = arch / f"runs-{month}"
-        dest.mkdir(parents=True, exist_ok=True)
-        names = r.get("files", [])
-        ordered = [name for name in names if not name.endswith(".rc")]
-        ordered += [name for name in names if name.endswith(".rc")]
-        for name in ordered:
-            src = run_dir / name
-            if src.is_file():
-                src.replace(dest / name)
-                out["files"] += 1
-                moved_any = True
-        out["runs"].append(r["id"])
-        with connect() as con:
-            con.execute("DELETE FROM runs WHERE id=?", (r["id"],))
-            con.commit()
 
     sess_dir = ROOT / ".aimem" / "sessions"
     for r in plan.get("sessions", []):
@@ -1542,12 +1247,12 @@ def archive_apply(plan, actor="관리자"):
             out["files"] += 1
     out["log_lines"] = log_total
 
-    if (out["tasks"] or out["requests"] or out["graphs"] or out["runs"] or out["sessions"] or out["events"]
-            or out["handoff"] or out["relay"] or out["log_lines"]):
+    changed = any(out[k] for k in ("tasks", "requests", "graphs", "sessions", "events", "handoff", "relay", "log_lines"))
+    if changed:
         with connect() as con:
             body = (f"{plan['days']}일 경과 - 태스크 {len(out['tasks'])}건, 요청 {len(out['requests'])}건, 그래프 {len(out['graphs'])}개 아카이브"
                     + (f" (태스크 {', '.join(out['tasks'])})" if out["tasks"] else "")
-                    + f", 실행 {len(out['runs'])}건, 세션 {len(out['sessions'])}건, 이벤트 {len(out['events'])}건"
+                    + f", 세션 {len(out['sessions'])}건, 이벤트 {len(out['events'])}건"
                     + f", 핸드오프 {len(out['handoff'])}건, 전달 {len(out['relay'])}개, 로그 {out['log_lines']}줄")
             con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
                         (_now(), actor, rev(con), "archive", body))
@@ -1563,8 +1268,7 @@ def archive_apply(plan, actor="관리자"):
                 vcon.close()
         except sqlite3.Error as e:
             print(f"archive: VACUUM 실패 - 정리는 성공 ({e})")
-    if moved_any or (out["tasks"] or out["requests"] or out["graphs"] or out["runs"]
-                     or out["sessions"] or out["events"] or out["handoff"] or out["relay"] or out["log_lines"]):
+    if moved_any or changed:
         try:
             render(sync_aimem=False)
         except Exception as e:
@@ -1573,12 +1277,7 @@ def archive_apply(plan, actor="관리자"):
 
 
 def cmd_archive(a):
-    """`8.0` 「끝난 작업의 보관·폐기」 구현 (REV 115 결정, 요청 Q-261110-549a, 큐 12. REV 123 에서 요청·그래프까지).
-
-    `--days`(기본 14)일 지난 **DONE 태스크**는 `.aimem/archive/board-<YYYY-MM>.md` 에 먼저 덧붙이고 확인한 뒤 DB 에서 내리고,
-    **DONE/REJECTED 요청 파일**은 `archive/requests-<YYYY-MM>/` 로, **노드가 전부 끝난 그래프**는 브리프·로그·잠금·inputs 까지
-    `archive/graph-<YYYY-MM>/` 로 옮깁니다. `--dry-run` 은 무엇을 옮길지만 보여 줍니다. 웹 보드·큐 탭의 '끝난 것 정리' 가 같은 함수를 씁니다.
-    """
+    """`8.0` 끝난 작업의 보관: `--days`(기본 14)일 지난 끝난 것을 `.aimem/archive/` 로. `--dry-run` 은 보여 주기만. 웹 '끝난 것 정리' 와 같은 함수."""
     plan = archive_plan(a.days)
     if not plan["total"] and not plan["total_records"]:
         print(f"archive: {a.days}일 지난 끝난 것 없음 (기준 {plan['cutoff']})")
@@ -1589,8 +1288,6 @@ def cmd_archive(a):
         print("archive: 요청 <- " + ", ".join(r["id"] for r in plan["requests"]))
     for g in plan["graphs"]:
         print(f"archive: 그래프 <- {g['id']} (+파일 {len(g['side_files']) + len(g['inputs'])})")
-    if plan["runs"]:
-        print(f"archive: 실행 <- {len(plan['runs'])}건")
     if plan["sessions"]:
         print(f"archive: 세션 <- {len(plan['sessions'])}건")
     if plan["events"]:
@@ -1608,7 +1305,7 @@ def cmd_archive(a):
         out = archive_apply(plan, a.actor)
     except RuntimeError as e:
         sys.exit(str(e))
-    print(f"archive: 태스크 {len(out['tasks'])}건, 요청 {len(out['requests'])}건, 그래프 {len(out['graphs'])}개, 실행 {len(out['runs'])}건, 이벤트 {len(out['events'])}건, 핸드오프 {len(out['handoff'])}건, 전달 {len(out['relay'])}개, 로그 {out['log_lines']}줄 옮김 (파일 {out['files']})")
+    print(f"archive: 태스크 {len(out['tasks'])}건, 요청 {len(out['requests'])}건, 그래프 {len(out['graphs'])}개, 세션 {len(out['sessions'])}건, 이벤트 {len(out['events'])}건, 핸드오프 {len(out['handoff'])}건, 전달 {len(out['relay'])}개, 로그 {out['log_lines']}줄 옮김 (파일 {out['files']})")
     if out.get("render_error"):
         print(f"archive: render 실패 - 생성물 갱신 안 됨 ({out['render_error']})")
     return 0
@@ -1664,15 +1361,7 @@ def _check_queue_text(*texts):
 
 
 def cmd_queue(a):
-    """`4.5` 대기 큐. REV 114 에서 마크다운 표를 내리면서 신설했습니다.
-
-    표를 쓰던 `aimem_board.py queue-add` / `queue-pop` 이 폐기됐으므로 **이것이
-    유일한 큐 편집 경로**입니다. 없으면 `8.0-4-2`(큐 맨 위를 다음 슬롯에 배정)가
-    돌지 않습니다.
-
-    `pos` 는 1부터 연속이어야 합니다 - `drop` 뒤에 빈 번호가 남으면 "맨 위"가
-    모호해지므로 **지운 뒤 다시 매깁니다.**
-    """
+    """`4.5` 대기 큐 - 유일한 큐 편집 경로. `pos` 는 1부터 연속이라 `drop` 뒤에 다시 매긴다("맨 위"가 모호해지지 않게)."""
     with connect() as con:
         # 읽고-쓰는 명령은 `BEGIN IMMEDIATE` 로 시작합니다. 기본 암묵 BEGIN 은
         # DML 에서야 열려서 앞선 `SELECT` 가 트랜잭션 밖이었고, 동시 `add` 둘이
@@ -1725,7 +1414,6 @@ def cmd_queue(a):
 
 
 # ---------------------------------------------------------------- slots (2026-11-10, 태석님 지시 "슬롯 하네스 추가·삭제 + 모델 지정")
-HARNESSES = ("claude", "codex", "opencode")
 SLOT_RE = re.compile(r"S\d{1,3}\Z")
 #: 웹에서 사람이 추가한 슬롯의 역할 표식 - **역할·비고는 라운드 관리자가 정한다**(8.0-1, 태석님 2026-11-10).
 #: 관리자는 라운드 시작 때 events(kind=slot)와 이 표식을 보고 `slot set --role/--note` 로 채운다.
@@ -1757,10 +1445,7 @@ def _check_slot_args(slot, harness, model):
 
 
 def _rt(name):
-    """`fleet_rt` 의 모듈 (설정·세션). `_sessions_ddl` 처럼 늦게 불러온다."""
-    tools = str(pathlib.Path(__file__).resolve().parent)
-    if tools not in sys.path:
-        sys.path.append(tools)
+    """`fleet_rt` 의 모듈 (설정 등) - 쓸 때만 불러온다."""
     import importlib  # noqa: PLC0415
     return importlib.import_module(f"fleet_rt.{name}")
 
@@ -1836,7 +1521,7 @@ def _slot_running(slot):
         names = os.listdir(sroot)
     except OSError:
         return None
-    sessions = _rt("sessions")
+    sessions = _rt_sessions
     live = sessions.live_index(sroot)
     for sid in names:
         d = sroot / sid
@@ -1995,10 +1680,10 @@ def main():
     e = sub.add_parser("event"); e.add_argument("--kind", required=True); e.add_argument("--body", required=True)
     e.add_argument("--actor", default="관리자"); e.add_argument("--bump", action="store_true", help="REV 를 하나 올린다")
     t = sub.add_parser("task"); t.add_argument("action", choices=["set", "list"]); t.add_argument("--id"); t.add_argument("--request")
-    t.add_argument("--title"); t.add_argument("--slot"); t.add_argument("--status", choices=["TODO","ASSIGNED","IN-PROGRESS","REVIEW","DONE","BLOCKED"])
+    t.add_argument("--title"); t.add_argument("--slot"); t.add_argument("--status", choices=TASK_STATUSES)
     t.add_argument("--artifacts"); t.add_argument("--actor", default="관리자")
     q = sub.add_parser("request"); q.add_argument("action", choices=["set", "list"]); q.add_argument("--id"); q.add_argument("--title")
-    q.add_argument("--detail"); q.add_argument("--requester"); q.add_argument("--status", choices=["NEW","PLANNED","IN-PROGRESS","DONE","REJECTED"]); q.add_argument("--actor", default="관리자")
+    q.add_argument("--detail"); q.add_argument("--requester"); q.add_argument("--status", choices=REQUEST_STATUSES); q.add_argument("--actor", default="관리자")
     q.add_argument("--project", help="결과물이 쌓일 프로젝트 `projects/<이름>/` (빈 문자열 = 함대 자체의 일). 요청 파일에 적힌다")
     o = sub.add_parser("ownership"); o.add_argument("action", choices=["set", "list"]); o.add_argument("--path"); o.add_argument("--owner"); o.add_argument("--note"); o.add_argument("--actor", default="관리자")
     sl = sub.add_parser("slot", help="슬롯 추가/변경/삭제/목록 - DB 정본 (웹 함대 현황에서도 됨)")
@@ -2006,7 +1691,7 @@ def main():
     sl.add_argument("--model", help="`fleet.toml` 의 공급자/모델 (예 kisti/kistillm, openrouter/deepseek/deepseek-v4.1-flash) 또는 claude 별칭(opus/sonnet/haiku)")
     sl.add_argument("--default-model", action="store_true", help="set: 모델을 하네스 기본으로 되돌린다"); sl.add_argument("--role"); sl.add_argument("--note")
     sl.add_argument("--force", action="store_true", help="remove: 미완 태스크가 있어도 삭제"); sl.add_argument("--actor", default="관리자")
-    r = sub.add_parser("archive", help="DONE 이 된 지 N일 지난 태스크를 .aimem/archive/board-<YYYY-MM>.md 로 옮긴다 (8.0)")
+    r = sub.add_parser("archive", help="N일 지난 끝난 태스크·요청·그래프와 딸린 세션·이벤트·핸드오프·전달·로그를 .aimem/archive/ 로 옮긴다 (8.0)")
     r.add_argument("--days", type=int, default=14); r.add_argument("--dry-run", action="store_true"); r.add_argument("--actor", default="관리자")
     h = sub.add_parser("handoff", help="핸드오프 로그 - 정본은 DB events, .aimem/handoff.md 는 생성물 (AIMEM.md 4절)")
     h.add_argument("action", choices=["add", "list", "sync"]); h.add_argument("--body"); h.add_argument("--actor", default="관리자")

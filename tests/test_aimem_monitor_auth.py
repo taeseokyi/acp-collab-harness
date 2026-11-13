@@ -292,7 +292,7 @@ class _Srv:
         self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.httpd.daemon_threads = True
         self.port = self.httpd.server_address[1]
-        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         self.thread.start()
 
     def close(self):
@@ -425,12 +425,14 @@ class AuthHttpTests(unittest.TestCase):
         self.assertNotIn("Secure", c)            # TLS 가 아니므로
 
     def test_login_wrong_token_is_401_without_cookie(self):
-        for payload in ({"token": OTHER}, {"token": ""}, {"token": 123}, {}, [], {"token": None}):
-            with self.subTest(payload):
-                s, h, _ = self.srv.req("POST", "/api/login", {"Content-Type": "application/json"},
-                                       json.dumps(payload).encode())
-                self.assertEqual(s, 401)
-                self.assertEqual(_h(h, "Set-Cookie"), [])
+        # 연속 실패의 실제 지연(2초)은 기다리지 않는다 - 지연 호출만 막고 401 을 본다
+        with mock.patch.object(server.time, "sleep"):
+            for payload in ({"token": OTHER}, {"token": ""}, {"token": 123}, {}, [], {"token": None}):
+                with self.subTest(payload):
+                    s, h, _ = self.srv.req("POST", "/api/login", {"Content-Type": "application/json"},
+                                           json.dumps(payload).encode())
+                    self.assertEqual(s, 401)
+                    self.assertEqual(_h(h, "Set-Cookie"), [])
         self.srv.guard.reset("127.0.0.1")        # 다른 테스트가 지연을 맞지 않도록
 
     def test_login_cookie_is_secure_under_tls(self):

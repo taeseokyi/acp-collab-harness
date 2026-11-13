@@ -21,7 +21,7 @@
       <label class="toggle"><input type="checkbox" id="autoRefresh" checked><span>자동<span class="tl-more"> 새로고침</span></span></label>
       <span id="refresh-status" class="refresh-status">마지막 갱신 -</span>
       <button type="button" id="refresh-now">지금 갱신</button>
-      <button type="button" id="archive-open" title="끝난 태스크·닫힌 요청·끝난 그래프를 한꺼번에 아카이브로 옮깁니다 (지우지 않음)"><span class="tl-more">끝난 것 </span>정리 <span id="archive-count" class="tab-count"></span></button>
+      <button type="button" id="archive-open" title="끝난 태스크·끝난 요청·끝난 그래프를 한꺼번에 아카이브로 옮깁니다 (지우지 않음)"><span class="tl-more">끝난 요청·그래프 </span>정리 <span id="archive-count" class="tab-count"></span></button>
       <!-- 화면·로그인 설정을 ⚙ 하나로 묶는다 (2026-11-12 태석님: 상단 바 정리 - 폰 2행, 데스크톱도 같은 꼴) -->
       <button type="button" id="settings-toggle" class="settings-toggle" aria-haspopup="true" aria-expanded="false" aria-controls="settings-menu" aria-label="설정" title="설정 - 어두운 모드 · 로그인">⚙<span class="tl-more">설정</span></button>
       <div id="settings-menu" class="settings-menu">
@@ -31,7 +31,6 @@
     </div>
   </header>
 
-  <div id="demo-banner" class="banner banner-demo" hidden>데모 모드 (?demo=1): 더미 데이터로 표시 중. 작업 요청 POST 는 브라우저 안에서만 흉내 냅니다.</div>
   <div id="errors" class="banner banner-errors" hidden></div>
 
   <div class="layout">
@@ -59,7 +58,7 @@
         </section>
 
         <section class="card" id="runs-section">
-          <h2>작업자 실행 상태 <span class="hint">최신이 위</span></h2>
+          <h2>실행 상태 <span class="hint">최신이 위</span></h2>
           <div class="tablewrap" id="runs-table-wrap"></div>
           <div id="runs-more" class="more-row"></div>
         </section>

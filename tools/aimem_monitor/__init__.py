@@ -1,6 +1,6 @@
 """AIMEM 함대 모니터 - 공통 계약 (관리자 소유, `AIMEM.md` `6절`).
 
-표준 라이브러리만 씁니다. 이 패키지는 **읽기 전용**이 원칙입니다 - 함대 상태(보드·큐·runs·
+표준 라이브러리만 씁니다. 이 패키지는 **읽기 전용**이 원칙입니다 - 함대 상태(보드·큐·실행·
 그래프)는 절대 고치지 않습니다. 쓰는 것은 **사람이 웹에서 누른 것**에 한합니다(전부 `server.py`,
 감사 로그 `.aimem/access.log` 에 남김):
   - `.aimem/requests/<id>.json` 생성(POST) 과 **NEW 요청**의 제목·본문 수정(POST, 2026-11-10 승인)
@@ -12,15 +12,14 @@
     공급자·모델, `fleet_rt.config`)에서만 고른다. 도는 작업자가 있는 슬롯은 삭제·하네스 변경 거절
 
 계층:
-  reader.py   파일 -> 딕셔너리 (AIMEM.md 파싱 / `.aimem/runs` 스캔 / ETA 추정)   [S1]
+  reader.py   파일 -> 딕셔너리 (DB 상태 / `.aimem/sessions` 스캔 / 남은 시간 추정)   [S1]
   server.py   딕셔너리 -> HTTP (JSON API + 정적 파일). **합류점 - 관리자 소유**
   static/     브라우저 (HTML+JS+CSS, 의존성 없음)                                 [S3]
 
-**인터페이스는 관리자가 못박습니다.** 슬롯이 협의하면 병렬이 아니라 회의가 됩니다
-(REV 102 선례: `envcheck` 의 `check() -> list[Result]`).
+**인터페이스는 관리자가 못박습니다.** 슬롯이 협의하면 병렬이 아니라 회의가 됩니다.
 
     reader.collect(root: pathlib.Path | None = None) -> dict   # STATE 스키마 (아래)
-    reader.median_durations(runs: list[dict]) -> dict          # ETA 표본
+    reader.median_durations(runs: list[dict]) -> dict          # 남은 시간 추정의 표본
 
 실행:
     PYTHONPATH=tools python3 -m aimem_monitor          # 127.0.0.1:18799
@@ -40,8 +39,8 @@ HOST = "127.0.0.1"
 STATE_KEYS = {
     "generated": "ISO8601(초) 수집 시각",
     "tz": "{name, offset}  - 화면 시각의 기준 구역(IANA 이름)과 지금의 UTC 오프셋 '+09:00'. 서버가 보내는 시각 문자열은 이 구역의 시계(오프셋 없음)",
-    "aimem": "{rev, lines, updated}  - DB 의 REV + AIMEM.md 1절",
-    "slots": "[{slot, harness, role, note, model, model_source}]  - 명부 + 하네스 설정 모델",
+    "aimem": "{rev, updated}  - DB 의 REV + AIMEM.md 서문의 최종 갱신",
+    "slots": "[{slot, harness, role, note, model, model_source (슬롯이 모델을 안 정했을 때만 출처, 아니면 빈 문자열), origin, round}]  - 명부",
     "board": "[{id, task, slot, status, handoff, artifact}]  - 작업 보드",
     "queue": "[{order, task, slots, handoff, note}]  - 대기 큐",
     "log": "[{when, text}]  - 핸드오프 로그, 최신 먼저",
@@ -49,10 +48,9 @@ STATE_KEYS = {
             "task, project, round, session_state, fail_kind, last_event_at, last_event, provider, role}]  - project/round 는 "
             "식별자에 붙이지 않고 따로 (없으면 null). 뒤 여섯 개는 세션 실행만(옛 실행은 null): session_state = running|done|failed|"
             "killed|timeout|stalled|lost, last_event = 마지막 tool/text 사건 한 줄",
-    "eta": "{by_harness:{<h>:{median_sec, samples, source}}, overall:{median_sec, samples}}",
     "requests": "[{" + ", ".join(REQUEST_ROW_KEYS := (
                     "id", "created", "updated", "requester", "project", "title", "detail", "detail_truncated", "detail_len",
-                    "status", "subtasks", "graph", "progress_pct", "eta_sec", "eta_at", "eta_basis", "eta_over")) + "}]"
+                    "status", "subtasks", "graph", "progress_pct", "eta_sec", "eta_basis")) + "}]"
                 "  - 행 키는 REQUEST_ROW_KEYS 가 정본, scrub_public 이 그 밖의 키를 떼어냅니다",
     "errors": "[문자열]  - 파싱 중 삼킨 문제. 비어 있어야 정상",
 }
@@ -60,23 +58,23 @@ STATE_KEYS = {
 #: `reader.collect()` 가 아니라 **서버가 덧붙이는** 최상위 키. `reader` 는 파일만 읽고
 #: 네트워크·외부 도구를 타지 않으므로 여기 둡니다(계층 분리, REV 111).
 SERVER_KEYS = {
-    "graphs": "[{id, request, created, updated, percent, eta_seconds, eta_at, counts, source, nodes:[{id, title, slot, harness, status, deps, attempts, max_attempts, last_run, "
+    "graphs": "[{id, request, created, updated, percent, eta_seconds, runner (실행기가 잡고 있나, null = 모름), counts, nodes:[{id, title, slot, harness, status, deps, attempts, max_attempts, last_run, "
               "waiting (provider:<이름>|probe:<이름>|slot:<슬롯>|null), infra (기반 장애로 막힘), infra_attempts (장애로 시도에서 빠진 횟수), "
               "attempt_log:[{run_id, started, fail_kind (work|infra|limit|timeout|null), session_state, why, provider, infra}]}]}]",
     # 관리자 세션 (요청 Q-261110-549a). `.aimem/sessions/` 에서 `role == "manager"` 인 폴더를 부를 때마다 읽는다
     # (캐시·pending 없음). id = 세션 id(`M-R21-193012`). status = running|done|failed|killed (timeout·stalled·lost 는 failed),
     # session_state = 세션의 원래 상태. last_activity = 마지막 사건 시각. steps = 글·도구 호출 사건 수.
     "managers": "{ok, error, sessions:[{label, status, started, updated, id, record_kb, "
-                "last_activity, steps, last_step, round, session_state, orphaned, phase (plan|judge|close|null: 호출 방식 라운드의 호출 단계)}]}",
+                "last_activity, steps, last_step, round, session_state, orphaned}]}",
     # 함대 제어 상태 (`tools/fleet_ctl.public_state`, 2026-11-10). can = 지금 누를 수 있는 동작
-    "fleet": "{mode, label, at, by, note, default, running_runs, graphs, brief, prepare, manager:{round, label, session, state (launching|running|driving|done|failed|killed|timeout|stalled|lost; driving = 호출 사이에 엔진이 그래프를 돌리는 중), by, at, ended, brief, workspace, last_event_at, mode? (\"calls\" 호출 방식 라운드만), phase? (plan|judge|close), calls? (호출 수)} | null, "
-             "can:{prepare, run, pause, stop, round}, idle, last_round:{round, label, at, state, report_status, report}, chain:{on, all, fleet, projects, label, max_rounds (한 묶음의 상한), renew (닿으면 새 묶음으로), autonomous, strikes, cycles, total_rounds, stopped_kind (done|cap|safety|stuck|report|error|off|wait), stopped_at, stopped_round, stopped_left, rounds_done, goals_done, open_requests, stopped_why, last}, policy:{current, default, chain, choices:[{key,label,desc}]} (운영 방침 cost|quality|speed - 없으면 옛 서버, 화면은 방침 UI 를 숨김), manager.policy",   # idle = '실행' 인데 도는 것이 없다(라운드 끝)
+    "fleet": "{mode, label, at, by, note, default, running_runs, graphs, brief, prepare, manager:{round, label, session, state (launching|running|done|failed|killed|timeout|stalled|lost), by, at, ended, brief, workspace, last_event_at, model?, policy?} | null, "
+             "can:{prepare, run, pause, stop, round}, idle, last_round:{round, label, at, state, report_status, report}, chain:{on, all, fleet, projects, label, limits:{default, max, hard} (상한 입력의 기본·최대·안전 상한), max_rounds (한 묶음의 상한), renew (닿으면 새 묶음으로), autonomous, strikes, cycles, total_rounds, stopped_kind (done|cap|safety|stuck|report|error|off|wait), stopped_at, stopped_round, stopped_left, rounds_done, goals_done, open_requests, stopped_why, last}, policy:{current, default, chain, choices:[{key,label,desc}]} (운영 방식 cost|quality|speed - 없으면 화면이 방식 UI 를 숨김)",   # idle = '실행' 인데 도는 것이 없다(라운드 끝)
     # 프로젝트 목록 (2026-11-10) - `projects/` 아래 폴더 + 요청이 가리키는 이름. exists = 폴더가 이미 있나
     # percent = 목표 대비(`PROGRESS.md` 의 `## 목표` 체크리스트, basis "goals") - 목표가 없으면 요청들의 평균(basis "requests").
     # goals = {total, done} 또는 null. request_percent = 요청 평균(늘 실음). rounds = `rounds/R<N>/round.json`(띄운 기록) + `PROGRESS.md` 의 `## R<N>`.
     # summary = `projects/<이름>/PROGRESS.md` 의 가장 최근 라운드 항목
     # app = 실행 선언(`projects/<이름>/app.json`). {runnable, url, title, root, entry, reason} 또는 null
-    "projects": "[{name, path, exists, percent, basis, goals:{total, done}, request_percent, requests:{total, done, new, active}, rounds, round_count, first_round, "
+    "projects": "[{name, path, exists, percent, basis, goals:{total, done}, request_percent, requests:{total, done, new, active}, rounds, round_count, "
                 "last_round, last_round_at, updated, summary, app}]",
     # Claude Code 상태줄이 적어 둔 `.aimem/claude-usage.json` 을 읽어 만든 사용 한도 (2026-11-12, R18).
     # 파일이 없거나 읽을 수 없으면 null.
@@ -121,7 +119,7 @@ RUN_DETAIL_KEYS = ("id", "found", "slot", "harness", "model", "label", "status",
 #: run id 꼴 **두 가지**를 받습니다.
 #:  - 새 체계(태석님 2026-11-09 18:15, `fleet.py:405`): `<태스크>-<슬롯>-a<시도>-<HHMMSS>`
 #:    예 `T-053-S3-a3-181328` / 태스크 없는 임시 실행은 `ADHOC-S3-a1-181328`
-#:  - 옛 체계: `20261109-172618-S3`. **`.aimem/runs/` 에 그대로 남아 있으므로 계속 받습니다**
+#:  - 옛 체계: `20261109-172618-S3` (보관된 기록의 id 꼴이라 계속 받습니다)
 #:  - 관리자 세션 `M-R21-193012` (`fleet_rt` 세션 id, 같은 id 가 이미 있으면 `-2`). 실행 표에 나오므로 상세도 받습니다
 #: `$` 가 아니라 `\Z` 입니다 - `$` 는 끝의 줄바꿈 앞에서도 맞아서 `"<id>\n"` 이 통과합니다.
 #: `reader.run_detail()` 은 `fullmatch` 로 거르므로 둘이 어긋납니다.
@@ -136,7 +134,7 @@ GRAPH_DIR = ".aimem/graph"
 
 #: 요청 파일 `.aimem/requests/<id>.json` 의 상태 값.
 REQUEST_STATES = ("NEW", "PLANNED", "IN-PROGRESS", "DONE", "REJECTED")
-#: 닫힌 요청 - 진행율·ETA 는 서브태스크가 아니라 **이 상태가** 정합니다 (`reader._estimate`, 2026-11-10).
+#: 끝난 요청 - 진행율·남은 시간은 서브태스크가 아니라 **이 상태가** 정합니다 (`reader._estimate`, 2026-11-10).
 REQUEST_CLOSED_STATES = ("DONE", "REJECTED")
 
 #: 서브태스크 상태 -> 진행율 가중치. `3절` 상태 값과 같은 어휘를 씁니다.

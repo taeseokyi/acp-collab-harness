@@ -14,33 +14,17 @@ import shutil
 import subprocess
 from typing import Optional
 
-from ..base import Command, Event, ProbeResult, SessionSpec, read_event_lines
+from ..base import (LIMIT_RE, Command, Event, ProbeResult, SessionSpec, no_report_tail, one_line as _one_line,
+                    read_event_lines, require_repo_cwd)
 
 _RETRY_RE = re.compile(r"reconnecting|stream disconnected|retrying", re.I)
-_LIMIT_RE = re.compile(r"\b429\b|rate.?limit|quota|usage.?limit", re.I)
-_NO_REPORT = "(최종 보고문 없음 - 작업자가 보고 전에 끝남. stderr 꼬리:)"
-_NOISE_RE = re.compile(r"^\s*(←|✗|!|\||\+|-|@|\$|>|codex$|tokens used|Reading additional)")
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-
-
-def _require_repo_cwd(cwd):
-    """진짜 하네스는 함대 저장소 안에서만 뜬다. 2026-11-12 /tmp 검수 사본에서 진짜 작업자가 떠 버린 일의 방지."""
-    p = pathlib.Path(str(cwd or ""))
-    if not (p.is_dir() and (p / "tools" / "fleet.py").is_file()):
-        raise ValueError(f"함대 저장소가 아닌 폴더에서는 codex 를 띄우지 않는다: {cwd!r}")
-    return str(p)
-
-
-def _one_line(s, n=120):
-    s = " ".join(str(s or "").split())
-    return s if len(s) <= n else s[: n - 1] + "…"
 
 
 def _error_event(msg, raw):
     data = {}
     if _RETRY_RE.search(msg):
         data["retry"] = True
-    if _LIMIT_RE.search(msg):
+    if LIMIT_RE.search(msg):
         data["limit"] = True
     return Event("error", msg, data, raw)
 
@@ -72,7 +56,7 @@ class CodexHarness:
     name = "codex"
 
     def command(self, spec: SessionSpec) -> Command:
-        cwd = _require_repo_cwd(spec.cwd)
+        cwd = str(require_repo_cwd(spec.cwd, "codex"))
         argv = ["codex", "exec", "--skip-git-repo-check", "--ephemeral", "-C", cwd, "--sandbox", "workspace-write",
                 "-c", "sandbox_workspace_write.network_access=true", "--json"]
         if spec.model:
@@ -151,16 +135,7 @@ class CodexHarness:
                 errors.append(ev.text)
         if last is not None and last.strip():
             return last.strip()
-        parts = []
-        try:
-            err = _ANSI_RE.sub("", (pathlib.Path(session_dir) / "stderr.log").read_text(encoding="utf-8", errors="replace"))
-            kept = [ln for ln in err.splitlines() if ln.strip() and not _NOISE_RE.match(ln)]
-            parts += kept[-25:]
-        except OSError:
-            pass
-        parts += [f"error: {m}" for m in errors]
-        tail = "\n".join(parts).strip()
-        return f"{_NO_REPORT}\n{tail}" if tail else ""
+        return no_report_tail(session_dir, [f"error: {m}" for m in errors])
 
     def limit_signal(self, session_dir: pathlib.Path) -> Optional[bool]:
         completed = False
@@ -171,9 +146,8 @@ class CodexHarness:
                 completed = True
         return False if completed else None
 
-    def resume_command(self, spec, harness_session_id, message_path) -> Optional[Command]:
-        # 작업자는 `--ephemeral` 로 떠서 세션을 디스크에 남기지 않으므로 이어 붙일 곳이 없다 → 지원 안 함
-        return None
+    def resume_command(self, spec, harness_session_id, message_path):
+        return None                     # `--ephemeral` 이라 이어 붙일 세션이 디스크에 없다
 
     def probe(self) -> ProbeResult:
         path = shutil.which("codex")

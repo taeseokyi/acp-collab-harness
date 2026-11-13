@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """tools/aimem_lint.py 테스트. 표준 라이브러리 unittest 만 사용."""
 
-import collections
 import contextlib
 import inspect
 import io
@@ -15,9 +14,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools"))
 
-import aimem_board
 import aimem_db
-import aimem_lint as lint
 from aimem_lint import (
     MANAGER_SESSION_FORM,
     MANAGER_SESSION_RE,
@@ -29,10 +26,7 @@ from aimem_lint import (
     main,
 )
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-
-# 2단계(T-060/T-061): 운영 상태 표는 DB 로 갔고, 2·3·4·4.5·6절에는 포인터만 남는다.
-# 관리자 선언이 있는 "통치 문서" 최소 픽스처 - 위반 0.
+# 관리자 선언이 있는 최소 픽스처 - 2·3·4·4.5·6절에는 포인터만, 위반 0.
 VALID_DOC = """# AIMEM.md - 공유 작업 메모리
 
 - **REV: 1** (개정 번호)
@@ -70,7 +64,7 @@ VALID_DOC = """# AIMEM.md - 공유 작업 메모리
 스냅샷: `AIMEM-state.md`
 """
 
-# 관리자 선언이 없는 최소 픽스처 - 새 STATE_* 검사는 게이팅 때문에 발화하지 않는다.
+# 관리자 선언이 없는 최소 픽스처 - STATE_* 검사는 게이팅 때문에 발화하지 않는다.
 NO_DECL_DOC = VALID_DOC.replace("- 관리자(단독 쓰기 권한): 엔진이 띄운 관리자 세션 `M-R<N>-<HHMMSS>`\n", "")
 
 TABLE = "| 슬롯 | 확인토큰 |\n| ---- | -------- |\n| S1   | `abc123` |\n"
@@ -101,13 +95,6 @@ def tearDownModule():
 class TestValidDoc(unittest.TestCase):
     def test_valid_fixture_has_no_violations(self):
         self.assertEqual(lint_text(VALID_DOC), [])
-
-    def test_real_aimem_md_lint_repo_returns_list(self):
-        # 내용은 단언하지 않는다 - 관리자가 같은 라운드에 본문을 고치는 중이라 건수가 움직인다.
-        vs = lint_repo(REPO_ROOT / "AIMEM.md", root=REPO_ROOT)
-        self.assertIsInstance(vs, list)
-        for v in vs:
-            self.assertIsInstance(v, Violation)
 
 
 class TestRevViolations(unittest.TestCase):
@@ -177,348 +164,7 @@ class TestSizeTotalLines(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------
-# aimem_board.py 스모크 (T-022 #3). 이번 라운드에 T-021 파서 재작성이 board 가 쓰던
-# 린터 내부 헬퍼를 없애 갱신 CLI 전체가 죽었는데, 테스트가 aimem_lint 만 덮고 aimem_board
-# 는 한 줄도 로드하지 않아 pre-commit 훅이 못 잡았다. 여기서 9개 쓰기 하위명령을 각각
-# 임시 사본에 태우고 exit0 + 산출물이 린터를 통과하는지 본다. 이게 있었으면 커밋 전에 걸렸다.
-# ---------------------------------------------------------------------
-
-BOARD_FIXTURE = """# AIMEM.md - 공유 작업 메모리
-
-- **REV: 5** (개정)
-- 최종 갱신: 2026-08-25 10:00 KST
-- 작성(관리자 선언 아님 - 2단계 STATE_* 게이팅을 피하려는 board 전용 시드): **클로** `%s`
-
----
-
-## 2. 세션 명부
-
-| 슬롯 | 확인토큰 | 하네스 | 역할 | 세션키 | 비고 |
-| ---- | -------- | ------ | ---- | ------ | ---- |
-| S1   | `abc123` | claude | 린터 | sess-key-s1 | - |
-| S2   | `def456` | claude | 테스트 | sess-key-s2 | - |
-
----
-
-## 3. 작업 보드
-
-| ID   | 태스크 | 담당 슬롯 | 상태 | 이어받음 | 산출물 |
-| ---- | ------ | --------- | ---- | -------- | ------ |
-| T-1  | 작업 A | S1        | DONE | -        | -      |
-| T-2  | 작업 B | S2        | TODO | T-1      | -      |
-
----
-
-## 4. 핸드오프 로그
-
-- `2026-08-25 10:00` 관리자: 로그 1
-- `2026-08-24 10:00` 관리자: 로그 2
-- `2026-08-23 10:00` 관리자: 로그 3
-
----
-
-## 4.5 대기 큐
-
-| 순서 | 태스크 | 후보 슬롯 | 이어받음 | 비고 |
-| ---- | ------ | --------- | -------- | ---- |
-| 1    | 대기 X | S1        | -        | -    |
-
----
-
-## 6. 파일 소유권
-
-| 경로 패턴  | 쓰기 소유 |
-| ---------- | --------- |
-| `AIMEM.md` | 관리자    |
-| `src/a.py` | S1        |
-| (그 외)    | 미배정    |
-""" % MANAGER_SESSION_FORM
-
-
-class TestBoardSmoke(unittest.TestCase):
-    """각 쓰기 하위명령을 fresh /tmp 사본에 실행 -> exit0 + 산출물 린트 통과.
-    board 가 린터 공개 API(find_section/extract_table)를 통해 절·표를 찾으므로,
-    린터 내부 리팩터가 board 를 깨면 여기서 잡힌다(T-024 회귀의 안전망)."""
-
-    ARGSETS = [
-        ("rev-bump", ["rev-bump"]),
-        ("handoff-add", ["handoff-add", "--text", "스모크 테스트 항목"]),
-        ("board-set", ["board-set", "T-1", "REVIEW"]),
-        ("board-add", ["board-add", "T-9", "새 작업", "S1", "TODO", "-", "-"]),
-        ("queue-add", ["queue-add", "새 대기", "S2", "-", "메모"]),
-        ("queue-pop", ["queue-pop"]),
-        ("roster-set", ["roster-set", "S1", "--session-key", "sess-key-new"]),
-        ("owner-add", ["owner-add", "docs/x.md", "S1", "메모"]),
-        ("archive-rollover", ["archive-rollover", "--keep", "1"]),
-    ]
-
-    def setUp(self):
-        self._tmpdir = tempfile.mkdtemp(prefix="aimem_board_smoke_")
-
-    def tearDown(self):
-        shutil.rmtree(self._tmpdir, ignore_errors=True)
-
-    def _run(self, args, path):
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-            rc = aimem_board.main(args + ["--file", path])
-        return rc
-
-    def test_all_write_subcommands_succeed_and_lint(self):
-        for name, args in self.ARGSETS:
-            with self.subTest(cmd=name):
-                path = os.path.join(self._tmpdir, "%s_AIMEM.md" % name)
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(BOARD_FIXTURE)
-                rc = self._run(args, path)
-                self.assertEqual(rc, 0, "%s 가 0 이 아닌 종료코드 %r 반환" % (name, rc))
-                # 2단계 이후 BOARD_FIXTURE 는 표를 가진 board 전용 시드라 lint_text 위반과 엮지 않는다.
-
-    def test_expect_rev_mismatch_is_rejected(self):
-        # board 의 낙관적 동시성 게이트도 한 번 태운다: 틀린 --expect-rev 는 거부(rc1)되고
-        # 파일은 무변경이어야 한다(T-019 실측을 회귀로 고정).
-        path = os.path.join(self._tmpdir, "expect_AIMEM.md")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(BOARD_FIXTURE)
-        before = open(path, encoding="utf-8").read()
-        rc = self._run(["rev-bump", "--expect-rev", "999"], path)
-        self.assertEqual(rc, 1)
-        self.assertEqual(open(path, encoding="utf-8").read(), before, "거부된 명령이 파일을 바꿈")
-
-
-# ---------------------------------------------------------------------
-# T-029(REV 82): board 쓰기 명령의 **행위 단언**. 기존 TestBoardSmoke 는 exit0 +
-# 산출물 린트통과만 봐서, board-set 이 엉뚱한 행/칸에 써도 린트만 통과하면 초록이었다
-# (S3 [T-027] (b) 가 지목한 구멍, S2 가 T-024 에서 겪은 파손이 빠져나간 경로).
-# 여기서는 (1) 의도한 행·의도한 칸이 의도한 값으로 바뀌고 (2) **그 외 모든 줄이 바이트
-# 단위로 불변**임을 멀티셋 줄 차분으로 못박는다. board 는 S1 소유라 읽기만 - 이 테스트가
-# board 버그를 잡으면 고치지 않고 아웃박스로 보고한다.
-# ---------------------------------------------------------------------
-
-
-def _line_diff(before, after):
-    """멀티셋 줄 차분. 반환 (removed, added). 한 줄이라도 부수적으로 바뀌면 여기 드러난다.
-    '바이트 단위 불변'은 곧 '의도한 줄 외에는 removed/added 에 아무것도 없다'로 검증한다."""
-    cb = collections.Counter(before.splitlines())
-    ca = collections.Counter(after.splitlines())
-    return sorted((cb - ca).elements()), sorted((ca - cb).elements())
-
-
-def _rowmaps(text, locate):
-    """locate(lines)->(start,end) 로 절을 찾아 그 표를 {헤더:셀값} 딕트 리스트로.
-    셀·헤더는 백틱/공백을 벗겨 비교값으로 만든다. 셀 수가 헤더보다 많아도(예: §6 에
-    비고 칸을 얹는 owner-add) min 으로 안전하게 zip."""
-    lines = text.splitlines()
-    span = locate(lines)
-    assert span is not None, "절을 찾을 수 없음"
-    table = lint.extract_table(lines, span[0], span[1])
-    assert table is not None, "표를 찾을 수 없음"
-    header, rows = table
-    hs = [h.strip("` ") for h in header]
-    out = []
-    for _ln, cells in rows:
-        n = min(len(hs), len(cells))
-        out.append({hs[i]: cells[i].strip("` ") for i in range(n)})
-    return out
-
-
-def _find_row(rowmaps, key, val):
-    hits = [r for r in rowmaps if r.get(key) == val]
-    assert len(hits) == 1, "키 %s=%s 로 행 1개를 기대했으나 %d개" % (key, val, len(hits))
-    return hits[0]
-
-
-_BOARD3 = lambda ls: aimem_board.find_section(ls, 3)
-_ROSTER2 = lambda ls: aimem_board.find_section(ls, 2)
-_OWNER6 = lambda ls: aimem_board.find_section(ls, 6)
-_QUEUE = aimem_board.find_queue_section
-
-
-class TestBoardBehavior(unittest.TestCase):
-    """각 쓰기 하위명령이 **의도한 칸만** 바꾸고 나머지는 바이트 불변인지 단언한다.
-    seed 는 TestBoardSmoke 와 같은 BOARD_FIXTURE(린트 통과 확인된 통치 문서)."""
-
-    def setUp(self):
-        self._tmpdir = tempfile.mkdtemp(prefix="aimem_board_beh_")
-
-    def tearDown(self):
-        shutil.rmtree(self._tmpdir, ignore_errors=True)
-
-    def _run(self, args, seed=BOARD_FIXTURE):
-        """seed 를 임시 사본에 쓰고 명령 실행. 반환 (rc, stdout+stderr, 실행 후 파일내용)."""
-        path = os.path.join(self._tmpdir, "beh_AIMEM.md")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(seed)
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-            rc = aimem_board.main(args + ["--file", path])
-        with open(path, encoding="utf-8") as f:
-            after = f.read()
-        return rc, buf.getvalue(), after
-
-    # ---- board-set: 한 행의 상태 칸만 ----
-    def test_board_set_changes_only_target_cell(self):
-        rc, _out, after = self._run(["board-set", "T-1", "REVIEW"])
-        self.assertEqual(rc, 0)
-        rows = _rowmaps(after, _BOARD3)
-        t1 = _find_row(rows, "ID", "T-1")
-        # 의도한 칸: T-1 의 상태 = REVIEW
-        self.assertEqual(t1["상태"], "REVIEW")
-        # 그 행의 다른 칸은 불변
-        self.assertEqual(t1["담당 슬롯"], "S1")
-        self.assertEqual(t1["이어받음"], "-")
-        self.assertEqual(t1["태스크"], "작업 A")
-        # 다른 행(T-2)은 손대지 않음
-        t2 = _find_row(rows, "ID", "T-2")
-        self.assertEqual(t2["상태"], "TODO")
-        # 바이트 불변: 딱 한 줄만 바뀐다(T-1 행). 옆줄을 망가뜨렸다면 여기서 잡힌다.
-        removed, added = _line_diff(BOARD_FIXTURE, after)
-        self.assertEqual(len(removed), 1, "바뀐 줄이 1개가 아님: removed=%r" % removed)
-        self.assertEqual(len(added), 1, "바뀐 줄이 1개가 아님: added=%r" % added)
-        self.assertIn("DONE", removed[0])
-        self.assertIn("REVIEW", added[0])
-        self.assertNotIn("DONE", added[0])
-
-    # ---- board-add: 새 행이 올바른 열에 앉는다 ----
-    def test_board_add_lands_in_correct_columns(self):
-        rc, _out, after = self._run(["board-add", "T-9", "새 작업", "S1", "TODO", "-", "-"])
-        self.assertEqual(rc, 0)
-        removed, added = _line_diff(BOARD_FIXTURE, after)
-        self.assertEqual(removed, [], "기존 줄이 바뀜: %r" % removed)  # append 는 기존 불변
-        self.assertEqual(len(added), 1, "새 줄이 1개가 아님: %r" % added)
-        rows = _rowmaps(after, _BOARD3)
-        ids = [r["ID"] for r in rows]
-        self.assertEqual(ids, ["T-1", "T-2", "T-9"])  # 맨 아래 추가
-        t9 = _find_row(rows, "ID", "T-9")
-        # 값이 각각 올바른 헤더 아래 앉았는지(위치기반 append 라 헤더 순서 어긋나면 여기서 깨짐)
-        self.assertEqual(t9["태스크"], "새 작업")
-        self.assertEqual(t9["담당 슬롯"], "S1")
-        self.assertEqual(t9["상태"], "TODO")
-        self.assertEqual(t9["이어받음"], "-")
-
-    # ---- roster-set: 한 슬롯의 세션키 칸만 ----
-    def test_roster_set_changes_only_target_row(self):
-        rc, _out, after = self._run(
-            ["roster-set", "S1", "--session-key", "sess-key-new"]
-        )
-        self.assertEqual(rc, 0)
-        rows = _rowmaps(after, _ROSTER2)
-        s1 = _find_row(rows, "슬롯", "S1")
-        s2 = _find_row(rows, "슬롯", "S2")
-        self.assertEqual(s1["세션키"], "sess-key-new")
-        # S1 의 다른 칸 불변
-        self.assertEqual(s1["역할"], "린터")
-        self.assertEqual(s1["하네스"], "claude")
-        self.assertEqual(s1["확인토큰"], "abc123")
-        # S2 행은 통째로 불변
-        self.assertEqual(s2["세션키"], "sess-key-s2")
-        self.assertEqual(s2["역할"], "테스트")
-        removed, added = _line_diff(BOARD_FIXTURE, after)
-        self.assertEqual(len(removed), 1)
-        self.assertEqual(len(added), 1)
-        self.assertIn("key-s1", removed[0])
-        self.assertIn("key-new", added[0])
-
-    # ---- queue-add: 맨 아래에 순서=max+1 로 ----
-    def test_queue_add_appends_with_next_order(self):
-        rc, _out, after = self._run(["queue-add", "새 대기", "S2", "-", "메모"])
-        self.assertEqual(rc, 0)
-        removed, added = _line_diff(BOARD_FIXTURE, after)
-        self.assertEqual(removed, [], "기존 줄이 바뀜: %r" % removed)
-        self.assertEqual(len(added), 1)
-        rows = _rowmaps(after, _QUEUE)
-        new = _find_row(rows, "태스크", "새 대기")
-        self.assertEqual(new["순서"], "2")  # 기존 max 1 → 2
-        self.assertEqual(new["후보 슬롯"], "S2")
-        self.assertEqual(new["비고"], "메모")
-        # 기존 순서 1 행 불변
-        old = _find_row(rows, "태스크", "대기 X")
-        self.assertEqual(old["순서"], "1")
-
-    # ---- queue-pop: 맨 위를 꺼내 반환하고 잔여를 재번호 ----
-    def test_queue_pop_removes_top_and_renumbers(self):
-        # 2행 큐로 만들어 'top 만' 꺼내는지 증명한다(1행이면 top/arbitrary 구분 불가).
-        two_row = BOARD_FIXTURE.replace(
-            "| 1    | 대기 X | S1        | -        | -    |\n",
-            "| 1    | 대기 X | S1        | -        | -    |\n"
-            "| 2    | 대기 Y | S2        | -        | -    |\n",
-        )
-        rc, out, after = self._run(["queue-pop"], seed=two_row)
-        self.assertEqual(rc, 0)
-        # 반환/출력에는 top(대기 X)만 — 대기 Y 를 꺼냈다면 top 이 아님
-        self.assertIn("대기 X", out)
-        self.assertNotIn("대기 Y", out)
-        rows = _rowmaps(after, _QUEUE)
-        self.assertEqual(len(rows), 1, "pop 후 잔여 1행이어야 함")
-        surv = rows[0]
-        self.assertEqual(surv["태스크"], "대기 Y")  # 남은 건 원래 둘째
-        self.assertEqual(surv["순서"], "1")  # 재번호: 2 → 1
-        self.assertEqual(surv["후보 슬롯"], "S2")
-        # 바이트 불변: 바뀐 줄은 전부 큐 안(대기 X/Y)뿐. 다른 절은 손대지 않음.
-        removed, added = _line_diff(two_row, after)
-        for l in removed + added:
-            self.assertIn("대기", l, "큐 밖의 줄이 바뀜: %r" % l)
-
-    # ---- owner-add: 새 행이 경로/소유 열에 앉는다 ----
-    def test_owner_add_lands_in_correct_columns(self):
-        rc, _out, after = self._run(["owner-add", "docs/x.md", "S1", "메모"])
-        self.assertEqual(rc, 0)
-        removed, added = _line_diff(BOARD_FIXTURE, after)
-        self.assertEqual(removed, [], "기존 줄이 바뀜: %r" % removed)
-        self.assertEqual(len(added), 1)
-        rows = _rowmaps(after, _OWNER6)
-        row = _find_row(rows, "경로 패턴", "docs/x.md")
-        self.assertEqual(row["쓰기 소유"], "S1")
-        # 기존 소유권 행 3개 그대로
-        paths = [r["경로 패턴"] for r in rows]
-        self.assertEqual(paths, ["AIMEM.md", "src/a.py", "(그 외)", "docs/x.md"])
-
-    # ---- rev-bump: REV +1 + 최종 갱신 줄만 (시각은 --now 로 결정적) ----
-    def test_rev_bump_increments_and_stamps(self):
-        rc, _out, after = self._run(["rev-bump", "--now", "2026-08-26 12:00"])
-        self.assertEqual(rc, 0)
-        m = lint.REV_RE.search(after)
-        self.assertIsNotNone(m)
-        self.assertEqual(int(m.group(1)), 6)  # BOARD_FIXTURE 는 REV 5
-        self.assertIn("최종 갱신: 2026-08-26 12:00", after)
-        # 딱 두 줄만 바뀐다: REV 줄, 최종 갱신 줄
-        removed, added = _line_diff(BOARD_FIXTURE, after)
-        self.assertEqual(len(removed), 2, "removed=%r" % removed)
-        self.assertEqual(len(added), 2, "added=%r" % added)
-
-    # ---- handoff-add: 새 항목이 §4 맨 위에 삽입된다(시각 무관 구조 단언) ----
-    def test_handoff_add_prepends_entry(self):
-        rc, _out, after = self._run(["handoff-add", "--text", "행위단언 항목"])
-        self.assertEqual(rc, 0)
-        lines = after.splitlines()
-        span = aimem_board.find_section(lines, 4)
-        entries = [lines[i] for i in range(span[0], span[1]) if aimem_board.ENTRY_RE.match(lines[i])]
-        self.assertEqual(len(entries), 4)  # 3 → 4
-        self.assertIn("행위단언 항목", entries[0])  # 맨 위에 들어간다
-        self.assertIn("로그 1", entries[1])  # 기존 top 이 둘째로 밀림
-        # 시각은 도구가 박는다 - 사람이 넘긴 값이 아님을 형식으로 확인
-        self.assertRegex(entries[0], r"^- `\d{4}-\d{2}-\d{2} \d{2}:\d{2}` 관리자: 행위단언 항목")
-
-    # ---- archive-rollover: 최신 keep 건(맨 위)만 남기고 나머지는 잘라낸다 ----
-    def test_archive_rollover_keeps_newest(self):
-        rc, _out, after = self._run(["archive-rollover", "--keep", "1"])
-        self.assertEqual(rc, 0)
-        lines = after.splitlines()
-        span = aimem_board.find_section(lines, 4)
-        entries = [lines[i] for i in range(span[0], span[1]) if aimem_board.ENTRY_RE.match(lines[i])]
-        self.assertEqual(len(entries), 1)  # 3 → keep 1
-        self.assertIn("로그 1", entries[0])  # 최신(맨 위) 유지
-        # 잘려나간 항목은 §4 에서 사라진다
-        self.assertNotIn("로그 2", "\n".join(entries))
-        self.assertNotIn("로그 3", "\n".join(entries))
-        # 아카이브는 임시 디렉터리 안으로만 나간다(저장소 .aimem/archive 는 건드리지 않음)
-        repo_archive = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".aimem", "archive")
-        self.assertTrue(os.path.isdir(self._tmpdir))
-
-
-# ---------------------------------------------------------------------
-# 2단계(T-061): 남는 코드 + 새 STATE_* 코드. 운영 상태 표는 `.aimem/aimem.db` 로 옮겨갔고
-# 린터 규칙은 "표가 있어야 한다" -> "표가 없어야 한다" 로 반전됐다.
+# 규칙별 검사. 운영 상태 표는 `.aimem/aimem.db` 에 있고 AIMEM.md 에는 표가 없어야 한다.
 # ---------------------------------------------------------------------
 
 
@@ -716,12 +362,24 @@ class TestLintRepo(unittest.TestCase):
         self._fake_repo(db_rev=99, write_state=False)
         self.assertEqual(self._codes(), [])
 
-    # (b) 저장소 현물 - 터지지 않고 리스트를 돌려준다 (내용 단언 없음)
-    def test_real_repo_returns_list_without_raising(self):
-        notes = []
-        vs = lint_repo(REPO_ROOT / "AIMEM.md", root=REPO_ROOT, notes=notes)
-        self.assertIsInstance(vs, list)
-        self.assertIsInstance(notes, list)
+    # (b) 진짜 aimem_db 로 임시 저장소를 만들어 render 한 직후는 깨끗하고, 세션·이벤트가 더해져도 낡지 않는다
+    def test_rendered_temp_repo_is_clean_and_stays_clean_after_sessions_and_events(self):
+        aimem = self._tmp / ".aimem"
+        for target, attr, value in ((aimem_db, "ROOT", self._tmp), (aimem_db, "DB", aimem / "aimem.db"),
+                                    (aimem_db, "AIMEM", self.md), (aimem_db, "HANDOFF", aimem / "handoff.md")):
+            pt = mock.patch.object(target, attr, value)
+            pt.start()
+            self.addCleanup(pt.stop)
+        with contextlib.redirect_stdout(io.StringIO()):
+            aimem_db.cmd_init()
+            with aimem_db.connect() as con:
+                con.execute("INSERT INTO meta(key,value) VALUES('rev','1')")
+            aimem_db.render()
+        self.assertEqual(lint_repo(self.md, root=self._tmp), [])
+        with aimem_db.connect() as con:
+            con.execute("INSERT INTO sessions(id,role,harness,state,started) VALUES('M-R1-000000','manager','claude','running','2026-01-01T00:00:00')")
+            con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES('2026-01-01T00:00:00','t',1,'note','x')")
+        self.assertEqual(lint_repo(self.md, root=self._tmp), [])
 
     # --- REV_DB_MISMATCH ---
     def test_rev_db_mismatch_fires(self):
@@ -789,58 +447,8 @@ class TestMainUsesLintRepo(unittest.TestCase):
             self.assertEqual(main([bad]), 1)
 
 
-# ---------------------------------------------------------------------------
-# 제거분 회귀 (식별자를 조각내 둔다: 통째로 적으면 이 파일이 자기 자신에 걸린다)
-# ---------------------------------------------------------------------------
-
-_REMOVED_NAMES = ("MAX_OUTBOX" + "_BYTES", "_check_outbox" + "_sizes")
-
-# 2단계(T-061)에서 지운 이름. 되살아나면 반전된 계약이 깨진 것이다.
-_REMOVED_2ND_STAGE = (
-    "ADMIN_OWNER_LITERALS", "BOARD_NON_SLOT_OWNERS", "PROTECTED_PATHS", "MAX_LOG_ENTRY_CHARS",
-    "_check_roster", "_check_board", "_check_ownership",
-)
-
-
-class TestRemovedNames(unittest.TestCase):
-    def test_module_no_longer_exposes_outbox_names(self):
-        for name in _REMOVED_NAMES:
-            self.assertFalse(hasattr(lint, name), "제거된 이름이 아직 있다: %s" % name)
-
-    def test_module_no_longer_exposes_second_stage_names(self):
-        for name in _REMOVED_2ND_STAGE:
-            self.assertFalse(hasattr(lint, name), "2단계에서 지운 이름이 아직 있다: %s" % name)
-
-    def test_retained_public_api_present(self):
-        for name in ("find_section", "extract_table", "lint_text", "lint_file", "lint_repo",
-                     "MAX_TOTAL_LINES", "MANAGER_SESSION_FORM"):
-            self.assertTrue(hasattr(lint, name), name)
-
-    def test_lint_source_has_no_live_outbox_references(self):
-        src = inspect.getsource(lint)
-        code_lines = [l for l in src.splitlines()
-                      if not l.lstrip().startswith("#") and "REV 103 에서 제거했다" not in l]
-        for name in _REMOVED_NAMES:
-            self.assertEqual([l for l in code_lines if name in l], [], name)
-
-    def test_this_test_module_has_no_stale_outbox_references(self):
-        src = open(os.path.abspath(__file__), encoding="utf-8").read()
-        for name in _REMOVED_NAMES:
-            hits = [l for l in src.splitlines() if name in l and '" + "' not in l]
-            self.assertEqual(hits, [], hits)
-
-    def test_removed_violation_codes_never_emitted(self):
-        # 옛 표 기반 위반 코드는 어떤 입력에도 나오지 않는다 (표가 있어도 STATE_TABLE_IN_AIMEM 만).
-        text = VALID_DOC.replace("## 2. 세션 명부\n\n", "## 2. 세션 명부\n\n" + TABLE + "\n", 1)
-        for v in lint_text(text):
-            for prefix in ("ROSTER_", "BOARD_", "OWNERSHIP_", "OUTBOX"):
-                self.assertFalse(v.code.startswith(prefix), v.code)
-            for gone in ("SIZE_HANDOFF_LOG", "SIZE_LOG_ENTRY_CHARS", "REV_LOG_MISSING", "HANDOFF_SECTION_MISSING"):
-                self.assertNotEqual(v.code, gone)
-
-
 class TestLintFileContract(unittest.TestCase):
-    """`lint_file` 의 시그니처·반환 계약은 `aimem_board.py` 와 `.githooks/pre-commit` 이 의존한다."""
+    """`lint_file`·`lint_repo` 의 시그니처·반환 계약 (`.githooks/pre-commit` 이 린터를 부른다)."""
 
     def setUp(self):
         self._tmpdir = tempfile.mkdtemp(prefix="aimem_lint_contract_")
@@ -876,11 +484,6 @@ class TestLintFileContract(unittest.TestCase):
     def test_accepts_notes_positionally_and_by_keyword(self):
         a, b = [], []
         self.assertEqual(lint_file(self.path, a), lint_file(self.path, notes=b))
-
-
-if __name__ == "__main__":
-    unittest.main()
-
 
 
 class TestEnglishManagerDeclaration(unittest.TestCase):
@@ -926,3 +529,7 @@ class TestWeightNote(unittest.TestCase):
         notes = []
         lint_text(VALID_DOC, notes)
         self.assertFalse(any("가벼움" in n for n in notes))
+
+
+if __name__ == "__main__":
+    unittest.main()

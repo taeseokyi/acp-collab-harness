@@ -34,7 +34,7 @@ def ev(**kw):
 
 
 def mk_session(root, sid, *, role="manager", running=False, end=None, started=OLD, rnd=21, label=None,
-               events=(), report=None, harness="fake", phase=None):
+               events=(), report=None, harness="fake"):
     sroot = root / ".aimem" / "sessions"
     d = sroot / sid
     d.mkdir(parents=True)
@@ -43,8 +43,6 @@ def mk_session(root, sid, *, role="manager", running=False, end=None, started=OL
             "extra": {}}
     if role == "worker":
         meta.update({"slot": "S2", "task_id": "T-1"})
-    if phase is not None:
-        meta["extra"]["phase"] = phase
     if running:
         pid = _fleet_env.marked_pid(sroot, sid)
         meta["supervisor_pid"] = pid
@@ -147,19 +145,6 @@ class ManagerStatusTest(Base):
         self.assertEqual(by["M-R16-060000"]["status"], "killed")
         self.assertNotIn("M-R15-050000", by)                                                      # 7 개 중 6 개만
         self.assertFalse(any(r["id"].startswith("T-") for r in rows))
-
-    def test_phase_passes_through_for_calls_rounds(self):
-        mk_session(self.root, "M-R23-110000", rnd=23, started="2026-11-12T11:00:00", end=done(), phase="plan")
-        mk_session(self.root, "M-R23-111000", rnd=23, started="2026-11-12T11:10:00", end=done(), phase="judge")
-        mk_session(self.root, "M-R23-112000", rnd=23, started="2026-11-12T11:20:00", end=done(), phase="bogus")
-        mk_session(self.root, "M-R22-100000", rnd=22, started="2026-11-12T10:00:00", end=done())   # 상주: phase 없음
-        by = {r["id"]: r for r in server.manager_status(self.root)["sessions"]}
-        self.assertEqual(by["M-R23-110000"]["phase"], "plan")
-        self.assertEqual(by["M-R23-111000"]["phase"], "judge")
-        self.assertIsNone(by["M-R23-112000"]["phase"])                                           # 모르는 값은 버린다
-        self.assertIsNone(by["M-R22-100000"]["phase"])
-        code, d = server.manager_detail("M-R23-111000", self.root)
-        self.assertEqual((code, d["session"]["phase"]), (200, "judge"))
 
     def test_lost_session_is_failed(self):
         mk_session(self.root, "M-R15-050000", rnd=15)
@@ -278,7 +263,7 @@ class HttpTest(Base):
             self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
         except PermissionError:
             self.skipTest("이 환경은 소켓을 못 연다")
-        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         self.thread.start()
         self.addCleanup(self._stop)
 
@@ -390,7 +375,7 @@ class ReviewFixesTest(Base):
             httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
         except PermissionError:
             self.skipTest("이 환경은 소켓을 못 연다")
-        t = threading.Thread(target=httpd.serve_forever, daemon=True)
+        t = threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         t.start()
         self.addCleanup(lambda: (httpd.shutdown(), httpd.server_close()))
         c = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=10)

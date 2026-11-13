@@ -9,7 +9,7 @@
 3. stdout 을 한 줄씩 `<받은 시각>\\t<원문>` 으로 events.jsonl 에 (줄마다 flush, 한 줄 최대 1MB)
 4. 벽시계(timeout)·침묵(idle_timeout)을 1초 안 간격으로 본다. 넘으면 하네스와 그룹의 나머지를 끝낸다
 5. SIGTERM/SIGINT/SIGHUP 를 받으면 하네스를 끝내고 killed 로 마감한다 (까닭은 cancel.json)
-6. 하네스가 끝나면 그룹에 남은 손자도 끝낸다(지금 래퍼 방식이 고아를 남기던 자리). 그룹을 빠져나간(setsid)
+6. 하네스가 끝나면 그룹에 남은 손자도 끝낸다. 그룹을 빠져나간(setsid)
    손자도 이 세션 환경 표식으로 찾아 pid 하나씩 끝낸다 → report.md → end.json → DB 색인. 그리고 0 으로 나간다.
    end.json 이 이미 있으면(작업자가 미리 써 둔 것) 감독 판정으로 덮는다 - end.json 의 주인은 감독이다
 
@@ -28,22 +28,17 @@ import threading
 import time
 
 from . import harness, sessions
-from .base import ENV_ROLE, ENV_ROOT, ENV_SESSION, SessionSpec, read_event_lines
+from .base import ENV_ROLE, ENV_ROOT, ENV_SESSION, TERM_GRACE_SEC, SessionSpec, read_event_lines
 from .env import load_env, session_key_name
 
 #: spawn 이 meta.json 에 pid 를 채우기를 기다리는 시간.
 META_WAIT_SEC = 10.0
-#: 하네스에 TERM 을 보낸 뒤 KILL 까지. `sessions.KILL_GRACE_SEC`(5초)보다 짧아야 cancel 이 KILL 하기 전에
-#: 감독이 제 손으로 end.json 을 쓴다.
-HARNESS_GRACE_SEC = 3.0
 #: 하네스가 끝난 뒤 stdout 파이프를 마저 읽는 시간 (손자가 파이프를 붙잡고 있을 수 있다).
 DRAIN_SEC = 1.0
 LINE_CAP = 1 << 20
 TICK = 0.1
-#: 침묵 판정에서 '사건' 말고도 살아 있음으로 치는 것: 하네스 그룹이 실제로 데이터를 읽고 있는가(`/proc/<pid>/io` 의 rchar).
-#: opencode·codex 는 긴 파일을 생성하는 동안 다 될 때까지 사건을 하나도 내지 않는다 - 그 사이 모델의 토큰은 소켓으로
-#: 계속 들어온다. 공급자가 정말 멈추면 읽는 양도 멈춘다. 연결 유지 신호(수십 바이트)는 문턱보다 훨씬 작다.
-#: (R24 T-282: 무료 딥시크가 브라우저 검사 파일을 4분 동안 쓰다가 '침묵 240초' 로 끊김, 2026-11-13)
+#: 침묵 판정에서 사건 말고도 살아 있음으로 치는 것: 세션 프로세스가 데이터를 읽고 있는가(`/proc/<pid>/io` rchar) -
+#: 긴 생성 중인 하네스는 사건 없이 토큰만 받는다. 연결 유지 신호(수십 바이트)는 문턱보다 훨씬 작다.
 IO_CHECK_SEC = 10.0
 IO_PROGRESS_BYTES = 4096
 
@@ -134,7 +129,7 @@ class Supervisor:
         return sessions.group_members(os.getpgid(0), exclude=(os.getpid(),))
 
     def _terminate(self):
-        """하네스와 그룹의 나머지에 TERM → HARNESS_GRACE_SEC → KILL. 하네스는 거둔다(좀비 안 남김).
+        """하네스와 그룹의 나머지에 TERM → TERM_GRACE_SEC → KILL. 하네스는 거둔다(좀비 안 남김).
 
         그룹 전체 신호(killpg)는 나 자신도 맞히므로 쓰지 않고, /proc 에서 같은 그룹의 pid 를 하나씩 찾는다.
         """
@@ -148,7 +143,7 @@ class Supervisor:
                     os.kill(p, signal.SIGTERM)
             except OSError:
                 pass
-        deadline = time.monotonic() + HARNESS_GRACE_SEC
+        deadline = time.monotonic() + TERM_GRACE_SEC
         while time.monotonic() < deadline:
             if self.proc is not None:
                 self.proc.poll()
@@ -199,12 +194,7 @@ class Supervisor:
                 yield ev
 
     def _group_rchar(self):
-        """이 세션의 프로세스들(나 말고)이 지금까지 읽은 바이트 합 (`/proc/<pid>/io` rchar). 못 읽으면 0.
-
-        '이 세션의 프로세스' = 내 프로세스 그룹 + 세션 표식을 단 프로세스 전부. 하네스가 백그라운드로 떼어 낸 명령
-        (`setsid`·Claude Code 의 백그라운드 작업)은 그룹을 벗어나지만 표식은 물려받는다 - 그것도 일하는 중으로 센다
-        (R24 T-288: Opus 검수자가 변이 시험 23개를 백그라운드로 돌리며 기다리다 '침묵 600초' 로 끊김, 2026-11-13).
-        """
+        """이 세션 프로세스들(나 말고 - 그룹 + 그룹을 벗어난 표식 단 백그라운드 명령)이 읽은 바이트 합. 못 읽으면 0."""
         me, total = os.getpid(), 0
         pids = set()
         try:
