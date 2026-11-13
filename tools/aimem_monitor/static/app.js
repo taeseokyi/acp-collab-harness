@@ -1118,50 +1118,117 @@ function policyLabel(policy, key) {
   return c ? (c.label || c.key) : '';
 }
 // 가로로 붙은 라디오 단추 묶음. 폭이 좁으면 줄을 바꾼다. 선택한 항목의 설명은 한 줄로 아래에 보인다.
-function policySegment(policy, selected, name, onChange) {
-  const wrap = document.createElement('div');
-  wrap.className = 'fc-policy';
+// 운영 방식 한 칸: [이름표] [지금 값 ▾] + 그 방식의 설명. **칸에 적힌 값은 그 칸의 지금 상태**다(`lit`, 서버가 아는 것) -
+// 눌러서 목록을 펴고 거기서 고를 때만 바꾸는 동작(`onPick`)이 나가고, 상태가 실제로 바뀐 뒤에야 칸의 값이 바뀐다.
+// 칸이 둘('지금 R<N>'·'다음 라운드')이라 무엇이 언제 쓰이는지가 자리로 구분된다. 목록에는 방식마다 설명이 붙고, 맨 위에 고르면
+// 어떻게 되는지를 적는다 (2026-11-13 태석님: 누르는 대로 불이 옮겨 다니면 따라가기 힘들다 → 상태 표시는 고정, 바꾸기는 목록에서)
+// 목록은 떠 있는 창이 아니라 칸 아래로 펼쳐진다 - 좁은 화면에서 잘리지 않고, 5초마다 다시 그려도 `state.policyMenu` 로 펴진 채 남는다.
+function policyMenuSet(row, focusKey) {
+  state.policyMenu = row || null;
+  state.policyMenuFocus = row ? (focusKey || null) : null;
+  if (state.data) renderFleetControl(state.data);
+}
+function policyBox(policy, o) {
+  const open = state.policyMenu === o.row && !!o.onPick && !o.disabled;
+  const cur = policy.choices.find((c) => c.key === o.lit);
+  const row = document.createElement('div');
+  row.className = 'fc-policy-row' + (open ? ' is-open' : '');
+  row.dataset.row = o.row;
   const lab = document.createElement('span');
   lab.className = 'fc-policy-lab';
-  lab.textContent = '운영 방식';
-  wrap.appendChild(lab);
-  const seg = document.createElement('div');
-  seg.className = 'fc-policy-seg';
-  seg.setAttribute('role', 'radiogroup');
-  seg.setAttribute('aria-label', '운영 방식');
+  lab.textContent = o.label;
+  row.appendChild(lab);
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'fc-policy-cur';
+  btn.dataset.key = o.lit || '';
+  btn.textContent = (cur ? (cur.label || cur.key) : '?') + (o.onPick ? (open ? ' ▴' : ' ▾') : '');
+  btn.setAttribute('aria-label', `${o.label} 운영 방식: ${cur ? cur.label : '?'}` + (o.onPick ? ' - 눌러서 바꾸기' : ''));
+  btn.disabled = !o.onPick || !!o.disabled;
+  if (o.onPick) {
+    btn.title = '눌러서 목록에서 바꿉니다';
+    btn.setAttribute('aria-haspopup', 'listbox');
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.addEventListener('click', () => {
+      policyMenuSet(open ? null : o.row, o.lit);
+      if (open) {
+        const again = document.querySelector(`#fleet-control .fc-policy-row[data-row="${o.row}"] .fc-policy-cur`);
+        if (again) again.focus();
+      }
+    });
+  }
+  row.appendChild(btn);
   const desc = document.createElement('div');
   desc.className = 'fc-hint fc-policy-desc';
-  const radios = [];
-  const showDesc = () => {
-    const r = radios.find((x) => x.checked);
-    const c = r && policy.choices.find((x) => x.key === r.value);
-    desc.textContent = c ? show(c.desc || '') : '';
-  };
-  for (const c of policy.choices) {
-    const l = document.createElement('label');
-    l.className = 'fc-policy-opt';
-    l.title = c.desc || '';
-    const r = document.createElement('input');
-    r.type = 'radio';
-    r.name = name;
-    r.value = c.key;
-    r.checked = c.key === selected;
-    r.addEventListener('change', () => { showDesc(); onChange(c.key); });
-    const t = document.createElement('span');
-    t.textContent = c.label || c.key;
-    l.appendChild(r);
-    l.appendChild(t);
-    seg.appendChild(l);
-    radios.push(r);
+  desc.textContent = cur ? show(cur.desc || '') : '';
+  row.appendChild(desc);
+  if (open) {
+    const menu = document.createElement('div');
+    menu.className = 'fc-policy-menu';
+    menu.setAttribute('role', 'listbox');
+    menu.setAttribute('aria-label', o.label + ' 운영 방식 고르기');
+    if (o.how) {
+      const how = document.createElement('div');
+      how.className = 'fc-hint fc-policy-how';
+      how.textContent = o.how;
+      menu.appendChild(how);
+    }
+    const close = (refocus) => {
+      policyMenuSet(null);
+      const again = refocus && document.querySelector(`#fleet-control .fc-policy-row[data-row="${o.row}"] .fc-policy-cur`);
+      if (again) again.focus();
+    };
+    for (const c of policy.choices) {
+      const on = c.key === o.lit;
+      const it = document.createElement('button');
+      it.type = 'button';
+      it.className = 'fc-policy-item' + (on ? ' is-on' : '');
+      it.dataset.key = c.key;
+      it.setAttribute('role', 'option');
+      it.setAttribute('aria-selected', on ? 'true' : 'false');
+      const nm = document.createElement('b');
+      nm.textContent = (c.label || c.key) + (on ? ` ✓ ${o.onLabel}` : '');
+      const ds = document.createElement('span');
+      ds.textContent = c.desc || '';
+      it.appendChild(nm);
+      it.appendChild(ds);
+      it.addEventListener('click', () => { close(true); if (!on) o.onPick(c.key); });
+      it.addEventListener('keydown', (e) => {
+        const items = Array.from(menu.querySelectorAll('.fc-policy-item'));
+        const i = items.indexOf(it);
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus(); }
+      });
+      menu.appendChild(it);
+    }
+    row.appendChild(menu);
+    // 다시 그린 뒤에도 보던 자리로 (목록 안에 초점이 있었을 때만 - 다른 데서 글을 쓰는 중이면 뺏지 않는다)
+    const want = state.policyMenuFocus;
+    state.policyMenuFocus = null;
+    if (want) setTimeout(() => { const t = menu.querySelector(`.fc-policy-item[data-key="${want}"]`); if (t && state.policyMenu === o.row) t.focus(); }, 0);
   }
-  if (!radios.some((x) => x.checked) && radios[0]) radios[0].checked = true;
-  wrap.appendChild(seg);
-  wrap.appendChild(desc);
-  showDesc();
-  return { el: wrap, get: () => (radios.find((x) => x.checked) || {}).value };
+  return row;
 }
+document.addEventListener('keydown', (e) => {    // 초점이 어디 있든 Esc 로 닫고, 편 칸으로 초점을 돌린다
+  if (e.key !== 'Escape' || !state.policyMenu) return;
+  const row = state.policyMenu;
+  policyMenuSet(null);
+  const again = document.querySelector(`#fleet-control .fc-policy-row[data-row="${row}"] .fc-policy-cur`);
+  if (again) again.focus();
+});
+document.addEventListener('click', (e) => {      // 목록 밖을 누르면 닫는다
+  if (state.policyMenu && !(e.target.closest && e.target.closest('.fc-policy-row'))) policyMenuSet(null);
+});
+// 고른 것이 없으면 도는(없으면 마지막) 라운드의 방식을 보인다 - 기본값을 보이면 빠른 구현으로 도는 중에 '무료 중심' 이 골라진 것처럼 읽힌다 (2026-11-13 태석님)
 function policySelected(policy, key) {
-  return policy.choices.some((c) => c.key === key) ? key : (policy.choices.some((c) => c.key === policy.default) ? policy.default : policy.choices[0].key);
+  const has = (k) => policy.choices.some((c) => c.key === k);
+  return [key, policy.current, policy.default].find(has) || policy.choices[0].key;
+}
+// 다음에 띄울 라운드의 방식: 이어 달리기가 켜져 있으면 그것의 방식(서버), 꺼져 있으면 이 화면에서 고른 것
+function nextPolicyKey(data) {
+  const pol = fleetPolicy(data);
+  if (!pol) return null;
+  const ch = (data.fleet && data.fleet.chain) || {};
+  return policySelected(pol, ch.on && pol.chain ? pol.chain : state.policyChoice);
 }
 
 const MODE_BADGE = { running: 'running', paused: 'partial', stopped: 'blocked', ready: 'done' };
@@ -1209,7 +1276,7 @@ async function fleetAction(act, confirmText, extraBody) {
 
 function fleetMsgText(m) {
   const b = m.body || {};
-  const name = { prepare: '준비', run: '재개', pause: '일시 중지', stop: '완전 중지', round: '라운드 실행' }[m.act] || m.act;
+  const name = { prepare: '준비', run: '재개', pause: '일시 중지', stop: '완전 중지', round: '라운드 실행', switch: '운영 방식 바꾸기' }[m.act] || m.act;
   if (m.act === 'prepare' && Array.isArray(b.checks)) {
     const bad = b.checks.filter((c) => !c.ok && c.required).map((c) => c.name);
     return b.ok ? '준비 점검 통과 - 준비 상태입니다' : `준비 점검에서 막혔습니다: ${bad.join(', ')} (아래 목록)`;
@@ -1220,6 +1287,14 @@ function fleetMsgText(m) {
     return `완전 중지 - 작업자 ${k}개 종료` + ((b.halted_graphs || []).length ? `, 그래프 ${b.halted_graphs.join(', ')} 정리` : '') + '. ' + (b.note || '');
   }
   if (m.act === 'run') return '재개 - ' + ((b.resumed_graphs || []).length ? `그래프 ${b.resumed_graphs.join(', ')} 이어 돌림. ` : '') + (b.note || '');
+  if (m.act === 'switch' && !b.round) {
+    const to = policyLabel(fleetPolicy(state.data), b.chain && b.chain.policy);
+    return `다음 라운드부터 ${to || '고른 방식'}(으)로 띄웁니다 - 도는 라운드는 그대로 갑니다`;
+  }
+  if (m.act === 'switch') {
+    const dg = (b.dropped_graphs || []).map((d) => d.graph);
+    return `운영 방식을 ${policyLabel(fleetPolicy(state.data), b.policy) || '고른 방식'}(으)로 바꿨습니다 - R${b.old_round} 을 멈추고 R${b.round} 를 띄웠습니다` + (dg.length ? ` (버린 그래프 ${dg.join(', ')})` : '') + '. 위 관리자 카드에 나타납니다';
+  }
   if (m.act === 'round') return `라운드 R${b.round} 실행 - 관리자 세션을 띄웠습니다 (${b.brief}). 위 관리자 카드에 나타납니다`;
   return name + ' 완료';
 }
@@ -1290,7 +1365,7 @@ function renderFleetChain(data) {
     .concat((data && Array.isArray(data.projects) ? data.projects : []).map((p) => p && p.name))
     .concat((data && Array.isArray(data.requests) ? data.requests : []).map((q) => q && q.project))
     .filter(Boolean))).sort();
-  const sig = JSON.stringify([f.mode, !!ch.on, ch.label, ch.all, ch.fleet, ch.projects, ch.max_rounds, ch.autonomous, ch.renew, ch.cycles, ch.total_rounds, f.chain_modes, ch.rounds_done, ch.stopped_why, ch.stopped_kind, ch.stopped_at, names, f.policy ? [f.policy.default, f.policy.chain, f.policy.choices, state.policyChoice] : null, lim,
+  const sig = JSON.stringify([f.mode, !!ch.on, ch.label, ch.all, ch.fleet, ch.projects, ch.max_rounds, ch.autonomous, ch.renew, ch.cycles, ch.total_rounds, f.chain_modes, ch.rounds_done, ch.stopped_why, ch.stopped_kind, ch.stopped_at, names, f.policy ? [f.policy.default, f.policy.current, f.policy.chain, f.policy.choices, state.policyChoice] : null, lim,
     !!state.chainBusy, state.chainMsg]);
   if (el.dataset.sig === sig) return;
   el.dataset.sig = sig;
@@ -1472,7 +1547,7 @@ function renderFleetChain(data) {
 
     // 운영 방식은 '라운드 실행' 옆의 한 곳에서 고른다 - 여기서는 지금 고른 것을 글로만 보인다
     const pol = fleetPolicy(data);
-    const polKey = pol ? policySelected(pol, state.policyChoice) : null;
+    const polKey = nextPolicyKey(data);
     if (pol) {
       const pt = document.createElement('div');
       pt.className = 'fc-hint fleet-chain-policy';
@@ -1692,6 +1767,9 @@ function renderFleetControl(data) {
     pill.title = f.note ? `${fleetModeLabel(f)} - ${f.note} (${fmtDateTime(f.at)}, ${show(f.by)})` : '';
   }
   if (!box) return;
+  // 운영 방식 목록 안에 초점이 있었으면 다시 그린 뒤 그 자리로 돌린다 (`policyBox`) - 지우기 전에 적어 둔다
+  const act = document.activeElement;
+  if (act && act.classList && act.classList.contains('fc-policy-item') && box.contains(act)) state.policyMenuFocus = act.dataset.key;
   box.textContent = '';
   if (!md) {
     box.appendChild(emptyP('함대 제어 상태를 읽지 못했습니다' + (f.error ? ': ' + f.error : '')));
@@ -1758,16 +1836,50 @@ function renderFleetControl(data) {
     // 화면에 다 보이는 것을 되묻지 않는다 - 할 일이 없을 때만 확인
     const reqs = (data && Array.isArray(data.requests)) ? data.requests : [];
     const nNew = reqs.filter((q) => String(q.status || '').toUpperCase() === 'NEW').length;
-    const pk = polSeg ? polSeg.get() : null;
+    const pk = nextPolicyKey(data);
     fleetAction('round', brief.standard && !nNew ? "할 일이 없습니다 - 관리자는 점검만 하고 끝냅니다. 그래도 띄울까요?" : null, pk ? { policy: pk } : undefined);
   });
   row.appendChild(rb);
   box.appendChild(row);
   const pol = fleetPolicy(data);
-  let polSeg = null;
   if (pol) {
-    polSeg = policySegment(pol, policySelected(pol, state.policyChoice), 'fleet-round-policy', (k) => { state.policyChoice = k; renderFleetChain(state.data); });
-    box.appendChild(polSeg.el);
+    // 두 칸으로 나눠 보인다 - '지금 R<N>'(도는 라운드가 있을 때만)과 '다음 라운드'. 칸의 값은 지금 상태에 고정이고, 눌러서 편 목록에서 고르면 그 칸의 것이 바뀐다
+    const chainOn = !!(f.chain && f.chain.on);
+    const mgrOn = md === 'running' && f.manager && ['launching', 'running'].includes(f.manager.state) && f.manager.policy;
+    const busy = !!state.fleetBusy;
+    const wrap = document.createElement('div');
+    wrap.className = 'fc-policy';
+    if (mgrOn) {
+      const rn = f.manager.round;
+      const runPol = f.manager.policy;
+      const open = (Array.isArray(f.graphs) ? f.graphs : []).map((g) => g.id);
+      wrap.appendChild(policyBox(pol, {
+        row: 'now', label: `지금 R${rn}`, lit: runPol, disabled: busy, onLabel: '지금 방식',
+        how: `고르면 R${rn} 을 멈추고 그 방식으로 다시 띄웁니다. 그래프는 버리고 새로 짭니다 - 고른 뒤 한 번 더 확인을 받습니다`,
+        onPick: can.switch ? (want) => fleetAction('switch',
+          `R${rn} 을 지금 멈추고 운영 방식을 바꿉니다 (${policyLabel(pol, runPol)} → ${policyLabel(pol, want)}).\n\n`
+          + '· 돌고 있는 관리자와 작업자가 끊깁니다 - 하던 일은 잃습니다\n'
+          + (open.length ? `· 끝나지 않은 그래프 ${open.join(', ')} 를 버립니다 - 새 관리자가 새 방식에 맞춰 다시 짭니다\n` : '· 새 관리자가 새 방식에 맞춰 그래프를 다시 짭니다\n')
+          + '· 이미 끝난 노드의 결과물은 남습니다\n'
+          + (chainOn ? '· 이어 달리기는 새 방식으로 이어 갑니다\n' : '')
+          + '\n되돌릴 수 없습니다. 진행할까요?', { policy: want, when: 'now', round: rn }) : null,
+      }));
+    }
+    const serverNext = chainOn && pol.chain;       // 이어 달리기가 켜져 있으면 다음 라운드의 방식은 서버에 있다 - 고르면 바로 바뀐다
+    wrap.appendChild(policyBox(pol, {
+      row: 'next', label: '다음 라운드', lit: nextPolicyKey(data), disabled: busy || (serverNext && f.switching), onLabel: '다음 방식',
+      how: serverNext ? '고르면 이어 달리기가 다음 라운드부터 그 방식으로 띄웁니다' + (mgrOn ? '. 도는 라운드는 그대로 갑니다' : '')
+        : "고르면 '라운드 실행' 이나 이어 달리기를 켤 때 그 방식으로 띄웁니다" + (mgrOn ? '. 도는 라운드는 그대로 갑니다' : '') + ' (이 화면에서만 기억합니다)',
+      onPick: serverNext ? (want) => fleetAction('switch', null, { policy: want, when: 'next' })
+        : (want) => {
+          state.policyChoice = want;
+          renderFleetControl(state.data);
+          renderFleetChain(state.data);
+          const again = document.querySelector('#fleet-control .fc-policy-row[data-row="next"] .fc-policy-cur');
+          if (again) again.focus();
+        },
+    }));
+    box.appendChild(wrap);
   }
 
   const hint = document.createElement('div');
@@ -1783,8 +1895,8 @@ function renderFleetControl(data) {
     if (curRound) {
       const now = document.createElement('div');
       now.className = 'fc-hint-now';
-      const cpl = policyLabel(pol, curRound.policy);
-      now.textContent = `지금 R${curRound.round} 실행 중` + (cpl ? ` · ${cpl}` : '') + (curRound.workspace ? ` · 라운드 보고 ${curRound.workspace}/` : '');
+      // 운영 방식은 위 '지금 R<N>' 줄에 있다 - 여기서 또 적지 않는다
+      now.textContent = `지금 R${curRound.round} 실행 중` + (curRound.workspace ? ` · 라운드 보고 ${curRound.workspace}/` : '');
       hint.appendChild(now);
     } else if (f.idle) {
       // 라운드가 끝났다 - 다음 요청은 '라운드 실행' 한 번이면 된다 (준비 점검은 그 안에서 돈다)

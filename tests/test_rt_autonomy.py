@@ -423,6 +423,18 @@ class Move(Base):
         self.round_json(5, policy="<x>")
         self.assertEqual(fleet_graph.round_policy(5), "cost")
 
+    def test_a_carried_over_graph_follows_the_round_that_runs_it(self):
+        """무료 중심 라운드에서 만든 그래프를 빠른 구현 라운드가 돌리면 지금 라운드의 방식을 따른다."""
+        import fleet_ctl  # noqa: PLC0415
+        g = self.blocked_graph(round_n=4, policy="cost")
+        self.round_json(6, policy="speed")
+        with mock.patch.object(fleet_ctl, "active_round", return_value=6):
+            self.assertEqual(fleet_graph.graph_policy(g), "speed")
+            ok, msg = fleet_graph.move_node(g, "T-1", "S3")
+        self.assertTrue(ok, msg)
+        with mock.patch.object(fleet_ctl, "active_round", return_value=None):      # 도는 관리자가 없으면 만든 라운드의 것
+            self.assertEqual(fleet_graph.graph_policy(g), "cost")
+
     def test_cli_move_takes_the_graph_lock(self):
         self.blocked_graph()
         a = argparse.Namespace(id="G-001", node="T-1", slot="S2", why="")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""data/answers.txt·data/allowed.txt 에서 web/js/words.js 를 만듭니다.
+"""data/answers.txt·data/allowed.txt·data/words/*.txt 에서 web/js/words.js 를 만듭니다.
 
 손으로 고른 낱말 원본을 읽어 완성형 한글 음절만으로 된 6칸 낱말만 남기고,
 정답 후보(ANSWERS)는 고정 씨앗으로 섞고 추측 목록(ALLOWED)은 정렬합니다.
@@ -18,6 +18,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ANSWERS_IN = PROJECT_ROOT / "data" / "answers.txt"
 ALLOWED_IN = PROJECT_ROOT / "data" / "allowed.txt"
+WORDS_DIR = PROJECT_ROOT / "data" / "words"
 OUTPUT = PROJECT_ROOT / "web" / "js" / "words.js"
 
 SEED = 20261113
@@ -96,10 +97,14 @@ def main() -> int:
 
     answers, dropped_answers = load_words(ANSWERS_IN)
     allowed, dropped_allowed = load_words(ALLOWED_IN)
+    branches = [(p, *load_words(p)) for p in sorted(WORDS_DIR.glob("*.txt"))]
 
     ordered_answers = sorted(answers)
     random.Random(SEED).shuffle(ordered_answers)
-    union = sorted(set(answers) | set(allowed))
+    union_set = set(answers) | set(allowed)
+    for _, words, _ in branches:
+        union_set.update(words)
+    union = sorted(union_set)
 
     content = "\n".join(
         [
@@ -113,6 +118,8 @@ def main() -> int:
     output.write_text(content, encoding="utf-8")
     print(f"answers: {len(ordered_answers)}개 (걸러 냄 {dropped_answers}줄)")
     print(f"allowed: {len(union)}개 (원본 {len(allowed)}개, 걸러 냄 {dropped_allowed}줄)")
+    for path, words, dropped in branches:
+        print(f"  {path.name}: {len(words)}개 (걸러 냄 {dropped}줄)")
     print(f"wrote {output}")
     return 0
 

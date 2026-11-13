@@ -13,6 +13,8 @@ import unittest
 from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests"))
+import _fleet_env  # noqa: F401,E402 - 세션 표식을 걷는다 (관리자 세션 안에서 돌려도 같은 결과)
 sys.path.insert(0, str(ROOT / "tools"))
 
 import aimem_db  # noqa: E402

@@ -18,6 +18,10 @@ class NewCtl:
     @staticmethod
     def launch_round(by, policy=None): NewCtl.calls.append(("round", by, policy)); return {"ok": True}
     @staticmethod
+    def switch_policy(policy, by, expect_round=None): NewCtl.calls.append(("switch", by, policy, expect_round)); return {"ok": policy != "cost", "error": "거절"}
+    @staticmethod
+    def chain_policy(policy, by): NewCtl.calls.append(("next", by, policy)); return {"ok": True}
+    @staticmethod
     def chain_set(on, target, mx, by, projects=(), fleet_on=False, all_=False, autonomous=False, renew=False, policy=None):
         NewCtl.calls.append(("chain", on, policy)); return {"ok": True}
 
@@ -51,6 +55,19 @@ class PolicyPassThrough(unittest.TestCase):
         self.assertEqual(NewCtl.calls, [("chain", True, "quality")])
         self.go(NewCtl, "chain", {"on": False, "policy": "bogus"})
         self.assertEqual(NewCtl.calls, [("chain", False, None)])
+
+    def test_switch_needs_a_known_policy_and_when_and_passes_refusals_as_409(self):
+        code, _ = self.go(NewCtl, "switch", {"policy": "speed", "when": "now", "round": 27})
+        self.assertEqual((code, NewCtl.calls), (200, [("switch", "웹", "speed", 27)]))
+        code, _ = self.go(NewCtl, "switch", {"policy": "speed", "when": "next"})
+        self.assertEqual((code, NewCtl.calls), (200, [("next", "웹", "speed")]))
+        for bad in ({}, {"policy": None, "when": "now"}, {"policy": "fast", "when": "now"}, {"policy": 3, "when": "next"}, None, [],
+                    {"policy": "speed"}, {"policy": "speed", "when": "later"}, {"policy": "speed", "when": True},
+                    {"policy": "speed", "when": "now"}, {"policy": "speed", "when": "now", "round": "27"}, {"policy": "speed", "when": "now", "round": True}):
+            code, out = self.go(NewCtl, "switch", bad)
+            self.assertEqual((code, NewCtl.calls), (400, []), bad)       # `when` 이 빠지면 멈추지 않는다
+        code, out = self.go(NewCtl, "switch", {"policy": "cost", "when": "now", "round": 27})      # 엔진이 거절하면 409
+        self.assertEqual((code, out["error"]), (409, "거절"))
 
 
 if __name__ == "__main__":

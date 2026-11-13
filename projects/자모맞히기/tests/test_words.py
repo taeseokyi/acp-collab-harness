@@ -40,6 +40,9 @@ BANNED = set(
     염음 염인 염정 염직 염질 염창 염천 염철 염총 염축 염출 염충
     염탐 염통 염판 염풍 염학 염한 염합 염행 염향 염혈 염황
     쇄약 갑작 학종 국공 과감 과중
+    희한 민망 괴악 희식 화성 국전
+    억울 솔직 명랑 온순 당당 씩씩 튼튼 든든 단단 쌀쌀 침울 패이다 개이다
+    착실 똑똑 꼼꼼 넉넉
     """.split()
 )
 
@@ -49,7 +52,7 @@ MUST = (
     "손톱 꽃밭 연못 작년 일년 요리사 사이다 "
     "선생 장난 운전 케이크 햇볕 풀잎 숲길 불빛 열병 복통 꿈속 진실 덧셈 "
     "뺄셈 곱셈 풀칠 급식 손뼉 울음 기지개 여권 출근 반말 벚꽃 단감 곶감 "
-    "밥상 반죽 콩국"
+    "밥상 반죽 콩국 까닭"
 ).split()
 
 
@@ -102,9 +105,20 @@ class WordsTest(unittest.TestCase):
     def test_answers_subset_of_allowed(self) -> None:
         self.assertLessEqual(set(self.words("ANSWERS")), set(self.words("ALLOWED")))
 
+    def test_answers_match_answers_file(self) -> None:
+        path = PROJECT / "data" / "answers.txt"
+        file_words = {
+            w.strip()
+            for w in path.read_text(encoding="utf-8").splitlines()
+            if w.strip() and not w.strip().startswith("#")
+        }
+        answers = self.words("ANSWERS")
+        self.assertEqual(set(answers), file_words, msg="ANSWERS 가 answers.txt 와 다름")
+        self.assertEqual(len(answers), 380)
+
     def test_counts(self) -> None:
         self.assertGreaterEqual(len(self.words("ANSWERS")), 300)
-        self.assertGreaterEqual(len(self.words("ALLOWED")), 1000)
+        self.assertGreaterEqual(len(self.words("ALLOWED")), 2000)
 
     def test_banned_words_absent(self) -> None:
         allowed = set(self.words("ALLOWED"))
@@ -119,7 +133,22 @@ class WordsTest(unittest.TestCase):
     def test_first_syllable_not_mass_generated(self) -> None:
         first = Counter(word[0] for word in self.words("ALLOWED"))
         top = first.most_common(1)[0]
-        self.assertLessEqual(top[1], 40, msg=f"한 첫 음절로 몰림: {top}")
+        limit = max(40, len(self.words("ALLOWED")) * 4 // 100)
+        self.assertLessEqual(top[1], limit, msg=f"한 첫 음절로 몰림: {top} (상한 {limit})")
+
+    def test_branch_files_first_syllable(self) -> None:
+        files = sorted((PROJECT / "data" / "words").glob("*.txt"))
+        self.assertTrue(files, msg="data/words/*.txt 가 없음")
+        for path in files:
+            words = [
+                w.strip()
+                for w in path.read_text(encoding="utf-8").splitlines()
+                if w.strip() and not w.strip().startswith("#")
+            ]
+            first = Counter(w[0] for w in words)
+            if first:
+                top = first.most_common(1)[0]
+                self.assertLessEqual(top[1], 15, msg=f"{path.name}: 한 첫 음절로 몰림 {top}")
 
     def test_allowed_sorted(self) -> None:
         self.assertEqual(self.words("ALLOWED"), sorted(self.words("ALLOWED")))

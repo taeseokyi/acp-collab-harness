@@ -41,6 +41,9 @@ TICK = 0.1
 #: 긴 생성 중인 하네스는 사건 없이 토큰만 받는다. 연결 유지 신호(수십 바이트)는 문턱보다 훨씬 작다.
 IO_CHECK_SEC = 10.0
 IO_PROGRESS_BYTES = 4096
+#: 읽기만으로 버틸 수 있는 시간 = 침묵 한도의 몇 배. 사건이 이만큼 없으면 읽고 있어도 멈춘 것으로 본다 -
+#: 멈춘 하네스도 제 파일·소켓을 조금씩 읽어 문턱을 넘긴다 (2026-11-13 R27: 사건 0줄로 58분, 5초에 7KB 씩 읽음).
+READ_ONLY_IDLES = 5
 
 
 def _now_ms():
@@ -56,7 +59,7 @@ class Supervisor:
         self.reader = None
         self.stop_sig = None
         self.finishing = False
-        self.last_activity = time.monotonic()
+        self.last_activity = self.last_event = time.monotonic()
         self.lock = threading.Lock()
 
     # -- 신호: 표시만 한다. 실제 처리는 주 고리에서 (처리기 안에서 무거운 일을 하면 끝마무리와 엉킨다)
@@ -108,7 +111,7 @@ class Supervisor:
                 chunk = out.readline(LINE_CAP)
                 if not chunk:
                     break
-                self.last_activity = time.monotonic()
+                self.last_activity = self.last_event = time.monotonic()
                 whole = chunk.endswith(b"\n")
                 if skipping:                    # 1MB 를 넘은 줄의 나머지는 버린다
                     skipping = not whole
@@ -268,7 +271,7 @@ class Supervisor:
                     stdout=subprocess.PIPE, stderr=errf, env=env, close_fds=True)   # 같은 그룹 (새 세션 아님)
             except OSError as e:
                 return {"state": "failed", "fail_kind": "infra", "why": f"하네스를 띄우지 못함: {e}"}
-            started = self.last_activity = time.monotonic()
+            started = self.last_activity = self.last_event = time.monotonic()
             self.reader = threading.Thread(target=self._pump, args=(self.proc.stdout, sink), daemon=True)
             self.reader.start()
             sessions.db_upsert(m.get("db_path"), sessions.index_row(self.d))
@@ -297,6 +300,10 @@ class Supervisor:
                     io_last = rchar
                 if idle and now - self.last_activity > idle:
                     verdict = {"state": "stalled", "fail_kind": "infra", "why": f"침묵 {idle:g}초 넘김 (사건도 읽기도 없음)"}
+                    break
+                if idle and now - self.last_event > idle * READ_ONLY_IDLES:
+                    verdict = {"state": "stalled", "fail_kind": "infra",
+                               "why": f"사건 없이 {idle * READ_ONLY_IDLES:g}초 넘김 (읽기만 계속됨 - 침묵 한도의 {READ_ONLY_IDLES}배)"}
                     break
                 time.sleep(TICK)
             if verdict is None:

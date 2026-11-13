@@ -869,6 +869,125 @@ def scenario_help_table(page, checks):
 # ---------------------------------------------------------------- 실행
 
 
+def open_settings_checked(page):
+    page.click("#btn-settings")
+    page.wait_for_selector("#modal-settings:not([hidden])", timeout=3000)
+    visible = page.locator("#set-hard").is_visible()
+    value = page.is_checked("#set-hard")
+    page.keyboard.press("Escape")
+    page.wait_for_function("() => document.getElementById('modal-settings').hidden === true")
+    return visible, value
+
+
+def set_hard_in_practice(page, on):
+    page.click("#mode-practice")
+    page.wait_for_timeout(200)
+    page.click("#btn-settings")
+    page.wait_for_selector("#modal-settings:not([hidden])", timeout=3000)
+    page.set_checked("#set-hard", on)
+    page.wait_for_timeout(250)
+    page.keyboard.press("Escape")
+    page.wait_for_function("() => document.getElementById('modal-settings').hidden === true")
+
+
+def scenario_hard_reaches_empty_board(page, checks):
+    dismiss_help(page)
+    set_hard_in_practice(page, True)
+    page.click("#mode-daily")
+    page.wait_for_timeout(200)
+    visible, value = open_settings_checked(page)
+    checks.ok("T-293 연습에서 하드 켬 → 빈 날마다 판 체크박스 켜짐", visible and value, f"체크 {value}")
+    page.reload(wait_until="load")
+    page.wait_for_selector("#board .tile", timeout=10000)
+    page.wait_for_timeout(200)
+    dismiss_help(page)
+    visible, value = open_settings_checked(page)
+    checks.ok("T-293 새로 고친 뒤에도 켜짐", visible and value, f"체크 {value}")
+
+    # 반대 방향: 하드 켠 빈 날마다 판 → 연습에서 끔 → 날마다
+    set_hard_in_practice(page, False)
+    page.click("#mode-daily")
+    page.wait_for_timeout(200)
+    visible, value = open_settings_checked(page)
+    checks.ok("T-293 연습에서 하드 끔 → 빈 날마다 판 체크박스 꺼짐", visible and not value, f"체크 {value}")
+    page.reload(wait_until="load")
+    page.wait_for_selector("#board .tile", timeout=10000)
+    page.wait_for_timeout(200)
+    dismiss_help(page)
+    visible, value = open_settings_checked(page)
+    checks.ok("T-293 반대 방향도 새로 고친 뒤 꺼짐", visible and not value, f"체크 {value}")
+
+
+def scenario_hard_keeps_played_board(page, checks):
+    dismiss_help(page)
+    answer = units_of(page, answer_word(page))
+    _word, guess = first_wrong(allowed_pairs(page), answer)
+    type_units(page, guess)
+    page.keyboard.press("Enter")
+    wait_settled(page, 0)
+    set_hard_in_practice(page, True)
+    page.click("#mode-daily")
+    page.wait_for_timeout(200)
+    visible, value = open_settings_checked(page)
+    checks.ok(
+        "T-293 한 줄 낸 날마다 판은 하드 바꿔도 판 값(꺼짐) 그대로",
+        visible and not value and row_text(page, 0) == guess,
+        f"체크 {value} 줄 {row_text(page, 0)!r}",
+    )
+
+
+def scenario_hard_reaches_empty_practice(page, checks):
+    # V3: 연습 판을 먼저 만들어 두고, 날마다에서 하드를 켠 뒤 연습으로 가면 빈 연습 판도 설정을 따른다
+    dismiss_help(page)
+    page.click("#mode-practice")
+    page.wait_for_timeout(200)
+    page.click("#mode-daily")
+    page.wait_for_timeout(200)
+    checks.ok("T-301 연습 판을 만든 뒤 날마다 판이 빔", empty_board(page))
+    page.click("#btn-settings")
+    page.wait_for_selector("#modal-settings:not([hidden])", timeout=3000)
+    page.check("#set-hard")
+    page.wait_for_timeout(250)
+    page.keyboard.press("Escape")
+    page.wait_for_function("() => document.getElementById('modal-settings').hidden === true")
+    page.click("#mode-practice")
+    page.wait_for_timeout(200)
+    visible, value = open_settings_checked(page)
+    checks.ok(
+        "T-301 날마다에서 하드 켬 → 빈 연습 판 체크박스 켜짐",
+        visible and value,
+        f"체크 {value}",
+    )
+
+
+def scenario_typed_letters_survive_align(page, checks):
+    # V6: 날마다 빈 판에 입력 중인 글자는 연습에서 하드를 바꾼 뒤 돌아와도 그대로 보인다
+    dismiss_help(page)
+    answer = units_of(page, answer_word(page))
+    _word, guess = first_wrong(allowed_pairs(page), answer)
+    typed = guess[:3]
+    type_units(page, typed)
+    checks.ok(
+        "T-301 날마다 빈 판에 세 칸을 쳐 둠",
+        row_text(page, 0) == typed,
+        f"실제 {row_text(page, 0)!r} 기대 {typed!r}",
+    )
+    set_hard_in_practice(page, True)
+    page.click("#mode-daily")
+    page.wait_for_timeout(200)
+    checks.ok(
+        "T-301 하드를 바꾸고 돌아와도 입력 중인 세 칸이 그대로",
+        row_text(page, 0) == typed,
+        f"실제 {row_text(page, 0)!r} 기대 {typed!r}",
+    )
+    visible, value = open_settings_checked(page)
+    checks.ok(
+        "T-301 입력 중인 판의 체크박스가 바꾼 값(켜짐)",
+        visible and value,
+        f"체크 {value}",
+    )
+
+
 def run(label, checks, scenario, browser, base, **page_options):
     page = open_page(browser, base, **page_options)
     try:
@@ -974,6 +1093,10 @@ def main():
                 )
                 run("N12 뒤집기 중 모드", checks, scenario_flip_mode_lock, browser, base)
                 run("N12 미리보기 고정값", checks, scenario_preview_fixed, browser, base)
+                run("T-293 하드 설정이 빈 판에 닿음", checks, scenario_hard_reaches_empty_board, browser, base)
+                run("T-293 낸 줄 있는 판은 유지", checks, scenario_hard_keeps_played_board, browser, base)
+                run("T-301 하드 설정이 빈 연습 판에 닿음", checks, scenario_hard_reaches_empty_practice, browser, base)
+                run("T-301 입력 중 글자 유지", checks, scenario_typed_letters_survive_align, browser, base)
                 run("N12 도움말↔README", checks, scenario_help_table, browser, base)
             finally:
                 browser.close()

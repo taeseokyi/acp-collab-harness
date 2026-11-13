@@ -8,6 +8,10 @@ import pathlib
 import sys
 
 os.environ["AIFLEET_HARNESS"] = "fake"
+# 관리자·작업자 세션 안에서 검사를 돌리면 세션 표식이 검사로 새어, 검사의 슬롯 추가가 "관리자가 더한 것" 으로 세어진다
+# (2026-11-13 R27-P1: 관리자가 전체 검사를 돌리자 실패 6·오류 29). 검사는 세션 밖인 것처럼 돈다.
+for _k in ("AIFLEET_ROLE", "AIFLEET_SESSION", "AIFLEET_SESSIONS_ROOT"):
+    os.environ.pop(_k, None)
 
 TOOLS = pathlib.Path(__file__).resolve().parent.parent / "tools"
 if str(TOOLS) not in sys.path:

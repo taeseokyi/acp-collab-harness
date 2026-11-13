@@ -503,6 +503,15 @@ function newGame(answer, number = puzzleNumber) {
   });
 }
 
+// 이어하는 판의 하드 모드는 저장된 판 값을 지키고, 빈 판은 저장된 설정을 따른다(입력 중인 글자는 옮김)
+function alignEmptyHard(g) {
+  if (g.rows.length !== 0 || g.hardMode === settings.hardMode) return g;
+  const typed = g.current;
+  const fresh = newGame(g.answer, g.puzzleNumber);
+  for (const ch of typed) fresh.addLetter(ch);
+  return fresh;
+}
+
 function startDaily() {
   const now = new Date();
   dayKey = dayKeyOf(now);
@@ -514,12 +523,7 @@ function startDaily() {
     try { dailyGame = fromJSON(saved, { allowed: ALLOWED_SET }); } catch { dailyGame = null; }
   }
   if (!dailyGame) dailyGame = newGame(answer, puzzleNumber);
-  // 이어하는 판의 하드 모드는 저장된 판 값을 지키고, 빈 판은 저장된 설정을 따른다
-  if (dailyGame.rows.length === 0 && dailyGame.hardMode !== settings.hardMode) {
-    const typed = dailyGame.current;
-    dailyGame = newGame(dailyGame.answer, dailyGame.puzzleNumber);
-    for (const ch of typed) dailyGame.addLetter(ch);
-  }
+  dailyGame = alignEmptyHard(dailyGame);
   if (mode === 'daily') {
     game = dailyGame;
     shiftOn = false;
@@ -554,8 +558,10 @@ function selectMode(next) {
   if (busy || next === mode) return;
   if (next === 'practice') {
     if (!practiceGame) startPractice();
+    practiceGame = alignEmptyHard(practiceGame);
     game = practiceGame;
   } else {
+    dailyGame = alignEmptyHard(dailyGame);
     game = dailyGame;
   }
   mode = next;

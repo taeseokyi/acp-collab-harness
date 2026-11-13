@@ -568,7 +568,7 @@ def _free_dependents(g):
     while changed:
         changed = False
         for m in g["nodes"]:
-            if m.get("status") != "blocked" or m.get("attempts"):
+            if m.get("status") != "blocked" or m.get("attempts") or m.get("dropped"):     # 버린 노드는 풀지 않는다
                 continue
             deps = [nodes[d] for d in m.get("deps", []) if d in nodes]
             if deps and not any(d.get("status") in ("failed", "blocked") for d in deps):
@@ -1273,7 +1273,7 @@ def cmd_run(a):
         stop_on_block = getattr(a, "stop_on_block", None)
         if stop_on_block is None:
             # 빨리·잘 하려는 라운드는 막힌 노드를 관리자가 곧바로 옮기거나 풀어야 한다 - 무료 중심은 끝까지 돌린다
-            stop_on_block = round_policy(g.get("round")) in ("speed", "quality")
+            stop_on_block = graph_policy(g) in ("speed", "quality")
         bad0 = {n["id"] for n in g["nodes"] if n.get("status") in ("failed", "blocked")}
         spawn, blocked_new = True, []
         while time.time() < deadline:
@@ -1323,6 +1323,10 @@ def cmd_run(a):
         return 0 if all(n.get("status") == "done" for n in g["nodes"]) else 1
 
 
+#: 운영 방식을 바꾸며 버린 노드(`fleet_ctl.switch_policy`)는 풀지도 옮기지도 다시 검증하지도 않는다 - 그래프를 새로 짠다
+DROPPED_REFUSAL = "{node} 는 버린 노드입니다 ({why}) - 풀지 않습니다. 그래프를 새로 짜십시오"
+
+
 def unblock(g, node_id):
     """사람이 확인한 뒤 `blocked`/`failed` 노드를 다시 굴립니다. (ok, 메시지)
 
@@ -1338,6 +1342,8 @@ def unblock(g, node_id):
         return False, f"노드가 없습니다: {node_id}"
     if n.get("status") not in ("blocked", "failed"):
         return False, f"{node_id} 는 {n.get('status', 'todo')} 입니다 - blocked/failed 만 풉니다"
+    if n.get("dropped"):
+        return False, DROPPED_REFUSAL.format(node=node_id, why=n["dropped"])
     atts = n.get("attempts") or []
     if not atts and not n.get("infra"):
         return False, f"{node_id} 는 의존 노드 때문에 막혔습니다 - 막힌 원인 노드를 푸십시오"
@@ -1407,6 +1413,18 @@ def round_policy(rnd):
         return "cost"
 
 
+def graph_policy(g):
+    """이 그래프를 **지금 돌리는** 라운드의 운영 방식. 도는 관리자가 있으면 그 라운드, 없으면 그래프를 만든 라운드(`g["round"]`).
+    앞 라운드에서 넘어온 그래프는 지금 라운드의 방식을 따른다 - 만든 라운드의 것을 읽으면 무료 중심에서 만든 그래프를
+    빠른 구현 라운드가 돌릴 때 유료 슬롯으로 못 옮긴다 (2026-11-13 R27: 관리자가 그래프 JSON 의 `round` 를 손으로 고침)."""
+    try:
+        import fleet_ctl  # noqa: PLC0415 - fleet_ctl 이 이 모듈을 import 하므로 지연
+        now = fleet_ctl.active_round()
+    except Exception:  # noqa: BLE001 - 못 읽으면 만든 라운드의 것
+        now = None
+    return round_policy(now if now is not None else g.get("round"))
+
+
 def _move_ownership(paths, slot, why):
     """노드의 쓰기 경로 소유를 새 슬롯으로 (`aimem_db.ownership_set`, events 한 줄씩). DB 가 없으면 아무것도 안 한다
     (보드 동기화와 같이 `fleet.RUNS` 옆의 DB - 임시 폴더 검사가 운영 DB 를 고치지 않게). 옮긴 경로 목록."""
@@ -1437,6 +1455,8 @@ def move_node(g, node_id, slot, policy=None, why=""):
     st = n.get("status", "todo")
     if st not in ("todo", "failed", "blocked"):
         return False, f"{node_id} 는 {st} 입니다 - todo/failed/blocked 만 옮깁니다"
+    if n.get("dropped"):
+        return False, DROPPED_REFUSAL.format(node=node_id, why=n["dropped"])
     old = n.get("slot")
     if slot == old:
         return False, f"{node_id} 는 이미 {slot} 에 있습니다"
@@ -1446,7 +1466,7 @@ def move_node(g, node_id, slot, policy=None, why=""):
     last = ((n.get("attempts") or []) + (n.get("infra_attempts") or []) or [{}])[-1]
     if isinstance(last, dict) and last.get("run_id") and fleet._run_state(last["run_id"])[0] == "running":
         return False, f"{node_id} 의 작업자가 아직 살아 있습니다 (run {last['run_id']}) - 끝나거나 사람이 내린 뒤에"
-    key = policy or round_policy(g.get("round"))
+    key = policy or graph_policy(g)
     try:
         from fleet_rt import config as rt_config  # noqa: PLC0415
         cfg = rt_config.load(fleet.ROOT)

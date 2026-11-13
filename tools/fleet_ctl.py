@@ -28,6 +28,7 @@
 import argparse
 import datetime as dt
 import fcntl
+import functools
 import json
 import os
 import pathlib
@@ -35,6 +36,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -611,6 +613,7 @@ def public_state():
     md = m["mode"]
     chain = chain_state()
     # '실행' 인데 도는 것이 없다 = 라운드가 끝났다 - 이때도 '준비'·'라운드 실행' 을 누를 수 있어야 한다.
+    busy_switch = switching()
     idle = md == "running" and not rr and not running_now and not any(g["runner"] for g in graphs)
     resumable = any(g["unfinished"] and not g["runner"] for g in graphs)
     can = {
@@ -621,11 +624,15 @@ def public_state():
         # 완전 중지는 돌고 있는 것을 죽이는 동작 - 죽일 게 없는 ready 에선 끈다
         "stop": md in ("running", "paused") or bool(rr) or running_now,
         "round": (md == "ready" or idle) and bool(b["file"]) and not running_now,
+        # 도는 라운드의 운영 방식을 지금 바꾸기 (`switch_policy`) - 멈추고 그래프를 버린 뒤 다시 띄운다
+        "switch": md == "running" and bool(manager_running()) and bool(b["file"]),
     }
+    if busy_switch:            # 누가 운영 방식을 바꾸는 중 - 그 사이에는 어떤 단추도 받지 않는다
+        can = {k: False for k in can}
     return {"mode": md, "label": MODE_LABEL.get(md), "at": m.get("at"), "by": m.get("by"), "note": m.get("note"),
             "default": bool(m.get("default")), "running_runs": len(rr),
             "graphs": [{"id": g["id"], "runner": bool(g["runner"]), "counts": g["counts"]} for g in graphs],
-            "brief": b, "prepare": last_prepare(), "manager": mgr, "can": can, "idle": idle,
+            "brief": b, "prepare": last_prepare(), "manager": mgr, "can": can, "idle": idle, "switching": busy_switch,
             "chain_modes": ["stop", "renew", "autonomous"],     # 상한에 닿았을 때 할 일 - 화면은 서버가 아는 것만 보인다
             "last_round": last, "policy": policy_state(mgr, last),
             "chain": {k: v for k, v in chain.items() if k != "log"} | {"last": (chain.get("log") or [None])[-1]}
@@ -668,6 +675,40 @@ def status():
 
 
 # ----------------------------------------------------------------- 동작
+# 운영 방식을 지금 바꾸는 동안(`switch_policy`: 멈춤 → 그래프 버림 → 준비 → 띄움, 몇 초~수십 초)에는 다른 제어 동작을 받지 않는다 -
+# 그 사이의 '완전 중지' 가 무시되고 새 관리자가 뜨거나, 끈 이어 달리기가 다시 켜지면 안 된다 (2026-11-13 검수).
+_SWITCH_OWNER = [None]      # 바꾸는 중인 (pid, 스레드) - 그 안에서 부르는 stop·prepare·launch_round 는 지나간다
+
+
+def switching():
+    """다른 누군가 운영 방식을 바꾸는 중인가 (`fleet-switch.lock` 을 잡지 않고 확인만)."""
+    if _SWITCH_OWNER[0] == (os.getpid(), threading.get_ident()):
+        return False
+    try:
+        with open(_aimem_dir() / "fleet-switch.lock", "r+") as f:
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    return False
+
+
+SWITCHING_ERROR = "운영 방식을 바꾸는 중입니다 - 끝난 뒤(몇 초~수십 초) 다시 누르십시오"
+
+
+def _not_while_switching(fn):
+    @functools.wraps(fn)
+    def wrapped(*a, **kw):
+        if switching():
+            return {"ok": False, "mode": mode(), "error": SWITCHING_ERROR}
+        return fn(*a, **kw)
+    return wrapped
+
+
+@_not_while_switching
 def pause(by="사람"):
     if mode() == "stopped":
         return {"ok": False, "error": "완전 중지 상태입니다 - 일시 중지할 것이 없습니다"}
@@ -675,6 +716,7 @@ def pause(by="사람"):
     return {"ok": True, "mode": "paused", "running_runs": running_runs()}
 
 
+@_not_while_switching
 def stop(by="사람"):
     """완전 중지. 상태를 먼저 바꿔(새 투입 차단) 관리자 세션을 끊고, 그래프·작업자를 정리한 뒤, 이 저장소의
     세션 표식을 단 남은 프로세스를 거둡니다. 끊긴 관리자의 라운드에 보고가 없으면 엔진이 최소 마감을 씁니다(설계 5.10).
@@ -717,6 +759,7 @@ def stop(by="사람"):
             "note": "관리자 밖에서 띄운 그래프 실행기는 다음 틱에 정리하고 끝납니다"}
 
 
+@_not_while_switching
 def resume(by="사람"):
     """실행. 진행 중이던 라운드만 이어 돌립니다 - 새 관리자는 띄우지 않습니다."""
     if mode() == "ready" and not any(gi["unfinished"] and not gi["runner"] for gi in graphs_overview()):
@@ -830,6 +873,7 @@ def _rev_lint_checks():
     return [_check("AIMEM 린터", lint.returncode == 0, lint_lines[-1] if lint_lines else "")]
 
 
+@_not_while_switching
 def prepare(by="사람", extra_checks=()):
     """준비. 관리자·작업자를 띄울 수 있는지 점검하고, 통과하면 `ready`. 아무것도 띄우지도 끊지도 않습니다 -
     남은 세션 프로세스가 있으면 점검이 실패하고 목록을 보입니다(끊는 것은 '완전 중지' 입니다)."""
@@ -904,6 +948,7 @@ def _start_watcher(n, close_only=False):
         return False
 
 
+@_not_while_switching
 def launch_round(by="사람", policy=None):
     """새 라운드. 확정 브리프가 있고 관리자가 없을 때만. **준비(ready)** 에서, 또는 앞 라운드가 끝난 채
     '실행' 으로 남아 있을 때(`round_over`) - 그때는 준비 점검을 여기서 먼저 돌립니다 (REV 153).
@@ -1572,6 +1617,7 @@ def chain_work(fleet_on=False, projects=(), all_=False):
     return {"requests": ids, "goals": goals, "queue": len(_queue_items()) if (all_ or fleet_on) else 0}
 
 
+@_not_while_switching
 def chain_set(on, project=None, max_rounds=None, by="사람", *, projects=None, fleet_on=None, all_=None, autonomous=False,
               renew=False, policy=None):
     """이어 달리기를 켜거나 끕니다. 대상은 **함대 · 프로젝트(여러 개) · 전체** 가운데 고릅니다.
@@ -1637,6 +1683,25 @@ def chain_set(on, project=None, max_rounds=None, by="사람", *, projects=None, 
             and (_manager_busy(mgr) or not round_over()):          # 끝난 라운드에는 감시자를 붙이지 않는다
         _end_chain_watcher()
         _start_watcher(mgr["round"])
+    return {"ok": True, "chain": st}
+
+
+@_not_while_switching
+def chain_policy(policy, by="사람"):
+    """켜져 있는 이어 달리기의 운영 방식만 바꾼다 - **다음 라운드부터** 쓰인다(도는 라운드는 그대로, 묶음·라운드 수도 그대로).
+    감시자는 다음 라운드를 띄울 때 이 파일을 새로 읽으므로 갈아 끼우지 않는다. 지금 바꾸는 것은 `switch_policy`."""
+    _, err = _policy_template(policy)
+    if err:
+        return {"ok": False, "error": err}
+    st = chain_state()
+    if not st.get("on"):
+        return {"ok": False, "error": "이어 달리기가 꺼져 있습니다 - 다음 라운드의 운영 방식은 띄울 때 고릅니다"}
+    old = _known_policy(st.get("policy"))
+    if old == policy:
+        return {"ok": False, "error": f"이어 달리기는 이미 {POLICY_LABEL.get(policy, policy)}(으)로 이어 갑니다"}
+    st.update({"policy": policy, "at": _now()})
+    st.setdefault("log", []).append(f"{_now()} 다음 라운드부터 운영 방식 {POLICY_LABEL.get(old, old or '?')} → {POLICY_LABEL.get(policy, policy)} ({by})")
+    _chain_write(st)
     return {"ok": True, "chain": st}
 
 
@@ -1806,6 +1871,10 @@ def chain_step(round_n, by="이어 달리기"):
                "strikes": (int(st.get("strikes", 0)) + 1) if d.get("strike") else 0,     # 진전이 있었으면 다시 0
                "open_requests": chain_work(*chain_targets(st))["requests"]})
     st.setdefault("log", []).append(f"{_now()} R{round_n} 끝 - {d['why']}" + (f" → 요청 {', '.join(filed)}" if filed else ""))
+    now = chain_state()        # 요청을 넣는 사이 `chain_policy` 가 바꿨으면 그것을 따른다 - 낡은 사본으로 덮지 않는다
+    if _known_policy(now.get("policy")) and now.get("policy") != st.get("policy"):
+        st["policy"] = now["policy"]
+        st["log"][-1:-1] = [x for x in (now.get("log") or [])[-1:] if "다음 라운드부터 운영 방식" in x]
     _chain_write(st)
     out = launch_round(by, policy=_known_policy(st.get("policy")))     # 켤 때 고른 운영 방식
     if not out.get("ok"):
@@ -1938,6 +2007,11 @@ def tell(message, by="사람"):
     n = active_round()
     if n is None:
         return {"ok": False, "error": "돌고 있는 라운드가 없습니다 - 다음 라운드의 일은 요청으로 넣으십시오"}
+    return _inbox_add(n, text, by)
+
+
+def _inbox_add(n, text, by):
+    """`rounds/R<n>/INBOX.md` 에 한 꼭지를 덧붙인다 (`tell` 과 `switch_policy` 가 쓴다)."""
     try:
         d = _round_dir(n)
     except ValueError as e:
@@ -1952,6 +2026,158 @@ def tell(message, by="사람"):
     return {"ok": True, "round": n, "path": str(p.relative_to(fleet.ROOT))}
 
 
+# ----------------------------------------------------------------- 도는 라운드의 운영 방식을 지금 바꾸기
+SWITCH_RUNNER_WAIT_SEC = 8     # 완전 중지 뒤 관리자 밖 실행기가 그래프 잠금을 놓기를 기다리는 시간 (틱 2초)
+
+
+def _drop_unfinished_graphs(why, round_n):
+    """라운드 R<round_n> 의(그리고 라운드 표시가 없는) 끝나지 않은 그래프의 남은 노드(done·failed·blocked 가 아닌 것)를
+    `blocked` + `dropped` 로 막는다 - 그래프를 버린다. 다른 라운드의 그래프는 건드리지 않는다.
+    끝난 노드와 그 결과물은 그대로다. 보드의 태스크는 BLOCKED 로 옮긴다(닫는 것은 다음 관리자). 버린 것 `[{graph, nodes}]`.
+    실행기가 잡고 있는 그래프는 건드리지 않는다 - 부르는 쪽이 완전 중지 뒤에 부른다."""
+    import fleet_graph  # noqa: PLC0415 - 순환 import 회피
+    out = []
+    for gi in graphs_overview():
+        if not gi["unfinished"] or gi["runner"]:
+            continue
+        try:
+            with fleet_graph.graph_lock(gi["id"], "drop"):
+                g = fleet_graph._load(gi["id"])
+                rn = g.get("round")
+                if isinstance(rn, int) and not isinstance(rn, bool) and rn != int(round_n):
+                    continue
+                before = {str(n.get("id")): n.get("status", "todo") for n in g.get("nodes") or []}
+                hit = []
+                for n in g.get("nodes") or []:
+                    if n.get("status", "todo") in ("done", "failed", "blocked"):
+                        continue
+                    n["status"], n["dropped"] = "blocked", why
+                    n.pop("waiting", None)
+                    n.pop("waiting_since", None)
+                    hit.append(str(n.get("id")))
+                if hit:
+                    fleet_graph._log(g, f"drop {', '.join(hit)} - {why}. 풀지 않습니다 - 다음 라운드가 그래프를 새로 짭니다")
+                    fleet_graph._save(g)
+                    fleet_graph._board_sync_changes(g, before)
+                    out.append({"graph": gi["id"], "nodes": hit})
+        except SystemExit:
+            continue
+    return out
+
+
+def _switch_preflight():
+    """멈추기 **전에** 볼 수 있는 것 - 하네스·키·공급자·린터·브리프. 막힌 필수 점검의 이름 목록 (없으면 빈 목록).
+    도는 라운드를 죽인 뒤에야 다시 못 띄운다는 것을 알면 늦다. 관리자·작업자가 남았는지는 멈춘 뒤 `prepare` 가 본다."""
+    bad = [c["name"] + (f" ({c['detail']})" if c.get("detail") else "")
+           for c in _runtime_checks() + _rev_lint_checks() if c["required"] and not c["ok"]]
+    if not latest_brief()["file"]:
+        bad.append("다음 라운드 브리프 없음")
+    return bad
+
+
+def switch_policy(policy, by="사람", expect_round=None):
+    """도는 라운드의 운영 방식을 **지금** 바꾼다: 그 라운드를 완전 중지하고, 끝나지 않은 그래프를 버리고, 새 방식으로 새 라운드를 띄운다.
+
+    방식은 띄울 때 관리자 브리프에 굳으므로 도는 라운드 안에서는 못 바꾼다 - 그래프의 모양과 슬롯 배정이 방식에 달려 있어
+    그래프도 버리고 새 관리자가 다시 짠다(끝난 노드의 결과물은 남는다). 이어 달리기가 켜져 있었으면 새 방식으로 이어 둔다.
+    돌이킬 수 없는 동작이라 화면은 확인을 받고 부른다. `expect_round` 는 확인창이 말한 라운드 - 그 사이 다른 라운드가 돌고 있으면 거절한다.
+    도는 관리자가 없거나, 같은 방식이거나, 다시 띄울 수 없는 것이 미리 보이면 **아무것도 건드리지 않고** 거절한다.
+    하는 동안 다른 제어 동작(완전 중지·라운드 실행·이어 달리기 등)은 거절된다(`switching`).
+    """
+    _, err = _policy_template(policy)
+    if err:
+        return {"ok": False, "error": err}
+    try:
+        _aimem_dir().mkdir(parents=True, exist_ok=True)
+        lock = open(_aimem_dir() / "fleet-switch.lock", "a")
+    except OSError as e:
+        return {"ok": False, "error": f"잠금 파일을 열지 못했습니다: {type(e).__name__}"}
+    with lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return {"ok": False, "error": SWITCHING_ERROR}
+        _SWITCH_OWNER[0] = (os.getpid(), threading.get_ident())
+        try:
+            return _switch_policy_locked(policy, by, expect_round)
+        finally:
+            _SWITCH_OWNER[0] = None
+
+
+def _switch_policy_locked(policy, by, expect_round):
+    n = active_round()
+    if n is None or mode() != "running":
+        return {"ok": False, "error": "돌고 있는 라운드가 없습니다 - 운영 방식은 '라운드 실행' 때 고릅니다"}
+    if expect_round is not None and expect_round != n:
+        return {"ok": False, "round": n, "error": f"지금 도는 것은 R{n} 입니다 (R{expect_round} 이 아님) - 화면을 새로 고친 뒤 다시 하십시오"}
+    old = _known_policy(_round_record(n).get("policy"))
+    if old == policy:
+        return {"ok": False, "error": f"R{n} 은 이미 {POLICY_LABEL.get(policy, policy)}(으)로 돌고 있습니다"}
+    bad = _switch_preflight()
+    if bad:
+        return {"ok": False, "round": n, "mode": mode(),
+                "error": f"다시 띄울 수 없어 R{n} 을 멈추지 않았습니다: " + "; ".join(bad)[:300]}
+    names = f"{POLICY_LABEL.get(old, old or '?')} → {POLICY_LABEL.get(policy, policy)}"
+    why = f"운영 방식 변경 ({names}, {by})"
+    chain_before = chain_state()
+    base = {"old_round": n, "old_policy": old, "dropped_graphs": []}
+
+    def halted(msg):        # 여기부터는 R<n> 이 이미 멈췄다 - 실패는 그 사실과 함께 알린다
+        return {"ok": False, **base, "mode": mode(), "error": f"R{n} 은 멈췄지만 {msg}"}
+    try:
+        stopped = stop(f"{by} - {why}")
+    except Exception as e:  # noqa: BLE001 - 멈추다 만 상태다. 날것의 오류 대신 어디까지 갔는지를 돌려준다
+        return halted(f"멈추는 도중 오류가 났습니다 ({type(e).__name__}: {str(e)[:160]}) - '완전 중지' 를 다시 누른 뒤 확인하십시오")
+    if any(m["outcome"] == "refused" for m in stopped["managers"]):
+        return {"ok": False, "round": n, "mode": mode(),
+                "error": f"R{n} 관리자를 끊지 못해 바꾸지 않았습니다 - 함대는 완전 중지 상태입니다"}
+    deadline = time.time() + SWITCH_RUNNER_WAIT_SEC
+    while time.time() < deadline and any(g["unfinished"] and g["runner"] for g in graphs_overview()):
+        time.sleep(0.2)
+    if stopped.get("chain_watcher") is None and _chain_lock_held():
+        # 앞 라운드의 감시자가 살아 있다 - 새 라운드의 감시자가 못 뜨고, 살아 있는 쪽이 나중에 이어 달리기를 엉뚱하게 판단한다
+        return halted("앞 라운드의 감시자가 남아 있어 새 라운드를 띄우지 않았습니다 - `.aimem/fleet-chain.log` 를 확인하십시오")
+    base["dropped_graphs"] = dropped = _drop_unfinished_graphs(f"R{n} {why}", n)
+    res = prepare(by)
+    if not res["ok"]:
+        bad = [c["name"] for c in res["checks"] if c["required"] and not c["ok"]]
+        return dict(halted("준비 점검에서 막혀 새 라운드를 띄우지 못했습니다: " + ", ".join(bad)[:300]), checks=res["checks"])
+    # 새 관리자에게 남길 말은 **띄우기 전에** 쓴다 - 관리자는 시작할 때 읽는다. 못 쓰면 띄우지 않는다(그래프를 버린 것을 모르고 뜬다)
+    nxt = latest_brief()["round"]
+    gids = ", ".join(d["graph"] for d in dropped)
+    note = _inbox_add(nxt, f"R{n} 을 도중에 멈추고 운영 방식을 바꿔 이 라운드를 띄웠습니다 ({names}). "
+                      + (f"R{n} 의 그래프 {gids} 는 버렸습니다(남은 노드 `blocked`·`dropped`) - 풀 수 없습니다. "
+                         "이 라운드의 운영 방식에 맞춰 **그래프를 새로 짜십시오.** 버린 노드의 태스크는 보드에서 닫고, " if dropped else "")
+                      + "이미 끝난 노드의 결과물은 그대로 씁니다. 앞 방식에서 관리자가 더한 슬롯이 남아 있으면 이 방식에 맞는지 보고 정리하십시오.", by)
+    if not note.get("ok"):
+        return halted(f"새 관리자에게 남길 말을 쓰지 못해 띄우지 않았습니다: {note.get('error')}")
+    if chain_before.get("on"):
+        # 완전 중지가 내려놓은 이어 달리기를 새 방식으로 이어 둔다 (묶음·라운드 수는 그대로) - 띄우기 전에, 감시자가 이어 달리기 감시자로 뜨게
+        st = dict(chain_before, policy=policy, at=_now())
+        st["log"] = list(chain_before.get("log") or []) + [f"{_now()} R{n} 을 멈추고 운영 방식을 바꿔 다시 띄움 ({names}, {by})"]
+        _chain_write(st)
+    out = launch_round(by, policy=policy)
+    if not out.get("ok"):
+        if chain_state().get("on"):
+            _chain_stop(chain_state(), "error", f"운영 방식을 바꾼 뒤 라운드를 못 띄웠습니다: {out.get('error')}", n)
+        return halted(f"새 라운드를 띄우지 못했습니다: {out.get('error')}")
+    return {**out, **base}
+
+
+def _chain_lock_held():
+    """감시자 잠금(`fleet-chain.lock`)을 누가 잡고 있는가 - 잡지 않고 확인만."""
+    try:
+        with open(_aimem_dir() / "fleet-chain.lock", "r+") as f:
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    return False
+
+
 # ----------------------------------------------------------------- CLI
 def main(argv=None):
     p = argparse.ArgumentParser(description="함대 제어 (준비/실행/일시 중지/완전 중지/라운드 실행)")
@@ -1962,6 +2188,8 @@ def main(argv=None):
         if c == "round":
             s.add_argument("--policy", choices=[x["key"] for x in POLICY_CHOICES], default=None,
                            help="운영 방식 (없으면 fleet.toml 의 [policy] default)")
+            s.add_argument("--switch", action="store_true",
+                           help="도는 라운드를 멈추고 그래프를 버린 뒤 --policy 방식으로 다시 띄운다 (되묻지 않는다)")
     c = sub.add_parser("chain", help="이어 달리기: 프로젝트 목표가 남으면 라운드가 끝난 뒤 다음 라운드를 스스로 띄운다")
     c.add_argument("action", choices=["on", "off", "status"])
     c.add_argument("--project", action="append", help="이어 달릴 프로젝트 (여러 번 줄 수 있다)")
@@ -1999,6 +2227,10 @@ def main(argv=None):
                                     autonomous=a.autonomous, renew=a.renew, policy=a.policy))
         print(json.dumps(out, ensure_ascii=False, indent=1))
         return 0 if out.get("ok", True) else 1
+    if a.cmd == "round" and a.switch:
+        out = switch_policy(a.policy, a.by) if a.policy else {"ok": False, "error": "--switch 는 --policy 와 함께 씁니다"}
+        print(json.dumps(out, ensure_ascii=False, indent=1))
+        return 0 if out.get("ok") else 1
     fn = {"status": lambda: status(), "prepare": lambda: prepare(a.by), "run": lambda: resume(a.by),
           "pause": lambda: pause(a.by), "stop": lambda: stop(a.by), "round": lambda: launch_round(a.by, policy=a.policy)}[a.cmd]
     out = fn()

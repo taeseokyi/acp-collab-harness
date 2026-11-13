@@ -1,0 +1,58 @@
+{
+ "round": 27,
+ "at": "2026-11-13T21:38:23",
+ "brief": "manager-round-standard.md",
+ "requests": [
+  "Q-261113-bd56"
+ ],
+ "projects": [
+  "자모맞히기"
+ ],
+ "session": "M-R27-225936",
+ "policy": "speed",
+ "resumes": [
+  {
+   "from": "M-R27-213823",
+   "to": "M-R27-225936",
+   "at": "2026-11-13T22:59:37",
+   "why": "After the move, all build nodes finished within about 7 minutes. Only the S1 adversarial review is left. · 클로드 코드(시스템 재부팅 22:56 뒤 복구) 이(가) 이음"
+  }
+ ],
+ "metrics": {
+  "workers": 10,
+  "peak_parallel": 3,
+  "minutes": {
+   "free": 120.03,
+   "paid": 37.07
+  },
+  "by_slot": {
+   "S1": {
+    "runs": 2,
+    "minutes": 14.97,
+    "tier": "paid"
+   },
+   "S2": {
+    "runs": 1,
+    "minutes": 60.02,
+    "tier": "free"
+   },
+   "S3": {
+    "runs": 1,
+    "minutes": 60.02,
+    "tier": "free"
+   },
+   "S4": {
+    "runs": 4,
+    "minutes": 12.17,
+    "tier": "paid"
+   },
+   "S5": {
+    "runs": 2,
+    "minutes": 9.93,
+    "tier": "paid"
+   }
+  },
+  "moves": 6,
+  "manager_slots": []
+ }
+}

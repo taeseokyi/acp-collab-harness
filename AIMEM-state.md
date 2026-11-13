@@ -1,15 +1,15 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-13T21:29:28 / REV 174
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-14T00:02:42 / REV 176
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | `a41f0c` | claude | opus | 린터 / 보드 CLI / 판단형 | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
-| S2 | `d27e93` | codex | kisti/kistillm | 만들기·고치기 (무료) | R21: 하네스 claude(sonnet) - 23:03 시동 쪽 변경, 관리자 변경 아님 |
-| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | 만들기·검사 (무료) | R21: 하네스 claude(sonnet) - 23:03 시동 쪽 변경, 관리자 변경 아님 |
-| S4 | `6cd650` | claude | sonnet | 병렬 작업자 (속도) | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
+| S1 | `a41f0c` | claude | opus | R28 마지막 적대적 재검수(T-303) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S2 | `d27e93` | codex | kisti/kistillm | R28 만들기: 시험 안내 문서 수(T-302, 무료) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
+| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R28 대기 (일 3개뿐, 막힌 노드 받기) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
+| S4 | `6cd650` | claude | sonnet | R28 빠른 구현: 낱말 목록 고치기(T-300) | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
 
 ## 3. 작업 보드
 
@@ -212,20 +212,23 @@
 | T-290 | Q-261113-bd56 | 추측 목록 보강 1000 + 오기·어근 빼기 (R24 재검수 N1·N2·N3) | S2 | DONE |  |
 | T-291 | Q-261113-bd56 | 새 날 연습 정답 토스트 + 시험 빈틈 셋 (R24 재검수 N4·N6) | S3 | DONE |  |
 | T-292 | Q-261113-bd56 | 3차 확인(가벼움) | S1 | DONE |  |
-| T-293 | Q-261113-bd56 | 하드 모드 설정이 빈 판에 바로 닿게 (R24-N5 하) + 시험 | S3 | ASSIGNED |  |
-| T-294 | Q-261113-bd56 | 추측 목록 갈래 1: 생활(음식·집·옷·몸·건강) 300개+ (R24-N1) | S2 | IN-PROGRESS |  |
-| T-295 | Q-261113-bd56 | 추측 목록 갈래 2: 사회(학교·일·돈·교통·장소) 300개+ (R24-N1) | S3 | IN-PROGRESS |  |
-| T-296 | Q-261113-bd56 | 추측 목록 갈래 3: 자연·마음(날씨·동식물·시간·감정·놀이) 300개+ (R24-N1) | S3 | ASSIGNED |  |
-| T-297 | Q-261113-bd56 | 추측 목록 갈래 4: 풀이씨(동사·형용사 기본형) 250개+ (R24-N1) | S2 | ASSIGNED |  |
-| T-298 | Q-261113-bd56 | build_words 가 data/words/*.txt 읽기 + test_words 2000·까닭·경계 6개 빼기 (R24-N1·N2·N3) | S2 | ASSIGNED |  |
-| T-299 | Q-261113-bd56 | 적대적 검수: 새 표본으로 덮는 범위·지어낸 말 + N5 변이 + 목표 판정 | S1 | ASSIGNED |  |
+| T-293 | Q-261113-bd56 | 하드 모드 설정이 빈 판에 바로 닿게 (R24-N5 하) + 시험 | S3 | DONE |  |
+| T-294 | Q-261113-bd56 | 추측 목록 갈래 1: 생활(음식·집·옷·몸·건강) 300개+ (R24-N1) | S2 | DONE |  |
+| T-295 | Q-261113-bd56 | 추측 목록 갈래 2: 사회(학교·일·돈·교통·장소) 300개+ (R24-N1) | S3 | DONE |  |
+| T-296 | Q-261113-bd56 | 추측 목록 갈래 3: 자연·마음(날씨·동식물·시간·감정·놀이) 300개+ (R24-N1) | S3 | DONE |  |
+| T-297 | Q-261113-bd56 | 추측 목록 갈래 4: 풀이씨(동사·형용사 기본형) 250개+ (R24-N1) | S2 | DONE |  |
+| T-298 | Q-261113-bd56 | build_words 가 data/words/*.txt 읽기 + test_words 2000·까닭·경계 6개 빼기 (R24-N1·N2·N3) | S2 | DONE |  |
+| T-299 | Q-261113-bd56 | 적대적 검수: 새 표본으로 덮는 범위·지어낸 말 + N5 변이 + 목표 판정 | S1 | DONE |  |
+| T-300 | Q-261113-292d | 낱말: 갈래 파일 어근 걷기·BANNED·까닭 MUST·ANSWERS 약속 시험 + 빠진 흔한 말 32개 (R27-N1·N2) | S4 | DONE |  |
+| T-301 | Q-261113-292d | 브라우저: 연습 쪽 하드 맞춤·입력 중 글자 유지 시험 - V3·V6 (R27-N2) | S5 | DONE |  |
+| T-302 | Q-261113-292d | tests/README.md 검사 수 갱신 (R27-N3) | S2 | DONE |  |
+| T-303 | Q-261113-292d | 가벼운 적대적 재검수 + '검사' 목표 판정 | S1 | DONE |  |
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
-| 1 | [자모맞히기] 추측 목록(ALLOWED)의 덮는 범위: 흔한 6칸 낱말 새 표본 60개 중 57개가 거절됨 - 시험(MUST)에 적힌 낱말만 덮음. 이용 조건이 분명한 공개 사전 자료(예: 우리말샘·표준국어대사전 공개 자료, 학습용 기초 어휘 목록)에서 6칸을 뽑는 길은 내려받기·이용 조건이 걸려 태석님 결정이 먼저. 같이: README 예 '까닭' 이 ALLOWED 에 없음, 어근·경계 낱말 희한 민망 괴악 희식 화성 국전 (rounds/R24/REVIEW-r24-3.md 의 R24-N1·N2·N3) | S2 (낱말) + S1 (3차 표본 확인) | R24 3차 확인(T-292). 목표 '낱말 목록'·'검사' 가 이것 때문에 열려 있음 |
-| 2 | [자모맞히기] 하드 모드 설정이 다른 모드의 빈 판에는 새로 고칠 때까지 안 닿음 - 연습에서 하드를 켜고 빈 날마다 판으로 오면 체크박스는 꺼짐(판 값), 저장 설정은 켜짐 (rounds/R24/REVIEW-r24-2.md 의 R24-N5, 하) | S3 | R24 재검수(T-288) |
+| 1 | [자모맞히기] R28-N1·N2·N3·N4 (모두 하, rounds/R28/REVIEW-r28.md 5절): R28-N1 같은 모드에서 줄을 낸 판의 하드 잠금(hardModeLocked) 브라우저 시험(변이 R28-V16 생존). R28-N2 alignEmptyHard 가 판 번호를 지키는지(puzzleNumber 0 아님) 시험(R28-V14 생존). R28-N3 갈래 파일 어근 선선 눅눅 촉촉(확실)·용감·채이다(경계) 지우고 BANNED, 파일 전체를 '-하다 없이 홀로 쓰이나' 로 훑기. R28-N4 덮는 범위 21.7%: 4절 빠진 흔한 말 30개 보태고 다음 검수는 새 표본으로. 목표 15/15 는 닫힘 - 품질 보강 | S4 |  |
 
 ## 6. 파일 소유권
 
@@ -274,27 +277,29 @@
 | `projects/웹워들/web/js/words.js` | S2 | R7 단어 목록 생성물 |
 | `projects/자모맞히기/app.json` | S2 | R23 |
 | `projects/자모맞히기/data/**` | S2 | R24 T-284 |
-| `projects/자모맞히기/data/words/사회.txt` | S3 | R25 T-295 |
-| `projects/자모맞히기/data/words/생활.txt` | S2 | R25 T-294 |
-| `projects/자모맞히기/data/words/자연마음.txt` | S3 | R25 T-296 |
-| `projects/자모맞히기/data/words/풀이씨.txt` | S2 | R25 T-297 |
-| `projects/자모맞히기/tests/README.md` | S3 | R24 T-282 |
+| `projects/자모맞히기/data/README.md` | S4 | G-060 T-298 S2→S4 |
+| `projects/자모맞히기/data/allowed.txt` | S4 | G-060 T-298 S2→S4 |
+| `projects/자모맞히기/data/answers.txt` | S4 | G-060 T-298 S2→S4 |
+| `projects/자모맞히기/data/words/**` | S4 | R28 |
+| `projects/자모맞히기/data/words/사회.txt` | S4 | G-060 T-295 S3→S4 |
+| `projects/자모맞히기/data/words/자연마음.txt` | S4 | G-060 T-296 S3→S4 |
+| `projects/자모맞히기/tests/README.md` | S2 | R28 |
 | `projects/자모맞히기/tests/browser_game.py` | S3 | R24 T-282 |
-| `projects/자모맞히기/tests/browser_modes.py` | S3 | R24 T-287 |
 | `projects/자모맞히기/tests/test_game.mjs` | S3 | R24 T-281 |
 | `projects/자모맞히기/tests/test_jamo.mjs` | S3 | R24 T-281 |
 | `projects/자모맞히기/tests/test_logic.mjs` | S3 | R23 |
 | `projects/자모맞히기/tests/test_storage.mjs` | S3 | R24 T-280 |
-| `projects/자모맞히기/tests/test_words.py` | S2 | R24 T-284 |
+| `projects/자모맞히기/tests/test_words.py` | S4 | R28 |
 | `projects/자모맞히기/tools/**` | S2 | R24 T-284 |
+| `projects/자모맞히기/tools/build_words.py` | S4 | G-060 T-298 S2→S4 |
 | `projects/자모맞히기/web/css/**` | S3 | R24 T-280 |
 | `projects/자모맞히기/web/index.html` | S3 | R24 T-280 |
 | `projects/자모맞히기/web/js/app.js` | S2 | R23 |
 | `projects/자모맞히기/web/js/game.js` | S2 | R24 T-278 (S3→S2 균형) |
 | `projects/자모맞히기/web/js/jamo.js` | S2 | R24 T-276 |
 | `projects/자모맞히기/web/js/storage.js` | S3 | R24 T-280 |
-| `projects/자모맞히기/web/js/ui.js` | S3 | R24 T-285 |
-| `projects/자모맞히기/web/js/words.js` | S2 | R24 T-284 |
+| `projects/자모맞히기/web/js/ui.js` | S4 | G-060 T-293 S3→S4 |
+| `projects/자모맞히기/web/js/words.js` | S4 | R28 |
 | `rounds/**` | 관리자 | 라운드 기록 폴더 rounds/R<N>/ - brief.md·REPORT.md 만 (결과물은 projects/) |
 | `rounds/R10/REVIEW.md` | S1 | R10 |
 | `rounds/R11/REVIEW-A.md` | S1 | R11 T-136 적대적 검수 A |
@@ -326,6 +331,8 @@
 | `rounds/R24/REVIEW-r24.md` | S1 | R24 T-283 |
 | `rounds/R25/REVIEW-r25.md` | S1 | R25 T-299 |
 | `rounds/R26/REVIEW-r26.md` | S1 | R26 T-299 적대적 검수 |
+| `rounds/R27/REVIEW-r27.md` | S1 | R27 T-299 |
+| `rounds/R28/REVIEW-r28.md` | S1 | R28 |
 | `skills/**` | 관리자 | **현재 비어 있음** (REV 101 에서 `acp-slot-lifecycle` 제거). 되살아나면 이 행이 그대로 적용된다 |
 | `tests/browser_monitor_app.py` | S3 | R10 T-131 |
 | `tests/browser_monitor_auth.py` | S3 | R10 T-135 |
@@ -405,4 +412,5 @@
 | Q-261112-c3a1 | 대기 큐 1~3 처리 (R18) | 관리자 (R17 검수가 남긴 큐) | DONE | 2026-11-12T14:25:16 |
 | Q-261112-7d68 | 대기 큐 5건 처리 (R19 뒤 자동) | 함대 이어 달리기 | DONE | 2026-11-12T17:35:20 |
 | Q-261113-a22b | 대기 큐 2건 처리: 실행 기록 FIFO·메타 상한(R22-P4) + 시험 구멍 넷(R22-S1·S2·Q3·Q4) | 관리자 M-R22 (대기 큐) | DONE | 2026-11-13T00:36:31 |
-| Q-261113-bd56 | 한글 자모 낱말 맞히기 웹 게임 (새 프로젝트) | 태석 | IN-PROGRESS | 2026-11-13T14:24:03 |
+| Q-261113-bd56 | 한글 자모 낱말 맞히기 웹 게임 (새 프로젝트) | 태석 | DONE | 2026-11-13T14:24:03 |
+| Q-261113-292d | 자모맞히기: 남은 목표 1개 이어 가기 (R27 뒤 자동) | 함대 이어 달리기 | DONE | 2026-11-13T23:20:46 |

@@ -20,7 +20,7 @@
     GET  /app/<이름>/<경로> -> `app.json` 이 선언한 앱 폴더의 정적 파일 (인증 뒤, /app/ CSP)
     GET  /api/managers/<세션 id> -> 관리자 세션 상세 (최근 단계·마지막 보고·라운드 기록·이벤트·그래프, 도구 출력 제외)
     POST /api/requests/<id>/edit -> NEW·미분담 요청의 제목·본문 수정 (Q-261110-549a)
-    POST /api/fleet/<동작> -> 함대 제어 prepare|run|pause|stop|round (tools/fleet_ctl.py)
+    POST /api/fleet/<동작> -> 함대 제어 prepare|run|pause|stop|round|switch (tools/fleet_ctl.py)
     GET  /login            -> static/login.html (인증 면제)
     GET  /api/authinfo     -> {github_enabled, tls, auth_required, authenticated} (면제)
     POST /api/login        -> 토큰 -> 세션 쿠키 / POST /api/logout -> 쿠키 삭제
@@ -1443,7 +1443,7 @@ def manager_detail(sid, root=ROOT, all_steps=False):
 # 전부 `fleet_ctl` 이 합니다 - 서버는 부르기만 합니다 (CLI 와 화면이 같은 규칙을 쓰게).
 
 FLEET_ACTIONS = ("prepare", "run", "pause", "stop", "round")
-_REQ_FLEET_RE = re.compile(r"\A/api/fleet/(prepare|run|pause|stop|round|chain)\Z")
+_REQ_FLEET_RE = re.compile(r"\A/api/fleet/(prepare|run|pause|stop|round|chain|switch)\Z")
 
 # -- 슬롯 관리 (2026-11-10, 태석님 지시 "슬롯 하네스 추가·삭제, 모델 지정") ----------------------------
 # 정본은 `.aimem/aimem.db` slots - `tools/aimem_db.py slot *` 과 같은 함수를 부른다. 모델은 **`fleet.toml` 에 설정된
@@ -1703,6 +1703,25 @@ def fleet_action(action, by, root=ROOT, payload=None):
         except Exception as e:  # noqa: BLE001
             return 500, {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
         return (200 if out.get("ok") else 400), out
+    if action == "switch":
+        # 도는 중에 운영 방식 바꾸기. now = 멈추고 그래프를 버린 뒤 다시 띄운다(`fleet_ctl.switch_policy`, 확인은 화면이 받는다),
+        # next = 켜진 이어 달리기가 다음 라운드부터 쓴다(`fleet_ctl.chain_policy`)
+        ctl = _fleet_ctl(root)
+        pol, err = _policy_arg(ctl, payload.get("policy") if isinstance(payload, dict) else None)
+        if err or pol is None:
+            return 400, {"ok": False, "error": err or "`policy` 가 없습니다"}
+        when = payload.get("when")
+        if when not in ("now", "next"):          # 기본값을 두지 않는다 - 빠뜨린 요청이 라운드를 멈추면 안 된다
+            return 400, {"ok": False, "error": "`when` 은 now(지금) 또는 next(다음 라운드부터) 여야 합니다"}
+        rn = payload.get("round")
+        if when == "now" and (not isinstance(rn, int) or isinstance(rn, bool)):
+            # 확인창이 말한 라운드를 같이 받는다 - 창이 떠 있는 사이 다음 라운드로 넘어갔으면 엔진이 거절한다
+            return 400, {"ok": False, "error": "`round` (멈출 라운드 번호)가 없습니다"}
+        try:
+            out = ctl.switch_policy(pol, by, expect_round=rn) if when == "now" else ctl.chain_policy(pol, by)
+        except Exception as e:  # noqa: BLE001
+            return 500, {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+        return (200 if out.get("ok") else 409), out
     if action not in FLEET_ACTIONS:
         return 404, {"ok": False, "error": f"없는 동작입니다: {action}"}
     ctl = _fleet_ctl(root)
@@ -2937,7 +2956,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             who = self._subject()
             code, result = fleet_action(fleet_act.group(1), f"웹({subject_label(who)})" if who else "웹", self.root, payload)
             self._audit("fleet-" + fleet_act.group(1), f"{code} mode={result.get('mode')}"
-                        + (f" chain={(result.get('chain') or {}).get('on')}" if fleet_act.group(1) == "chain" else ""))
+                        + (f" chain={(result.get('chain') or {}).get('on')}" if fleet_act.group(1) == "chain" else "")
+                        + (f" when={str(payload.get('when'))[:8]} policy={str(payload.get('policy'))[:12]}"
+                           f" round={result.get('old_round')}->{result.get('round')}"
+                           if fleet_act.group(1) == "switch" and isinstance(payload, dict) else ""))
             return self._json(code, result)
         # 속도 제한 (S4 유출 검수 3번). **본문을 읽기 전에** 겁니다 - 막을 요청의
         # 64KB 를 굳이 받아들일 이유가 없습니다. 대신 연결은 끊습니다(본문 미소진).

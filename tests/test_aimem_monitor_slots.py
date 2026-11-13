@@ -2,11 +2,16 @@
 
 `server.slot_action` 은 DB(`aimem_db`)를 고치고, 모델은 `fleet.toml` 에 설정된 목록에서만 받는다.
 """
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _fleet_env  # noqa: F401,E402 - 세션 표식을 걷는다 (관리자 세션 안에서 돌려도 같은 결과)
+
 import contextlib
 import io
 import json
 import pathlib
-import sys
 import tempfile
 import unittest
 from unittest import mock

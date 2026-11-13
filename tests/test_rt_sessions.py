@@ -191,6 +191,17 @@ class TestRun(Base):
         self.assertEqual(st["state"], "done", st)
         self.assertTrue(_wait(lambda: not self.group_of(d), 5))   # 감독이 DB 를 적고 끝날 때까지
 
+    def test_reading_alone_does_not_keep_a_session_alive_forever(self):
+        """사건 없이 읽기만 이어지면 침묵 한도의 몇 배에서 끊는다 - 멈춘 하네스도 제 파일을 조금씩 읽는다."""
+        from fleet_rt import run as rt_run  # noqa: PLC0415
+        d = self.spawn(["busy-read 30", "emit 끝"], idle_timeout=1.0)
+        t0 = time.time()
+        st = self.wait_end(d, 20)
+        self.assertEqual((st["state"], st["fail_kind"]), ("stalled", "infra"), st)
+        self.assertIn("읽기만 계속됨", st["why"])
+        self.assertLess(time.time() - t0, rt_run.READ_ONLY_IDLES * 1.0 + 6)
+        self.assertTrue(_wait(lambda: not self.group_of(d), 5))
+
     def test_reading_by_a_detached_child_is_not_silence(self):
         """하네스가 그룹을 벗어난(setsid) 백그라운드 명령을 기다리는 동안도, 그 명령이 읽고 있으면 침묵이 아니다."""
         d = self.spawn(["detached-busy 2", "emit 끝"], idle_timeout=1.0)
