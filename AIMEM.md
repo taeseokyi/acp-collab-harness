@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/a
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 168** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-13 07:02 KST
+- **REV: 169** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-13 13:54 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **the `role=manager` session the engine starts for a round** (harness claude,
@@ -365,8 +365,10 @@ A slot asked for a design decision has a defective brief; `BLOCKED` is the right
 
 Issue independent `spawn`s in one turn and collect with one `wait`; dependent tasks wait for their predecessor;
 never two slots on one file. Concurrency cap: 2~5 (`8.1`).
-**kistillm is not serialized**: concurrent S2/S3 runs showed `queued:0`; the delay is prompt re-reading
-(50~60k tokens per turn), so lowering concurrency gains nothing and the only lever is **prompt length** - short
+**Per-provider concurrency is a setting, not a rule:** `fleet.toml` `max_concurrent`, enforced by the engine. It
+follows the server's measured throughput and is raised when resources grow (re-measure first). kistillm today
+(2026-11-13): parallel requests are accepted but share a fixed throughput, so the value is 1 - overlapping only
+delays each run. Either way the biggest lever is **prompt length** (each turn re-reads the context) - short
 briefs, narrow write scope.
 
 #### 8.0-3-1 Terminology and Identifiers
