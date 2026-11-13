@@ -2,7 +2,7 @@
 
 여러 AI 코딩 에이전트(슬롯)가 **같은 폴더에서 동시에 일할 때** 서로의 작업을
 덮어쓰지 않게 하는 규약과 도구 모음입니다. 프로젝트마다 이 저장소를 복제해
-`AIMEM.md` 의 목표·보드만 바꿔 쓰는 것을 전제로 만들었습니다.
+`AIMEM.md` 의 목표와 DB 의 명부·소유권만 바꿔 쓰는 것을 전제로 만들었습니다.
 
 ## 문제
 
@@ -12,14 +12,14 @@
 
 ## 해결 구조
 
-- **`AIMEM.md`** - 규약 한 벌(영어, REV 128~). 운영 상태(명부·보드·큐·소유권)는 `.aimem/aimem.db` 가 정본이고
+- **`AIMEM.md`** - 규약 한 벌(영어). 운영 상태(명부·보드·큐·소유권)는 `.aimem/aimem.db` 가 정본이고
   `AIMEM-state.md` 가 읽기용 스냅샷, 핸드오프 로그도 DB 가 정본이고 `.aimem/handoff.md` 는 최신 12건 생성물입니다(`aimem_db.py handoff add|list`). 쓰기는 관리자만
 - **파일 소유권 표** - 경로 패턴마다 쓰기 소유 슬롯을 하나로 못박습니다.
   동시 쓰기 충돌을 구조적으로 없앱니다
-- **REV + 확인토큰** - 작업자는 착수 전에 지시의 REV·토큰을 `AIMEM.md` 실측으로
-  대조합니다. 어긋나면 멈춥니다. 재생된 옛 메시지를 걸러내는 장치입니다
-- **핸드오프 / 핸드온** - 일을 넘기는 슬롯은 아웃박스에
-  `다음 담당자가 알아야 할 것` 을 채웁니다. 이어받는 슬롯은 그것만 읽고 시작합니다
+- **REV + 확인토큰** - 작업자는 착수 전에 `python3 tools/aimem_db.py check --slot S<n> --token <토큰> --rev <REV>`
+  한 줄로 지시의 REV·토큰을 DB 와 대조합니다. 어긋나면 멈춥니다. 재생된 옛 메시지를 걸러내는 장치입니다
+- **보고는 응답 본문에** - 작업자는 `다음 담당자가 알아야 할 것` 까지 응답 본문에 적고, 관리자가 그것으로
+  다음 브리프를 씁니다
 - **하드리밋** - 커밋/푸시, 삭제, 의존성 설치, `AIMEM.md` 쓰기, 소유 경로 밖 쓰기는
   관리자도 전달할 수 없습니다. 사람의 직접 허용만 엽니다
 
@@ -33,25 +33,27 @@
   파일이 없으면 내장 기본값을 씁니다
 - **`.env`** - 저장소 루트에 두는 비밀 키 파일(`.env.example` 을 복사). 권한이 600 이 아니면 읽지 않습니다. git 제외
 - 슬롯의 모델은 DB `slots.model` 이 정본이고, 비어 있으면 `fleet.toml` 의 하네스 기본 모델을 씁니다
+- **라운드**는 `python3 tools/fleet_ctl.py round [--policy cost|quality|speed]`(또는 웹 '라운드 실행')로 띄웁니다.
+  운영 방식(무료 중심·품질 중심·빠른 구현)이 슬롯 쓰는 법을 정합니다(`.aimem/briefs/policy-<방식>.md`)
+- 돌고 있는 라운드의 관리자에게 말을 남기려면 `python3 tools/fleet_ctl.py tell "…"`(`rounds/R<N>/INBOX.md`)
 
 ## 도구
 
 | 파일 | 역할 |
 | ---- | ---- |
 | `tools/aimem_lint.py` | `AIMEM.md` 구조 불변식 검사기. 표준 라이브러리만 |
-| `tools/aimem_board.py` | 보드·명부·큐·소유권 표 갱신 CLI. 락 + lint 롤백 안전망 |
+| `tools/aimem_db.py` | 운영 상태 DB(`.aimem/aimem.db`) CLI - `check`·`task`·`slot`·`queue`·`ownership`·`request`·`handoff`·`event`·`render`·`archive` |
 | `tools/fleet.py` | 작업자 띄우기(`spawn`)·상태(`runs`·`wait`·`report`)·거두기(`close`·`reap`) 도우미 (관리자 전용) |
-| `tools/envcheck/` | 환경 점검 러너(하네스 CLI·`fleet.toml`·`.env`·슬롯 공급자·파이썬·DNS). 누적 판정은 `.aimem/envcheck-state.json` |
+| `tools/fleet_graph.py` | 태스크 그래프 실행기 - `new`·`validate`·`run`·`status`·`move`·`unblock` |
+| `tools/fleet_ctl.py` | 함대 모드·라운드 띄우기(`round`)·이어 달리기(`chain`)·말 남기기(`tell`) |
+| `tools/fleet_rt/` | 세션 런타임 - 하네스 CLI 를 띄워 지키고 `.aimem/sessions/<id>/` 에 기록 |
 | `.githooks/pre-commit` | 커밋 전 린터 + 단위 테스트 자동 실행 |
 
 내린 도구는 `.aimem/archive/retired-tools/` 에 있습니다.
-`aimem_pipeline.py` (무인 배정 드라이버) 는 REV 105 에서 내렸습니다 - 게이트 판정이
-사문화된 `0.6-3` 에 걸려 있었습니다.
 
 ```bash
 python3 tools/aimem_lint.py AIMEM.md     # 통과 시 exit 0
 python3 -m unittest discover -s tests
-PYTHONPATH=tools python3 -m envcheck     # 환경 점검
 git config core.hooksPath .githooks      # 훅 활성화
 ```
 
@@ -60,13 +62,13 @@ git config core.hooksPath .githooks      # 훅 활성화
 ## 쓰는 법
 
 1. 이 저장소를 프로젝트 폴더로 복제합니다
-2. `AIMEM.md` 의 `1. 현재 목표`, `3. 작업 보드`, `6. 파일 소유권` 을 프로젝트에 맞게 다시 씁니다
+2. `AIMEM.md` 의 `1. 현재 목표` 를 다시 쓰고, 슬롯·소유권은 `python3 tools/aimem_db.py slot|ownership` 으로 맞춥니다
 3. 위임을 사용자 지침 파일(`~/.claude/CLAUDE.md` 등 에이전트가 쓸 수 없는 위치)에 한 번 적습니다
-4. 관리자가 브리프(슬롯 ID·REV·토큰·소유 경로·검증 방법)를 만들면 엔진이 작업자 세션을 띄웁니다
+4. 웹 요청 폼으로 요청을 넣고 라운드를 띄우면, 관리자가 그래프로 나눠 작업자 세션을 띄웁니다
 
 ## 함대 모니터 (HTTPS + 접근 제어)
 
-**평소에도 HTTPS 로 띄웁니다** (2026-11-10 전환). 같은 포트로 들어온 `http://` 는 https 로 301 됩니다.
+**평소에도 HTTPS 로 띄웁니다.** 같은 포트로 들어온 `http://` 는 https 로 301 됩니다.
 
 ```bash
 tools/aimem_monitor/monitorctl.sh start          # https://<주소>:18799/  (--tls --host 0.0.0.0, 인증 켬)
@@ -94,13 +96,13 @@ pid 는 `.aimem/monitor.pid`, 로그는 `.aimem/monitor.log`. 내릴 때는 pid 
 
 슬롯(작업자 하네스·모델)은 웹 **함대 현황**의 '변경'·'+ 슬롯 추가' 로, 또는 `python3 tools/aimem_db.py slot add|set|remove|list` 로 다룹니다. 모델 선택지는 `fleet.toml` 의 공급자·모델입니다.
 
-- **비밀은 셸이 아니라 파일에서 읽습니다** - `.aimem/tls/monitor.env`(0600; `KISTI_API_KEY`,
-  `GITHUB_CLIENT_ID`, 선택으로 `GITHUB_CLIENT_SECRET`). 공급자 키는 저장소 루트 `.env` 에서 읽습니다.
-  그룹·기타가 읽을 수 있는 파일은 읽지 않습니다. **`.aimem/tls/` 는 git 제외**입니다
+- **비밀은 셸이 아니라 저장소 루트 `.env` 한 곳에서 읽습니다**(0600; 공급자 키, `KISTI_API_KEY`,
+  `GITHUB_CLIENT_ID`, 선택으로 `GITHUB_CLIENT_SECRET`). 그룹·기타가 읽을 수 있는 파일은 읽지 않습니다.
+  `.env` 와 `.aimem/tls/` 는 git 제외입니다
 - HSTS 는 **도메인 이름으로 들어온 요청에만** 보냅니다. `localhost`·IP 로 들어오면 보내지 않습니다 -
   HSTS 는 포트가 아니라 호스트 전체에 걸려, 같은 PC 의 다른 `http://localhost:*` 서비스를 깨뜨릴 수 있습니다
 
-### 인증서 - PC 의 다른 서비스와 같은 사설 CA 를 씁니다 (2026-11-10)
+### 인증서 - PC 의 다른 서비스와 같은 사설 CA 를 씁니다
 
 서버 인증서는 태석님 PC 의 사설 CA(`C:\Temp\carefor-app\server\certs\ca.{crt,key}`, carefor-app·
 Signposts_of_Faith 와 공용)로 서명합니다. 그 CA 가 윈도우 신뢰 루트에 **이미 들어 있으므로 브라우저에
@@ -119,7 +121,7 @@ curl -s --cacert .aimem/tls/ca.crt https://192.168.0.5:18800/api/health   # 401 
 자동으로 들어가지만 아래 프록시 경로에서는 필요 없습니다. CA 없이 쓰려면 `--self-signed` - 그때는
 `server.crt` 를 윈도우 **신뢰할 수 있는 루트 인증 기관**에 설치해야 경고가 사라집니다.
 
-### 외부에서 들어오게 하기 - 윈도우 쪽 TCP 프록시 (WSL2, 2026-11-10)
+### 외부에서 들어오게 하기 - 윈도우 쪽 TCP 프록시 (WSL2)
 
 `netsh portproxy` 는 WSL IP 를 직접 적어야 해서 재부팅마다 끊겼습니다(Windows 10 이라 `networkingMode=mirrored`
 도 못 씁니다). 대신 **윈도우에서 도는 작은 통과 프록시**가 `0.0.0.0:18800` 을 듣고 **`127.0.0.1:18799`** 로
@@ -136,10 +138,9 @@ curl -s --cacert .aimem/tls/ca.crt https://192.168.0.5:18800/api/health   # 401 
 New-NetFirewallRule -DisplayName "AIMEM fleet proxy" -Direction Inbound -LocalPort 18800 -Protocol TCP -Action Allow
 ```
 
-**저장소 밖(호스트·공유기 설정)이라 작업자도 관리자도 실행하지 않습니다.** 옛 `portproxy` 규칙은 없습니다
-(2026-11-10 확인) - 있었다면 `netsh interface portproxy delete v4tov4 listenport=18799 listenaddress=0.0.0.0`.
+**저장소 밖(호스트·공유기 설정)이라 작업자도 관리자도 실행하지 않습니다.**
 
-### 폰에 앱으로 설치 (PWA, 2026-11-10)
+### 폰에 앱으로 설치 (PWA)
 
 모니터는 설치형 웹앱입니다(`/manifest.webmanifest` + `/sw.js`, 아이콘 `static/icon-*.png`). 서비스 워커는 **앱 껍데기만**
 캐시하고 `/api/*`·로그인은 절대 캐시하지 않습니다 - 폰에 함대 데이터가 남지 않습니다. 주소는 외부에서 쓰는 그 주소
@@ -153,7 +154,7 @@ New-NetFirewallRule -DisplayName "AIMEM fleet proxy" -Direction Inbound -LocalPo
 
 ### GitHub 로그인 (선택)
 
-**기기 흐름(기본).** `.aimem/tls/monitor.env` 에 `GITHUB_CLIENT_ID` **만** 적고(기기 흐름이 켜진 OAuth App 의
+**기기 흐름(기본).** `.env` 에 `GITHUB_CLIENT_ID` **만** 적고(기기 흐름이 켜진 OAuth App 의
 Client ID - 공개 정보, reefwiz-esp32 와 같은 앱을 씁니다) `admin github allow <내 계정>` → `restart`.
 로그인 화면의 **GitHub 로 로그인** 을 누르면 확인 코드가 뜨고, `github.com/login/device` 에 그 코드를 넣어
 승인하면 화면이 넘어갑니다. 콜백 주소가 없어 **어느 주소·포트로 접속하든 같습니다**(내부 IP, 프록시 18800, 외부 주소).

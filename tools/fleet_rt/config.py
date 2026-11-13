@@ -13,14 +13,14 @@ FILE = "fleet.toml"
 #: 파일이 없을 때의 기본값. `fleet.toml` 과 같게 유지한다 (검사가 둘을 대조한다).
 DEFAULTS = {
     "providers": {
-        "kisti": {"base_url": "https://aida.kisti.re.kr:10430/v1", "env_key": "KISTI_API_KEY",
+        "kisti": {"tier": "free", "base_url": "https://aida.kisti.re.kr:10430/v1", "env_key": "KISTI_API_KEY",
                   "max_concurrent": 1, "idle_timeout_sec": 240, "probe": "models", "models": ["kistillm"]},
-        "exaone": {"base_url": "https://api.exaone.ai/v1", "env_key": "EXAONE_API_KEY",
+        "exaone": {"tier": "free", "base_url": "https://api.exaone.ai/v1", "env_key": "EXAONE_API_KEY",
                    "max_concurrent": 1, "idle_timeout_sec": 240, "models": ["k-exaone_v2.5"]},
-        "openrouter": {"base_url": "https://openrouter.ai/api/v1", "env_key": "OPENROUTER_API_KEY",
+        "openrouter": {"tier": "paid", "base_url": "https://openrouter.ai/api/v1", "env_key": "OPENROUTER_API_KEY",
                        "max_concurrent": 3, "idle_timeout_sec": 240, "models": ["deepseek/deepseek-v4.1-flash"]},
-        "opencode": {"max_concurrent": 1, "idle_timeout_sec": 240, "models": ["deepseek-v4.1-flash-free"]},
-        "anthropic": {"max_concurrent": 3, "idle_timeout_sec": 600, "models": ["opus", "sonnet", "haiku"]},
+        "opencode": {"tier": "free", "max_concurrent": 1, "idle_timeout_sec": 240, "models": ["deepseek-v4.1-flash-free"]},
+        "anthropic": {"tier": "paid", "max_concurrent": 3, "idle_timeout_sec": 600, "models": ["opus", "sonnet", "haiku"]},
     },
     "harness": {
         "claude": {"binary": "claude", "providers": ["anthropic"], "default_model": "sonnet"},
@@ -29,7 +29,10 @@ DEFAULTS = {
     },
     "manager": {"mode": "resident"},
     "time": {"zone": "Asia/Seoul"},
-    "policy": {"default": "cost"},
+    "policy": {"default": "cost",
+               "cost": {"extra_slots": 2, "slot_tiers": ["free"]},
+               "quality": {"extra_slots": 2, "slot_tiers": ["free", "paid"]},
+               "speed": {"extra_slots": 4, "slot_tiers": ["free", "paid"]}},
 }
 
 #: 관리자 운용 방식 (설계 5.9). `resident` 는 관리자 하나가 라운드 내내 산다(지금까지의 방식).
@@ -39,6 +42,13 @@ MANAGER_MODES = ("resident", "calls")
 #: 라운드 운영 방식 - 관리자가 슬롯을 어떻게 쓰나. 관리자에게 주는 지시 한 덩이만 다르고 엔진의 배정은 같다.
 #: cost(무료 중심, 지금까지의 방식) · quality(품질 중심) · speed(빠른 구현)
 POLICIES = ("cost", "quality", "speed")
+
+#: 공급자 등급. 모르거나 적지 않은 공급자는 유료로 본다 - 모르면 돈이 드는 쪽으로 막는 것이 안전하다
+TIERS = ("free", "paid")
+TIER_LABEL = {"free": "무료", "paid": "유료"}
+
+#: `[policy.<키>]` 표가 없는 옛 설정 파일의 값 (`DEFAULTS` 와 같다)
+_POLICY_LIMITS = {k: DEFAULTS["policy"][k] for k in POLICIES}
 
 #: claude CLI 가 받는 모델 별칭·꼴: 이런 이름은 공급자 접두 없이도 anthropic 이다
 _CLAUDE_ALIASES = ("opus", "sonnet", "haiku", "fable")
@@ -108,6 +118,38 @@ class Config:
         """`[policy] default` - 라운드를 띄울 때 운영 방식을 따로 고르지 않으면 이것. 표가 없으면 `cost`(지금까지의 방식)."""
         return str((self.data.get("policy") or {}).get("default") or "cost")
 
+    def tier(self, provider):
+        """공급자 등급 `free` | `paid`. 모르는 공급자·적지 않은 등급은 `paid`."""
+        v = (self.provider(provider) or {}).get("tier") if provider else None
+        return v if v in TIERS else "paid"
+
+    def slot_tier(self, harness, model):
+        """슬롯 (하네스, 모델) 의 등급 - 그 공급자의 등급. 공급자를 모르면 `paid`."""
+        return self.tier(self.provider_of(harness, model))
+
+    def policy(self, key):
+        """운영 방식 `key` 의 엔진 한도 `{"extra_slots", "slot_tiers"}`. 표가 없으면 내장값, 모르는 키는 cost 의 것."""
+        base = _POLICY_LIMITS.get(key) or _POLICY_LIMITS["cost"]
+        got = (self.data.get("policy") or {}).get(key)
+        got = got if isinstance(got, dict) else {}
+        return {"extra_slots": int(got.get("extra_slots", base["extra_slots"])),
+                "slot_tiers": list(got.get("slot_tiers", base["slot_tiers"]))}
+
+    def model_allowed(self, harness, model):
+        """(ok, 까닭). 빈 모델(하네스 기본)은 통과. claude 는 별칭·모델 id(`claude-…`, `anthropic/…`)도 통과.
+        그 밖은 이 설정이 그 하네스에 허용한 모델 목록(`models_for`)에 있어야 한다 - 웹과 CLI 가 같은 규칙을 쓴다."""
+        if not model:
+            return True, ""
+        low = str(model).lower()
+        if low in _CLAUDE_ALIASES or low.startswith(_CLAUDE_PREFIXES):
+            return (True, "") if harness == "claude" else (False, f"{model} 은(는) claude 하네스의 모델이라 {harness} 하네스가 받을 수 없습니다")
+        hosts = [h for h in self.harnesses() if any(m["key"] == model for m in self.models_for(h))]
+        if not hosts:
+            return False, f"fleet.toml 에 설정된 모델이 아닙니다: {model}"
+        if harness not in hosts:
+            return False, f"{model} 은(는) {harness} 하네스가 받을 수 없습니다 (가능: {', '.join(hosts)})"
+        return True, ""
+
     def models_for(self, harness):
         """모니터 모델 선택기용 목록. claude 는 공급자 접두 없는 별칭, 나머지는 `공급자/모델`."""
         out = []
@@ -161,6 +203,8 @@ def _validate(data):
                 raise ConfigError(f"{FILE}: providers.{name}.{key} 는 숫자여야 합니다")
         if "models" in p and not isinstance(p["models"], list):
             raise ConfigError(f"{FILE}: providers.{name}.models 는 목록이어야 합니다")
+        if "tier" in p and p["tier"] not in TIERS:
+            raise ConfigError(f"{FILE}: providers.{name}.tier 는 {' · '.join(TIERS)} 가운데 하나여야 합니다 (받은 값 {p['tier']!r})")
     for name, h in data.get("harness", {}).items():
         if not isinstance(h, dict):
             raise ConfigError(f"{FILE}: harness.{name} 가 표가 아닙니다")
@@ -175,3 +219,14 @@ def _validate(data):
     if policy not in POLICIES:
         # 오타를 기본값으로 삼키면 사람이 고른 것과 다른 비용으로 돈다 - manager.mode 와 같은 까닭
         raise ConfigError(f"{FILE}: policy.default 는 {' · '.join(POLICIES)} 가운데 하나여야 합니다 (받은 값 {policy!r})")
+    for key, v in data.get("policy", {}).items():
+        if key == "default":
+            continue
+        if key not in POLICIES or not isinstance(v, dict):
+            raise ConfigError(f"{FILE}: [policy.{key}] 는 {' · '.join(POLICIES)} 가운데 하나의 표여야 합니다")
+        n = v.get("extra_slots", 0)
+        if isinstance(n, bool) or not isinstance(n, int) or n < 0:
+            raise ConfigError(f"{FILE}: policy.{key}.extra_slots 는 0 이상의 정수여야 합니다 (받은 값 {n!r})")
+        tiers = v.get("slot_tiers", [])
+        if not isinstance(tiers, list) or any(t not in TIERS for t in tiers):
+            raise ConfigError(f"{FILE}: policy.{key}.slot_tiers 는 {' · '.join(TIERS)} 의 목록이어야 합니다 (받은 값 {tiers!r})")

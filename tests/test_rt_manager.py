@@ -439,9 +439,9 @@ class ReviewFixes(Base):
         real = fleet_ctl._round_brief_path
         bar = threading.Barrier(2)
 
-        def slow(b, at):
+        def slow(b, at, *rest):
             time.sleep(0.4)          # 첫 누름이 관리자를 띄우는 사이에 둘째 누름이 들어온다
-            return real(b, at)
+            return real(b, at, *rest)
         res = []
 
         def tap():

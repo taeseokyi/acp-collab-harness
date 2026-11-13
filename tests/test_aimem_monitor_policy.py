@@ -64,11 +64,16 @@ class PolicyPassThrough(unittest.TestCase):
         self.go(NewCtl, "chain", {"on": False, "policy": "bogus"})
         self.assertEqual(NewCtl.calls, [("chain", False, None)])
 
-    def test_old_engine_signature_gets_no_keyword(self):
-        code, _ = self.go(OldCtl, "round", {"policy": "speed"})
+    def test_old_engine_refuses_a_chosen_policy_instead_of_dropping_it(self):
+        """고른 운영 방식을 받지 못하는 옛 엔진이면 말없이 버리고 띄우지 않는다 - 409 와 '모니터를 다시 띄우십시오'."""
+        code, out = self.go(OldCtl, "round", {"policy": "speed"})
+        self.assertEqual((code, OldCtl.calls), (409, []))
+        self.assertIn("모니터를 다시 띄우십시오", out["error"])
+        code, out = self.go(OldCtl, "chain", {"on": True, "fleet": True, "policy": "speed"})
+        self.assertEqual((code, OldCtl.calls), (409, []))
+        self.assertIn("모니터를 다시 띄우십시오", out["error"])
+        code, _ = self.go(OldCtl, "round", {})                       # 고르지 않았으면 옛 엔진도 그대로 띄운다
         self.assertEqual((code, OldCtl.calls), (200, [("round", "웹")]))
-        code, _ = self.go(OldCtl, "chain", {"on": True, "fleet": True, "policy": "speed"})
-        self.assertEqual((code, OldCtl.calls), (200, [("chain", True)]))
 
 
 if __name__ == "__main__":

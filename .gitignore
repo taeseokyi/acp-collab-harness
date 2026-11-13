@@ -5,10 +5,6 @@ __pycache__/
 node_modules/
 .aimem.lock
 
-# envcheck 러너의 누적 판정 상태 - 이력 자산이 아니라 상태 파일.
-# 테스트마다 타임스탬프 25줄이 바뀌어 실제 diff 를 가린다 (REV 106, 태석님 승인).
-.aimem/envcheck-state.json
-
 # OpenClaw 워크스페이스 기본 항목 - ACP 세션이 부트스트랩으로 생성한다, 저장소 자산 아님 (2026-11-06, 태석님 지시)
 IDENTITY.md
 SOUL.md

@@ -12,8 +12,8 @@ import urllib.request
 
 
 def running_by_provider(sessions_root):
-    """지금 도는 세션을 공급자별로. '도는가' 는 감독기(`sessions.state`)의 판정 하나만 쓴다 -
-    감독 없이 하네스만 남은 세션도 공급자 자리를 잡고 있으므로 센다."""
+    """지금 도는 **작업자** 세션을 공급자별로. '도는가' 는 감독기(`sessions.state`)의 판정 하나만 쓴다 -
+    감독 없이 하네스만 남은 세션도 공급자 자리를 잡고 있으므로 센다. 관리자는 세지 않는다 - `max_concurrent` 는 작업자 자리다."""
     from . import sessions  # noqa: PLC0415 - 설정만 읽는 호출은 감독기를 들이지 않는다
     out = {}
     root = pathlib.Path(sessions_root)
@@ -24,7 +24,8 @@ def running_by_provider(sessions_root):
     live = sessions.live_index(root)
     for d in dirs:
         meta = sessions.load_meta(d)
-        if not isinstance(meta, dict) or sessions.state(d, live=live).get("state") != "running":
+        if not isinstance(meta, dict) or meta.get("role") == "manager" \
+                or sessions.state(d, live=live).get("state") != "running":
             continue
         prov = meta.get("provider")
         if prov:

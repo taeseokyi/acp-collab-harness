@@ -1553,23 +1553,14 @@ def _slot_payload_fields(payload):
 
 
 def _model_allowed(model, harness, root=ROOT):
-    """빈 값(하네스 기본)은 통과. claude 는 별칭·모델 id(`claude-…`, `anthropic/…`)도 통과.
-    그 밖은 `fleet.toml` 이 그 하네스에 허용한 모델 목록에 있어야 한다."""
+    """(ok, 까닭) - 규칙은 `fleet_rt.config.Config.model_allowed` 한 곳 (CLI `aimem_db.py slot` 과 같다)."""
     if not model:
         return True, ""
-    if harness == "claude":
-        low = model.lower()
-        if low in ("opus", "sonnet", "haiku", "fable") or low.startswith(("claude-", "anthropic/", "claude-cli/")):
-            return True, ""
-    ms = fleet_models(root)
-    hit = next((m for m in ms["models"] if m["key"] == model), None)
-    if hit is None:
-        if not ms["ok"]:
-            return False, f"모델 목록을 읽지 못해 확인할 수 없습니다: {ms['error']}"
-        return False, f"fleet.toml 에 설정된 모델이 아닙니다: {model}"
-    if harness not in hit["harnesses"]:
-        return False, f"{model} 은(는) {harness} 하네스가 받을 수 없습니다 (가능: {', '.join(hit['harnesses'])})"
-    return True, ""
+    try:
+        cfg = _fleet_rt("config").load(root)
+    except Exception as e:  # noqa: BLE001 - ConfigError 포함
+        return False, f"모델 목록을 읽지 못해 확인할 수 없습니다: {type(e).__name__}: {str(e)[:160]}"
+    return cfg.model_allowed(harness, model)
 
 
 SLOT_NOTICE_REQUESTER = "슬롯 관리(웹)"
@@ -1676,6 +1667,10 @@ def fleet_state(root=ROOT):
         return {"mode": None, "error": f"{type(e).__name__}: {str(e)[:120]}", "can": {a: False for a in FLEET_ACTIONS}}
 
 
+#: 고른 운영 방식을 받지 못하는 옛 엔진이 올라와 있을 때 - 말없이 버리면 사람이 고른 것과 다른 방식으로 돈다
+_STALE_ENGINE = "올라와 있는 엔진이 운영 방식을 받지 못합니다 - 모니터를 다시 띄우십시오 (고른 방식을 버리고 띄우지 않았습니다)"
+
+
 def _accepts(fn, name):
     """엔진 함수가 키워드 `name` 을 받는지 (엔진 갱신이 화면보다 늦을 때를 위해)."""
     try:
@@ -1728,7 +1723,9 @@ def fleet_action(action, by, root=ROOT, payload=None):
                 pol, err = _policy_arg(ctl, p.get("policy"))
                 if err:
                     return 400, {"ok": False, "error": err}
-                if pol is not None and _accepts(ctl.chain_set, "policy"):
+                if pol is not None:
+                    if not _accepts(ctl.chain_set, "policy"):
+                        return 409, {"ok": False, "error": _STALE_ENGINE}
                     kw["policy"] = pol
             out = ctl.chain_set(p["on"], None, p.get("max_rounds"), by, projects=names,
                                 fleet_on=bool(p.get("fleet")), all_=bool(p.get("all")),
@@ -1753,7 +1750,9 @@ def fleet_action(action, by, root=ROOT, payload=None):
         pol, err = _policy_arg(ctl, payload.get("policy"))
         if err:
             return 400, {"ok": False, "error": err}
-        if pol is not None and _accepts(ctl.launch_round, "policy"):
+        if pol is not None:
+            if not _accepts(ctl.launch_round, "policy"):
+                return 409, {"ok": False, "error": _STALE_ENGINE}
             rkw["policy"] = pol
     try:
         out = {"prepare": lambda: ctl.prepare(by, extra), "run": lambda: ctl.resume(by),

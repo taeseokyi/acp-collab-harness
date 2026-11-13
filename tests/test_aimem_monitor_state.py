@@ -176,7 +176,7 @@ class DbIsCanonical(_Base):
         self.seed()
         s = reader.collect(self.root)
         self.assertEqual(set(s["slots"][0]),
-                         {"slot", "token", "harness", "role", "note", "model", "model_source"})
+                         {"slot", "token", "harness", "role", "note", "model", "model_source", "origin", "round"})
         self.assertEqual(set(s["board"][0]),
                          {"id", "task", "slot", "status", "handoff", "artifact"})
         self.assertEqual(set(s["queue"][0]), {"order", "task", "slots", "handoff", "note"})

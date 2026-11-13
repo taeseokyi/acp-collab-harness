@@ -2540,7 +2540,17 @@ function renderSlots(data) {
         now.appendChild(le);
       }
     }
-    return [mono(s.slot), now, show(s.harness), modelCell, show(s.role), plainText(s.note) || '-'];
+    // 관리자가 라운드 중에 더한 슬롯 - 사람이 둔 것과 구분해 작은 칩 하나 (지우는 것은 관리자·사람 몫)
+    let slotCell = mono(s.slot);
+    if (s.origin === 'manager') {
+      slotCell = document.createElement('div');
+      slotCell.appendChild(mono(s.slot));
+      const chip = badge('관리자 추가' + (s.round != null ? ' R' + s.round : ''), 'neutral');
+      chip.className += ' slot-origin';
+      chip.title = '라운드 관리자가 운영 방식의 한도 안에서 더한 슬롯';
+      slotCell.appendChild(chip);
+    }
+    return [slotCell, now, show(s.harness), modelCell, show(s.role), plainText(s.note) || '-'];
   });
   const rowClasses = slots.map((s) => (running.has(s.slot) ? 'row-running' : ''));   // 색은 지금 도는 슬롯에만 (전에는 마지막 실행이 있으면 전부 칠했다)
   // 행을 누르면 그 슬롯의 패널(실행으로 가는 길 + 하네스·모델·역할 변경·삭제). 전에는 행은 마지막 실행을, 맨 끝 '변경' 단추는 슬롯을 열었다

@@ -2,6 +2,7 @@
 # 설계: docs/FLEET-ENGINE-V2.md 3.5, 3.6
 
 [providers.kisti]
+tier = "free"            # free(무료) | paid(유료) - 운영 방식이 관리자에게 허용하는 슬롯을 가른다
 base_url = "https://aida.kisti.re.kr:10430/v1"
 env_key = "KISTI_API_KEY"
 max_concurrent = 1        # 동시에 띄울 세션 수
@@ -10,6 +11,7 @@ probe = "models"          # 준비 점검 때 GET <base_url>/models
 models = ["kistillm"]
 
 [providers.exaone]
+tier = "free"
 base_url = "https://api.exaone.ai/v1"
 env_key = "EXAONE_API_KEY"
 max_concurrent = 1
@@ -17,6 +19,7 @@ idle_timeout_sec = 240
 models = ["k-exaone_v2.5"]
 
 [providers.openrouter]    # 하네스 실물 검사용 (태석님 2026-11-12: codex·opencode 검사는 오픈라우터 딥시크로)
+tier = "paid"
 base_url = "https://openrouter.ai/api/v1"
 env_key = "OPENROUTER_API_KEY"
 max_concurrent = 3
@@ -24,11 +27,13 @@ idle_timeout_sec = 240
 models = ["deepseek/deepseek-v4.1-flash"]
 
 [providers.opencode]      # 오픈코드 자체 공급(Zen). 무료 모델은 키 없이 오픈코드 하네스에서만 쓸 수 있다
+tier = "free"
 max_concurrent = 1        # 동시에 띄울 세션 수
 idle_timeout_sec = 240
 models = ["deepseek-v4.1-flash-free"]
 
 [providers.anthropic]     # claude CLI 가 자기 로그인으로 붙는다 - 키·주소 없음
+tier = "paid"
 max_concurrent = 3
 idle_timeout_sec = 600
 models = ["opus", "sonnet", "haiku"]
@@ -58,3 +63,16 @@ zone = "Asia/Seoul"        # 엔진·작업자·로그·모니터 화면의 시�
 
 [policy]
 default = "cost"   # 운영 방식 기본값: cost(무료 중심) · quality(품질 중심) · speed(빠른 구현)
+
+# 운영 방식마다 관리자가 라운드 중에 스스로 더할 수 있는 슬롯 수와 그 슬롯의 등급 (엔진이 지킨다 - 지시문만으로는 지켜지지 않는다)
+[policy.cost]
+extra_slots = 2
+slot_tiers = ["free"]
+
+[policy.quality]
+extra_slots = 2
+slot_tiers = ["free", "paid"]
+
+[policy.speed]
+extra_slots = 4
+slot_tiers = ["free", "paid"]

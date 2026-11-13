@@ -612,6 +612,8 @@ def collect(root: pathlib.Path | None = None) -> dict:
                       _s(r.get("role")), "", _s(r.get("note")), _s(r.get("model"))] for r in db.get("slots") or []]
     else:
         slot_rows = [c + [""] for c in _table_rows(_section(lines, r"2\."), 6, errors, "2절 명부")]
+    # 관리자가 라운드 중에 더한 슬롯의 표식 (`aimem_db.slot_add` 의 origin·round) - 화면이 작은 칩으로 보인다
+    origin = {_s(r.get("slot")): (r.get("origin"), r.get("round")) for r in (db.get("slots") or [])} if db is not None else {}
     slots = []
     for c in slot_rows:
         harness = c[2]
@@ -619,8 +621,11 @@ def collect(root: pathlib.Path | None = None) -> dict:
             model, src = c[6], "슬롯 설정"
         else:
             model, src = harness_model(harness, root)
+        o, rn = origin.get(c[0], (None, None))
         slots.append({"slot": c[0], "token": c[1].strip("`"), "harness": harness,
-                      "role": c[3], "note": c[5], "model": model, "model_source": src})
+                      "role": c[3], "note": c[5], "model": model, "model_source": src,
+                      "origin": "manager" if o == "manager" else "owner",
+                      "round": rn if o == "manager" and isinstance(rn, int) and not isinstance(rn, bool) else None})
 
     if db is not None:
         board = [{"id": _s(r.get("id")), "task": _s(r.get("title")), "slot": _s(r.get("slot")) or "-",

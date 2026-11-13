@@ -233,7 +233,7 @@ SCHEMA = """
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS slots(slot TEXT PRIMARY KEY, token TEXT NOT NULL, harness TEXT NOT NULL,
-  model TEXT, role TEXT, note TEXT, updated TEXT);
+  model TEXT, role TEXT, note TEXT, updated TEXT, origin TEXT DEFAULT 'owner', round INTEGER);
 CREATE TABLE IF NOT EXISTS ownership(path_pattern TEXT PRIMARY KEY, owner TEXT NOT NULL, note TEXT);
 CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY, title TEXT, detail TEXT, requester TEXT,
   status TEXT NOT NULL DEFAULT 'NEW', created TEXT, updated TEXT, raw JSON);
@@ -254,11 +254,35 @@ CREATE INDEX IF NOT EXISTS idx_tasks_request ON tasks(request_id);
 """
 
 
+#: 표가 생긴 뒤에 더한 칸 (이름, 정의). 이전 마이그레이션 장치가 없어 `CREATE TABLE IF NOT EXISTS` 로는 옛 DB 에 칸이 안 생긴다 -
+#: 열 때마다 없는 칸만 `ALTER TABLE` 로 더한다. `origin`: 누가 둔 슬롯인가(owner 사람 · manager 관리자), `round`: 관리자가 더한 라운드.
+_ADDED_COLUMNS = {"slots": (("origin", "TEXT DEFAULT 'owner'"), ("round", "INTEGER"))}
+
+
+def _ensure_columns(con):
+    for table, cols in _ADDED_COLUMNS.items():
+        try:
+            have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+        except sqlite3.Error:
+            continue
+        if not have:
+            continue                    # 표가 아직 없다 - `init` 의 SCHEMA 가 칸까지 만든다
+        for name, decl in cols:
+            if name in have:
+                continue
+            try:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+                con.commit()
+            except sqlite3.OperationalError:
+                pass                    # 다른 프로세스가 같은 순간 더했거나 잠김 - 다음에 열 때 다시 본다
+
+
 def connect():
     DB.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB, timeout=10)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys=ON")
+    _ensure_columns(con)
     return con
 
 
@@ -1590,14 +1614,26 @@ def cmd_archive(a):
     return 0
 
 
-def cmd_ownership(a):
-    with connect() as con:
-        if a.action == "set":
+def ownership_set(path, owner, note=None, actor="관리자", db=None):
+    """소유권 한 행을 쓰고 events 에 `ownership` 한 줄. `db` 를 주면 그 DB 파일에(그래프 실행기가 실행 기록 옆 DB 에 쓴다)."""
+    con = sqlite3.connect(db, timeout=10) if db else connect()
+    con.row_factory = sqlite3.Row
+    try:
+        with con:
             con.execute("""INSERT INTO ownership(path_pattern,owner,note) VALUES(?,?,?)
-                ON CONFLICT(path_pattern) DO UPDATE SET owner=excluded.owner, note=COALESCE(excluded.note,ownership.note)""", (a.path, a.owner, a.note))
-            con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)", (_now(), a.actor, rev(con), "ownership", f"{a.path} -> {a.owner}"))
-            con.commit(); print(f"ownership {a.path} -> {a.owner}")
-        elif a.action == "list":
+                ON CONFLICT(path_pattern) DO UPDATE SET owner=excluded.owner, note=COALESCE(excluded.note,ownership.note)""", (path, owner, note))
+            con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)", (_now(), actor, rev(con), "ownership", f"{path} -> {owner}"))
+    finally:
+        con.close()
+
+
+def cmd_ownership(a):
+    if a.action == "set":
+        ownership_set(a.path, a.owner, a.note, a.actor)
+        print(f"ownership {a.path} -> {a.owner}")
+        return 0
+    with connect() as con:
+        if a.action == "list":
             for r in con.execute("SELECT path_pattern,owner,note FROM ownership ORDER BY owner,path_pattern"):
                 print(f"  {r['owner']:<10} {r['path_pattern']:<40} {r['note'] or ''}")
     return 0
@@ -1720,31 +1756,161 @@ def _check_slot_args(slot, harness, model):
         raise ValueError(f"모델 id 꼴이 아닙니다: {model!r}")
 
 
+def _rt(name):
+    """`fleet_rt` 의 모듈 (설정·세션). `_sessions_ddl` 처럼 늦게 불러온다."""
+    tools = str(pathlib.Path(__file__).resolve().parent)
+    if tools not in sys.path:
+        sys.path.append(tools)
+    import importlib  # noqa: PLC0415
+    return importlib.import_module(f"fleet_rt.{name}")
+
+
+def _slot_cfg():
+    """`ROOT/fleet.toml`. 못 읽으면 ValueError - 모델을 확인할 수 없으면 슬롯을 바꾸지 않는다."""
+    config = _rt("config")
+    try:
+        return config.load(ROOT)
+    except config.ConfigError as e:
+        raise ValueError(f"fleet.toml 을 읽지 못해 모델을 확인할 수 없습니다: {e}") from None
+
+
+def _check_model(cfg, harness, model):
+    ok, why = cfg.model_allowed(harness, model)
+    if not ok:
+        raise ValueError(why)
+
+
+#: 관리자 세션 id 의 라운드 (`M-R<N>-HHMMSS…`, `fleet_rt.manager.manager_id`)
+_MANAGER_SID_RE = re.compile(r"M-R(\d+)-")
+
+
+def manager_caller():
+    """지금 부르는 이가 라운드 관리자 세션이면 `{"round": N 또는 None, "policy": 키}`, 아니면 None(사람·웹 - 전권).
+
+    감독이 모든 세션에 `AIFLEET_ROLE`·`AIFLEET_SESSION` 을 넣는다(`fleet_rt.base`). 운영 방식은 그 라운드 기록
+    `rounds/R<N>/round.json` 의 `policy`, 모르면 `cost`(가장 좁은 쪽).
+    """
+    base = _rt("base")
+    if os.environ.get(base.ENV_ROLE) != "manager":
+        return None
+    m = _MANAGER_SID_RE.match(os.environ.get(base.ENV_SESSION, ""))
+    n = int(m.group(1)) if m else None
+    key = "cost"
+    if n is not None:
+        try:
+            rec = json.loads((ROOT / "rounds" / f"R{n}" / "round.json").read_text(encoding="utf-8"))
+            v = rec.get("policy") if isinstance(rec, dict) else None
+            key = v if v in _rt("config").POLICIES else "cost"
+        except (OSError, ValueError):
+            pass
+    return {"round": n, "policy": key}
+
+
+def _slot_provider(cfg, row):
+    return cfg.provider_of(row["harness"], row["model"] or None)
+
+
+def _manager_slot_room(con, cfg, mgr, harness, model, exclude=None):
+    """관리자가 (harness, model) 슬롯을 하나 더 두거나 그쪽으로 바꿔도 되나. 안 되면 ValueError (까닭 한 줄)."""
+    config = _rt("config")
+    key = mgr["policy"]
+    lim = cfg.policy(key)
+    tier = cfg.slot_tier(harness, model)
+    prov = cfg.provider_of(harness, model)
+    if tier not in lim["slot_tiers"]:
+        allowed = "·".join(config.TIER_LABEL[x] for x in lim["slot_tiers"]) or "(없음)"
+        raise ValueError(f"운영 방식 {key} 에서 관리자는 {allowed} 슬롯만 둘 수 있습니다 - "
+                         f"{harness} {model or '(하네스 기본)'} 은(는) {config.TIER_LABEL.get(tier, tier)}입니다 (공급자 {prov or '모름'})")
+    if prov:
+        same = [r["slot"] for r in con.execute("SELECT * FROM slots") if r["slot"] != exclude and _slot_provider(cfg, r) == prov]
+        cap = cfg.max_concurrent(prov)
+        if len(same) >= cap:
+            raise ValueError(f"공급자 {prov} 는 동시에 {cap}개까지라 슬롯을 더해도 빨라지지 않습니다 "
+                             f"(이미 {', '.join(same)}) - 다른 공급자의 모델을 고르십시오")
+
+
+def _slot_running(slot):
+    """그 슬롯으로 지금 도는 작업자 세션 id, 없으면 None. 세션 폴더는 DB 옆(`<.aimem>/sessions`)."""
+    sroot = DB.parent / "sessions"
+    try:
+        names = os.listdir(sroot)
+    except OSError:
+        return None
+    sessions = _rt("sessions")
+    live = sessions.live_index(sroot)
+    for sid in names:
+        d = sroot / sid
+        if sid not in live and (d / "end.json").exists():
+            continue
+        meta = sessions.load_meta(d) or {}
+        if meta.get("role") == "manager" or meta.get("slot") != slot:
+            continue
+        if sessions.state(d, live=live).get("state") == "running":
+            return sid
+    return None
+
+
 def slot_add(slot=None, harness=None, model=None, role="", note="", actor="관리자"):
-    """슬롯 추가. slot 을 생략하면 다음 번호. 돌려주는 값은 새 행(dict)."""
+    """슬롯 추가. slot 을 생략하면 다음 번호. 돌려주는 값은 새 행(dict).
+
+    (하네스, 모델)은 누가 부르든 `fleet.toml` 이 허용한 짝이어야 한다. 라운드 관리자 세션이 부르면(`manager_caller`)
+    그 라운드 운영 방식의 한도 안에서만 - 관리자가 더한 슬롯 수 < `extra_slots`, 등급이 `slot_tiers` 안, 공급자에
+    작업자 자리가 남음 - 더하고 `origin='manager'`·`round` 를 적는다. 사람(웹·CLI)은 한도 없이 `origin='owner'`.
+    """
     import secrets
     if not harness:
         raise ValueError("하네스가 필요합니다")
     _check_slot_args(slot, harness, model)
+    cfg = _slot_cfg()
+    _check_model(cfg, harness, model)
+    mgr = manager_caller()
     with connect() as con:
+        con.execute("BEGIN IMMEDIATE")      # 세기와 더하기 사이에 다른 관리자가 끼지 않게
         slot = slot or next_slot_id()
         if con.execute("SELECT 1 FROM slots WHERE slot=?", (slot,)).fetchone():
             raise ValueError(f"{slot} 은 이미 있습니다")
+        if mgr is not None:
+            cap = cfg.policy(mgr["policy"])["extra_slots"]
+            mine = [r["slot"] for r in con.execute("SELECT slot FROM slots WHERE origin='manager' ORDER BY slot")]
+            if len(mine) >= cap:
+                raise ValueError(f"운영 방식 {mgr['policy']} 에서 관리자가 더할 수 있는 슬롯은 {cap}개이고 이미 {len(mine)}개를 더했습니다"
+                                 + (f" ({', '.join(mine)})" if mine else "") + " - 더 필요하면 사람에게 요청하십시오")
+            _manager_slot_room(con, cfg, mgr, harness, model)
         token = secrets.token_hex(3)
-        con.execute("INSERT INTO slots(slot,token,harness,model,role,note,updated) VALUES(?,?,?,?,?,?,?)",
-                    (slot, token, harness, model or None, role or "", note or "", _now()))
-        _slot_event(con, actor, f"slot add {slot} {harness} 모델 {model or '(하네스 기본)'}" + (f" - {role}" if role else ""))
+        con.execute("INSERT INTO slots(slot,token,harness,model,role,note,updated,origin,round) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (slot, token, harness, model or None, role or "", note or "", _now(),
+                     "manager" if mgr is not None else "owner", mgr["round"] if mgr is not None else None))
+        _slot_event(con, actor, f"slot add {slot} {harness} 모델 {model or '(하네스 기본)'}" + (f" - {role}" if role else "")
+                    + (f" (관리자 추가 R{mgr['round']}, 운영 {mgr['policy']})" if mgr is not None else ""))
         con.commit()
         return dict(con.execute("SELECT * FROM slots WHERE slot=?", (slot,)).fetchone())
 
 
 def slot_set(slot, harness=None, model=None, role=None, note=None, actor="관리자", clear_model=False):
-    """슬롯 변경 - 준 값만 바꾼다. `clear_model=True` 면 모델을 하네스 기본으로 되돌린다."""
+    """슬롯 변경 - 준 값만 바꾼다. `clear_model=True` 면 모델을 하네스 기본으로 되돌린다.
+
+    관리자 세션은 어느 슬롯이든 역할·비고를 정하지만, 하네스·모델은 **자기가 더한 슬롯**(`origin='manager'`)만 -
+    사람이 둔 엔진은 사람의 결정이다. 바꾸는 짝도 운영 방식의 등급·공급자 자리 안이어야 한다.
+    """
     _check_slot_args(slot, harness, model)
+    mgr = manager_caller()
     with connect() as con:
         cur = con.execute("SELECT * FROM slots WHERE slot=?", (slot,)).fetchone()
         if not cur:
             raise ValueError(f"{slot} 이 명부에 없습니다")
+        engine = bool(harness and harness != cur["harness"]) or clear_model or (model is not None and model != cur["model"])
+        if engine:
+            new_h = harness or cur["harness"]
+            new_m = None if clear_model else (model if model is not None else cur["model"])
+            cfg = _slot_cfg()
+            if model is not None or harness:
+                _check_model(cfg, new_h, None if clear_model else new_m)
+            if mgr is not None:
+                if (cur["origin"] if "origin" in cur.keys() else "owner") != "manager":
+                    raise ValueError(f"{slot} 은(는) 사람이 둔 슬롯이라 관리자는 하네스·모델을 바꾸지 않습니다 - "
+                                     "역할·비고만 정하고(`slot set --role/--note`), 다른 엔진이 필요하면 `slot add` 로 더하십시오")
+                if cfg.provider_of(new_h, new_m) != _slot_provider(cfg, cur) or cfg.slot_tier(new_h, new_m) != cfg.slot_tier(cur["harness"], cur["model"]):
+                    _manager_slot_room(con, cfg, mgr, new_h, new_m, exclude=slot)
         changes = []
         if harness and harness != cur["harness"]:
             con.execute("UPDATE slots SET harness=? WHERE slot=?", (harness, slot)); changes.append(f"하네스 {cur['harness']}→{harness}")
@@ -1769,12 +1935,19 @@ def slot_open_tasks(slot):
 
 
 def slot_remove(slot, actor="관리자", force=False):
-    """슬롯 삭제. 끝나지 않은 태스크가 배정돼 있으면 `force` 없이는 거절한다. 소유권 행은 같이 내린다."""
+    """슬롯 삭제. 작업자가 돌고 있으면 거절, 끝나지 않은 태스크가 배정돼 있으면 `force` 없이는 거절. 소유권 행은 같이 내린다.
+    관리자 세션은 자기가 더한 슬롯(`origin='manager'`)만 지운다."""
     _check_slot_args(slot, None, None)
+    mgr = manager_caller()
     with connect() as con:
         cur = con.execute("SELECT * FROM slots WHERE slot=?", (slot,)).fetchone()
         if not cur:
             raise ValueError(f"{slot} 이 명부에 없습니다")
+        if mgr is not None and (cur["origin"] if "origin" in cur.keys() else "owner") != "manager":
+            raise ValueError(f"{slot} 은(는) 사람이 둔 슬롯이라 관리자는 지우지 않습니다 - 관리자는 자기가 더한 슬롯만 지웁니다")
+        running = _slot_running(slot)
+        if running:
+            raise ValueError(f"{slot} 에 작업자가 돌고 있습니다 ({running}) - 끝난 뒤 삭제하십시오")
         open_tasks = [r["id"] for r in con.execute("SELECT id FROM tasks WHERE slot=? AND status NOT IN ('DONE')", (slot,))]
         if open_tasks and not force:
             raise ValueError(f"{slot} 에 끝나지 않은 태스크가 있습니다: {', '.join(open_tasks)} (force 로 강제)")
@@ -1785,10 +1958,19 @@ def slot_remove(slot, actor="관리자", force=False):
         return {"slot": slot, "ownership_removed": n_own, "open_tasks": open_tasks}
 
 
+def slot_origin_label(r):
+    """`slot list`·모니터의 작은 표식 - 관리자가 더한 슬롯만 `관리자 추가 R<N>`."""
+    if (r.get("origin") if isinstance(r, dict) else None) != "manager":
+        return ""
+    return "관리자 추가" + (f" R{r['round']}" if r.get("round") is not None else "")
+
+
 def cmd_slot(a):
     if a.action == "list":
         for r in slot_list():
-            print(f"  {r['slot']}  {r['token']}  {r['harness']:<9} 모델 {r['model'] or '(하네스 기본)'}  {r['role'] or ''}")
+            mark = slot_origin_label(r)
+            print(f"  {r['slot']}  {r['token']}  {r['harness']:<9} 모델 {r['model'] or '(하네스 기본)'}  {r['role'] or ''}"
+                  + (f"  [{mark}]" if mark else ""))
         return 0
     try:
         if a.action == "add":

@@ -351,11 +351,80 @@ def _mark_round_record_failed(n):
         pass
 
 
-def _fill_placeholders(text, n, at):
-    """표준 브리프·호출 틀·운영 방식 지시가 같이 쓰는 자리표시 `{round}` `{date}` `{rev}` `{workspace}`."""
+def _slot_rows():
+    """명부(DB `slots`) 행들을 슬롯 번호 순으로 - **읽기 전용**. DB 는 실행 기록 옆(`fleet.RUNS` 의 부모)이라 검사가 갈아 끼운
+    폴더를 따라가고, 칸을 더하는 `aimem_db.connect` 를 쓰지 않는다. 못 읽으면 빈 목록."""
+    import sqlite3  # noqa: PLC0415
+    db = _aimem_dir() / "aimem.db"
+    if not db.is_file():
+        return []
+    try:
+        con = sqlite3.connect(db.as_uri() + "?mode=ro", uri=True, timeout=2)
+        con.row_factory = sqlite3.Row
+        try:
+            rows = [dict(r) for r in con.execute("SELECT * FROM slots")]
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return []
+    return sorted((r for r in rows if re.fullmatch(r"S\d+", str(r.get("slot") or ""))), key=lambda r: int(r["slot"][1:]))
+
+
+def slot_roster_lines(rows=None, cfg=None):
+    """`{slots}` 자리표시의 글: 슬롯마다 한 줄 `- S2 · codex · kisti/kistillm · 무료 · 공급자 kisti(동시 1) · 역할`
+    (관리자가 더한 슬롯이면 ` · 관리자 추가`). 관리자가 등급·공급자 자리를 보고 노드를 나누게 한다."""
+    from fleet_rt import config as rt_config  # noqa: PLC0415
+    rows = _slot_rows() if rows is None else rows
+    if cfg is None:
+        try:
+            cfg = rt_config.load(fleet.ROOT)
+        except rt_config.ConfigError:
+            cfg = rt_config.Config(rt_config._copy(rt_config.DEFAULTS))
+    out = []
+    for r in rows:
+        h = str(r.get("harness") or "?")
+        m = r.get("model") or (cfg.harness(h) or {}).get("default_model") or "(하네스 기본)"
+        prov = cfg.provider_of(h, r.get("model") or None)
+        parts = [str(r.get("slot")), h, str(m), rt_config.TIER_LABEL[cfg.tier(prov)],
+                 f"공급자 {prov}(동시 {cfg.max_concurrent(prov)})" if prov else "공급자 모름"]
+        role = " ".join(str(r.get("role") or "").split())
+        if role:
+            parts.append(role[:80])
+        if r.get("origin") == "manager":
+            parts.append("관리자 추가")
+        out.append("- " + " · ".join(parts))
+    return "\n".join(out) if out else "- (명부가 비어 있음)"
+
+
+def policy_slot_room(key, rows=None, cfg=None):
+    """운영 방식 `key` 에서 관리자가 지금 더 둘 수 있는 슬롯 수와 등급 `(남은 수, 등급 목록)` - `aimem_db.slot_add` 가 지키는 한도."""
+    from fleet_rt import config as rt_config  # noqa: PLC0415
+    rows = _slot_rows() if rows is None else rows
+    if cfg is None:
+        try:
+            cfg = rt_config.load(fleet.ROOT)
+        except rt_config.ConfigError:
+            cfg = rt_config.Config(rt_config._copy(rt_config.DEFAULTS))
+    lim = cfg.policy(key)
+    used = sum(1 for r in rows if r.get("origin") == "manager")
+    return max(0, lim["extra_slots"] - used), list(lim["slot_tiers"])
+
+
+def _fill_placeholders(text, n, at, policy=None):
+    """표준 브리프·호출 틀·운영 방식 지시가 같이 쓰는 자리표시 `{round}` `{date}` `{rev}` `{workspace}`, 그리고
+    `{slots}`(지금 명부 한 줄씩) `{extra_slots}`(이 운영 방식에서 관리자가 더 둘 수 있는 슬롯 수) `{slot_tiers}`(둘 수 있는 등급).
+    `policy` 가 없으면 그 라운드 기록의 운영 방식(없으면 cost). 모르는 자리표시는 그대로 둔다."""
     for k, v in (("{round}", str(int(n))), ("{date}", at.strftime("%Y-%m-%d %H:%M")),
                  ("{rev}", str(fleet.read_rev())), ("{workspace}", round_workspace(n))):
         text = text.replace(k, v)
+    if any(k in text for k in ("{slots}", "{extra_slots}", "{slot_tiers}")):
+        from fleet_rt import config as rt_config  # noqa: PLC0415
+        key = policy if policy in POLICY_LABEL else (_known_policy(_round_record(n).get("policy")) or "cost")
+        rows = _slot_rows()
+        room, tiers = policy_slot_room(key, rows)
+        text = (text.replace("{slots}", slot_roster_lines(rows))
+                .replace("{extra_slots}", str(room))
+                .replace("{slot_tiers}", "·".join(rt_config.TIER_LABEL[x] for x in tiers) or "없음"))
     return text
 
 
@@ -386,11 +455,11 @@ def _policy_template(key):
                       f".aimem/briefs/{POLICY_BRIEF.format(key=key)}")
 
 
-def _freeze_policy(n, at, template):
+def _freeze_policy(n, at, template, policy=None):
     """운영 방식 지시를 채워 `rounds/R<N>/policy.md` 로 굳히고 그 글을 준다. 틀이 없으면(cost 대체) None."""
     if template is None:
         return None
-    text = _fill_placeholders(template, n, at)
+    text = _fill_placeholders(template, n, at, policy)
     _write_text_replace(_round_dir(n) / "policy.md", text)
     return text
 
@@ -410,7 +479,7 @@ def _with_policy(text, policy_text):
     return text if not policy_text else text.rstrip("\n") + "\n\n" + policy_text
 
 
-def _round_brief_path(b, at):
+def _round_brief_path(b, at, policy=None):
     """보낼 브리프의 절대 경로. 라운드 작업 공간을 만들고, 브리프를 그 안의 `brief.md` 로 굳힌다.
 
     표준 브리프는 번호·날짜·REV·작업 공간을 채운다. 그 라운드만의 확정 브리프는 글자 그대로 옮기고
@@ -419,7 +488,7 @@ def _round_brief_path(b, at):
     ws = round_workspace(b["round"])
     text = (fleet.ROOT / ".aimem" / "briefs" / b["file"]).read_text(encoding="utf-8")
     if b.get("standard"):
-        text = _fill_placeholders(text, b["round"], at)
+        text = _fill_placeholders(text, b["round"], at, policy)
     else:
         text = text.rstrip("\n") + (f"\n\n## 라운드 기록과 결과물\n종료 보고는 `{ws}/REPORT.md` 에도 씁니다. 결과물은 라운드 폴더가 아니라 "
                                     f"요청의 프로젝트 폴더 `projects/<프로젝트>/` 에 쌓습니다 (`8.0-8`).\n")
@@ -710,7 +779,8 @@ def _last_round(mgr=None):
     return {"round": n, "label": mgr.get("label") if same else None,
             "at": (mgr.get("at") if same else None) or rec.get("at"),
             "state": mgr.get("state") if same else rec.get("state"),
-            "report_status": round_report_status(n), "report": f"{round_workspace(n)}/REPORT.md" if rep.is_file() else None}
+            "report_status": round_report_status(n), "report": f"{round_workspace(n)}/REPORT.md" if rep.is_file() else None,
+            "metrics": rec.get("metrics") if isinstance(rec.get("metrics"), dict) else None}
 
 
 def round_over():
@@ -780,6 +850,9 @@ def stop(by="사람"):
     # 호출 사이(엔진이 그래프를 돌리던 틈)에 멈춘 호출 방식 라운드 - 끊을 관리자가 없었어도 마감한다
     if driving is not None and driving not in closed and write_minimal_close(driving, f"완전 중지 ({by})"):
         closed.append(driving)
+    for rn in sorted({m["round"] for m in managers if isinstance(m.get("round"), int)} | set(closed)
+                     | ({driving} if driving is not None else set())):
+        record_round_metrics(rn)
     return {"ok": True, "mode": "stopped", "managers": managers, "halted_graphs": halted, "killed": killed,
             "reaped": reaped, "chain_watcher": watcher, "closed_rounds": closed,
             "note": "관리자 밖에서 띄운 그래프 실행기는 다음 틱에 정리하고 끝납니다"}
@@ -1057,11 +1130,11 @@ def _launch_round_locked(by, policy="cost", policy_template=None):
     sid = _new_manager_id(n, at)
     try:
         # 운영 방식 지시를 `policy.md` 로 굳힌다 - 상주 방식은 아래에서 브리프 뒤에, 호출 방식은 구동기가 호출마다 붙인다
-        policy_text = _freeze_policy(n, at, policy_template)
+        policy_text = _freeze_policy(n, at, policy_template, policy)
         if calls:
             _write_round_record(n, at, b["file"], session=sid, calls_by=by, policy=policy)   # 브리프는 호출마다 구동기가 굳힌다
         else:
-            brief = _round_brief_path(b, at)
+            brief = _round_brief_path(b, at, policy)
             _write_round_record(n, at, b["file"], session=sid, policy=policy)
     except (OSError, ValueError) as e:
         # 라운드 폴더가 저장소 밖을 가리키는 등 - 아무것도 띄우지 않고 모드도 그대로 둔다
@@ -1314,6 +1387,103 @@ def close_if_unreported(n):
         return None
     s = mine[-1]
     return s["status"] if write_minimal_close(n, f"관리자 세션이 {s['status']} 로 끝남", session=s["id"]) else None
+
+
+# ----------------------------------------------------------------- 운영 방식을 따랐다는 증거
+def _local_time(s):
+    """세션 기록의 시각 -> naive 로컬 datetime, 못 읽으면 None (`fleet_graph._parse_started` 와 같은 태도)."""
+    try:
+        d = dt.datetime.fromisoformat(str(s).strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return d.astimezone().replace(tzinfo=None) if d.tzinfo is not None else d
+
+
+def round_metrics(n):
+    """라운드 R<n> 의 **작업자** 세션 폴더(`meta.json` 시작·슬롯·공급자, `end.json` 끝)에서 센 실제 운용.
+
+    `{"workers", "peak_parallel", "minutes": {"free", "paid"}, "by_slot": {슬롯: {"runs", "minutes", "tier"}},
+    "moves", "manager_slots"}`. 운영 방식은 지시라 따랐는지는 결과로만 보인다 - 몇 개를 동시에 돌렸고 유료·무료에
+    몇 분을 썼는지. 깨진·없는 파일은 건너뛴다. 끝나지 않은 세션은 수에는 넣고 분에는 넣지 않는다.
+    """
+    from fleet_rt import config as rt_config  # noqa: PLC0415
+    try:
+        cfg = rt_config.load(fleet.ROOT)
+    except rt_config.ConfigError:
+        cfg = rt_config.Config(rt_config._copy(rt_config.DEFAULTS))
+    n = int(n)
+    root = _sessions_root()
+    try:
+        dirs = sorted(d for d in root.iterdir() if d.is_dir())
+    except OSError:
+        dirs = []
+    workers, spans, by_slot, minutes = 0, [], {}, {"free": 0.0, "paid": 0.0}
+    for d in dirs:
+        try:
+            meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        rn = meta.get("round") if isinstance(meta, dict) else None
+        if not isinstance(meta, dict) or meta.get("role") == "manager" or isinstance(rn, bool) or rn != n:
+            continue
+        workers += 1
+        tier = cfg.tier(meta.get("provider"))
+        slot = str(meta.get("slot") or "?")
+        e = by_slot.setdefault(slot, {"runs": 0, "minutes": 0.0, "tier": tier})
+        e["runs"] += 1
+        e["tier"] = tier
+        start = _local_time(meta.get("started"))
+        try:
+            end_rec = json.loads((d / "end.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            end_rec = None
+        end = _local_time(end_rec.get("ended")) if isinstance(end_rec, dict) else None
+        if start is None or end is None or end < start:
+            continue
+        m = (end - start).total_seconds() / 60.0
+        e["minutes"] += m
+        minutes[tier] += m
+        spans.append((start, end))
+    marks = sorted([(s, 1) for s, _ in spans] + [(e, -1) for _, e in spans], key=lambda x: (x[0], x[1]))
+    peak = cur = 0
+    for _, step in marks:          # 같은 시각이면 끝(-1)이 먼저 - 이어 달린 둘을 겹쳤다고 세지 않는다
+        cur += step
+        peak = max(peak, cur)
+    moves = 0
+    for g in _round_graphs(n):
+        if str(g.get("round")) != str(n):
+            continue
+        moves += sum(len(nd.get("moves") or []) for nd in g["nodes"] if isinstance(nd, dict))
+    mine = [r["slot"] for r in _slot_rows() if r.get("origin") == "manager" and r.get("round") == n]
+    return {"workers": workers, "peak_parallel": peak,
+            "minutes": {k: round(v, 2) for k, v in minutes.items()},
+            "by_slot": {s: {**v, "minutes": round(v["minutes"], 2)} for s, v in sorted(by_slot.items())},
+            "moves": moves, "manager_slots": mine}
+
+
+def record_round_metrics(n):
+    """라운드가 끝날 때 `round.json["metrics"]` 를 **한 번** 적는다(이미 있으면 그대로). 적은(또는 있던) 값, 못 하면 None.
+    마감 길에서 부르므로 어떤 경우에도 예외를 내지 않는다."""
+    try:
+        d = _round_dir(n, create=False)
+        f = d / "round.json"
+        if not f.is_file() or f.is_symlink():
+            return None
+        rec = json.loads(f.read_text(encoding="utf-8"))
+        if not isinstance(rec, dict):
+            return None
+        if isinstance(rec.get("metrics"), dict):
+            return rec["metrics"]
+        m = round_metrics(n)
+        rec = json.loads(f.read_text(encoding="utf-8"))      # 세는 사이 구동기가 고쳤을 수 있다 - 다시 읽고 칸 하나만 더한다
+        if not isinstance(rec, dict) or isinstance(rec.get("metrics"), dict):
+            return (rec or {}).get("metrics") if isinstance(rec, dict) else None
+        rec["metrics"] = m
+        _write_text_replace(f, json.dumps(rec, ensure_ascii=False, indent=1) + "\n")
+        return m
+    except Exception as e:  # noqa: BLE001
+        print(f"{_now()} R{n}: 운용 기록(metrics)을 적지 못했습니다: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        return None
 
 
 # ----------------------------------------------------------------- 끊긴 관리자 잇기
@@ -1631,7 +1801,7 @@ def chain_set(on, project=None, max_rounds=None, by="사람", scope=None, projec
 
     `fleet_on`(함대), `projects`(이름 목록), `all_`(전체 = 프로젝트+함대) 로 줍니다. 옛 인자 `project`·`scope` 도 받습니다 -
     아무것도 안 주면 전체입니다. 켤 때 지금의 열린 요청과 목표 체크 수를 기준으로 적어 둡니다.
-    `policy` 는 이어 띄울 라운드들의 운영 방식 - None 이면 지금 적힌 것, 그것도 없으면 `fleet.toml` 기본값.
+    `policy` 는 이어 띄울 라운드들의 운영 방식 - None 이면 켜져 있는 중엔 지금 것, 꺼진 데서 켜면 `fleet.toml` 기본값.
     """
     if not on:
         st = chain_state()
@@ -1674,7 +1844,9 @@ def chain_set(on, project=None, max_rounds=None, by="사람", scope=None, projec
     if not 1 <= mx <= CHAIN_MAX_ROUNDS:
         return {"ok": False, "error": f"상한 라운드는 1~{CHAIN_MAX_ROUNDS} 입니다"}
     if policy is None:
-        policy = _known_policy(chain_state().get("policy")) or policy_default()
+        # 켜져 있는 동안 다시 켜면 고른 것을 그대로, 꺼진 데서 켜면 설정의 기본값 - 지난번 이어 달리기의 방식을 몰래 잇지 않는다
+        cur = chain_state()
+        policy = (_known_policy(cur.get("policy")) if cur.get("on") else None) or policy_default()
     _, perr = _policy_template(policy)
     if perr:            # 켤 때 거절한다 - 라운드가 끝난 뒤에야 못 띄운다는 것을 알면 늦다
         return {"ok": False, "error": perr}
@@ -1962,6 +2134,7 @@ def _watch(n, poll, wait, close_only=False):
             closed = close_if_unreported(n) or ""
             if closed:
                 print(f"{_now()} R{n}: 관리자가 {closed} 로 끝나 최소 마감을 썼습니다", flush=True)
+            record_round_metrics(n)
         if not on:
             return 0                      # 꺼져 있거나 사람이 껐다 - 마감만 보고 끝
         if not round_over():
@@ -2213,7 +2386,7 @@ def _call_brief(n, phase, at, k, calls, rec, why=None):
     """호출 하나의 브리프: 단계 틀(`.aimem/briefs/manager-call-<단계>.md`, 표준 브리프와 같은 자리표시) + '지금까지'
     + 운영 방식 지시(`rounds/R<N>/policy.md`, 있으면).
     `rounds/R<N>/brief-<단계>[-k].md` 로 굳히고 (파일 이름, 글)을 준다 - 보낸 그대로가 라운드 기록에 남는다."""
-    text = _fill_placeholders(_call_template(phase).read_text(encoding="utf-8"), n, at)
+    text = _fill_placeholders(_call_template(phase).read_text(encoding="utf-8"), n, at, _known_policy(rec.get("policy")))
     own = str(rec.get("brief") or "")
     if phase == "plan" and BRIEF_RE.match(own):
         # 그 라운드만의 확정 브리프로 띄운 라운드 - 계획 호출이 그 지시를 함께 받는다
@@ -2383,6 +2556,8 @@ def _drive(n, close_only=False, *, spawn_call=None, run_graphs=None, poll=None, 
     if ended == "end":
         # 마감 호출까지 갔어도 실행기 없이 남은 노드(그래프를 붙잡는 시간이 지나 판정으로 넘긴 것 등)는 아무도 거두지 않는다
         halt_round_leftovers(n, "호출 방식 라운드가 마감된 뒤 남음")
+    if ended in ("end", "fail", "stop"):
+        record_round_metrics(n)
     if ended in ("end", "fail"):
         _drive_chain_end(n, close_only, poll, CHAIN_WAIT_SEC if chain_wait is None else chain_wait)
     return 0
@@ -2618,7 +2793,7 @@ def main(argv=None):
     c.add_argument("--max", type=int, default=None, help=f"상한 라운드 (기본 {CHAIN_DEFAULT_ROUNDS}, 최대 {CHAIN_MAX_ROUNDS})")
     c.add_argument("--renew", action="store_true", help="상한에 닿으면 멈추지 않고 새 묶음으로 이어 간다 (끝날 때까지)")
     c.add_argument("--policy", choices=[x["key"] for x in POLICY_CHOICES], default=None,
-                   help="이어 띄울 라운드의 운영 방식 (없으면 지금 적힌 것, 없으면 기본값)")
+                   help="이어 띄울 라운드의 운영 방식 (없으면: 켜져 있는 중이면 지금 것, 꺼진 데서 켜면 fleet.toml 기본값)")
     c.add_argument("--by", default="CLI")
     t = sub.add_parser("tell", help="돌고 있는 라운드의 관리자에게 말을 남긴다 (rounds/R<N>/INBOX.md)")
     t.add_argument("message")

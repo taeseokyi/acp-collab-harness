@@ -12,6 +12,7 @@
   python3 tools/fleet_graph.py run R-001 [--timeout 3600] [--concurrency 3]   # 끝날 때까지 틱 반복
   python3 tools/fleet_graph.py status R-001        # 노드별 상태·진행율·ETA (웹 UI 가 읽는 것과 같은 JSON)
   python3 tools/fleet_graph.py unblock R-001 T1    # 사람이 확인한 blocked/failed 노드를 다시 굴림 (그 뒤 run/step)
+  python3 tools/fleet_graph.py move R-001 T1 --slot S5   # 막힌 노드를 다른 슬롯으로 (소유도 함께, 운영 방식의 등급 안에서)
 
 노드 형식 (nodes.json 배열):
   {"id":"T1","title":"서버 골격","slot":"S1","project":"<프로젝트 이름, 함대 자체 일이면 생략>","write":["tools/aimem_monitor/server.py"],
@@ -69,6 +70,9 @@ KILL_GRACE_SEC = 5
 INFRA_RETRY_MAX = 3
 #: 공급자 준비 점검 결과를 이만큼 재사용한다 - 죽은 공급자를 틱마다(2초) 두드리지 않게.
 PROBE_TTL_SEC = 30.0
+#: 공급자가 응답하지 않아(`probe:<p>`) 이만큼 넘게 기다린 노드는 `blocked`+`infra` 로 넘긴다 - 그래프가 제 시간 한도까지
+#: 말없이 놀지 않고 관리자·사람이 `move`/`unblock` 으로 판단하게.
+PROBE_WAIT_MAX_SEC = 600
 #: `run` 의 틱 간격(초). 노드 하나가 끝난 뒤 다음이 뜨기까지 평균 절반을 기다린다 (설계 5.7: 예전 15초).
 DEFAULT_POLL_SEC = 2.0
 
@@ -288,7 +292,7 @@ def progress(g, durations=None):
         return longest[k]
 
     critical = max((lp(k) for k in nodes), default=0.0)
-    conc = max(1, int(g.get("concurrency", 3)))
+    conc = _graph_concurrency(g)
     serial = sum(remaining.values()) / conc
     eta_s = max(critical, serial)
     counts = {}
@@ -345,9 +349,10 @@ def _live_scan(g):
       - 세션: `end.json` 이 없거나, 이 저장소 표식을 단 프로세스가 살아 있는 것(`live_index`)만.
         `state()` 가 running 을 주려면 둘 중 하나가 꼭 참이다 - 작업자가 end.json 을 미리 써 놓고 계속 도는
         경우도 그 프로세스가 색인에 있으므로 빠지지 않는다. **슬롯이 비어 보이는 쪽으로는 줄이지 않았다.**
-    공급자 수는 `fleet_rt.providers.running_by_provider` 와 같은 규칙(도는 세션의 meta `provider`, 관리자 포함)이고,
+    공급자 수는 `fleet_rt.providers.running_by_provider` 와 같은 규칙(도는 **작업자** 세션의 meta `provider`)이고,
     같은 훑기에서 같이 센다 - 그 함수는 세션 폴더 전부를 다시 보므로 틱마다 부르면 줄인 것이 도로 는다.
-    관리자 세션은 슬롯이 없어도 '모든 슬롯 바쁨' 으로 치지 않는다 (R21 실측).
+    관리자 세션은 공급자 자리도 슬롯도 잡지 않는다 - `max_concurrent` 는 작업자 자리 수다(관리자를 세면 유료 공급자에서
+    작업자 자리 하나가 라운드 내내 사라진다). 슬롯이 없어도 '모든 슬롯 바쁨' 으로 치지 않는다 (R21 실측).
     """
     busy, by_prov = set(), {}
 
@@ -400,10 +405,10 @@ def _live_scan(g):
         except Exception:  # noqa: BLE001
             continue
         meta = meta if isinstance(meta, dict) else {}
-        if meta.get("provider"):
-            by_prov[meta["provider"]] = by_prov.get(meta["provider"], 0) + 1
         if meta.get("role") == "manager":
             continue
+        if meta.get("provider"):
+            by_prov[meta["provider"]] = by_prov.get(meta["provider"], 0) + 1
         if meta.get("slot"):
             busy.add(meta["slot"])
         else:
@@ -925,6 +930,21 @@ def _infra_requeue(g, n, att, why):
         _log(g, f"infra-requeue {n['id']} ({att['run_id']}, {why}) - 시도로 세지 않음 ({k}/{INFRA_RETRY_MAX})")
 
 
+def _probe_wait_block(g, n, prov, waited, line):
+    """공급자가 `PROBE_WAIT_MAX_SEC` 넘게 응답하지 않아 기다리던 노드를 막는다 - `INFRA_RETRY_MAX` 에 닿은 것과 같은 꼴
+    (`blocked` + `infra`)이라 `unblock` 이 그대로 풀고, 관리자는 `move` 로 다른 슬롯에 옮길 수 있다."""
+    n["infra"] = True
+    n["status"] = "blocked"
+    n.pop("waiting", None)
+    n.pop("waiting_since", None)
+    last = (n.get("infra_attempts") or [None])[-1]
+    if isinstance(last, dict):
+        last["infra"] = True
+    _log(g, f"INFRA {n['id']} - 공급자 {prov} 가 {int(waited)}초 넘게 응답하지 않아 기다리기를 그만둡니다 ({line}). "
+            f"태스크 잘못이 아닙니다. `fleet_graph.py move {g.get('id')} {n['id']} --slot S<n>` 으로 다른 슬롯에 옮기거나 "
+            f"공급자를 확인한 뒤 `fleet_graph.py unblock {g.get('id')} {n['id']}`")
+
+
 # ---------------------------------------------------------------- 공급자 문지기 (설계 3.5·5.4)
 def _rt_cfg(g):
     """`fleet.toml` (mtime 캐시). 못 읽으면 None - 문지기 없이 옛 규칙(슬롯·concurrency)으로만 띄운다."""
@@ -967,7 +987,8 @@ def _probe_cached(cfg, provider):
 
 
 def _set_waiting(g, n, why, detail=""):
-    """준비됐는데 못 뜨는 까닭을 노드에 적는다(`provider:<p>`·`probe:<p>`·`slot:<S>`, 풀리면 지움). 바뀌었으면 True.
+    """준비됐는데 못 뜨는 까닭을 노드에 적는다(`provider:<p>`·`probe:<p>`·`slot:<S>`·`concurrency:<n>`, 풀리면 지움).
+    바뀌었으면 True. 까닭이 바뀔 때 `waiting_since` 에 그 시각을 적는다 - 얼마나 기다렸는지 보려고.
 
     로그는 **바뀔 때 한 번** - 틱이 2초라 매 틱 남기면 로그가 그것으로 찬다.
     """
@@ -975,10 +996,26 @@ def _set_waiting(g, n, why, detail=""):
         return False
     if why is None:
         n.pop("waiting", None)
+        n.pop("waiting_since", None)
         return True
     n["waiting"] = why
+    n["waiting_since"] = _now()
     _log(g, f"wait {n['id']} - {why}" + (f" ({detail})" if detail else ""))
     return True
+
+
+def default_concurrency(nodes):
+    """그래프의 기본 동시성 = 노드가 쓰는 서로 다른 슬롯 수(최소 1). 슬롯 하나는 한 번에 하나만 돌고 공급자 자리는
+    문지기가 따로 지키므로, 이보다 작은 수는 라운드를 말없이 늦출 뿐이다."""
+    return max(1, len({str(n.get("slot")) for n in nodes or [] if isinstance(n, dict) and n.get("slot")}))
+
+
+def _graph_concurrency(g):
+    try:
+        v = int(g.get("concurrency") or 0)
+    except (TypeError, ValueError):
+        v = 0
+    return v if v > 0 else default_concurrency(g.get("nodes"))
 
 
 def _dependents(g):
@@ -1141,7 +1178,7 @@ def halt_running(g, why="완전 중지"):
     return changed
 
 
-def step(g, concurrency=None, allow_spawn=None):
+def step(g, concurrency=None, allow_spawn=None, hold_on_block=False):
     """한 틱: 끝난 실행을 거두어 검증하고, 실패면 재시도(한정), 준비된 노드를 띄웁니다.
 
     사용 한도 판정은 실행 rc != 0 이고 보고가 한도 꼴일 때만 합니다. rc == 0 이면
@@ -1154,16 +1191,20 @@ def step(g, concurrency=None, allow_spawn=None):
     다시 읽게 됩니다. `cmd_run`/`cmd_step` 이 시작 전에 한 번 돌립니다.
 
     틱 끝에 상태가 바뀐 태스크 노드를 보드에 옮깁니다(`_board_sync_changes`) - 도중에 예외가 나도 옮깁니다.
+
+    `hold_on_block` 이면 이 틱에 노드가 새로 failed/blocked 된 순간 띄우기를 건너뜁니다 - 거두기와 띄우기가 한 틱이라,
+    호출자가 틱 뒤에 보고 멈추면 이미 그 자리에 다음 노드가 떠 있습니다 (`run --stop-on-block`).
     """
     before = {str(n.get("id")): n.get("status", "todo") for n in g.get("nodes") or []}
     try:
-        return _step(g, concurrency, allow_spawn)
+        return _step(g, concurrency, allow_spawn, hold_on_block)
     finally:
         _board_sync_changes(g, before)
 
 
-def _step(g, concurrency=None, allow_spawn=None):
-    conc = concurrency or int(g.get("concurrency", 3))
+def _step(g, concurrency=None, allow_spawn=None, hold_on_block=False):
+    conc = concurrency or _graph_concurrency(g)
+    bad_before = {n.get("id") for n in g["nodes"] if n.get("status") in ("failed", "blocked")}
     if allow_spawn is None:
         m = _fleet_mode()
         if m == "stopped":
@@ -1282,11 +1323,19 @@ def _step(g, concurrency=None, allow_spawn=None):
     for n in g["nodes"]:
         if n.get("status", "todo") != "todo" and "waiting" in n:
             n.pop("waiting")           # 떴거나 끝난 노드의 대기 까닭은 지운다
+            n.pop("waiting_since", None)
             changed = True
+    if hold_on_block and any(n.get("status") in ("failed", "blocked") and n.get("id") not in bad_before for n in g["nodes"]):
+        allow_spawn = False
     # 3) 띄우기 (fan-out, 동시성 상한, 슬롯 바쁨, **공급자 자리**) - 함대가 '실행' 일 때만.
     # 준비된 노드가 없으면 실행 기록을 훑지도 않는다 - 대부분의 틱은 여기서 싸게 끝난다.
     running = sum(1 for n in g["nodes"] if n.get("status") == "running")
-    ready = _ready(g) if allow_spawn and running < conc else []
+    ready = _ready(g) if allow_spawn else []
+    if ready and running >= conc:
+        # 동시성 상한이 붙잡고 있다는 것도 다른 까닭처럼 적는다 - 말없이 늦어지지 않게
+        for n in ready:
+            changed |= _set_waiting(g, n, f"concurrency:{conc}")
+        ready = []
     if ready:
         busy, by_prov = _live_scan(g)
         cfg = _rt_cfg(g)
@@ -1296,7 +1345,8 @@ def _step(g, concurrency=None, allow_spawn=None):
         ready.sort(key=lambda n: (-deps_on.get(n["id"], 0), order[n["id"]]))
     for n in ready:
         if running >= conc:
-            break
+            changed |= _set_waiting(g, n, f"concurrency:{conc}")
+            continue
         slot = n.get("slot")
         if slot in busy:
             changed |= _set_waiting(g, n, f"slot:{slot}")
@@ -1310,6 +1360,10 @@ def _step(g, concurrency=None, allow_spawn=None):
             ok, line = _probe_cached(cfg, prov)
             if not ok:
                 changed |= _set_waiting(g, n, f"probe:{prov}", line)
+                waited = _elapsed_since(n.get("waiting_since"))
+                if waited is not None and waited > PROBE_WAIT_MAX_SEC:
+                    _probe_wait_block(g, n, prov, waited, line)
+                    changed = True
                 continue
         _set_waiting(g, n, None)
         # 스폰 직후 저장합니다. 예전에는 한 틱의 끝에서 한 번만 저장해, 뒤 노드가
@@ -1436,9 +1490,10 @@ def cmd_new(a):
     bad_ids = [n["id"] for n in nodes if not re.fullmatch(r"T-\d+[A-Z]?", str(n.get("id", "")))]
     if bad_ids:
         print(f"경고: 노드 id 는 보드 태스크 id(T-0xx) 를 그대로 쓰십시오: {bad_ids}", file=sys.stderr)
+    conc = a.concurrency if getattr(a, "concurrency", None) else default_concurrency(nodes)
     g = {"id": a.id, "request": a.request, "created": _now(), "rev": fleet.read_rev(),
          "round": fleet.current_round(),      # 식별자에 붙이지 않고 따로 적는다 (화면 구분용)
-         "concurrency": a.concurrency, "nodes": nodes}
+         "concurrency": conc, "nodes": nodes}
     followup = (getattr(a, "followup", None) or "").strip()
     if followup:
         g["followup"] = followup[:300]
@@ -1529,14 +1584,28 @@ def cmd_run(a):
         halted = inbox = False
         box = inbox_path(g.get("round"))
         box0 = _mtime(box)
+        stop_on_block = getattr(a, "stop_on_block", None)
+        if stop_on_block is None:
+            # 빨리·잘 하려는 라운드는 막힌 노드를 관리자가 곧바로 옮기거나 풀어야 한다 - 무료 중심은 끝까지 돌린다
+            stop_on_block = round_policy(g.get("round")) in ("speed", "quality")
+        bad0 = {n["id"] for n in g["nodes"] if n.get("status") in ("failed", "blocked")}
+        spawn, blocked_new = True, []
         while time.time() < deadline:
-            if step(g, a.concurrency):
+            # 띄우기를 멈춘 뒤에도 '완전 중지' 면 함대 모드에 맡긴다 - 떠 있는 작업자를 거두는 일(`halt_running`)이 거기 있다
+            if step(g, a.concurrency, allow_spawn=None if spawn or _fleet_mode() == "stopped" else False,
+                    hold_on_block=stop_on_block):
                 break
             if _fleet_mode() == "stopped":
                 halted = True
                 break
             if _mtime(box) != box0:
                 inbox = True
+                break
+            if stop_on_block and spawn:
+                blocked_new = [n["id"] for n in g["nodes"] if n.get("status") in ("failed", "blocked") and n["id"] not in bad0]
+                if blocked_new:
+                    spawn = False        # 새 노드는 띄우지 않고 떠 있는 것만 거둔다
+            if not spawn and not any(n.get("status") == "running" for n in g["nodes"]):
                 break
             time.sleep(a.poll)
         g = _load(a.id)
@@ -1558,6 +1627,13 @@ def cmd_run(a):
             print(f"사람이 말을 남겼습니다: {box.relative_to(fleet.ROOT) if box else INBOX_NAME} - 읽고 판단한 뒤 "
                   f"`fleet_graph.py run {g['id']}` 로 이어 가십시오 (rc {RC_INBOX})")
             return RC_INBOX
+        if not spawn:
+            gone = [n for n in g["nodes"] if n["id"] in blocked_new]
+            names = ", ".join(f"{n['id']}({n.get('status')}, {n.get('slot')})" for n in gone)
+            print(f"막힌 노드: {names} - 새 노드는 띄우지 않고 "
+                  f"멈췄습니다. `fleet_graph.py move {g['id']} <노드> --slot S<n>` 으로 다른 슬롯에 옮기거나 "
+                  f"`unblock` 한 뒤 `fleet_graph.py run {g['id']}` 로 이어 가십시오")
+            return 1
         return 0 if all(n.get("status") == "done" for n in g["nodes"]) else 1
 
 
@@ -1651,6 +1727,114 @@ def reverify(g, node_id):
     return True, f"{node_id}: 다시 검증 통과 - done" + (f" / 함께 푼 노드: {', '.join(freed)}" if freed else "")
 
 
+def round_policy(rnd):
+    """라운드 R<rnd> 의 운영 방식 키 (`rounds/R<N>/round.json` 의 `policy`). 모르면 `cost` - 가장 좁은 쪽."""
+    try:
+        from fleet_rt import config as rt_config  # noqa: PLC0415
+        rec = json.loads((pathlib.Path(fleet.ROOT) / "rounds" / f"R{int(rnd)}" / "round.json").read_text(encoding="utf-8"))
+        v = rec.get("policy") if isinstance(rec, dict) else None
+        return v if v in rt_config.POLICIES else "cost"
+    except (OSError, ValueError, TypeError):
+        return "cost"
+
+
+def _move_ownership(paths, slot, why):
+    """노드의 쓰기 경로 소유를 새 슬롯으로 (`aimem_db.ownership_set`, events 한 줄씩). DB 가 없으면 아무것도 안 한다
+    (보드 동기화와 같이 `fleet.RUNS` 옆의 DB - 임시 폴더 검사가 운영 DB 를 고치지 않게). 옮긴 경로 목록."""
+    db = _board_db()
+    if not db.is_file() or not paths:
+        return []
+    import aimem_db  # noqa: PLC0415
+    done = []
+    for w in paths:
+        aimem_db.ownership_set(str(w), slot, note=why[:200], actor="관리자(move)", db=db)
+        done.append(str(w))
+    fleet._DB_CACHE["at"] = 0.0          # 바로 뒤 `run` 이 옛 소유를 캐시에서 읽지 않게
+    return done
+
+
+def move_node(g, node_id, slot, policy=None, why=""):
+    """노드를 다른 슬롯으로 옮긴다 - 관리자가 막힌 노드를 다른 엔진에 넘기는 길. (ok, 메시지)
+
+    - todo / failed / blocked 이고 마지막 작업자가 살아 있지 않은 노드만
+    - 새 슬롯은 명부에 있어야 하고, 운영 방식(`policy`, 없으면 그 라운드의 것)이 허용하는 등급(`slot_tiers`)이어야 한다
+    - 쓰기 경로의 소유를 새 슬롯으로 옮기고(events), 노드를 `todo` 로. 시도 한도를 다 썼으면 한 번 더 허용하고
+      (`unblock` 과 같다), 이 노드 때문에 막힌 뒤쪽 노드도 푼다. `moves` 에 기록을 남긴다.
+    """
+    nodes = {n["id"]: n for n in g["nodes"]}
+    n = nodes.get(node_id)
+    if n is None:
+        return False, f"노드가 없습니다: {node_id}"
+    st = n.get("status", "todo")
+    if st not in ("todo", "failed", "blocked"):
+        return False, f"{node_id} 는 {st} 입니다 - todo/failed/blocked 만 옮깁니다"
+    old = n.get("slot")
+    if slot == old:
+        return False, f"{node_id} 는 이미 {slot} 에 있습니다"
+    roster = fleet.roster()
+    if slot not in roster:
+        return False, f"{slot} 이 명부에 없습니다 (`aimem_db.py slot list`)"
+    last = ((n.get("attempts") or []) + (n.get("infra_attempts") or []) or [{}])[-1]
+    if isinstance(last, dict) and last.get("run_id") and fleet._run_state(last["run_id"])[0] == "running":
+        return False, f"{node_id} 의 작업자가 아직 살아 있습니다 (run {last['run_id']}) - 끝나거나 사람이 내린 뒤에"
+    key = policy or round_policy(g.get("round"))
+    try:
+        from fleet_rt import config as rt_config  # noqa: PLC0415
+        cfg = rt_config.load(fleet.ROOT)
+        h, m = fleet.spawn_harness_model(slot, n.get("harness"), n.get("model"))
+        tier = cfg.slot_tier(h, m)
+        allowed = cfg.policy(key)["slot_tiers"]
+    except Exception as e:  # noqa: BLE001 - 등급을 모르면 옮기지 않는다 (돈이 드는 쪽을 막는다)
+        return False, f"fleet.toml 을 읽지 못해 {slot} 의 등급을 확인할 수 없습니다: {e}"
+    if tier not in allowed:
+        return False, (f"운영 방식 {key} 에서는 {'·'.join(rt_config.TIER_LABEL[x] for x in allowed) or '(없음)'} 슬롯으로만 옮깁니다 - "
+                       f"{slot}({h} {m or '하네스 기본'}) 는 {rt_config.TIER_LABEL.get(tier, tier)}입니다")
+    moved = _move_ownership(list(n.get("write") or []), slot, f"{g.get('id')} {node_id} {old}→{slot}")
+    n["slot"] = slot
+    n.setdefault("moves", []).append({"from": old, "to": slot, "at": _now(), "why": str(why or "")[:300]})
+    if len(n.get("attempts") or []) >= int(n.get("max_attempts", 2)):
+        n["max_attempts"] = len(n["attempts"]) + 1
+    for a in n.get("infra_attempts") or []:
+        if isinstance(a, dict):
+            a["cleared"] = True              # 다른 공급자로 간다 - 옛 공급자의 장애 횟수는 이 노드를 막지 않는다
+    n.pop("infra", None)
+    n.pop("waiting", None)
+    n.pop("waiting_since", None)
+    n["status"] = "todo"
+    freed, changed = [], True
+    while changed:
+        changed = False
+        for m_ in g["nodes"]:
+            if m_.get("status") != "blocked" or m_.get("attempts"):
+                continue
+            deps = [nodes[d] for d in m_.get("deps", []) if d in nodes]
+            if deps and not any(d.get("status") in ("failed", "blocked") for d in deps):
+                m_["status"] = "todo"
+                freed.append(m_["id"])
+                changed = True
+    _log(g, f"move {node_id} {old} -> {slot} (운영 {key})" + (f"; 소유 {len(moved)}건 옮김" if moved else "")
+         + (f"; 뒤쪽 {', '.join(freed)} 도 todo" if freed else "") + (f" - {why}" if why else ""))
+    return True, (f"{node_id}: {old} → {slot}, 다음 틱에 띄웁니다" + (f" / 소유를 옮긴 경로 {len(moved)}개" if moved else "")
+                  + (f" / 함께 푼 노드: {', '.join(freed)}" if freed else ""))
+
+
+def cmd_move(a):
+    # 실행기와 같은 잠금을 잡는다 - `run` 이 도는 동안 옮기면 실행기가 옛 그래프로 덮어쓴다
+    with contextlib.ExitStack() as stack:
+        try:
+            stack.enter_context(graph_lock(a.id, "move"))
+        except SystemExit:
+            print(f"`run` 이 그래프 {a.id} 를 잡고 있어 옮기지 않았습니다 - `run` 이 돌아온 뒤 다시 move 하십시오 "
+                  f"(`run --stop-on-block` 은 노드가 막히면 돌아옵니다)", file=sys.stderr)
+            return 2
+        g = _load(a.id)
+        ok, msg = move_node(g, a.node, a.slot, why=a.why or "")
+        if ok:
+            _save(g)
+    print(msg, file=sys.stdout if ok else sys.stderr)
+    return 0 if ok else 2
+
+
 def cmd_unblock(a):
     with graph_lock(a.id, "unblock"):
         g = _load(a.id)
@@ -1709,7 +1893,8 @@ def main():
     n.add_argument("--id", required=True)
     n.add_argument("--request", required=True)
     n.add_argument("--nodes", required=True, help="노드 배열 JSON 파일")
-    n.add_argument("--concurrency", type=int, default=3)
+    n.add_argument("--concurrency", type=int, default=None,
+                   help="한 번에 띄울 노드 수 (기본: 그래프가 쓰는 서로 다른 슬롯 수). 슬롯 하나에 하나·공급자 자리는 따로 지킨다")
     n.add_argument("--followup", help="라운드 상한(그래프 3·태스크 10)을 넘는 그래프가 검수 결함의 수정·재검수일 때, 무엇의 후속인지")
     for name in ("validate", "status"):
         sub.add_parser(name).add_argument("id")
@@ -1721,7 +1906,15 @@ def main():
     r.add_argument("--timeout", type=int, default=3600)
     r.add_argument("--poll", type=float, default=DEFAULT_POLL_SEC)
     r.add_argument("--concurrency", type=int)
+    r.add_argument("--stop-on-block", dest="stop_on_block", action=argparse.BooleanOptionalAction, default=None,
+                   help="노드가 새로 failed/blocked 되면 새 노드를 띄우지 않고 떠 있는 것만 거둔 뒤 rc 1 로 돌아온다 "
+                        "(관리자가 move/unblock 하고 다시 run). 기본: 라운드 운영 방식이 speed·quality 면 켜짐, cost 면 꺼짐")
     sub.add_parser("list")
+    mv = sub.add_parser("move", help="todo/failed/blocked 노드를 다른 슬롯으로 옮긴다 (쓰기 경로 소유도 함께)")
+    mv.add_argument("id")
+    mv.add_argument("node")
+    mv.add_argument("--slot", required=True, help="옮겨 갈 슬롯 (명부에 있어야 하고, 운영 방식이 허용하는 등급이어야 함)")
+    mv.add_argument("--why", default="", help="옮기는 까닭 한 줄 (노드의 moves 기록에 남는다)")
     u = sub.add_parser("unblock", help="사람이 확인한 blocked/failed 노드를 다시 굴림")
     u.add_argument("id")
     u.add_argument("node")
@@ -1729,7 +1922,7 @@ def main():
                    help="작업자를 다시 띄우지 않고 검증만 다시 (verify 를 고쳤을 때). 통과하면 done")
     a = p.parse_args()
     return {"new": cmd_new, "validate": cmd_validate, "step": cmd_step, "run": cmd_run,
-            "status": cmd_status, "list": cmd_list, "unblock": cmd_unblock}[a.cmd](a) or 0
+            "status": cmd_status, "list": cmd_list, "unblock": cmd_unblock, "move": cmd_move}[a.cmd](a) or 0
 
 
 if __name__ == "__main__":

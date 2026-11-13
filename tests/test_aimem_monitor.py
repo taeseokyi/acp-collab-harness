@@ -40,7 +40,7 @@ EXPECTED_KEYS = {
     "errors",
 }
 
-SLOT_KEYS = {"slot", "token", "harness", "role", "note", "model", "model_source"}
+SLOT_KEYS = {"slot", "token", "harness", "role", "note", "model", "model_source", "origin", "round"}
 BOARD_KEYS = {"id", "task", "slot", "status", "handoff", "artifact"}
 QUEUE_KEYS = {"order", "task", "slots", "handoff", "note"}
 LOG_KEYS = {"when", "text"}
@@ -268,8 +268,9 @@ class TestStateContract(unittest.TestCase):
         self.assertEqual(len(slots), 2)
         for entry in slots:
             self.assertEqual(set(entry), SLOT_KEYS)
-            for key in SLOT_KEYS:
+            for key in SLOT_KEYS - {"round"}:
                 self.assertIsInstance(entry[key], str)
+            self.assertEqual((entry["origin"], entry["round"]), ("owner", None))   # 관리자가 더한 슬롯만 manager·라운드 번호
         s1 = entry_by_id(slots, "slot", "S1")
         s2 = entry_by_id(slots, "slot", "S2")
         self.assertEqual(s1["token"], "a41f0c")
