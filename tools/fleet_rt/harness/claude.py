@@ -133,6 +133,44 @@ def result_limit_signal(res, events=()) -> Optional[bool]:
     return None  # 오류인데 표지가 없다 - False 면 호출자가 글자 판정을 건너뛴다
 
 
+#: 모델 API 가 잠깐 막히거나 바빴다는 HTTP 상태. 429 는 대개 사용 한도라 `result_limit_signal` 이 먼저 거른다.
+TRANSIENT_STATUS = frozenset({403, 408, 409, 429})
+#: 상태 숫자가 없을 때만 보는 일반적인 전송 오류 낱말 (특정 업체·문구는 넣지 않는다)
+TRANSIENT_WORDS = ("timeout", "timed out", "connection", "overloaded", "econnreset", "socket hang up")
+
+
+def result_transient(res, events=()) -> bool:
+    """result 사건 하나가 '잠깐의 API·전송 오류로 끝남' 인가. 사용 한도면 False (한도는 기다려도 곧 안 풀린다)."""
+    if not isinstance(res, dict) or not res.get("is_error"):
+        return False
+    if result_limit_signal(res, events) is True:
+        return False
+    try:
+        status = int(res.get("api_error_status"))
+    except (TypeError, ValueError):
+        status = None
+    if status is not None:
+        return status in TRANSIENT_STATUS or 500 <= status <= 599
+    if res.get("terminal_reason") != "api_error":
+        return False
+    text = " ".join(str(res.get(k) or "") for k in ("result", "api_error")).lower()
+    return any(w in text for w in TRANSIENT_WORDS)
+
+
+def transient_api_error(session_dir) -> bool:
+    """세션의 **마지막** result 사건이 잠깐의 API·전송 오류인가. result 가 없거나 오류가 아니면 False.
+
+    claude -p 는 이런 오류를 스스로 다시 시도하지 않고 rc 1 로 끝난다. 엔진은 이것이 참일 때만 같은 대화를
+    `--resume` 으로 잇는다 - 진짜 실패·한도까지 이으면 같은 실패에 돈만 든다.
+    """
+    try:
+        evs = ADAPTER._events(session_dir)
+    except Exception:  # noqa: BLE001
+        return False
+    res = next((d for d in reversed(evs) if d.get("type") == "result"), None)
+    return result_transient(res, evs)
+
+
 class ClaudeHarness:
     name = "claude"
 
@@ -151,6 +189,11 @@ class ClaudeHarness:
         return argv
 
     def command(self, spec: SessionSpec) -> Command:
+        resume = (spec.extra or {}).get("resume_session")
+        if resume:
+            # 끊긴 대화를 잇는다 (`fleet_ctl.resume_manager`): 지시문(stdin)이 이어 갈 말이 되고, 도구·모델·설정은 처음과 같다.
+            # `--session-id` 는 붙이지 않는다 - 대화 id 는 이어 받는 쪽이 정한다
+            return self.resume_command(spec, str(resume), spec.brief_path)
         argv = self._argv(spec)
         sid = (spec.extra or {}).get("harness_session_id")
         if spec.role == "manager" and sid:

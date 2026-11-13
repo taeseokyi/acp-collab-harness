@@ -90,3 +90,27 @@ def spec(sid, n, cwd, *, at=None, by="사람", brief="", workspace="", provider=
         label=label(n, at, phase),
         timeout=float(MANAGER_TIMEOUT_SEC if phase is None else CALL_TIMEOUT_SEC), idle_timeout=None, tools=MANAGER_TOOLS,
         settings_path=None, extra=extra)
+
+
+#: 이어 간 관리자 세션의 라벨 꼬리 - 몇 번 이어도 한 번만 붙인다
+RESUMED_SUFFIX = " (이어 감)"
+
+
+def resume_spec(old_meta, new_id, resume_session):
+    """끊긴 관리자 세션(`meta.json`)을 같은 대화로 잇는 새 세션의 명세.
+
+    라운드·모델·도구·거부 목록·제한 시간·공급자·단계는 처음 것을 그대로 쓴다 - 이었다고 권한이 달라지지 않게.
+    `extra.resume_session` 이 하네스 어댑터에 `--resume` 을 시키고, 이은 뒤의 대화 id 도 같은 것으로 적어 둔다
+    (다음에 또 끊기면 그 id 로 다시 잇는다).
+    """
+    spec = SessionSpec.from_dict(dict(old_meta))
+    spec.id = str(new_id)
+    spec.brief_path = ""
+    spec.label = str(spec.label or new_id)
+    if not spec.label.endswith(RESUMED_SUFFIX):
+        spec.label += RESUMED_SUFFIX
+    extra = dict(spec.extra or {})
+    extra.update({"resume_session": str(resume_session), "harness_session_id": str(resume_session),
+                  "resumed_from": str(old_meta.get("id") or "")})
+    spec.extra = extra
+    return spec

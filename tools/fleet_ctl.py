@@ -1218,6 +1218,177 @@ def close_if_unreported(n):
     return s["status"] if write_minimal_close(n, f"관리자 세션이 {s['status']} 로 끝남", session=s["id"]) else None
 
 
+# ----------------------------------------------------------------- 끊긴 관리자 잇기
+# claude -p 는 모델 API 의 잠깐 오류(전송·과부하·앞단 차단)를 다시 시도하지 않고 rc 1 로 끝난다. 전에는 엔진이 그것을
+# 라운드의 끝으로 보아 작업자를 거두고 최소 마감을 쓰고 이어 달리기를 멈췄다 - 오류 한 번에 라운드 하나를 잃었다.
+# 이제 마지막 result 가 그런 오류(`harness.claude.transient_api_error`)면 잠깐 쉬었다가 **같은 대화**를 `--resume` 으로
+# 잇는다. 작업자는 따로 도는 세션이라 그동안 그대로 둔다. 사용 한도·진짜 실패는 잇지 않는다(전과 같이 끝낸다).
+MANAGER_RESUME_MAX = 2                    # 라운드 하나에서 이어 가는 최대 횟수 - 넘으면 전처럼 끝낸다
+MANAGER_RESUME_BACKOFF_SEC = (20, 60)     # 몇 번째 잇기 앞에 쉬는 시간 (API 가 돌아올 틈). 싼 응답 확인 수단이 없어 쉬기만 한다
+RESUME_BRIEF = ("모델 API 오류({why})로 대화가 끊겼다가 이어집니다. 그동안 엔진은 작업자를 거두지 않았습니다. "
+                "`fleet_ctl.py status`·`fleet_graph.py status <G>`·`INBOX.md` 로 지금 상태를 다시 보고, 하던 일을 이어서 "
+                "끝내십시오. 끊기기 직전에 돌리던 명령은 끝났을 수 있습니다.")
+RESUME_BRIEF_CALLS = " 응답 맨 끝 줄의 `NEXT:` 규칙은 처음 받은 지시 그대로입니다."
+
+
+def _manager_transient_end(sid):
+    """관리자 세션이 잠깐의 API·전송 오류로 끝났나 (검사가 갈아 끼우는 이음새 - 가짜 하네스에는 result 가 없다)."""
+    from fleet_rt.harness import claude as rt_claude  # noqa: PLC0415
+    return rt_claude.transient_api_error(_sessions_root() / str(sid))
+
+
+def _harness_session_of(sid):
+    """끊긴 세션의 하네스 대화 id - 사건(claude 의 init·result)에서 뽑은 것, 없으면 띄울 때 정해 둔 것."""
+    d = _sessions_root() / str(sid)
+    rt = _rt()
+    try:
+        hsid = rt.index_row(d).get("harness_session_id")
+    except Exception:  # noqa: BLE001
+        hsid = None
+    if not hsid:
+        extra = (rt.load_meta(d) or {}).get("extra")
+        hsid = extra.get("harness_session_id") if isinstance(extra, dict) else None
+    return str(hsid) if hsid else None
+
+
+def _round_resumes(n):
+    r = _round_record(n).get("resumes")
+    return len(r) if isinstance(r, list) else 0
+
+
+def _resume_why(sid):
+    """브리프·기록에 적을 끊긴 까닭 한 줄 (세션의 마지막 답 첫 줄)."""
+    try:
+        text = _rt().report(_sessions_root() / str(sid)) or ""
+    except Exception:  # noqa: BLE001
+        text = ""
+    line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+    return (line[:160] or "모델 API 오류")
+
+
+def _resume_text(why, calls=False):
+    return RESUME_BRIEF.format(why=why) + (RESUME_BRIEF_CALLS if calls else "") + "\n"
+
+
+def _record_resume(n, old, new, why):
+    """`round.json` 에 잇기 하나를 적고 `session` 을 새 세션으로. 다른 칸은 그대로."""
+    try:
+        f = _round_dir(n, create=False) / "round.json"
+        try:
+            rec = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            rec = {}
+        if not isinstance(rec, dict):
+            rec = {}
+        rs = rec.get("resumes") if isinstance(rec.get("resumes"), list) else []
+        rec["resumes"] = rs + [{"from": str(old), "to": str(new), "at": _now(), "why": str(why)[:300]}]
+        rec["session"] = str(new)
+        _write_text_replace(f, json.dumps(rec, ensure_ascii=False, indent=1) + "\n")
+    except (OSError, ValueError) as e:
+        print(f"{_now()} R{n}: 라운드 기록에 잇기를 적지 못했습니다 - {e}", flush=True)
+
+
+def _spawn_resumed(n, old_sid, new_sid, text):
+    """끊긴 관리자 세션 `old_sid` 의 대화를 새 세션 `new_sid` 로 잇는다. 세션 폴더. 못 하면 ValueError(까닭)."""
+    from fleet_rt import manager as rt_manager  # noqa: PLC0415
+    rt = _rt()
+    meta = rt.load_meta(_sessions_root() / str(old_sid))
+    if not isinstance(meta, dict) or meta.get("role") != "manager":
+        raise ValueError(f"관리자 세션 기록을 읽지 못했습니다: {old_sid}")
+    hsid = _harness_session_of(old_sid)
+    if not hsid:
+        raise ValueError(f"{old_sid} 의 하네스 대화 id 를 모릅니다 - 이을 수 없습니다")
+    spec = rt_manager.resume_spec(meta, new_sid, hsid)
+    db = _aimem_dir() / "aimem.db"
+    try:
+        return rt.spawn(spec, text, _sessions_root(), db_path=str(db) if db.exists() else None, env_root=str(fleet.ROOT))
+    except (OSError, RuntimeError) as e:
+        raise ValueError(f"이은 관리자를 띄우지 못했습니다: {type(e).__name__}: {str(e)[:200]}") from e
+
+
+def resume_manager(n=None, why=None, start_watcher=True, expect=None, by=None):
+    """라운드 R<n>(없으면 가장 최근 라운드)의 끝난 관리자 대화를 새 세션으로 잇는다 (상주 방식).
+
+    감시자는 잠깐의 API 오류일 때만 부른다(`_try_resume_manager`). 사람이 부를 때(`resume-manager`)는 끝난 까닭을
+    따지지 않는다 - 판단은 사람 몫이다. 거절: 관리자가 아직 돈다, 보고(`REPORT.md`)가 이미 있다, 대화 id 를 모른다,
+    함대가 '실행' 이 아니다, 더 뒤 라운드가 떴다, 호출 방식 라운드다(구동기가 스스로 잇는다).
+    `start_watcher` 면 그 라운드의 감시자를 다시 띄운다 - 감시자 안에서 부를 때는 False(그 감시자가 계속 본다).
+    `expect` 를 주면 마지막 관리자 세션이 그것일 때만 잇는다 (쉬는 사이 상황이 바뀌었으면 손대지 않게).
+    """
+    try:
+        _aimem_dir().mkdir(parents=True, exist_ok=True)
+        lock = open(_aimem_dir() / "fleet-launch.lock", "a")
+    except OSError as e:
+        return {"ok": False, "error": f"라운드 띄우기 잠금 파일을 열지 못했습니다: {type(e).__name__}"}
+    with lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return {"ok": False, "error": "라운드를 띄우는 중이라 잇지 않습니다"}
+        mgrs = manager_sessions()
+        if n is None:
+            mine_all = [s["round"] for s in mgrs if isinstance(s.get("round"), int)]
+            if not mine_all:
+                return {"ok": False, "error": "관리자 세션이 없습니다"}
+            n = max(mine_all)
+        n = int(n)
+        if mode() != "running":
+            return {"ok": False, "round": n, "error": f"함대가 '실행' 이 아닙니다 (지금: {MODE_LABEL.get(mode())})"}
+        if _round_record(n).get("mode") == "calls":
+            return {"ok": False, "round": n, "error": "호출 방식 라운드는 구동기가 호출을 잇습니다"}
+        if (fleet.ROOT / round_workspace(n) / "REPORT.md").exists():
+            return {"ok": False, "round": n, "error": f"R{n} 은 이미 보고(REPORT.md)가 있습니다"}
+        running = [s for s in mgrs if s["status"] == "running"]
+        if running:
+            return {"ok": False, "round": n, "error": "실행 중인 관리자가 있습니다: " + ", ".join(s["id"] for s in running)}
+        if max(_used_rounds() | {n}) != n:
+            return {"ok": False, "round": n, "error": f"R{n} 뒤 라운드가 이미 떴습니다"}
+        mine = [s for s in mgrs if s.get("round") == n]
+        if not mine:
+            return {"ok": False, "round": n, "error": f"R{n} 의 관리자 세션이 없습니다"}
+        old = mine[-1]["id"]
+        if expect is not None and old != expect:
+            return {"ok": False, "round": n, "error": f"마지막 관리자가 {expect} 가 아니라 {old} 입니다"}
+        why = why or (_resume_why(old) + (f" · {str(by)[:60]} 이(가) 이음" if by else ""))
+        new = _new_manager_id(n, dt.datetime.now())
+        try:
+            _spawn_resumed(n, old, new, _resume_text(why))
+        except ValueError as e:
+            return {"ok": False, "round": n, "session": old, "error": str(e)}
+        _record_resume(n, old, new, why)
+    print(f"{_now()} R{n}: 관리자 {old} 의 대화를 {new} 로 잇습니다 ({why})", flush=True)
+    watcher = _start_watcher(n, close_only=not chain_state().get("on")) if start_watcher else None
+    return {"ok": True, "round": n, "from": old, "session": new, "why": why, "resumes": _round_resumes(n), "watcher": watcher}
+
+
+def _try_resume_manager(n, sleep=None):
+    """감시자가 관리자가 끝난 것을 본 순간: 잠깐의 API 오류로 끊긴 것이고 잇기가 남았으면 쉬었다가 잇는다. 이었으면 True.
+
+    False 면 감시자는 전처럼 한다(작업자 거두기·최소 마감·이어 달리기 판단).
+    """
+    mine = [s for s in manager_sessions() if s.get("round") == int(n)]
+    last = mine[-1] if mine else None
+    if last is None or last["status"] != "failed" or mode() != "running":
+        return False
+    if (fleet.ROOT / round_workspace(n) / "REPORT.md").exists():
+        return False                       # 보고를 쓰고 끊겼다 - 이을 일이 없다
+    k = _round_resumes(n)
+    if not _manager_transient_end(last["id"]):
+        return False
+    if k >= MANAGER_RESUME_MAX:
+        print(f"{_now()} R{n}: 관리자가 또 API 오류로 끊겼지만 잇기 상한({MANAGER_RESUME_MAX})에 닿아 라운드를 끝냅니다", flush=True)
+        return False
+    why = _resume_why(last["id"])
+    wait = MANAGER_RESUME_BACKOFF_SEC[min(k, len(MANAGER_RESUME_BACKOFF_SEC) - 1)] if MANAGER_RESUME_BACKOFF_SEC else 0
+    print(f"{_now()} R{n}: 관리자 {last['id']} 가 API 오류로 끊겼습니다 ({why}) - {wait}초 뒤 같은 대화를 잇습니다"
+          f" ({k + 1}/{MANAGER_RESUME_MAX})", flush=True)
+    (sleep or time.sleep)(wait)
+    res = resume_manager(n, why=why, start_watcher=False, expect=last["id"])
+    if not res.get("ok"):
+        print(f"{_now()} R{n}: 잇지 못했습니다 - {res.get('error')}", flush=True)
+    return bool(res.get("ok"))
+
+
 # ----------------------------------------------------------------- 이어 달리기 (REV 155)
 # 프로젝트 목표가 남아 있으면 라운드가 끝난 뒤 다음 라운드를 **함대가 스스로** 띄웁니다. 2026-11-10 밤에는 사람이
 # (Claude Code 가) 손으로 이었습니다: 보고와 `PROGRESS.md` 의 `## 목표` 를 읽고 → 남은 목표를 요청으로 넣고 → 준비 → 라운드.
@@ -1678,6 +1849,8 @@ def _watch(n, poll, wait, close_only=False):
             on = False
         if _round_manager_running(n):
             continue
+        if closed is None and _try_resume_manager(n):
+            continue                      # 잠깐의 API 오류 - 같은 대화를 이었다. 작업자는 두고 새 세션을 계속 지켜본다
         if closed is None:
             # 관리자가 어떤 상태로 끝났든(done 도) 실행기 없이 남은 이 라운드 작업자를 거둔다 - 마감보다 먼저
             last = next((s for s in reversed(manager_sessions()) if s.get("round") == int(n)), None)
@@ -1998,6 +2171,15 @@ def _spawn_call_and_wait(n, phase, sid, brief_name, text, at, by, poll=DRIVE_POL
     return _wait_session(d, poll)
 
 
+def _resume_call_and_wait(n, phase, old_sid, new_sid, text, by, poll=DRIVE_POLL_SEC):
+    """API 오류로 끊긴 호출 `old_sid` 의 대화를 새 세션 `new_sid` 로 잇고 끝나기를 기다린다. (세션 상태, 마지막 보고)."""
+    try:
+        d = _spawn_resumed(n, old_sid, new_sid, text)
+    except ValueError as e:
+        return "failed", str(e)
+    return _wait_session(d, poll)
+
+
 def _bad_nodes(graphs):
     return {(g["id"], n.get("id")) for g in graphs for n in g["nodes"] if n.get("status") in ("failed", "blocked")}
 
@@ -2068,9 +2250,10 @@ def _drive_chain_end(n, close_only, poll, wait):
     print(f"{_now()} chain R{n}: {json.dumps({k: v for k, v in res.items() if k != 'open'}, ensure_ascii=False)}", flush=True)
 
 
-def _drive(n, close_only=False, *, spawn_call=None, run_graphs=None, poll=None, chain_wait=None):
+def _drive(n, close_only=False, *, spawn_call=None, run_graphs=None, poll=None, chain_wait=None, resume_call=None):
     """호출 방식 라운드 하나를 끝까지 돌린다 (모델 없는 고리). 구동기 프로세스의 본체이고, 검사는 두 이음새를 갈아 끼운다:
-    `spawn_call(n, phase, sid, brief_name, text, at, by) -> (상태, 보고)`, `run_graphs(n, gids) -> 결과`.
+    `spawn_call(n, phase, sid, brief_name, text, at, by) -> (상태, 보고)`, `run_graphs(n, gids) -> 결과`,
+    `resume_call(n, phase, old_sid, new_sid, text, by) -> (상태, 보고)` (API 오류로 끊긴 호출을 같은 대화로 잇기).
 
     라운드 기록에 호출이 이미 있으면(일시 중지 뒤 '실행' 으로 다시 띄운 구동기) 마지막 호출의 결과에서 잇는다.
     """
@@ -2080,7 +2263,8 @@ def _drive(n, close_only=False, *, spawn_call=None, run_graphs=None, poll=None, 
     try:
         ended = _drive_loop(int(n), close_only,
                             spawn_call or (lambda *a: _spawn_call_and_wait(*a, poll=poll)),
-                            run_graphs or (lambda rn, gids: _run_round_graphs(rn, gids, poll=poll)), poll)
+                            run_graphs or (lambda rn, gids: _run_round_graphs(rn, gids, poll=poll)), poll,
+                            resume_call or (lambda *a: _resume_call_and_wait(*a, poll=poll)))
     except Exception as e:  # noqa: BLE001 - 구동기가 터져도 라운드는 마감이 남아야 한다 (설계 5.10)
         import traceback  # noqa: PLC0415
         traceback.print_exc()
@@ -2101,7 +2285,7 @@ def _drive(n, close_only=False, *, spawn_call=None, run_graphs=None, poll=None, 
     return 0
 
 
-def _drive_loop(n, close_only, spawn_call, run_graphs, poll):
+def _drive_loop(n, close_only, spawn_call, run_graphs, poll, resume_call=None):
     """`_drive` 의 고리. 끝난 까닭: `end`(마감 호출까지) · `fail`(호출 실패 - 최소 마감) · `stop`(호출이 사람을 부름) · `halted`."""
     from fleet_rt import manager as rt_manager  # noqa: PLC0415
     import fleet_graph  # noqa: PLC0415
@@ -2173,6 +2357,23 @@ def _drive_loop(n, close_only, spawn_call, run_graphs, poll):
         else:
             log(f"호출 {phase} ({sid}) 를 띄웁니다")
             state, report = spawn_call(n, phase, sid, name, text, at, by)
+            # 잠깐의 API 오류로 끊긴 호출은 같은 단계로 한두 번 잇는다 (상주 방식의 `_try_resume_manager` 와 같은 규칙).
+            # 같은 항목에서 세션만 바꾼다 - 단계 수(판정 상한)를 잇기로 늘리지 않게
+            while (resume_call is not None and state == "failed" and mode() == "running"
+                   and _round_resumes(n) < MANAGER_RESUME_MAX and _manager_transient_end(sid)):
+                k = _round_resumes(n)
+                why = _resume_why(sid)
+                wait = MANAGER_RESUME_BACKOFF_SEC[min(k, len(MANAGER_RESUME_BACKOFF_SEC) - 1)] if MANAGER_RESUME_BACKOFF_SEC else 0
+                log(f"호출 {phase} ({sid}) 가 API 오류로 끊겼습니다 ({why}) - {wait}초 뒤 같은 대화를 잇습니다 ({k + 1}/{MANAGER_RESUME_MAX})")
+                time.sleep(wait)
+                if mode() != "running":
+                    break
+                old, sid = sid, _new_manager_id(n, dt.datetime.now())
+                _record_resume(n, old, sid, why)
+                entry.setdefault("resumed_from", []).append(old)
+                entry.update({"session": sid, "state": "launching"})
+                _save_calls(n, calls, sid)
+                state, report = resume_call(n, phase, old, sid, _resume_text(why, calls=True), by)
         nxt = parse_next(report) if state == "done" else None
         entry.update({"state": state, "ended": _now(),
                       "next": (nxt["kind"] + (" " + " ".join(nxt.get("graphs") or []) if nxt.get("graphs") else "")
@@ -2314,6 +2515,9 @@ def main(argv=None):
     t = sub.add_parser("tell", help="돌고 있는 라운드의 관리자에게 말을 남긴다 (rounds/R<N>/INBOX.md)")
     t.add_argument("message")
     t.add_argument("--by", default="CLI")
+    r = sub.add_parser("resume-manager", help="끊긴 관리자 대화를 같은 대화로 잇는다 (보고가 없고 관리자가 끝난 라운드)")
+    r.add_argument("--round", type=int, default=None, help="라운드 번호 (없으면 가장 최근 라운드)")
+    r.add_argument("--by", default="CLI")
     w = sub.add_parser("_chainwatch")
     w.add_argument("--round", type=int, required=True)
     w.add_argument("--close-only", action="store_true", help="마감만 지켜본다 - 이어 달리기는 하지 않는다")
@@ -2325,6 +2529,10 @@ def main(argv=None):
         return _chain_wait_and_step(a.round, close_only=a.close_only)
     if a.cmd == "_rounddrive":
         return _drive_main(a.round, close_only=a.close_only)
+    if a.cmd == "resume-manager":
+        out = resume_manager(a.round, by=a.by)
+        print(json.dumps(out, ensure_ascii=False, indent=1))
+        return 0 if out.get("ok") else 1
     if a.cmd == "tell":
         out = tell(a.message, a.by)
         print(json.dumps(out, ensure_ascii=False, indent=1))

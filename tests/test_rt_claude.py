@@ -234,6 +234,77 @@ class LimitTest(unittest.TestCase):
         self.assertIs(self._sig([ev, _result()]), False)
 
 
+class TransientTest(unittest.TestCase):
+    """관리자 대화를 이을지 가르는 판정 - 잠깐의 API·전송 오류만 참, 사용 한도·진짜 실패는 거짓."""
+
+    def _tr(self, lines):
+        with tempfile.TemporaryDirectory() as tmp:
+            return claude_h.transient_api_error(_session_dir(tmp, lines))
+
+    def test_the_real_403_line(self):
+        # 2026-11-13 R25 관리자를 끝낸 그 줄 (요약)
+        line = json.dumps({"type": "result", "subtype": "success", "is_error": True, "api_error_status": 403,
+                           "terminal_reason": "api_error", "stop_reason": "stop_sequence", "num_turns": 36,
+                           "result": "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare",
+                           "session_id": "e623b7fc-0095-4c27-bfbe-9f9d27eeb542"})
+        self.assertIs(self._tr(['{"type":"system","subtype":"init","session_id":"e623b7fc"}', line]), True)
+
+    def test_5xx_and_other_statuses(self):
+        for st in (408, 409, 500, 502, 503, 529):
+            with self.subTest(status=st):
+                self.assertIs(self._tr([_result(is_error=True, api_error_status=st, terminal_reason="api_error",
+                                                result=f"API Error: {st} Overloaded")]), True)
+
+    def test_text_only_when_no_status(self):
+        self.assertIs(self._tr([_result(is_error=True, terminal_reason="api_error", result="Request timed out")]), True)
+        self.assertIs(self._tr([_result(is_error=True, terminal_reason="api_error", result="API Error: Connection error.")]), True)
+        self.assertIs(self._tr([_result(is_error=True, result="Request timed out")]), False)      # api_error 가 아니다
+
+    def test_usage_limit_is_not_transient(self):
+        self.assertIs(self._tr([_result(is_error=True, api_error_status=429, terminal_reason="api_error",
+                                        result="You've hit your limit")]), False)
+        self.assertIs(self._tr([_result(is_error=True, api_error_status=429, result="rate limited")]), False)
+        ev = json.dumps({"type": "rate_limit_event", "rate_limit_info": {"status": "rejected"}})
+        self.assertIs(self._tr([ev, _result(is_error=True, api_error_status=503, terminal_reason="api_error")]), False)
+
+    def test_normal_failures_are_not_transient(self):
+        self.assertIs(self._tr([]), False)
+        self.assertIs(self._tr(['{"type":"assistant"}']), False)
+        self.assertIs(self._tr([_result()]), False)
+        self.assertIs(self._tr([_result(is_error=True, result="작업 실패")]), False)
+        self.assertIs(self._tr([_result(is_error=True, api_error_status=400, terminal_reason="api_error",
+                                        result="API Error: 400 prompt is too long")]), False)
+        self.assertIs(self._tr([_result(is_error=True, api_error_status=401, terminal_reason="api_error",
+                                        result="Invalid API key")]), False)
+
+    def test_only_the_last_result_counts(self):
+        bad = _result(is_error=True, api_error_status=529, terminal_reason="api_error")
+        self.assertIs(self._tr([bad, _result()]), False)
+        self.assertIs(self._tr([_result(), bad]), True)
+
+
+class ResumeCommandTest(unittest.TestCase):
+    def test_resume_session_uses_resume_not_session_id(self):
+        from fleet_rt import manager as rt_manager
+        old = rt_manager.spec("M-R9-120000", 9, REPO, by="t", brief="b.md", workspace="rounds/R9").to_dict()
+        old["label"] = "관리자 R9 (Opus) 2026-11-13"
+        spec = rt_manager.resume_spec(old, "M-R9-120500", "hsid-1")
+        spec.brief_path = "/x/brief.md"
+        first = claude_h.ADAPTER.command(SessionSpec.from_dict(dict(old, brief_path="/x/brief.md")))
+        c = claude_h.ADAPTER.command(spec)
+        self.assertEqual(c.argv[-2:], ["--resume", "hsid-1"])
+        self.assertNotIn("--session-id", c.argv)
+        # 모델·도구·거부 목록은 처음과 같다 (처음 것의 `--session-id <id>` 만 `--resume <id>` 로)
+        self.assertEqual(c.argv[:-2], first.argv[:-2])
+        self.assertIn("--disallowedTools", c.argv)
+        self.assertEqual(c.stdin_path, "/x/brief.md")
+        self.assertEqual((spec.id, spec.round, spec.timeout, spec.role), ("M-R9-120500", 9, old["timeout"], "manager"))
+        self.assertEqual(spec.label, "관리자 R9 (Opus) 2026-11-13 (이어 감)")
+        self.assertEqual(rt_manager.resume_spec(spec.to_dict(), "M-R9-121000", "hsid-1").label, spec.label)
+        self.assertEqual((spec.extra["harness_session_id"], spec.extra["resumed_from"], spec.extra["by"]),
+                         ("hsid-1", "M-R9-120000", "t"))
+
+
 class ProbeTest(unittest.TestCase):
     def test_missing(self):
         with mock.patch.object(claude_h.shutil, "which", return_value=None):

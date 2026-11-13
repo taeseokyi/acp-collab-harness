@@ -340,6 +340,66 @@ class Loop(Base):
         st = fleet_ctl.chain_state()
         self.assertEqual((st["on"], st["stopped_kind"]), (False, "report"))
 
+    def resumer(self, *steps):
+        """API 오류로 끊긴 호출을 잇는 이음새 - 차례로 (상태, 보고). 끝난 세션 폴더를 남긴다."""
+        it = iter(steps)
+
+        def resume_call(n, phase, old, new, text, by):
+            self.spawned.append({"phase": phase, "sid": new, "resumed_from": old, "text": text})
+            state, report = next(it)
+            d = self.sroot / new
+            d.mkdir(parents=True)
+            (d / "meta.json").write_text(json.dumps({"id": new, "role": "manager", "round": n, "harness": "claude",
+                                                     "label": new, "started": fleet_ctl._now(), "supervisor_pid": 999999,
+                                                     "proc_start": 1, "extra": {"by": by, "phase": phase}}), encoding="utf-8")
+            (d / "end.json").write_text(json.dumps({"state": state, "rc": 0, "ended": fleet_ctl._now()}), encoding="utf-8")
+            (d / "report.md").write_text(report, encoding="utf-8")
+            return state, report
+        return resume_call
+
+    def test_a_call_cut_by_a_transient_api_error_is_resumed_in_the_same_phase(self):
+        self.calls_round()
+        self.graph("G-001", self.N)
+        first_judge = []
+        spawn = self.script(("done", "NEXT: RUN G-001"),
+                            lambda: first_judge.append(1) or ("failed", "API Error: 503"), self.closer())
+        with mock.patch.object(fleet_ctl, "MANAGER_RESUME_BACKOFF_SEC", (0, 0)), \
+                mock.patch.object(fleet_ctl, "_manager_transient_end",
+                                  side_effect=lambda sid: sid == self.spawned[1]["sid"]):
+            fleet_ctl._drive(self.N, True, spawn_call=spawn, run_graphs=self.runner(), poll=0.01, chain_wait=2,
+                             resume_call=self.resumer(("done", "판정 끝\nNEXT: CLOSE")))
+        rec = self.record()
+        self.assertEqual([(c["phase"], c["state"]) for c in rec["calls"]], [("plan", "done"), ("judge", "done"), ("close", "done")])
+        judge = rec["calls"][1]
+        old = self.spawned[1]["sid"]
+        self.assertEqual(judge["resumed_from"], [old])
+        self.assertEqual(self.spawned[2]["resumed_from"], old)
+        self.assertEqual(judge["session"], self.spawned[2]["sid"])
+        self.assertIn("NEXT:", self.spawned[2]["text"])
+        self.assertEqual([(r["from"], r["to"]) for r in rec["resumes"]], [(old, judge["session"])])
+        self.assertIn("상태: DONE", self.report())
+
+    def test_resumes_are_capped_and_then_the_fail_branch_runs(self):
+        self.calls_round()
+        self.graph("G-001", self.N)
+        with mock.patch.object(fleet_ctl, "MANAGER_RESUME_BACKOFF_SEC", (0, 0)), \
+                mock.patch.object(fleet_ctl, "_manager_transient_end", return_value=True):
+            fleet_ctl._drive(self.N, True, spawn_call=self.script(("done", "NEXT: RUN G-001"), ("failed", "")),
+                             run_graphs=self.runner(), poll=0.01, chain_wait=2,
+                             resume_call=self.resumer(("failed", ""), ("failed", ""), ("failed", "")))
+        rec = self.record()
+        self.assertEqual(len(rec["resumes"]), fleet_ctl.MANAGER_RESUME_MAX)
+        self.assertEqual([(c["phase"], c["state"]) for c in rec["calls"]], [("plan", "done"), ("judge", "failed")])
+        self.assertIn("상태: PARTIAL", self.report())
+
+    def test_a_failed_call_that_is_not_transient_is_not_resumed(self):
+        self.calls_round()
+        self.graph("G-001", self.N)
+        fleet_ctl._drive(self.N, True, spawn_call=self.script(("done", "NEXT: RUN G-001"), ("failed", "")),
+                         run_graphs=self.runner(), poll=0.01, chain_wait=2, resume_call=self.resumer())
+        self.assertNotIn("resumes", self.record())
+        self.assertIn("상태: PARTIAL", self.report())
+
     def test_stop_line_writes_the_minimal_close_with_the_reason_and_stops_the_chain(self):
         self.calls_round()
         fleet_ctl.chain_set(True, None, 3, "test", all_=True)

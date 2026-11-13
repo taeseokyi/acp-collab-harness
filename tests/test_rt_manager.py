@@ -765,5 +765,137 @@ class LeftoversWhenTheManagerEnds(Base):
         self.assertEqual([(h["kind"], h["graph"], h["node"], h["status"]) for h in got], [("node", "G-4", "T-908", "todo")])
 
 
+class ResumeAfterTransientApiError(Base):
+    """관리자가 잠깐의 API 오류로 끝나면 감시자가 같은 대화를 잇는다 - 작업자는 거두지 않고, 마감도 쓰지 않는다.
+    가짜 하네스에는 claude 의 result 사건이 없으므로 판정(`_manager_transient_end`)은 갈아 끼운다."""
+
+    def setUp(self):
+        super().setUp()
+        for pt in (mock.patch.object(fleet_ctl, "MANAGER_RESUME_BACKOFF_SEC", (0, 0)),):
+            pt.start()
+            self.addCleanup(pt.stop)
+
+    def failed_round(self, worker=True):
+        out = self.launch("emit 시작", "exit 1")
+        n, sid = out["round"], out["session"]
+        self.assertTrue(_wait(lambda: sessions.state(self.sroot / sid)["state"] == "failed", 10))
+        rid = None
+        if worker:
+            self.graphs.mkdir(parents=True, exist_ok=True)
+            rid = _spawn_worker("S2", n, "FAKE: hang", task_id="T-950")
+            fleet_graph._save({"id": "G-9", "round": n, "created": fleet_ctl._now(), "nodes": [
+                {"id": "T-950", "title": "도는 노드", "slot": "S2", "task": "x", "deps": [], "write": [], "max_attempts": 2,
+                 "status": "running", "attempts": [{"run_id": rid, "started": fleet_ctl._now()}]}]})
+            self.assertTrue(_wait(lambda: sessions.state(self.sroot / rid)["state"] == "running", 10))
+        return n, sid, rid
+
+    def transient(self, *sids):
+        return mock.patch.object(fleet_ctl, "_manager_transient_end", side_effect=lambda s: s in sids)
+
+    def test_a_transient_end_resumes_the_same_conversation_and_keeps_the_worker(self):
+        n, sid, rid = self.failed_round()
+        waits = []
+        with self.transient(sid):
+            self.assertTrue(fleet_ctl._try_resume_manager(n, sleep=waits.append))
+        self.assertEqual(waits, [0])
+        rec = json.loads((self.root / "rounds" / f"R{n}" / "round.json").read_text(encoding="utf-8"))
+        new = rec["session"]
+        self.assertNotEqual(new, sid)
+        self.assertEqual(rt_manager.round_of(new), n)
+        self.assertEqual([(r["from"], r["to"]) for r in rec["resumes"]], [(sid, new)])
+        meta = sessions.load_meta(self.sroot / new)
+        self.assertEqual(meta["extra"]["resume_session"], f"fake-{sid}")       # 끊긴 세션의 대화 id (사건에서)
+        self.assertEqual(meta["extra"]["harness_session_id"], f"fake-{sid}")
+        self.assertTrue(meta["label"].endswith("(이어 감)"))
+        self.assertEqual((meta["model"], meta["tools"], meta["timeout"], meta["extra"]["disallowed_tools"]),
+                         ("opus", rt_manager.MANAGER_TOOLS, float(rt_manager.MANAGER_TIMEOUT_SEC), rt_manager.MANAGER_DENIED))
+        self.assertIn("모델 API 오류", (self.sroot / new / "brief.md").read_text(encoding="utf-8"))
+        # 작업자·노드는 그대로, 마감 없음, 감시자를 새로 띄우지 않음(이 감시자가 계속 본다)
+        self.assertEqual(sessions.state(self.sroot / rid)["state"], "running")
+        self.assertEqual(fleet_graph._load("G-9")["nodes"][0]["status"], "running")
+        self.assertFalse(self.report_path(n).exists())
+        self.assertEqual(self.started, [n])
+        self.assertEqual(fleet_ctl.public_state()["manager"]["session"], new)
+
+    def test_the_watcher_keeps_watching_the_resumed_manager_and_the_chain_goes_on(self):
+        n, sid, rid = self.failed_round()
+        fleet_ctl.chain_set(True, None, 3, "test", all_=True)
+        with self.transient(sid), mock.patch.object(fleet_ctl, "chain_step", return_value={"ok": True}) as step:
+            self.assertEqual(fleet_ctl._watch(n, poll=0.05, wait=20), 0)
+        step.assert_called_once_with(n)                                      # 끊김으로 이어 달리기를 멈추지 않았다
+        rec = json.loads((self.root / "rounds" / f"R{n}" / "round.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(rec["resumes"]), 1)
+        self.assertEqual(sessions.state(self.sroot / rec["session"])["state"], "done")
+        self.assertFalse(self.report_path(n).exists())                      # 이은 관리자가 done - 최소 마감 없음
+        self.assertTrue(fleet_ctl.chain_state()["on"])
+
+    def test_after_the_resume_cap_the_old_path_runs(self):
+        n, sid, rid = self.failed_round()
+        f = self.root / "rounds" / f"R{n}" / "round.json"
+        rec = json.loads(f.read_text(encoding="utf-8"))
+        rec["resumes"] = [{"from": "a", "to": "b"}] * fleet_ctl.MANAGER_RESUME_MAX
+        f.write_text(json.dumps(rec), encoding="utf-8")
+        fleet_ctl.chain_set(True, None, 3, "test", all_=True)
+        with self.transient(sid):
+            self.assertEqual(fleet_ctl._watch(n, poll=0.05, wait=10), 0)
+        self.assertEqual([s["id"] for s in fleet_ctl.manager_sessions()], [sid])   # 새 관리자 없음
+        self.assertEqual(sessions.state(self.sroot / rid)["state"], "killed")      # 작업자를 거뒀다
+        self.assertIn("관리자 없이 끝남 (failed)", self.report_path(n).read_text(encoding="utf-8"))
+        st = fleet_ctl.chain_state()
+        self.assertEqual((st["on"], st["stopped_kind"]), (False, "report"))
+
+    def test_a_failure_that_is_not_transient_takes_the_old_path(self):
+        n, sid, rid = self.failed_round()
+        self.assertFalse(fleet_ctl._manager_transient_end(sid))                   # 진짜 판정: result 사건이 없다
+        self.assertFalse(fleet_ctl._try_resume_manager(n, sleep=self.fail))
+        self.assertEqual(fleet_ctl._watch(n, poll=0.05, wait=10, close_only=True), 0)
+        self.assertEqual(sessions.state(self.sroot / rid)["state"], "killed")
+        self.assertIn("상태: PARTIAL", self.report_path(n).read_text(encoding="utf-8"))
+        self.assertNotIn("resumes", json.loads((self.root / "rounds" / f"R{n}" / "round.json").read_text(encoding="utf-8")))
+
+    def test_a_done_manager_is_untouched(self):
+        out = self.launch("report DONE\\n끝")
+        n, sid = out["round"], out["session"]
+        self.assertTrue(_wait(lambda: sessions.state(self.sroot / sid)["state"] == "done", 10))
+        with self.transient(sid):
+            self.assertFalse(fleet_ctl._try_resume_manager(n, sleep=self.fail))
+        self.assertEqual([s["id"] for s in fleet_ctl.manager_sessions()], [sid])
+
+    def test_a_paused_fleet_is_not_resumed(self):
+        n, sid, _ = self.failed_round(worker=False)
+        fleet_ctl.pause("test")
+        with self.transient(sid):
+            self.assertFalse(fleet_ctl._try_resume_manager(n, sleep=self.fail))
+
+    def test_manual_resume_and_its_refusals(self):
+        n, sid, _ = self.failed_round(worker=False)
+        out = fleet_ctl.resume_manager(n, by="사람")
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(out["from"], sid)
+        self.assertEqual(self.started, [n, n])                              # 사람이 이으면 감시자를 다시 띄운다
+        new = out["session"]
+        self.assertTrue(_wait(lambda: sessions.state(self.sroot / new)["state"] == "done", 10))
+        self.report_path(n).write_text("# 보고\n\n상태: DONE\n", encoding="utf-8")
+        self.assertIn("REPORT.md", fleet_ctl.resume_manager(n)["error"])
+        self.report_path(n).unlink()
+        hang = self.launch_next_hanging(n)
+        self.assertIn("실행 중인 관리자", fleet_ctl.resume_manager(hang)["error"])
+
+    def launch_next_hanging(self, n):
+        """보고를 두고 다음 라운드를 띄운다 - 도는 관리자가 있을 때의 거절을 보려고."""
+        self.report_path(n).write_text("# 보고\n\n상태: DONE\n", encoding="utf-8")
+        out = self.launch("hang")
+        self.assertTrue(_wait(lambda: sessions.state(self.sroot / out["session"])["state"] == "running", 10))
+        return out["round"]
+
+    def test_manual_resume_without_a_conversation_id_is_refused(self):
+        fleet_ctl.set_mode("running", "test")
+        self.fake_session("M-R4-100000", 4, end_state="failed")
+        out = fleet_ctl.resume_manager(4)
+        self.assertFalse(out["ok"])
+        self.assertIn("대화 id", out["error"])
+        self.assertEqual(self.started, [])
+
+
 if __name__ == "__main__":
     unittest.main()
