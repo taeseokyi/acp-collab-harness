@@ -916,8 +916,26 @@ ARCHIVE_TERMINAL_NODE = ("done", "failed", "blocked")
 ARCHIVE_REQUEST_CLOSED = ("DONE", "REJECTED")
 
 
+_TOKEN_RE = re.compile(r"[0-9A-Za-z-]+")
+_TOKEN_CACHE = {}
+
+
 def _mentions(body, ident):
-    return re.search(r"(?<![0-9A-Za-z-])" + re.escape(ident) + r"(?![0-9A-Za-z-])", body or "") is not None
+    """본문에 식별자가 **낱말로** 들어 있나 (앞뒤가 영숫자·`-` 가 아님).
+
+    본문마다 식별자 꼴 낱말을 한 번만 뽑아 집합으로 본다. 예전에는 (본문 × 식별자) 마다 정규식을 새로 만들어
+    기록이 쌓이자 정규식 캐시가 넘쳐 아카이브 계획 하나가 30초를 넘겼다 (2026-11-13 실측, 47만 번 컴파일).
+    """
+    ident = str(ident)
+    if not _TOKEN_RE.fullmatch(ident):          # 영숫자·`-` 밖의 글자가 든 식별자는 옛 방식 그대로
+        return re.search(r"(?<![0-9A-Za-z-])" + re.escape(ident) + r"(?![0-9A-Za-z-])", body or "") is not None
+    key = body or ""
+    toks = _TOKEN_CACHE.get(key)
+    if toks is None:
+        if len(_TOKEN_CACHE) > 20000:
+            _TOKEN_CACHE.clear()
+        toks = _TOKEN_CACHE[key] = frozenset(_TOKEN_RE.findall(key))
+    return ident in toks
 
 
 def _iso(v):

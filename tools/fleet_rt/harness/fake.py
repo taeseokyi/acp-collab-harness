@@ -11,6 +11,7 @@
     FAKE: env <이름>               {"type":"text","text":"<이름>=<값>"} (없으면 `<이름>=` ) - 환경 표식 확인용
     FAKE: write <상대경로> <글>    작업 폴더(cwd) 아래에 파일을 쓴다. 절대 경로·`..` 은 거절(rc 2)
     FAKE: sleep <초>               잠깐 쉰다
+    FAKE: detached-busy <초>      setsid 로 떨어진 손자가 그만큼 데이터를 읽는 동안 사건 없이 기다린다 (백그라운드 작업)
     FAKE: busy-read <초>          사건 없이 그만큼 데이터를 계속 읽는다 (긴 생성 중인 하네스 - 침묵으로 치면 안 된다)
     FAKE: hang                     사건 하나({"type":"text","text":"hang"}) 내고 영원히 잔다 (침묵 감지·끊기 검사)
     FAKE: ignore-term              SIGTERM 을 무시한다 (SIGKILL 길 검사)
@@ -170,6 +171,12 @@ def _run(brief_path):
             dst.write_text(body.replace("\\n", "\n"), encoding="utf-8")
         elif word == "sleep":
             time.sleep(float(rest))
+        elif word == "detached-busy":
+            # 사건 없이, 그룹을 벗어난(setsid) 손자가 <초> 동안 데이터를 읽는 동안 기다린다 - 백그라운드 작업 흉내
+            secs = float(rest or "3")
+            code = ("import time\nend=time.time()+%r\nf=open('/dev/urandom','rb')\n"
+                    "while time.time()<end:\n f.read(65536); time.sleep(0.05)\n") % secs
+            subprocess.Popen([sys.executable, "-c", code], start_new_session=True, **quiet).wait()
         elif word == "busy-read":
             # 사건은 내지 않고 데이터만 계속 읽는다 - 긴 생성 중인 하네스(토큰이 소켓으로 들어오는 중)를 흉내 (침묵 오판 검사)
             end = time.time() + float(rest or "3")

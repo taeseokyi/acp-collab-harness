@@ -196,6 +196,13 @@ class TestRun(Base):
         self.assertIn("읽기도 없음", st2["why"])
         self.assertTrue(_wait(lambda: not self.group_of(d) and not self.group_of(d2), 5))   # 감독이 DB 를 적고 끝날 때까지
 
+    def test_reading_by_a_detached_child_is_not_silence(self):
+        """하네스가 그룹을 벗어난(setsid) 백그라운드 명령을 기다리는 동안도, 그 명령이 읽고 있으면 침묵이 아니다."""
+        d = self.spawn(["detached-busy 5", "emit 끝"], idle_timeout=2.5)
+        st = self.wait_end(d, 20)
+        self.assertEqual(st["state"], "done", st)
+        self.assertTrue(_wait(lambda: not self.group_of(d), 5))
+
     def test_timeout(self):
         d = self.spawn(["emit 시작", "sleep 30"], timeout=1.5)
         st = self.wait_end(d)

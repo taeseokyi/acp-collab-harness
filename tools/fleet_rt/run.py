@@ -199,13 +199,24 @@ class Supervisor:
                 yield ev
 
     def _group_rchar(self):
-        """내 프로세스 그룹에서 나를 뺀 프로세스들이 지금까지 읽은 바이트 합 (`/proc/<pid>/io` rchar). 못 읽으면 0."""
+        """이 세션의 프로세스들(나 말고)이 지금까지 읽은 바이트 합 (`/proc/<pid>/io` rchar). 못 읽으면 0.
+
+        '이 세션의 프로세스' = 내 프로세스 그룹 + 세션 표식을 단 프로세스 전부. 하네스가 백그라운드로 떼어 낸 명령
+        (`setsid`·Claude Code 의 백그라운드 작업)은 그룹을 벗어나지만 표식은 물려받는다 - 그것도 일하는 중으로 센다
+        (R24 T-288: Opus 검수자가 변이 시험 23개를 백그라운드로 돌리며 기다리다 '침묵 600초' 로 끊김, 2026-11-13).
+        """
         me, total = os.getpid(), 0
+        pids = set()
         try:
-            pgid = os.getpgid(0)
+            pids.update(sessions.group_members(os.getpgid(0), exclude=(me,)))
         except OSError:
-            return 0
-        for p in sessions.group_members(pgid, exclude=(me,)):
+            pass
+        try:
+            pids.update(sessions._session_remnants(self.d))
+        except Exception:  # noqa: BLE001 - 훑기가 실패해도 그룹만으로 판정한다
+            pass
+        pids.discard(me)
+        for p in pids:
             try:
                 for line in open(f"/proc/{p}/io", encoding="ascii"):
                     if line.startswith("rchar:"):
