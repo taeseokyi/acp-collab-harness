@@ -551,7 +551,15 @@ def sync_rev_in_aimem():
 def render(sync_aimem=True):
     body = render_text()
     state_md = ROOT / "AIMEM-state.md"
-    state_md.write_text(body, encoding="utf-8")
+
+    def unstamped(text):                 # 생성 시각 줄만 다른 것은 같은 스냅샷이다
+        return [ln for ln in text.splitlines() if not ln.startswith(STAMP_PREFIX)]
+    try:
+        old = state_md.read_text(encoding="utf-8")
+    except OSError:
+        old = None
+    if old is None or unstamped(old) != unstamped(body):   # 내용이 같으면 다시 쓰지 않는다 - 준비 점검마다 작업 트리가 더러워지지 않게
+        state_md.write_text(body, encoding="utf-8")
     bumped = sync_rev_in_aimem() if sync_aimem else None
     handoff_sync()   # .aimem/handoff.md 도 DB 에서 만드는 생성물이다
     print(f"render: {state_md} ({body.count(chr(10))} lines)"
