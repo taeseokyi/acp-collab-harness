@@ -1,0 +1,6 @@
+{
+  "name": "jamo-guess",
+  "private": true,
+  "type": "module",
+  "description": "의존성 없음. node 가 js 파일을 ESM 으로 읽게 하는 표시일 뿐 - npm install 할 것이 없습니다."
+}

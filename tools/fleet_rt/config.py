@@ -29,11 +29,16 @@ DEFAULTS = {
     },
     "manager": {"mode": "resident"},
     "time": {"zone": "Asia/Seoul"},
+    "policy": {"default": "cost"},
 }
 
 #: 관리자 운용 방식 (설계 5.9). `resident` 는 관리자 하나가 라운드 내내 산다(지금까지의 방식).
 #: `calls` 는 관리자가 계획·판정·마감 세 곳에서만 짧게 뜨고, 그 사이 그래프는 엔진(`fleet_ctl` 의 라운드 구동기)이 돌린다.
 MANAGER_MODES = ("resident", "calls")
+
+#: 라운드 운영 방식 - 관리자가 슬롯을 어떻게 쓰나. 관리자에게 주는 지시 한 덩이만 다르고 엔진의 배정은 같다.
+#: cost(무료 중심, 지금까지의 방식) · quality(품질 중심) · speed(빠른 구현)
+POLICIES = ("cost", "quality", "speed")
 
 #: claude CLI 가 받는 모델 별칭·꼴: 이런 이름은 공급자 접두 없이도 anthropic 이다
 _CLAUDE_ALIASES = ("opus", "sonnet", "haiku", "fable")
@@ -99,6 +104,10 @@ class Config:
         """`[manager] mode` - `resident`(기본) 또는 `calls`. 표가 없으면 기본값 - 옛 설정 파일도 그대로 돈다."""
         return str((self.data.get("manager") or {}).get("mode") or "resident")
 
+    def policy_default(self):
+        """`[policy] default` - 라운드를 띄울 때 운영 방식을 따로 고르지 않으면 이것. 표가 없으면 `cost`(지금까지의 방식)."""
+        return str((self.data.get("policy") or {}).get("default") or "cost")
+
     def models_for(self, harness):
         """모니터 모델 선택기용 목록. claude 는 공급자 접두 없는 별칭, 나머지는 `공급자/모델`."""
         out = []
@@ -141,7 +150,7 @@ def _copy(d):
 
 
 def _validate(data):
-    for sec in ("providers", "harness", "manager", "time"):
+    for sec in ("providers", "harness", "manager", "time", "policy"):
         if not isinstance(data.get(sec, {}), dict):
             raise ConfigError(f"{FILE}: [{sec}] 가 표가 아닙니다")
     for name, p in data.get("providers", {}).items():
@@ -162,3 +171,7 @@ def _validate(data):
     if mode not in MANAGER_MODES:
         # 모르는 값을 기본값으로 삼키지 않는다 - 'call' 같은 오타로 사람이 고른 방식과 다르게 돌면 비용이 달라진다
         raise ConfigError(f"{FILE}: manager.mode 는 {' · '.join(MANAGER_MODES)} 가운데 하나여야 합니다 (받은 값 {mode!r})")
+    policy = data.get("policy", {}).get("default", "cost")
+    if policy not in POLICIES:
+        # 오타를 기본값으로 삼키면 사람이 고른 것과 다른 비용으로 돈다 - manager.mode 와 같은 까닭
+        raise ConfigError(f"{FILE}: policy.default 는 {' · '.join(POLICIES)} 가운데 하나여야 합니다 (받은 값 {policy!r})")

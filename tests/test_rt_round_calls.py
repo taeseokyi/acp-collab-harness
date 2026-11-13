@@ -654,7 +654,9 @@ class Launch(Base):
         self.assertNotIn("calls", rec)
         self.assertTrue(_wait(lambda: fleet_ctl.manager_running(), 10))
         m = fleet_ctl.public_state()["manager"]
-        self.assertEqual(set(m), {"round", "label", "session", "state", "by", "at", "ended", "brief", "workspace", "last_event_at"})
+        self.assertEqual(set(m), {"round", "label", "session", "state", "by", "at", "ended", "brief", "workspace", "last_event_at",
+                                  "policy"})
+        self.assertEqual(m["policy"], "cost")                      # 고르지 않으면 기본값 (정책 파일이 없어도 cost 는 뜬다)
         self.assertNotIn("phase", sessions.load_meta(self.sroot / out["session"])["extra"])
         self.assertEqual(sessions.load_meta(self.sroot / out["session"])["timeout"], rt_manager.MANAGER_TIMEOUT_SEC)
         fleet_ctl.stop("test")

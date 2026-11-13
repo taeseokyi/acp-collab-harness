@@ -85,6 +85,21 @@ class ConfigTest(unittest.TestCase):
             with self.assertRaises(config.ConfigError, msg=bad):
                 config.load(root_with(bad))
 
+    def test_policy_default(self):
+        """`[policy] default` - 기본은 cost(무료 중심). 표가 없는 옛 설정도 cost. 모르는 값은 읽을 때 거절."""
+        self.assertEqual(config.POLICIES, ("cost", "quality", "speed"))
+        self.assertEqual(config.load(REPO).policy_default(), "cost")
+        self.assertEqual(config.load(self.root).policy_default(), "cost")      # 파일이 없으면 기본
+        def root_with(text):
+            d = pathlib.Path(tempfile.mkdtemp(dir=self.root))
+            (d / "fleet.toml").write_text(text, encoding="utf-8")
+            return d
+        self.assertEqual(config.load(root_with('[providers.a]\nmodels = ["x"]\n')).policy_default(), "cost")
+        self.assertEqual(config.load(root_with('[policy]\ndefault = "speed"\n')).policy_default(), "speed")
+        for bad in ('[policy]\ndefault = "fast"\n', 'policy = "speed"\n', '[policy]\ndefault = 1\n', '[policy]\ndefault = ""\n'):
+            with self.assertRaises(config.ConfigError, msg=bad):
+                config.load(root_with(bad))
+
     def test_malformed_raises(self):
         (self.root / "fleet.toml").write_text("[providers.x\nfoo =", encoding="utf-8")
         with self.assertRaises(config.ConfigError):

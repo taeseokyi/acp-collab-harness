@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/a
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 170** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-13 14:37 KST
+- **REV: 172** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-13 20:07 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **the `role=manager` session the engine starts for a round** (harness claude,
@@ -333,8 +333,8 @@ directly, in parallel (`[REV 129 내림] 8.0`).
 - **Parallel by default:** several `spawn`s in one turn, one `wait`; the reviewer launches alongside the next task;
   2~5 concurrent (`8.1`). When the Manager's turn is longer than the workers' total, cut bookkeeping, not briefs
 - **kistillm workers** execute correctly but may paste the wrong output summary - the Manager reproduces
-  verification itself (`8.0-4`). Their delay is the accepted price of cost saving: **never substitute a paid model.**
-  An outage is recorded (run id, error, time) in the handoff log and the task stays `BLOCKED`
+  verification itself (`8.0-4`). Under the `cost` policy their delay is the accepted price: **never substitute a paid
+  model** - an outage is recorded (run id, error, time) in the handoff log and the task stays `BLOCKED`
 - **Check ("high-five") report format:** exactly one line, nothing before or after:
   `하이파이브 S<n> OK | REV <N> | 토큰 <t> | 시각 <KST HH:MM> | cwd <pwd> | 모델 <own model or unknown>`
 - **Delegation files** name "the Manager session written in the AIMEM.md header"; their exception list is
@@ -476,8 +476,12 @@ used and **the round's tasks are the `NEW` requests**; with nothing to do the Ma
    assign role → `DONE`. Mid-round arrivals are judged the same way at every checkpoint
 
 **Graph and verify rules** (standing; the round brief repeats them in Korean)
-- **Free slots build and fix; paid slots (S1, S4) judge, design and review adversarially.** A build or fix given
-  to a paid slot is listed with its reason in report item (6). Never move a failed free task to a paid slot
+- **Slot use follows the round's operating policy** (chosen at launch; default `fleet.toml` `[policy] default`):
+  `cost` (무료 중심) - free slots build and fix, paid slots (S1, S4) only judge and review, a failed free task is
+  never moved to a paid slot; `quality` (품질 중심) - core nodes may go to paid slots, every graph gets an
+  adversarial review and a re-review; `speed` (빠른 구현) - every slot builds in parallel, a blocked free task moves
+  to a paid slot. The policy text is appended to the Manager's brief (`.aimem/briefs/policy-<key>.md`). A build or
+  fix given to a paid slot is listed with its reason in report item (6)
 - **Parallel graphs:** a `deps` edge only where a node reads another's output. Fix the interface (file and function
   names, input/output shapes) first and put it in each brief, so logic, UI, styles and tests can sit side by side;
   spread one level over different slots (different providers run at the same time); reviews go last.

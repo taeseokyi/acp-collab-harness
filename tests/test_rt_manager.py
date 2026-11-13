@@ -236,7 +236,9 @@ class LaunchAndStop(Base):
         m = st["manager"]
         self.assertEqual((m["round"], m["session"], m["by"], m["workspace"]), (8, sid, "test", "rounds/R8"))
         self.assertIn(m["state"], ("launching", "running"))
-        self.assertEqual(set(m), {"round", "label", "session", "state", "by", "at", "ended", "brief", "workspace", "last_event_at"})
+        self.assertEqual(set(m), {"round", "label", "session", "state", "by", "at", "ended", "brief", "workspace", "last_event_at",
+                                  "policy"})
+        self.assertEqual(m["policy"], "cost")                      # 고르지 않으면 기본값 (정책 파일이 없어도 cost 는 뜬다)
         self.assertNotIn("relay", st)
         self.assertFalse(st["idle"])
         self.assertFalse(st["can"]["round"])

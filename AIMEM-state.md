@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-13T14:37:49 / REV 170
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-13T20:07:35 / REV 172
 
 ## 2. 세션 명부
 
@@ -195,70 +195,100 @@
 | T-273 | Q-261113-a22b | 시험: FIFO·큰 메타 회귀 + 한도 판정 시험 구멍 (R22-P4·R22-S1·R22-S2) | S3 | DONE |  |
 | T-274 | Q-261113-a22b | browser_monitor_ui.py: 이번 라운드 값 고정 자료 + 잘린 제목 펼침 (R22-Q3·R22-Q4) | S3 | DONE |  |
 | T-275 | Q-261113-a22b | 검수: R22-P4·S1·S2·Q3·Q4 수정 | S1 | DONE |  |
+| T-276 | Q-261113-bd56 | jamo.js: 칸 풀기·조합·두벌식 자판 표 | S2 | DONE |  |
+| T-277 | Q-261113-bd56 | 낱말 목록: 원본 + build_words.py → words.js + test_words.py | S3 | DONE |  |
+| T-278 | Q-261113-bd56 | game.js: 웹워들 로직을 6칸 자모로 | S2 | DONE |  |
+| T-279 | Q-261113-bd56 | ui.js: 자모 자판·e.code 입력·미리보기·날마다/연습 | S2 | DONE |  |
+| T-280 | Q-261113-bd56 | index.html·style.css·storage.js: 제목·도움말·모드·미리보기·6칸 | S3 | DONE |  |
+| T-281 | Q-261113-bd56 | 단위 검사: test_jamo.mjs + test_game.mjs | S3 | DONE |  |
+| T-282 | Q-261113-bd56 | 브라우저 검사 browser_game.py | S3 | DONE |  |
+| T-283 | Q-261113-bd56 | 적대적 검수: 자모맞히기 1차 | S1 | DONE |  |
+| T-284 | Q-261113-bd56 | 낱말 목록 손질 (R24-N1·N2·N3·N11) | S2 | DONE |  |
+| T-285 | Q-261113-bd56 | ui.js 모드 오가기 정리 (R24-N4·N5·N6·N7·N8·N13) | S3 | DONE |  |
+| T-286 | Q-261113-bd56 | storage.js 시스템 어두운 모드 + 접두어 시험 (R24-N9·N12) | S3 | DONE |  |
+| T-287 | Q-261113-bd56 | 브라우저 회귀 검사 browser_modes.py (R24-N4~N9·N12·N13) | S3 | DONE |  |
+| T-288 | Q-261113-bd56 | 재검수: R24-N1~N13 닫힘 + 목표 판정 | S1 | DONE |  |
+| T-289 | Q-261113-bd56 | ui.js: 끝난 연습 판 유지 (T-287 NEEDS-FIX) | S3 | DONE |  |
+| T-290 | Q-261113-bd56 | 추측 목록 보강 1000 + 오기·어근 빼기 (R24 재검수 N1·N2·N3) | S2 | DONE |  |
+| T-291 | Q-261113-bd56 | 새 날 연습 정답 토스트 + 시험 빈틈 셋 (R24 재검수 N4·N6) | S3 | DONE |  |
+| T-292 | Q-261113-bd56 | 3차 확인(가벼움) | S1 | DONE |  |
+| T-293 | Q-261113-bd56 | 하드 모드 설정이 빈 판에 바로 닿게 (R24-N5 하) + 시험 | S3 | ASSIGNED |  |
+| T-294 | Q-261113-bd56 | 추측 목록 갈래 1: 생활(음식·집·옷·몸·건강) 300개+ (R24-N1) | S2 | IN-PROGRESS |  |
+| T-295 | Q-261113-bd56 | 추측 목록 갈래 2: 사회(학교·일·돈·교통·장소) 300개+ (R24-N1) | S3 | IN-PROGRESS |  |
+| T-296 | Q-261113-bd56 | 추측 목록 갈래 3: 자연·마음(날씨·동식물·시간·감정·놀이) 300개+ (R24-N1) | S3 | ASSIGNED |  |
+| T-297 | Q-261113-bd56 | 추측 목록 갈래 4: 풀이씨(동사·형용사 기본형) 250개+ (R24-N1) | S2 | ASSIGNED |  |
+| T-298 | Q-261113-bd56 | build_words 가 data/words/*.txt 읽기 + test_words 2000·까닭·경계 6개 빼기 (R24-N1·N2·N3) | S2 | ASSIGNED |  |
+| T-299 | Q-261113-bd56 | 적대적 검수: 새 표본으로 덮는 범위·지어낸 말 + N5 변이 + 목표 판정 | S1 | ASSIGNED |  |
 
 ## 4. 이벤트 로그 (최신 50)
 
+- `2026-11-13 20:07` 클로드 코드 [handoff] REV 172: **REV 172. 운영 방식(무료 중심·품질 중심·빠른 구현) + 함대 정지 (태석님 지시).** (1) **운영 방식**: 라운드를 띄울 때 `cost`(무료 중심, 기본)·`quality`(품질 중심)·`speed`(빠른 구현)를 고른다 - `fleet_ctl.py round --policy …`, `chain on --policy …`, 모니터의 라운드 실행·이어 달리기 칸. 고른 방식의 규칙(`.aimem/briefs/policy-<key>.md`)이 관리자 브리프 끝에 붙고 `rounds/R<N>/policy.md`·`r
+- `2026-11-13T19:31:55` 관리자 [graph] REV 171: R26 시작: R25 관리자가 API 오류로 끊긴 G-060(7노드, 모두 todo)을 이어받음. T-299 검수 산출물을 rounds/R25/REVIEW-r25.md -> rounds/R26/REVIEW-r26.md 로 옮기고(라운드 폴더 규칙) 그래프의 round 를 26 으로 고쳐 이 라운드의 상한·INBOX 에 묶었다.
+- `2026-11-13T19:31:15` 관리자 [ownership] REV 171: rounds/R26/REVIEW-r26.md -> S1
+- `2026-11-13T18:39:05` 그래프 실행기 [task] REV 171: T-295 IN-PROGRESS S3
+- `2026-11-13T18:39:05` 그래프 실행기 [task] REV 171: T-294 IN-PROGRESS S2
+- `2026-11-13T18:39:05` M-R25 [round] REV 171: R25 시작: 태석님 결정(공개 사전 자료) 없음 - R24 대안대로 갈래 4파일(S2 생활·풀이씨, S3 사회·자연마음)로 추측 목록 넓힘 + R24-N5 하드 모드 + 검수. G-060 노드 7 (T-293~T-299)
+- `2026-11-13T18:39:01` 관리자 [request] REV 171: Q-261113-bd56 IN-PROGRESS
+- `2026-11-13T18:37:13` 관리자 [ownership] REV 171: rounds/R25/REVIEW-r25.md -> S1
+- `2026-11-13T18:37:13` 관리자 [ownership] REV 171: projects/자모맞히기/data/words/자연마음.txt -> S3
+- `2026-11-13T18:37:13` 관리자 [ownership] REV 171: projects/자모맞히기/data/words/사회.txt -> S3
+- `2026-11-13T18:37:13` 관리자 [ownership] REV 171: projects/자모맞히기/data/words/풀이씨.txt -> S2
+- `2026-11-13T18:37:13` 관리자 [ownership] REV 171: projects/자모맞히기/data/words/생활.txt -> S2
+- `2026-11-13T18:37:11` 관리자 [task] REV 171: T-299 ASSIGNED S1 적대적 검수: 새 표본으로 덮는 범위·지어낸 말 + N5 변이 + 목표 판정
+- `2026-11-13T18:37:11` 관리자 [task] REV 171: T-298 ASSIGNED S2 build_words 가 data/words/*.txt 읽기 + test_words 2000·까닭·경계 6개 빼기 (R24-N1·N2·N3)
+- `2026-11-13T18:37:11` 관리자 [task] REV 171: T-297 ASSIGNED S2 추측 목록 갈래 4: 풀이씨(동사·형용사 기본형) 250개+ (R24-N1)
+- `2026-11-13T18:37:11` 관리자 [task] REV 171: T-296 ASSIGNED S3 추측 목록 갈래 3: 자연·마음(날씨·동식물·시간·감정·놀이) 300개+ (R24-N1)
+- `2026-11-13T18:37:11` 관리자 [task] REV 171: T-295 ASSIGNED S3 추측 목록 갈래 2: 사회(학교·일·돈·교통·장소) 300개+ (R24-N1)
+- `2026-11-13T18:37:11` 관리자 [task] REV 171: T-294 ASSIGNED S2 추측 목록 갈래 1: 생활(음식·집·옷·몸·건강) 300개+ (R24-N1)
+- `2026-11-13T18:37:10` 관리자 [task] REV 171: T-293 ASSIGNED S3 하드 모드 설정이 빈 판에 바로 닿게 (R24-N5 하) + 시험
+- `2026-11-13 18:32` 관리자 M-R24 [handoff] REV 171: **REV 171. R24 자모맞히기 첫 구현 (요청 Q-261113-bd56, PARTIAL - 목표 13/15).** 태석님 덧붙임대로 projects/웹워들 의 web/·serve.py·시험 하네스를 관리자가 복사해 출발점으로 두고 자모 6칸으로 바꿨다(R23 설계는 버림). 그래프 G-056(만들기 8)·G-057·G-058(검수 수정 6)·G-059(보강 2), 태스크 17/18, 적대적 검수 3번(rounds/R24/REVIEW-r24*.md). 시험 node 66·python 11·브라우저 121+76 통과, 함대 10
+- `2026-11-13T18:28:49` 관리자 [request] REV 170: Q-261113-bd56 PLANNED
+- `2026-11-13T18:28:49` M-R24 [queue] REV 170: queue +2 [자모맞히기] 하드 모드 설정이 다른 모드의 빈 판에는 새로 고칠 때까지 안 닿음 - 연습에서 하드를 켜고 빈 날마다 판으로 오면 체크박스는 꺼짐(판 값), 저장 설정은 켜짐 (rounds/R24/REVIEW-r24-2.md 의 R24-N5, 하)
+- `2026-11-13T18:28:49` M-R24 [queue] REV 170: queue +1 [자모맞히기] 추측 목록(ALLOWED)의 덮는 범위: 흔한 6칸 낱말 새 표본 60개 중 57개가 거절됨 - 시험(MUST)에 적힌 낱말만 덮음. 이용 조건이 분명한 공개 사전 자료(예: 우리말샘·표준국어대사전 공개 자료, 학습용 기초 어휘 목록)에서 6칸을 뽑는 길은 내려받기·이용 조건이 걸려 태석님 결정이 먼저. 같이: README 예 '까닭' 이 ALLOWED 에 없음, 어근·경계 낱말 희한 민망 괴악 희식 화성 국전 (rounds/R24/REVIEW-r24-3.md 의 R24-N1·N2·N3)
+- `2026-11-13T18:28:36` M-R24 [graph] REV 170: G-059 끝: T-290·T-291·T-292 DONE (모두 1회). 3차 확인 REVIEW-r24-3: 시험 node 66·py 11·browser 121+76 모두 초록, 변이 9 중 8 잡힘. 2차 N1·N3·N4·N6 닫힘, N2(덮는 범위) 아니오 - 새 흔한 6칸 낱말 60 중 57 거절(MUST 에 넣은 것만 덮음), N5(하드 모드) 범위 밖. 목표 13/15. 라운드 태스크 17/18 이라 낱말 범위는 다음 라운드
+- `2026-11-13T18:28:36` 관리자 [task] REV 170: T-292 DONE
+- `2026-11-13T18:28:36` 관리자 [task] REV 170: T-291 DONE
+- `2026-11-13T18:28:36` 관리자 [task] REV 170: T-290 DONE
+- `2026-11-13T18:28:17` 그래프 실행기 [task] REV 170: T-292 REVIEW S1
+- `2026-11-13T18:13:33` 그래프 실행기 [task] REV 170: T-292 IN-PROGRESS S1
+- `2026-11-13T18:13:33` 그래프 실행기 [task] REV 170: T-290 REVIEW S2
+- `2026-11-13T17:56:05` 그래프 실행기 [task] REV 170: T-291 REVIEW S3
+- `2026-11-13T17:44:45` 그래프 실행기 [task] REV 170: T-291 IN-PROGRESS S3
+- `2026-11-13T17:44:45` 그래프 실행기 [task] REV 170: T-290 IN-PROGRESS S2
+- `2026-11-13T17:44:42` 관리자 [task] REV 170: T-292 TODO S1 3차 확인(가벼움)
+- `2026-11-13T17:44:41` 관리자 [task] REV 170: T-291 TODO S3 새 날 연습 정답 토스트 + 시험 빈틈 셋 (R24 재검수 N4·N6)
+- `2026-11-13T17:44:41` 관리자 [task] REV 170: T-290 TODO S2 추측 목록 보강 1000 + 오기·어근 빼기 (R24 재검수 N1·N2·N3)
+- `2026-11-13T17:44:41` 관리자 [ownership] REV 170: rounds/R24/REVIEW-r24-3.md -> S1
+- `2026-11-13T17:44:41` M-R24 [graph] REV 170: G-057·G-058 끝: T-284~T-289 DONE (T-284 첫 시도 no-op, T-287 은 NEEDS-FIX→T-289 수정→재시도 통과, T-288 은 침묵 600초로 한 번 재기동). 재검수 REVIEW-r24-2: 1차 13건 중 12 닫힘(N2 부분), 시험 node 66·py 11·browser 121+62, 변이 28 중 22 잡힘, 새 결함 6건 모두 하. 목표 13/15 닫아도 됨(낱말 목록·검사 남음). 다음: G-059(낱말 보강·새 날 토스트·시험 빈틈·3차 확인)
+- `2026-11-13T17:44:41` 관리자 [task] REV 170: T-288 DONE
+- `2026-11-13T17:44:41` 관리자 [task] REV 170: T-287 DONE
+- `2026-11-13T17:44:41` 관리자 [task] REV 170: T-286 DONE
+- `2026-11-13T17:44:41` 관리자 [task] REV 170: T-285 DONE
+- `2026-11-13T17:44:41` 관리자 [task] REV 170: T-284 DONE
+- `2026-11-13T17:43:11` 그래프 실행기 [task] REV 170: T-288 REVIEW S1
+- `2026-11-13T17:06:36` 그래프 실행기 [task] REV 170: T-288 IN-PROGRESS S1
+- `2026-11-13T17:06:36` 그래프 실행기 [task] REV 170: T-284 REVIEW S2
+- `2026-11-13T16:31:34` 그래프 실행기 [task] REV 170: T-287 REVIEW S3
+- `2026-11-13T16:28:01` 그래프 실행기 [task] REV 170: T-287 IN-PROGRESS S3
+- `2026-11-13T16:28:01` 관리자 [task] REV 170: T-289 DONE
+- `2026-11-13T16:27:55` 그래프 실행기 [task] REV 170: T-289 REVIEW S3
 - `2026-11-13 14:37` 클로드 코드 [handoff] REV 170: **REV 170. 관리자에게 도중에 말 전하기 + 병렬 그래프 규칙 (태석님 지시).** (1) R23(자모맞히기 첫 라운드)은 태석님이 요청에 '화면·게임 방식은 웹워들과 비슷하게' 를 덧붙였는데 관리자가 이미 요청을 읽은 뒤라 반영할 길이 없어, 작업자가 뜨기 전에 완전 중지했다(최소 마감 PARTIAL, 태스크·그래프 없음, 요청은 NEW 그대로). 관리자가 쓰다 만 `projects/자모맞히기/` 뼈대와 `.aimem/graph/inputs/r23/` 는 다음 관리자가 보고 쓰거나 버린다. (2) **`fleet_ctl.p
-- `2026-11-13T14:27:35` 관리자 [ownership] REV 169: rounds/R23/REVIEW-r23*.md -> S1
-- `2026-11-13T14:27:35` 관리자 [ownership] REV 169: projects/자모맞히기/tests/browser_game.py -> S3
-- `2026-11-13T14:27:35` 관리자 [ownership] REV 169: projects/자모맞히기/tests/test_logic.mjs -> S3
-- `2026-11-13T14:27:34` 관리자 [ownership] REV 169: projects/자모맞히기/tests/test_words.py -> S3
-- `2026-11-13T14:27:34` 관리자 [ownership] REV 169: projects/자모맞히기/web/css/** -> S3
-- `2026-11-13T14:27:34` 관리자 [ownership] REV 169: projects/자모맞히기/web/js/words.js -> S3
-- `2026-11-13T14:27:34` 관리자 [ownership] REV 169: projects/자모맞히기/tools/** -> S3
-- `2026-11-13T14:27:34` 관리자 [ownership] REV 169: projects/자모맞히기/data/** -> S3
-- `2026-11-13T14:27:31` 관리자 [ownership] REV 169: projects/자모맞히기/app.json -> S2
-- `2026-11-13T14:27:31` 관리자 [ownership] REV 169: projects/자모맞히기/web/index.html -> S2
-- `2026-11-13T14:27:31` 관리자 [ownership] REV 169: projects/자모맞히기/web/js/app.js -> S2
-- `2026-11-13T14:27:31` 관리자 [ownership] REV 169: projects/자모맞히기/web/js/game.js -> S2
-- `2026-11-13T14:27:31` 관리자 [ownership] REV 169: projects/자모맞히기/web/js/jamo.js -> S2
-- `2026-11-13T14:17:12` fleet.py [slot] REV 169: slot set S3: 하네스 claude→opencode, 모델 sonnet→opencode/deepseek-v4.1-flash-free
-- `2026-11-13T14:17:12` fleet.py [slot] REV 169: slot set S2: 하네스 claude→codex, 모델 sonnet→kisti/kistillm
 - `2026-11-13 13:54` 클로드 코드 [handoff] REV 169: **REV 169. 공급자 동시 실행은 규칙이 아니라 설정 (태석님 지시).** kistillm 이 돌아와 동시 처리 수를 쟀다(요청마다 다른 1.6만 토큰 입력·256 토큰 출력, 2회): 동시 1 약 20초, 동시 2 둘 다 약 39초, 동시 3 셋 다 약 57초 - 서버는 함께 받지만 처리량이 고정이라 나눠 먹는다. 그래서 지금 `fleet.toml` `[providers.kisti] max_concurrent = 1`. 태석님 방침: 자원이 늘면 동시 실행이 득일 수 있으니 열어 둔다 - 엔진은 이 숫자만 보고, 올릴 때는 
-- `2026-11-13T08:58:12` 클로드 코드 [queue] REV 168: 대기 큐 2건 처리(태석님 지시): R22-N1 - fleet.py wait 의 stderr 읽기도 FIFO 안전하게, step() 단위 FIFO 회귀 검사. R22-N2·N3·N4 - 세션 meta 상한·read_regular_bytes 의 장치 거절과 fd 닫기·'이번 라운드' 둘째 줄 검사. 변이 시험으로 옛 동작을 잡는 것 확인.
-- `2026-11-13T08:58:12` 관리자 [queue] REV 168: queue -1 FIFO 에서 step() 이 아직 막힘(R22-N1, 낮음): fleet_graph.step() 이 run_limit_signal 보다 먼저 fleet.run_report 로 같은 .out 을 read_text 하고(tools/fleet.py run_report), .rc 가 FIFO 면 _run_state 의 rc.read_text 도 막힘. .out·.rc·.err 읽기를 fleet.read_regular_bytes 로 옮기고 FIFO 시험을 step() 단위로. 근거 rounds/R22/REVIEW-r22-4
-- `2026-11-13T08:58:12` 관리자 [queue] REV 168: queue -2 시험 구멍 셋(R22-N2·R22-N3·R22-N4, 낮음~정보): 세션 meta.json 256 KiB 상한 시험(_session_meta·run_limit_signal 세션 갈래), read_regular_bytes 의 S_ISREG 검사·fd 닫기를 지키는 시험(/dev/zero 링크 등), browser_monitor_ui.py '이번 라운드' 둘째 줄(관리자 상태)까지 단언. 근거 rounds/R22/REVIEW-r22-4.md (R22-N5 심볼릭 링크 따라감은 회귀 아님, 정보)
 - `2026-11-13 07:02` 클로드 코드 [handoff] REV 168: **REV 168. 엔진 v2 남은 위험 셋 (태석님 지시, 클로드 코드 커밋).** (1) **`verify` 는 울타리 안에서 돈다**(bubblewrap, `tools/fleet_rt/sandbox.py`): 쓰기는 저장소와 `/tmp` 만, `.git` 읽기 전용, `.env`·`.aimem/tls/` 안 보임, 환경에 API 키·토큰·세션 표식 없음, 자기 pid 네임스페이스, 네트워크는 됨. 시간 초과면 프로세스 그룹째 끊는다. `$HOME` 에 쓰거나 키를 읽는 검사는 엔진에서 실패한다(8.0-8 규칙·브리프에 적음).
 - `2026-11-13 02:38` 클로드 코드 [handoff] REV 167: **REV 167. 엔진 v2 4단계 - 관리자 호출 방식 (태석님 지시, 클로드 코드 커밋). 기본값은 그대로 상주 방식이다.** `fleet.toml` `[manager] mode = "resident" | "calls"`. `calls` 면 관리자를 ① 계획 ② 판정(되풀이) ③ 마감, 짧은 새 세션으로만 띄우고 그 사이 `fleet_graph run` 은 엔진(라운드 진행기 `fleet_ctl.py _rounddrive`)이 돈다. 호출은 보고 마지막 줄 `NEXT: RUN G-… | CLOSE | STOP <까닭>` 로 다
 - `2026-11-13 02:01` 클로드 코드 [handoff] REV 166: **REV 166. 엔진 v2 3단계 - 그래프 실행기 튜닝 (태석님 지시, 클로드 코드 커밋).** (1) 실패의 종류: 시도마다 `fail_kind`(work·infra·limit·timeout). 공급자·전송 장애(infra: 침묵으로 끊김·감독 소멸·응답 없이 오류)는 **시도 횟수를 쓰지 않고** `infra_attempts` 로 옮겨 다시 넣는다. 다시 넣기 전에 공급자가 응답하는지 본다. 3번 이어지면 노드는 `blocked` + `infra`(태스크 잘못이 아님) - 공급자가 돌아오면 `fleet_graph.py un
 - `2026-11-13 01:23` M-R22 [handoff] REV 165: **REV 165. R22 (관리자 M-R22-233844) - DONE.** R21 의 엔진 결함 수정(관리자 세션이 슬롯을 바쁨으로 만들던 것)이 실전에서 통과: 작업자 13회 띄움, 막힘 0. 요청 둘 DONE: Q-261112-7d68(R20 이어받기 - G-052 재개 후 재검수가 새 엔진 claude 어댑터에 N3·N4 미반영(P1·P2) 발견 → G-053·G-054 후속으로 판정을 fleet_rt/harness/claude.py 한 벌(result_limit_signal·limit_text_hit)로 모으고 시험이 전
-- `2026-11-13T01:21:22` M-R22 [graph] REV 164: G-055 finished: T-272(S2 read_regular_bytes·메타 256KiB)·T-273(S3 시험)·T-274(S3 브라우저 Q3·Q4)·T-275(S1 검수 rounds/R22/REVIEW-r22-4.md) DONE. R20-N6·N8·R22-S1·S2·Q3·Q4 닫힘, 변이 20 중 15. 남은 것 큐 2건(R22-N1 step() FIFO, R22-N2·N3·N4 시험 구멍). Q-261113-a22b DONE
-- `2026-11-13T01:21:18` 관리자 [ownership] REV 164: tools/fleet.py -> 관리자
-- `2026-11-13T01:21:18` M-R22 [queue] REV 164: queue +2 시험 구멍 셋(R22-N2·R22-N3·R22-N4, 낮음~정보): 세션 meta.json 256 KiB 상한 시험(_session_meta·run_limit_signal 세션 갈래), read_regular_bytes 의 S_ISREG 검사·fd 닫기를 지키는 시험(/dev/zero 링크 등), browser_monitor_ui.py '이번 라운드' 둘째 줄(관리자 상태)까지 단언. 근거 rounds/R22/REVIEW-r22-4.md (R22-N5 심볼릭 링크 따라감은 회귀 아님, 정보)
-- `2026-11-13T01:21:18` M-R22 [queue] REV 164: queue +1 FIFO 에서 step() 이 아직 막힘(R22-N1, 낮음): fleet_graph.step() 이 run_limit_signal 보다 먼저 fleet.run_report 로 같은 .out 을 read_text 하고(tools/fleet.py run_report), .rc 가 FIFO 면 _run_state 의 rc.read_text 도 막힘. .out·.rc·.err 읽기를 fleet.read_regular_bytes 로 옮기고 FIFO 시험을 step() 단위로. 근거 rounds/R22/REVIEW-r22-4
-- `2026-11-13T01:21:18` M-R22 [queue] REV 164: queue -1 시험 구멍 넷(R22-S1·R22-S2·R22-Q3·R22-Q4, 낮음~정보): (가) test_fleet_graph 의 test_q2_session_branch_context_window_text_is_not_true 를 assertIsNone 으로 (나) claude 어댑터 limit_signal 의 except 갈래를 타는 시험 (다) browser_monitor_ui.py temporary_aimem_root 가 fleet.RUNS 도 갈아끼우고 '이번 라운드' 값까지 단언 (라) 넓은 폭 표 배치에서 잘린 
-- `2026-11-13T01:21:18` M-R22 [queue] REV 164: queue -2 한도 판정 남은 결함(R20-N6·R20-N8 = R22-P4, 정보~낮음): fleet_graph.run_limit_signal 이 .out 을 S_ISREG 검사 없이 열어 FIFO 면 영영 막힘(tools/fleet_graph.py 의 1MiB 읽기), fleet._run_meta 가 meta 를 크기 상한 없이 read_text (tools/fleet.py). 방향은 rounds/R20/REVIEW-r20.md
-- `2026-11-13T01:21:17` M-R22 [request] REV 164: Q-261113-a22b DONE
-- `2026-11-13T01:21:17` 관리자 [task] REV 164: T-275 DONE
-- `2026-11-13T01:21:17` 관리자 [task] REV 164: T-274 DONE
-- `2026-11-13T01:21:17` 관리자 [task] REV 164: T-273 DONE
-- `2026-11-13T01:21:17` 관리자 [task] REV 164: T-272 DONE
-- `2026-11-13T00:36:37` M-R22 [request] REV 164: Q-261113-a22b IN-PROGRESS
-- `2026-11-13T00:36:37` 관리자 [task] REV 164: T-275 TODO S1 검수: R22-P4·S1·S2·Q3·Q4 수정
-- `2026-11-13T00:36:37` 관리자 [task] REV 164: T-274 TODO S3 browser_monitor_ui.py: 이번 라운드 값 고정 자료 + 잘린 제목 펼침 (R22-Q3·R22-Q4)
-- `2026-11-13T00:36:37` 관리자 [task] REV 164: T-273 TODO S3 시험: FIFO·큰 메타 회귀 + 한도 판정 시험 구멍 (R22-P4·R22-S1·R22-S2)
-- `2026-11-13T00:36:37` 관리자 [task] REV 164: T-272 TODO S2 실행 기록 읽기: FIFO 막힘·메타 상한 (R20-N6·R20-N8 = R22-P4)
-- `2026-11-13T00:36:32` 관리자 [ownership] REV 164: rounds/R22/REVIEW-r22-4.md -> S1
-- `2026-11-13T00:36:31` 관리자 [ownership] REV 164: tools/fleet.py -> S2
-- `2026-11-13T00:36:31` M-R22 [request] REV 164: Q-261113-a22b PLANNED 대기 큐 2건 처리: 실행 기록 FIFO·메타 상한(R22-P4) + 시험 구멍 넷(R22-S1·S2·Q3·Q4)
-- `2026-11-13T00:35:09` M-R22 [graph] REV 164: G-054 finished: T-270(S3 Q2 시험 claude 어댑터 패치·Q1 디딤 폴더)·T-271(S1 재검수 rounds/R22/REVIEW-r22-3.md) DONE, R22-R1·R2 닫힘, 전체 discover 940 OK, 변이 3/3. 큐 5건(Q-261112-7d68 의 대상) 모두 처리돼 drop, 새 큐 2건(R22-P4, R22-S1·S2·Q3·Q4). Q-261112-7d68 DONE
-- `2026-11-13T00:35:09` M-R22 [request] REV 164: Q-261112-7d68 DONE
-- `2026-11-13T00:35:09` M-R22 [queue] REV 164: queue +2 한도 판정 남은 결함(R20-N6·R20-N8 = R22-P4, 정보~낮음): fleet_graph.run_limit_signal 이 .out 을 S_ISREG 검사 없이 열어 FIFO 면 영영 막힘(tools/fleet_graph.py 의 1MiB 읽기), fleet._run_meta 가 meta 를 크기 상한 없이 read_text (tools/fleet.py). 방향은 rounds/R20/REVIEW-r20.md
-- `2026-11-13T00:35:04` M-R22 [queue] REV 164: queue +1 시험 구멍 넷(R22-S1·R22-S2·R22-Q3·R22-Q4, 낮음~정보): (가) test_fleet_graph 의 test_q2_session_branch_context_window_text_is_not_true 를 assertIsNone 으로 (나) claude 어댑터 limit_signal 의 except 갈래를 타는 시험 (다) browser_monitor_ui.py temporary_aimem_root 가 fleet.RUNS 도 갈아끼우고 '이번 라운드' 값까지 단언 (라) 넓은 폭 표 배치에서 잘린 
-- `2026-11-13T00:34:57` 관리자 [task] REV 164: T-271 DONE
-- `2026-11-13T00:34:57` 관리자 [task] REV 164: T-270 DONE
-- `2026-11-13T00:34:50` M-R22 [queue] REV 164: queue -1 브라우저 검사가 '진짜 저장소의 그때그때 상태' 에 기대는 자리를 한 번 쓸어내십시오. R17 에 두 건이 이 까닭으로 깨졌습니다(그래프 제목 펼치기 - 끝난 그래프가 접힘 / 프로젝트 칸 볼드 - 최근 실행 20건이 전부 함대 일). 둘 다 임시 저장소 고정 자료로 옮겨 고쳤습니다. tests/browser_monitor_*.py 에서 ROOT 를 그대로 보는 시나리오를 찾아 같은 꼴로 옮기십시오
 - `2026-11-12 23:28` M-R21 [handoff] REV 164: **REV 164. R21 (관리자 M-R21-230339) - BLOCKED, 엔진 v2 결함으로 작업자 0명.** NEW 요청 없음. 이어받은 Q-261112-7d68 의 G-052(R20 후속 4노드)를 재개하려 했으나 fleet_graph._busy_slots 가 관리자 세션(.aimem/sessions/M-R21-*, role manager·slot null)을 '슬롯 모를 running 실행' 으로 세어 모든 슬롯을 바쁨으로 본다 → 관리자가 살아 있는 한 어떤 노드도 못 띄운다(로그: skip T-263/T-265 - 
 - `2026-11-12 23:00` 클로드 코드 [handoff] REV 163: **REV 163. 함대 엔진 v2 (태석님 지시, 클로드 코드 커밋).** R20 은 11-12 20:13 마감 없이 끊겼다(G-052 4건 todo, 요청 Q-261112-7d68 진행 중, 큐 5건 - 다음 라운드가 이어받는다). 그 뒤 엔진을 바꿨다: (1) 작업자와 관리자를 엔진이 직접 세션으로 띄운다 - `tools/fleet_rt`(하네스 어댑터 claude·codex·opencode·fake + 세션마다 감독 프로세스), 기록은 `.aimem/sessions/<id>/`(사건 흐름 events.jsonl·report.
 - `2026-11-12 17:42` 클로드 코드 [handoff] REV 162: **REV 162 (덧붙임, 클로드 코드 커밋 - R20 도중).** 태석님 지시. 모니터 화면 정리: (1) 상단 바 - 어두운 모드·로그인·로그아웃을 ⚙ 설정 메뉴 하나로(폰·데스크톱 같은 꼴), 720px 이하는 짧은 글자로 2행, 930px 이상 1행(320~1450px 10px 간격 실측, 3행 없음). (2) 데스크톱 - 핸드오프 로그 시각 칸이 잘리던 것, ASSIGNED·NEEDS-FIX 배지 잘림, '자동 새로고침' 간격, 서브태스크 없는 진행 중 요청의 같은 문장 두 번. 함께: R19 종료분(REPORT·REV 
 - `2026-11-12 17:32` 관리자 R19 [handoff] REV 162: **REV 162. R19 - 끊긴 R18 을 닫고, 사용 한도 카드와 감사 상한을 끝까지 몰아 적대적 검수·재검수까지.** R18 은 WSL 재시작으로 끊겼었고 G-045 를 이어 돌려 닫았습니다(T-234·T-235 는 작업자가 일을 다 했는데 다른 파일의 검사 자료가 틀려 verify 가 빨갰던 것 - 고친 뒤 관리자가 같은 명령을 직접 돌려 rc 0 확인하고 닫음). **엔진 결함 둘을 실측으로 잡았습니다**: R18 이 넣은 한도 판정이 보고에 '사용 한도' 글자만 있어도 멀쩡한 DONE 을 막았습니다(실제로 T-241·T
-- `2026-11-12 17:16` 클로드 코드 [handoff] REV 161: **REV 161 (클로드 코드, R19 도중 커밋).** 태석님 지시. (1) **대기 큐 결함 번호에 라운드**: 검수 번호(N=결함·M=변이 시험·D=넘어온 결함)는 보고서마다 1부터 다시 세어 라운드끼리 섞였다 → 큐에는 `R17-N5`·`R17-N5·N6` 꼴만, `queue add/edit` 가 맨 `N5` 를 거절. `queue edit --pos`(제자리 고침) 신설. 큐 1~3 을 이 꼴로 고치고 출처 T-224 를 적음. 표준 브리프·AIMEM 4.5 에 규칙(순서 번호 대신 발견 번호로 가리킴). (2) **화면
-- `2026-11-12 15:30` 클로드 코드 [handoff] REV 160: **R18 끊김 (REV 그대로).** 2026-11-12 14:57 WSL 이 업데이트로 재시작되어(15:22 재기동, 커널 6.18.58.1) 관리자 R18·작업자·이어 달리기 감시자가 모두 사라졌다. G-045: T-231·T-232·T-233·T-237 done, T-234(S2)·T-236(S3) 는 실행 1분 안에 lost(거둠), T-235·T-238 todo. 파일·git·DB 손상 없음, 린터 통과. 전체 테스트 641 중 1건 실패 - `test_collect_state_failure_branch_keys_matc
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
+| 1 | [자모맞히기] 추측 목록(ALLOWED)의 덮는 범위: 흔한 6칸 낱말 새 표본 60개 중 57개가 거절됨 - 시험(MUST)에 적힌 낱말만 덮음. 이용 조건이 분명한 공개 사전 자료(예: 우리말샘·표준국어대사전 공개 자료, 학습용 기초 어휘 목록)에서 6칸을 뽑는 길은 내려받기·이용 조건이 걸려 태석님 결정이 먼저. 같이: README 예 '까닭' 이 ALLOWED 에 없음, 어근·경계 낱말 희한 민망 괴악 희식 화성 국전 (rounds/R24/REVIEW-r24-3.md 의 R24-N1·N2·N3) | S2 (낱말) + S1 (3차 표본 확인) | R24 3차 확인(T-292). 목표 '낱말 목록'·'검사' 가 이것 때문에 열려 있음 |
+| 2 | [자모맞히기] 하드 모드 설정이 다른 모드의 빈 판에는 새로 고칠 때까지 안 닿음 - 연습에서 하드를 켜고 빈 날마다 판으로 오면 체크박스는 꺼짐(판 값), 저장 설정은 켜짐 (rounds/R24/REVIEW-r24-2.md 의 R24-N5, 하) | S3 | R24 재검수(T-288) |
 
 ## 6. 파일 소유권
 
@@ -307,17 +337,28 @@
 | `projects/웹워들/web/js/ui.js` | S2 | R13 T-161 await init() 호출 자리 (storage.js 와 같은 슬롯) |
 | `projects/웹워들/web/js/words.js` | S2 | R7 단어 목록 생성물 |
 | `projects/자모맞히기/app.json` | S2 | R23 |
-| `projects/자모맞히기/data/**` | S3 | R23 |
-| `projects/자모맞히기/tests/browser_game.py` | S3 | R23 |
+| `projects/자모맞히기/data/**` | S2 | R24 T-284 |
+| `projects/자모맞히기/data/words/사회.txt` | S3 | R25 T-295 |
+| `projects/자모맞히기/data/words/생활.txt` | S2 | R25 T-294 |
+| `projects/자모맞히기/data/words/자연마음.txt` | S3 | R25 T-296 |
+| `projects/자모맞히기/data/words/풀이씨.txt` | S2 | R25 T-297 |
+| `projects/자모맞히기/tests/README.md` | S3 | R24 T-282 |
+| `projects/자모맞히기/tests/browser_game.py` | S3 | R24 T-282 |
+| `projects/자모맞히기/tests/browser_modes.py` | S3 | R24 T-287 |
+| `projects/자모맞히기/tests/test_game.mjs` | S3 | R24 T-281 |
+| `projects/자모맞히기/tests/test_jamo.mjs` | S3 | R24 T-281 |
 | `projects/자모맞히기/tests/test_logic.mjs` | S3 | R23 |
-| `projects/자모맞히기/tests/test_words.py` | S3 | R23 |
-| `projects/자모맞히기/tools/**` | S3 | R23 |
-| `projects/자모맞히기/web/css/**` | S3 | R23 |
-| `projects/자모맞히기/web/index.html` | S2 | R23 |
+| `projects/자모맞히기/tests/test_storage.mjs` | S3 | R24 T-280 |
+| `projects/자모맞히기/tests/test_words.py` | S2 | R24 T-284 |
+| `projects/자모맞히기/tools/**` | S2 | R24 T-284 |
+| `projects/자모맞히기/web/css/**` | S3 | R24 T-280 |
+| `projects/자모맞히기/web/index.html` | S3 | R24 T-280 |
 | `projects/자모맞히기/web/js/app.js` | S2 | R23 |
-| `projects/자모맞히기/web/js/game.js` | S2 | R23 |
-| `projects/자모맞히기/web/js/jamo.js` | S2 | R23 |
-| `projects/자모맞히기/web/js/words.js` | S3 | R23 |
+| `projects/자모맞히기/web/js/game.js` | S2 | R24 T-278 (S3→S2 균형) |
+| `projects/자모맞히기/web/js/jamo.js` | S2 | R24 T-276 |
+| `projects/자모맞히기/web/js/storage.js` | S3 | R24 T-280 |
+| `projects/자모맞히기/web/js/ui.js` | S3 | R24 T-285 |
+| `projects/자모맞히기/web/js/words.js` | S2 | R24 T-284 |
 | `rounds/**` | 관리자 | 라운드 기록 폴더 rounds/R<N>/ - brief.md·REPORT.md 만 (결과물은 projects/) |
 | `rounds/R10/REVIEW.md` | S1 | R10 |
 | `rounds/R11/REVIEW-A.md` | S1 | R11 T-136 적대적 검수 A |
@@ -344,6 +385,11 @@
 | `rounds/R22/REVIEW-r22-4.md` | S1 | R22 T-275 검수 |
 | `rounds/R22/REVIEW-r22.md` | S1 | R22 T-266 재검수 (R21 이 못 띄워 R22 폴더로 옮김) |
 | `rounds/R23/REVIEW-r23*.md` | S1 | R23 |
+| `rounds/R24/REVIEW-r24-2.md` | S1 | R24 T-288 |
+| `rounds/R24/REVIEW-r24-3.md` | S1 | R24 T-292 |
+| `rounds/R24/REVIEW-r24.md` | S1 | R24 T-283 |
+| `rounds/R25/REVIEW-r25.md` | S1 | R25 T-299 |
+| `rounds/R26/REVIEW-r26.md` | S1 | R26 T-299 적대적 검수 |
 | `skills/**` | 관리자 | **현재 비어 있음** (REV 101 에서 `acp-slot-lifecycle` 제거). 되살아나면 이 행이 그대로 적용된다 |
 | `tests/browser_monitor_app.py` | S3 | R10 T-131 |
 | `tests/browser_monitor_auth.py` | S3 | R10 T-135 |
@@ -429,39 +475,39 @@
 | Q-261112-c3a1 | 대기 큐 1~3 처리 (R18) | 관리자 (R17 검수가 남긴 큐) | DONE | 2026-11-12T14:25:16 |
 | Q-261112-7d68 | 대기 큐 5건 처리 (R19 뒤 자동) | 함대 이어 달리기 | DONE | 2026-11-12T17:35:20 |
 | Q-261113-a22b | 대기 큐 2건 처리: 실행 기록 FIFO·메타 상한(R22-P4) + 시험 구멍 넷(R22-S1·S2·Q3·Q4) | 관리자 M-R22 (대기 큐) | DONE | 2026-11-13T00:36:31 |
-| Q-261113-bd56 | 한글 자모 낱말 맞히기 웹 게임 (새 프로젝트) | 태석 | NEW | 2026-11-13T14:24:03 |
+| Q-261113-bd56 | 한글 자모 낱말 맞히기 웹 게임 (새 프로젝트) | 태석 | IN-PROGRESS | 2026-11-13T14:24:03 |
 
 ## 실행 (최근 30)
 
 | run id | 태스크 | 슬롯 | 하네스 | 모델 | 시도 | 상태 | rc | 시작 | 끝 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| T-254-S3-a1-185833 | T-254 | S3 | opencode |  | 1 | done | 0 | 18:58:33 | 19:01:31 |
-| T-256-S3-a1-190137 | T-256 | S3 | opencode |  | 1 | done | 0 | 19:01:37 | 19:05:05 |
-| T-257-S3-a1-190512 | T-257 | S3 | opencode |  | 1 | done | 0 | 19:05:12 | 19:09:53 |
-| T-258-S3-a1-191029 | T-258 | S3 | opencode |  | 1 | done | 0 | 19:10:29 | 19:12:49 |
-| T-261-S3-a1-191342 | T-261 | S3 | opencode |  | 1 | done | 0 | 19:13:42 | 19:15:23 |
-| T-262-S1-a1-191529 | T-262 | S1 | claude | opus | 1 | done | 0 | 19:15:29 | 19:27:09 |
-| T-263-S2-a1-193012 | T-263 | S2 | codex |  | 1 | lost |  | 19:30:12 | 20:10:17 |
-| T-265-S3-a1-193012 | T-265 | S3 | opencode |  | 1 | done | 1 | 19:30:12 | 20:01:25 |
-| T-265-S3-a2-200131 | T-265 | S3 | opencode |  | 2 | lost |  | 20:01:31 | 20:13:52 |
-| T-263-S2-a2-201017 | T-263 | S2 | codex |  | 2 | lost |  | 20:10:17 | 20:13:52 |
-| ADHOC-S4-a1-213402 | ADHOC | S4 | claude | sonnet | 1 | done | 0 | 21:34:02 | 21:34:14 |
-| ADHOC-S2-a1-220212 | ADHOC | S2 | codex | openrouter/deepseek/deepseek-v4.1-flash | 1 | done | 0 | 22:02:12 | 22:02:20 |
-| ADHOC-S3-a1-220213 | ADHOC | S3 | opencode | openrouter/deepseek/deepseek-v4.1-flash | 1 | done | 0 | 22:02:13 | 22:02:26 |
-| ADHOC-S3-a1-220242 | ADHOC | S3 | opencode | openrouter/deepseek/deepseek-v4.1-flash | 1 | killed | -15 | 22:02:42 | 22:03:07 |
-| T-263-S2-a2-234000 | T-263 | S2 | claude | sonnet | 2 | done | 0 | 23:40:00 | 23:40:45 |
-| T-265-S3-a2-234000 | T-265 | S3 | claude | sonnet | 2 | done | 0 | 23:40:00 | 23:41:53 |
-| T-264-S3-a1-234216 | T-264 | S3 | claude | sonnet | 1 | done | 0 | 23:42:16 | 23:42:59 |
-| T-266-S1-a1-234309 | T-266 | S1 | claude | opus | 1 | done | 0 | 23:43:09 | 23:52:32 |
-| T-267-S2-a1-235730 | T-267 | S2 | claude | sonnet | 1 | done | 0 | 23:57:30 | 23:59:42 |
-| T-268-S3-a1-000043 | T-268 | S3 | claude | sonnet | 1 | done | 0 | 00:00:43 | 00:01:28 |
-| T-269-S1-a1-000136 | T-269 | S1 | claude | opus | 1 | done | 0 | 00:01:36 | 00:12:40 |
-| T-270-S3-a1-001552 | T-270 | S3 | claude | sonnet | 1 | done | 0 | 00:15:52 | 00:18:37 |
-| T-271-S1-a1-002059 | T-271 | S1 | claude | opus | 1 | done | 0 | 00:20:59 | 00:34:19 |
-| T-272-S2-a1-003638 | T-272 | S2 | claude | sonnet | 1 | done | 0 | 00:36:38 | 00:37:57 |
-| T-273-S3-a1-003851 | T-273 | S3 | claude | sonnet | 1 | done | 0 | 00:38:51 | 00:41:36 |
-| T-274-S3-a1-004400 | T-274 | S3 | claude | sonnet | 1 | done | 0 | 00:44:00 | 00:45:31 |
-| T-275-S1-a1-004604 | T-275 | S1 | claude | opus | 1 | done | 0 | 00:46:04 | 01:20:51 |
-| ADHOC-S3-a1-141151 | ADHOC | S3 | opencode | opencode/deepseek-v4.1-flash-free | 1 | done | 0 | 14:11:51 | 14:12:14 |
 | ADHOC-S2-a1-141719 | ADHOC | S2 | codex | kisti/kistillm | 1 | done | 0 | 14:17:19 | 14:18:03 |
 | ADHOC-S3-a1-141719 | ADHOC | S3 | opencode | opencode/deepseek-v4.1-flash-free | 1 | done | 0 | 14:17:19 | 14:17:37 |
+| T-276-S2-a1-145005 | T-276 | S2 | codex | kisti/kistillm | 1 | done | 0 | 14:50:05 | 14:55:50 |
+| T-277-S3-a1-145005 | T-277 | S3 | opencode | opencode/deepseek-v4.1-flash-free | 1 | done | 0 | 14:50:05 | 15:00:33 |
+| T-278-S2-a1-145553 | T-278 | S2 | codex | kisti/kistillm | 1 | done | 0 | 14:55:53 | 14:58:23 |
+| T-280-S3-a1-150036 | T-280 | S3 | opencode | opencode/deepseek-v4.1-flash-free | 1 | done | 0 | 15:00:36 | 15:03:53 |
+| T-281-S3-a1-150353 | T-281 | S3 | opencode | opencode/deepseek-v4.1-flash-free | 1 | done | 0 | 15:03:53 | 15:07:20 |
+| T-279-S2-a1-150359 | T-279 | S2 | codex | kisti/kistillm | 1 | done | 0 | 15:03:59 | 15:11:10 |
+| T-281-S3-a2-150724 | T-281 | S3 | opencode | opencode/deepseek-v4.1-flash-free | 2 | done | 0 | 15:07:24 | 15:08:11 |
+| T-281-S3-a3-150917 | T-281 | S3 | opencode | opencode/deepseek-v4.1-flash-free | 3 | done | 0 | 15:09:17 | 15:11:40 |
+| T-282-S3-a1-151142 | T-282 | S3 | opencode | opencode/deepseek-v4.1-flash-free | 1 | stalled | -15 | 15:11:42 | 15:17:13 |
+| T-282-S3-a1-151713 | T-282 | S3 | opencode | opencode/deepseek-v4.1-flash-free | 1 | done | 0 | 15:17:13 | 15:25:08 |
+| T-283-S1-a1-152545 | T-283 | S1 | claude | opus | 1 | done | 0 | 15:25:45 | 15:51:59 |
+| T-285-S3-a1-155533 | T-285 | S3 | opencode | opencode/deepseek-v4.1-flash-free | 1 | done | 0 | 15:55:33 | 16:01:52 |
+| T-284-S2-a1-155533 | T-284 | S2 | codex | kisti/kistillm | 1 | done | 0 | 15:55:33 | 16:18:58 |
+| T-286-S3-a1-160250 | T-286 | S3 | opencode | opencode/deepseek-v4.1-flash-free | 1 | done | 0 | 16:02:50 | 16:04:01 |
+| T-287-S3-a1-160406 | T-287 | S3 | opencode | opencode/deepseek-v4.1-flash-free | 1 | done | 0 | 16:04:06 | 16:16:19 |
+| T-284-S2-a2-161859 | T-284 | S2 | codex | kisti/kistillm | 2 | done | 0 | 16:18:59 | 17:06:33 |
+| T-289-S3-a1-162450 | T-289 | S3 | opencode | opencode/deepseek-v4.1-flash-free | 1 | done | 0 | 16:24:50 | 16:26:36 |
+| T-287-S3-a2-162801 | T-287 | S3 | opencode | opencode/deepseek-v4.1-flash-free | 2 | done | 0 | 16:28:01 | 16:31:05 |
+| T-288-S1-a1-170636 | T-288 | S1 | claude | opus | 1 | stalled | 143 | 17:06:36 | 17:26:50 |
+| T-288-S1-a1-172651 | T-288 | S1 | claude | opus | 1 | done | 0 | 17:26:51 | 17:43:08 |
+| T-290-S2-a1-174444 | T-290 | S2 | codex | kisti/kistillm | 1 | done | 0 | 17:44:44 | 18:13:30 |
+| T-291-S3-a1-174444 | T-291 | S3 | opencode | opencode/deepseek-v4.1-flash-free | 1 | done | 0 | 17:44:44 | 17:54:18 |
+| T-292-S1-a1-181333 | T-292 | S1 | claude | opus | 1 | done | 0 | 18:13:33 | 18:28:15 |
+| T-294-S2-a1-183905 | T-294 | S2 | codex | kisti/kistillm | 1 | killed | 0 | 18:39:05 | 18:48:56 |
+| T-295-S3-a1-183905 | T-295 | S3 | opencode | opencode/deepseek-v4.1-flash-free | 1 | killed | -15 | 18:39:05 | 18:48:57 |
+| T-294-S2-a1-193200 | T-294 | S2 | codex | kisti/kistillm | 1 | killed | 0 | 19:32:00 | 20:06:58 |
+| T-295-S3-a1-193200 | T-295 | S3 | opencode | opencode/deepseek-v4.1-flash-free | 1 | done | 0 | 19:32:00 | 19:32:30 |
+| T-295-S3-a2-193245 | T-295 | S3 | opencode | opencode/deepseek-v4.1-flash-free | 2 | killed | -15 | 19:32:45 | 20:06:58 |

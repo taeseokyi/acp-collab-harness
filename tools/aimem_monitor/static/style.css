@@ -1754,3 +1754,17 @@ button:disabled { opacity: 0.6; }
 .manager-phase { color: var(--muted, inherit); font-size: 13px; white-space: nowrap; }
 .manager-round-head { font-weight: var(--st-fw-bold); font-size: 13px; margin: 12px 0 4px; }
 .manager-round-head:first-child { margin-top: 0; }
+
+/* 운영 방침 고르기 (무료 중심 / 품질 중심 / 빠른 구현) */
+.fc-policy { display: flex; flex-wrap: wrap; align-items: center; gap: var(--st-s-1) var(--st-s-2); margin-top: var(--st-s-2); }
+.fc-policy-lab { font-size: var(--st-fs-sm); color: var(--st-ink-muted); }
+.fc-policy-seg { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.fc-policy-opt { display: inline-flex; align-items: center; cursor: pointer; }
+.fc-policy-opt input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.fc-policy-opt span { display: inline-block; padding: 4px 12px; border: 1px solid var(--st-line); border-radius: 999px; font-size: 14px; white-space: nowrap; }
+.fc-policy-opt input:checked + span { background: var(--st-accent-fill); border-color: var(--st-accent-fill); color: var(--st-accent-ink); font-weight: 600; }
+.fc-policy-opt input:focus-visible + span { outline: 2px solid var(--st-accent-fill); outline-offset: 2px; }
+.fc-policy-desc { flex-basis: 100%; overflow-wrap: anywhere; }
+.fleet-chain-policy { margin: var(--st-s-2) 0; }
+.manager-policy { font-size: 12px; }
+@media (max-width: 480px) { .fc-policy-opt span { padding: 6px 10px; } }

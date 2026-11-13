@@ -1290,6 +1290,63 @@ function runStatusBadge(r) {
   return statusBadge(r.state);
 }
 
+// 운영 방침 (무료 중심 / 품질 중심 / 빠른 구현). 서버가 `fleet.policy` 를 주지 않으면(옛 서버) 화면에 아무것도 안 낸다.
+function fleetPolicy(data) {
+  const p = data && data.fleet && data.fleet.policy;
+  return p && Array.isArray(p.choices) && p.choices.length ? p : null;
+}
+function policyLabel(policy, key) {
+  if (!policy || !key) return '';
+  const c = policy.choices.find((x) => x && x.key === key);
+  return c ? (c.label || c.key) : '';
+}
+// 가로로 붙은 라디오 단추 묶음. 폭이 좁으면 줄을 바꾼다. 선택한 항목의 설명은 한 줄로 아래에 보인다.
+function policySegment(policy, selected, name, onChange) {
+  const wrap = document.createElement('div');
+  wrap.className = 'fc-policy';
+  const lab = document.createElement('span');
+  lab.className = 'fc-policy-lab';
+  lab.textContent = '운영 방침';
+  wrap.appendChild(lab);
+  const seg = document.createElement('div');
+  seg.className = 'fc-policy-seg';
+  seg.setAttribute('role', 'radiogroup');
+  seg.setAttribute('aria-label', '운영 방침');
+  const desc = document.createElement('div');
+  desc.className = 'fc-hint fc-policy-desc';
+  const radios = [];
+  const showDesc = () => {
+    const r = radios.find((x) => x.checked);
+    const c = r && policy.choices.find((x) => x.key === r.value);
+    desc.textContent = c ? show(c.desc || '') : '';
+  };
+  for (const c of policy.choices) {
+    const l = document.createElement('label');
+    l.className = 'fc-policy-opt';
+    l.title = c.desc || '';
+    const r = document.createElement('input');
+    r.type = 'radio';
+    r.name = name;
+    r.value = c.key;
+    r.checked = c.key === selected;
+    r.addEventListener('change', () => { showDesc(); onChange(c.key); });
+    const t = document.createElement('span');
+    t.textContent = c.label || c.key;
+    l.appendChild(r);
+    l.appendChild(t);
+    seg.appendChild(l);
+    radios.push(r);
+  }
+  if (!radios.some((x) => x.checked) && radios[0]) radios[0].checked = true;
+  wrap.appendChild(seg);
+  wrap.appendChild(desc);
+  showDesc();
+  return { el: wrap, get: () => (radios.find((x) => x.checked) || {}).value };
+}
+function policySelected(policy, key) {
+  return policy.choices.some((c) => c.key === key) ? key : (policy.choices.some((c) => c.key === policy.default) ? policy.default : policy.choices[0].key);
+}
+
 const MODE_BADGE = { running: 'running', paused: 'partial', stopped: 'blocked', ready: 'done' };
 const FLEET_BUTTONS = [
   { act: 'prepare', label: '준비', title: '관리자·작업자를 띄울 수 있는지 점검합니다. 통과하면 준비 상태 (작업자는 띄우지 않음)' },
@@ -1299,7 +1356,7 @@ const FLEET_BUTTONS = [
     confirm: '돌고 있는 작업자와 그래프 실행기를 지금 종료합니다.\n중간 산출물이 반쯤 남을 수 있습니다. 계속할까요?' },
 ];
 
-async function fleetAction(act, confirmText) {
+async function fleetAction(act, confirmText, extraBody) {
   if (confirmText && !window.confirm(confirmText)) return;
   state.fleetBusy = act;
   state.fleetMsg = null;
@@ -1315,7 +1372,7 @@ async function fleetAction(act, confirmText) {
       const res = await fetch('/api/fleet/' + act, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: '{}',
+        body: JSON.stringify(extraBody || {}),
       });
       body = await res.json().catch(() => ({ ok: false, error: 'HTTP ' + res.status }));
     }
@@ -1374,7 +1431,8 @@ async function chainAction(on, target, maxRounds) {
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify(on
           ? { on: true, all: !!target.all, fleet: !!target.fleet, projects: target.projects || [], max_rounds: maxRounds,
-            renew: !!target.renew, autonomous: !!target.auto }
+            renew: !!target.renew, autonomous: !!target.auto,
+            ...(target.policy ? { policy: target.policy } : {}) }
           : { on: false }),
       });
       body = await res.json().catch(() => ({ ok: false, error: 'HTTP ' + res.status }));
@@ -1415,7 +1473,7 @@ function renderFleetChain(data) {
     .concat((data && Array.isArray(data.projects) ? data.projects : []).map((p) => p && p.name))
     .concat((data && Array.isArray(data.requests) ? data.requests : []).map((q) => q && q.project))
     .filter(Boolean))).sort();
-  const sig = JSON.stringify([f.mode, !!ch.on, ch.label, ch.all, ch.fleet, ch.projects, ch.max_rounds, ch.autonomous, ch.renew, ch.cycles, ch.total_rounds, f.chain_modes, ch.rounds_done, ch.stopped_why, ch.stopped_kind, ch.stopped_at, names,
+  const sig = JSON.stringify([f.mode, !!ch.on, ch.label, ch.all, ch.fleet, ch.projects, ch.max_rounds, ch.autonomous, ch.renew, ch.cycles, ch.total_rounds, f.chain_modes, ch.rounds_done, ch.stopped_why, ch.stopped_kind, ch.stopped_at, names, f.policy ? [f.policy.default, f.policy.chain, f.policy.choices] : null,
     !!state.chainBusy, state.chainMsg]);
   if (el.dataset.sig === sig) return;
   el.dataset.sig = sig;
@@ -1435,7 +1493,8 @@ function renderFleetChain(data) {
     const what = document.createElement('span');
     what.className = 'fleet-chain-what';
     const cap = ch.max_rounds || 3;
-    what.textContent = `${label} · 상한 ${cap} 라운드 · 닿으면 ${ch.autonomous ? '새로 이어 감 (완전 자율 종주)' : (ch.renew || !ch.max_rounds) ? '새로 이어 감 (끝날 때까지)' : '멈춤'}`;
+    const chPol = policyLabel(fleetPolicy(data), f.policy && f.policy.chain);
+    what.textContent = `${label}${chPol ? ' · ' + chPol : ''} · 상한 ${cap} 라운드 · 닿으면 ${ch.autonomous ? '새로 이어 감 (완전 자율 종주)' : (ch.renew || !ch.max_rounds) ? '새로 이어 감 (끝날 때까지)' : '멈춤'}`;
     head.appendChild(what);
     const off = document.createElement('button');
     off.type = 'button';
@@ -1606,6 +1665,13 @@ function renderFleetChain(data) {
     sec2.appendChild(modes);
     el.appendChild(sec2);
 
+    const pol = fleetPolicy(data);
+    let polSeg = null;
+    if (pol) {
+      polSeg = policySegment(pol, policySelected(pol, keep.policy || pol.chain || pol.default), 'fleet-chain-policy', (k) => { sync(); });
+      polSeg.el.classList.add('fleet-chain-policy');
+      el.appendChild(polSeg.el);
+    }
     const on = document.createElement('button');
     on.type = 'button';
     on.className = 'fc-btn btn-primary fleet-chain-on';
@@ -1623,6 +1689,7 @@ function renderFleetChain(data) {
         renew: mode !== 'stop',
         auto: mode === 'autonomous',
         max: Number(num.value) || 0,
+        policy: polSeg ? polSeg.get() : undefined,
       };
     };
     const sync = () => {
@@ -1894,10 +1961,18 @@ function renderFleetControl(data) {
     const todo = brief.standard
       ? (nNew ? `할 일: 새 작업 요청 ${nNew}건` : "할 일: 새 작업 요청이 없습니다 - 관리자는 점검만 하고 끝냅니다. 시킬 일이 있으면 취소하고 '할 일 쓰기' 로 먼저 넣으십시오")
       : `브리프: ${briefName}`;
-    fleetAction('round', `새 관리자 라운드 R${brief.round} 를 띄웁니다 (유료 Opus 세션).\n${todo}\n계속할까요?`);
+    const pk = polSeg ? polSeg.get() : null;
+    const pl = pk ? policyLabel(pol, pk) : '';
+    fleetAction('round', `새 관리자 라운드 R${brief.round} 를 띄웁니다 (유료 Opus 세션).\n${todo}${pl ? `\n운영 방침: ${pl}` : ''}\n계속할까요?`, pk ? { policy: pk } : undefined);
   });
   row.appendChild(rb);
   box.appendChild(row);
+  const pol = fleetPolicy(data);
+  let polSeg = null;
+  if (pol) {
+    polSeg = policySegment(pol, policySelected(pol, state.policyChoice), 'fleet-round-policy', (k) => { state.policyChoice = k; });
+    box.appendChild(polSeg.el);
+  }
 
   const hint = document.createElement('div');
   hint.className = 'fc-hint';
@@ -1912,7 +1987,8 @@ function renderFleetControl(data) {
     if (curRound) {
       const now = document.createElement('div');
       now.className = 'fc-hint-now';
-      now.textContent = `지금 R${curRound.round} 실행 중` + (curRound.workspace ? ` · 라운드 보고 ${curRound.workspace}/` : '');
+      const cpl = policyLabel(pol, curRound.policy);
+      now.textContent = `지금 R${curRound.round} 실행 중` + (cpl ? ` · ${cpl}` : '') + (curRound.workspace ? ` · 라운드 보고 ${curRound.workspace}/` : '');
       hint.appendChild(now);
     } else if (f.idle) {
       // 라운드가 끝났다 - 다음 요청은 '라운드 실행' 한 번이면 된다 (준비 점검은 그 안에서 돈다)
@@ -2143,6 +2219,17 @@ async function openManagerDetail(cur, all = false) {
   })));
 }
 
+function appendPolicyChip(head, data) {
+  const pol = fleetPolicy(data);
+  const mg = (data.fleet || {}).manager;
+  const t = pol && mg ? policyLabel(pol, mg.policy) : '';
+  if (!t) return;
+  const c = badge(t, 'neutral');
+  c.classList.add('manager-policy');
+  c.title = '이 라운드의 운영 방침';
+  head.appendChild(c);
+}
+
 function renderManager(data) {
   const box = $('manager-card');
   if (!box) return;
@@ -2161,6 +2248,7 @@ function renderManager(data) {
   // 엔진이 관리자를 띄우는 중인데 세션 폴더가 아직 안 보이는 짧은 틈
   if (mg && mg.state === 'launching' && !(cur && cur.status === 'running')) {
     head.appendChild(mgrStateBadge('launching'));
+    appendPolicyChip(head, data);
     const l = document.createElement('span');
     l.className = 'manager-label';
     l.textContent = show(mg.label || ('관리자 R' + mg.round));
@@ -2184,6 +2272,7 @@ function renderManager(data) {
   const isRun = cur.status === 'running';
   const driving = !!(mg && mg.state === 'driving' && !isRun);
   head.appendChild(driving ? mgrStateBadge('driving') : mgrStateBadge(cur.session_state, cur.status));
+  appendPolicyChip(head, data);
   const label = document.createElement('span');
   label.className = 'manager-label';
   label.textContent = show(cur.label);

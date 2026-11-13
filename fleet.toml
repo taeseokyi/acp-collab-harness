@@ -55,3 +55,6 @@ mode = "resident"
 
 [time]
 zone = "Asia/Seoul"        # 엔진·작업자·로그·모니터 화면의 시간대
+
+[policy]
+default = "cost"   # 운영 방식 기본값: cost(무료 중심) · quality(품질 중심) · speed(빠른 구현)

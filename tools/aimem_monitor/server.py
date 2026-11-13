@@ -1676,6 +1676,37 @@ def fleet_state(root=ROOT):
         return {"mode": None, "error": f"{type(e).__name__}: {str(e)[:120]}", "can": {a: False for a in FLEET_ACTIONS}}
 
 
+def _accepts(fn, name):
+    """엔진 함수가 키워드 `name` 을 받는지 (엔진 갱신이 화면보다 늦을 때를 위해)."""
+    try:
+        import inspect
+        ps = inspect.signature(fn).parameters
+        return name in ps or any(q.kind == q.VAR_KEYWORD for q in ps.values())
+    except (TypeError, ValueError):
+        return False
+
+
+def _policy_arg(ctl, val):
+    """(키, 오류). 운영 방침 키는 엔진이 알려 주는 선택지(`public_state()['policy']['choices']`) 안의 문자열만 받는다."""
+    if val is None:
+        return None, None
+    if not isinstance(val, str):
+        return None, "`policy` 는 문자열이어야 합니다"
+    keys = None
+    try:
+        st = ctl.public_state() if callable(getattr(ctl, "public_state", None)) else None
+        pol = st.get("policy") if isinstance(st, dict) else None
+        if isinstance(pol, dict):
+            keys = [c.get("key") for c in pol.get("choices", []) if isinstance(c, dict)]
+    except Exception:  # noqa: BLE001
+        keys = None
+    if keys is None:
+        keys = ["cost", "quality", "speed"]
+    if val not in keys:
+        return None, f"모르는 운영 방침입니다: {val[:40]}"
+    return val, None
+
+
 def fleet_action(action, by, root=ROOT, payload=None):
     """(HTTP 코드, 응답). 판정은 fleet_ctl 이 하고, 막힌 동작은 409 로 돌려줍니다."""
     if action == "chain":
@@ -1691,9 +1722,17 @@ def fleet_action(action, by, root=ROOT, payload=None):
             if isinstance(p.get("project"), str) and p["project"].strip():
                 names.append(p["project"])
             # 대상: 함대(fleet) · 프로젝트 여러 개(projects) · 전체(all). 아무것도 안 골랐으면 거절하고 이유를 돌려준다
-            out = _fleet_ctl(root).chain_set(p["on"], None, p.get("max_rounds"), by, projects=names,
-                                             fleet_on=bool(p.get("fleet")), all_=bool(p.get("all")),
-                                             autonomous=bool(p.get("autonomous")), renew=bool(p.get("renew")))
+            ctl = _fleet_ctl(root)
+            kw = {}
+            if p["on"] and "policy" in p:
+                pol, err = _policy_arg(ctl, p.get("policy"))
+                if err:
+                    return 400, {"ok": False, "error": err}
+                if pol is not None and _accepts(ctl.chain_set, "policy"):
+                    kw["policy"] = pol
+            out = ctl.chain_set(p["on"], None, p.get("max_rounds"), by, projects=names,
+                                fleet_on=bool(p.get("fleet")), all_=bool(p.get("all")),
+                                autonomous=bool(p.get("autonomous")), renew=bool(p.get("renew")), **kw)
         except Exception as e:  # noqa: BLE001
             return 500, {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
         return (200 if out.get("ok") else 400), out
@@ -1709,10 +1748,17 @@ def fleet_action(action, by, root=ROOT, payload=None):
                                     ("없음" if not pend else ", ".join(pend) + " - 관리자 브리프 (0) 대상"), required=False))
         except Exception:  # noqa: BLE001
             pass
+    rkw = {}
+    if action == "round" and isinstance(payload, dict) and "policy" in payload:
+        pol, err = _policy_arg(ctl, payload.get("policy"))
+        if err:
+            return 400, {"ok": False, "error": err}
+        if pol is not None and _accepts(ctl.launch_round, "policy"):
+            rkw["policy"] = pol
     try:
         out = {"prepare": lambda: ctl.prepare(by, extra), "run": lambda: ctl.resume(by),
                "pause": lambda: ctl.pause(by), "stop": lambda: ctl.stop(by),
-               "round": lambda: ctl.launch_round(by)}[action]()
+               "round": lambda: ctl.launch_round(by, **rkw)}[action]()
     except Exception as e:  # noqa: BLE001
         return 500, {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
     if action == "prepare":
