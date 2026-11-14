@@ -173,6 +173,38 @@ class WordsTest(unittest.TestCase):
             self.assertEqual(out.read_bytes(), before, msg="다시 만들면 파일이 달라짐")
         self.assertEqual(WORDS_JS.read_bytes(), before, msg="시험이 진짜 words.js 를 건드림")
 
+    def test_trend_build(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            trend_in = tmp_path / "trend.txt"
+            trend_in.write_text(
+                "# 머리 주석\n"
+                "\n"
+                "2026-11-20 낑깡\n"
+                "2026-11-21 과자\n"
+                "2026-13-99 어머니\n"
+                "2026-11-20 한국\n",
+                encoding="utf-8",
+            )
+            out = tmp_path / "words.js"
+            subprocess.run(
+                [sys.executable, str(BUILD), "--out", str(out), "--trend", str(trend_in)],
+                check=True,
+                capture_output=True,
+            )
+            text = out.read_text(encoding="utf-8")
+
+            trend_match = re.search(r"export const TREND = (\{.*?\});", text, re.S)
+            self.assertIsNotNone(trend_match, msg="TREND 를 찾지 못했습니다")
+            trend = json.loads(trend_match.group(1))
+            self.assertEqual(trend, {"2026-11-20": "낑깡"}, msg=f"TREND 가 다름: {trend}")
+
+            allowed_match = re.search(r"export const ALLOWED = (\[.*?\]);", text, re.S)
+            self.assertIsNotNone(allowed_match, msg="ALLOWED 를 찾지 못했습니다")
+            allowed = json.loads(allowed_match.group(1))
+            self.assertIn("낑깡", allowed, msg="트렌드 낱말이 ALLOWED 에 없음")
+            self.assertEqual(allowed, sorted(allowed), msg="ALLOWED 가 정렬되지 않음")
+
     def test_unit_examples(self) -> None:
         self.assertEqual(to_units("한국"), "ㅎㅏㄴㄱㅜㄱ")
         self.assertEqual(to_units("까닭"), "ㄲㅏㄷㅏㄹㄱ")

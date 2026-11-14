@@ -277,3 +277,27 @@ test("matchMedia 가 던지면 dark:false 로 둔다", async () => {
   const S = await fresh();
   assert.equal(S.loadSettings().dark, false);
 });
+
+test("뉴스 정답은 서버가 정본이라 loadTrend·saveTrend 가 없다", async () => {
+  const S = await fresh();
+  assert.equal(S.loadTrend, undefined);
+  assert.equal(S.saveTrend, undefined);
+});
+
+test("남아 있던 jamo.trend 는 init 때 한 번 지운다", async () => {
+  stubGlobals();
+  const { sent } = fakeParent();
+  const S = await fresh();
+  const p = S.init();
+  await tick();
+  reply({ aimem: "store.v1", op: "snapshot", items: { trend: '{"2026-11-20":"지원"}' } });
+  await p;
+  assert.deepEqual(sent.filter((m) => m.key === "trend"), [
+    { aimem: "store.v1", op: "put", key: "trend", value: null },
+  ]);
+});
+
+test("jamo.trend 가 없으면 init 이 지우기를 보내지 않는다", async () => {
+  const { sent } = await opened();
+  assert.equal(sent.filter((m) => m.key === "trend").length, 0);
+});

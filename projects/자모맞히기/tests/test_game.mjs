@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   scoreGuess, keyboardState, hardModeViolation, createGame, fromJSON,
-  dailyIndex, answerForDate, WORD_LENGTH, MAX_GUESSES
+  dailyIndex, answerForDate, dayKey, WORD_LENGTH, MAX_GUESSES
 } from "../web/js/game.js";
 
 const HANGUK = "ㅎㅏㄴㄱㅜㄱ";
@@ -303,4 +303,37 @@ test("날짜: answerForDate 는 날짜마다 같은 정답", () => {
   assert.ok(answers.includes(a));
   assert.equal(answerForDate(new Date(2026, 10, 13, 22), answers), a);
   assert.equal(answerForDate(new Date(2026, 10, 14), answers), answers[1]);
+});
+
+test("dayKey: 로컬 날짜를 YYYY-MM-DD 로 적는다", () => {
+  assert.equal(dayKey(new Date(2026, 10, 3, 5)), "2026-11-03");
+  assert.equal(dayKey(new Date(2026, 0, 31, 23, 59)), "2026-01-31");
+  assert.throws(() => dayKey(new Date("아무 날")));
+});
+
+test("날짜: trend 에 그 날 키가 있으면 그 낱말", () => {
+  const answers = [GAROSU, BANANA, GONGHANG];
+  const trend = { "2026-11-13": KKADAK };
+  assert.equal(answerForDate(new Date(2026, 10, 13), answers, trend), KKADAK);
+  assert.equal(answerForDate(new Date(2026, 10, 13, 22), answers, trend), KKADAK);
+  assert.equal(answerForDate(new Date(2026, 10, 14), answers, trend), answers[1]);
+});
+
+test("allowWord: 판을 만든 뒤 보탠 낱말이 그 판에서 받아들여진다", () => {
+  const g = createGame({ answer: HANGUK, allowed: [HANGUK] });
+  for (const ch of KKADAK) g.addLetter(ch);
+  assert.equal(g.submit().reason, "unknown");
+  assert.equal(g.allowWord(KKADAK), true);
+  assert.equal(g.submit().ok, true);
+  assert.equal(g.rows.length, 1);
+  // 목록이 없는 판은 모두 허용이라 보탤 것이 없다
+  assert.equal(createGame({ answer: HANGUK }).allowWord(KKADAK), false);
+});
+
+test("날짜: trend 에 그 날 키가 없으면 기존 낱말", () => {
+  const answers = [GAROSU, BANANA, GONGHANG];
+  const day = new Date(2026, 10, 13);
+  assert.equal(answerForDate(day, answers, {}), answers[0]);
+  assert.equal(answerForDate(day, answers), answers[0]);
+  assert.equal(answerForDate(day, answers, { "2026-11-14": KKADAK }), answers[0]);
 });

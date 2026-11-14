@@ -65,3 +65,5 @@ projects/*/**/__pycache__/
 
 # 삭제한 프로젝트 폴더를 옮겨 둔 곳 (fleet_ctl.py project remove, REV 180) - 커밋 안 된 작업이 있을 수 있어 지우지 않고 옮긴다
 .aimem/archive/projects-*/
+# 모니터가 띄운 앱 서버(serve.py)의 기록·로그 (REV 182, tools/aimem_monitor/app_server.py)
+.aimem/appservers/

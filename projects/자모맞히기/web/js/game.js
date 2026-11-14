@@ -52,8 +52,19 @@ export function dailyIndex(date = new Date()) {
   return Math.round((local - EPOCH_UTC) / MS_PER_DAY);
 }
 
-export function answerForDate(date, answers) {
+// 날짜를 로컬 기준 `YYYY-MM-DD` 로 적는다. dailyIndex 와 같은 로컬 날짜 경계를 쓴다.
+export function dayKey(date = new Date()) {
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) throw new Error("날짜가 올바르지 않습니다");
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+export function answerForDate(date, answers, trend = {}) {
   if (!answers || answers.length === 0) throw new Error("정답 목록이 비었습니다");
+  // 트렌드에 그 날짜 키가 있으면 그 낱말이 정답이다. 없으면 기존처럼 날짜 번호로 고른다.
+  const key = dayKey(date);
+  if (trend && Object.prototype.hasOwnProperty.call(trend, key)) return trend[key];
   const n = answers.length;
   // JS 의 % 는 음수를 그대로 돌려주므로 2026 년 이전 날짜도 목록 안에 들어오게 한 번 더 맞춘다.
   return answers[((dailyIndex(date) % n) + n) % n];
@@ -174,6 +185,13 @@ class Game {
   get hardMode() { return this.#hardMode; }
   get puzzleNumber() { return this.#puzzleNumber; }
   get maxGuesses() { return this.#maxGuesses; }
+
+  // 사전에서 찾은 낱말을 지금 판에 보탠다. 목록이 없는 판(모두 허용)은 할 일이 없다. 저장 형식은 그대로.
+  allowWord(units) {
+    if (!this.#allowed || typeof units !== "string") return false;
+    this.#allowed.add(units.toLowerCase());
+    return true;
+  }
 
   // 물리 키보드의 Shift/CapsLock 입력도 받도록 소문자로 맞춘 뒤 검사한다.
   addLetter(ch) {

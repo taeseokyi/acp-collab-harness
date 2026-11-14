@@ -76,9 +76,20 @@ function todayKey() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-export async function init() {
-  if (initPromise) return initPromise;
-  initPromise = (async () => {
+// 예전에 브라우저에 두던 뉴스 정답(jamo.trend)은 이제 서버가 정본이라 한 번 지운다
+function dropLegacyTrend() {
+  try {
+    if (read('trend') !== null) remove('trend');
+  } catch { /* 무시 */ }
+}
+
+export function init() {
+  if (!initPromise) initPromise = setup().finally(dropLegacyTrend);
+  return initPromise;
+}
+
+async function setup() {
+  {
     if (store()) return;
     if (!globalThis.parent || globalThis.parent === globalThis) return;
 
@@ -122,8 +133,7 @@ export async function init() {
       const day = k.slice(dailyPrefix.length);
       if (day !== today) remove('daily.' + day);
     }
-  })();
-  return initPromise;
+  }
 }
 
 const num = (v) => (Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0);
@@ -213,4 +223,61 @@ export function loadSeenHelp() {
 
 export function saveSeenHelp() {
   write('seenHelp', true);
+}
+
+// 외부 사전 설정 {on, source, keys, customs} (T-313)
+const EXTRA_MAX = 500;
+const WORD_RE = /^[가-힣]{1,10}$/;
+
+export function loadDict() {
+  const raw = read('dict');
+  const o = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const keys = {};
+  if (o.keys && typeof o.keys === 'object' && !Array.isArray(o.keys)) {
+    for (const [k, v] of Object.entries(o.keys)) if (typeof v === 'string' && v) keys[k] = v;
+  }
+  const customs = [];
+  if (Array.isArray(o.customs)) {
+    for (const c of o.customs) {
+      if (c && typeof c === 'object' && typeof c.id === 'string' && typeof c.baseUrl === 'string'
+        && typeof c.model === 'string') {
+        customs.push({
+          id: c.id,
+          label: typeof c.label === 'string' ? c.label : c.id,
+          baseUrl: c.baseUrl,
+          model: c.model,
+          key: typeof c.key === 'string' ? c.key : '',
+        });
+      }
+    }
+  }
+  return {
+    on: o.on !== false,
+    source: typeof o.source === 'string' && o.source ? o.source : 'wiktionary',
+    keys,
+    customs,
+  };
+}
+
+export function saveDict(cfg) {
+  write('dict', {
+    on: cfg.on !== false,
+    source: String(cfg.source || 'wiktionary'),
+    keys: cfg.keys || {},
+    customs: cfg.customs || [],
+  });
+}
+
+export function loadExtraWords() {
+  const raw = read('extraWords');
+  return Array.isArray(raw) ? raw.filter((w) => typeof w === 'string' && WORD_RE.test(w)) : [];
+}
+
+export function addExtraWord(word) {
+  if (typeof word !== 'string' || !WORD_RE.test(word)) return false;
+  const list = loadExtraWords();
+  if (list.includes(word)) return true;
+  list.push(word);
+  write('extraWords', list.slice(-EXTRA_MAX));
+  return true;
 }

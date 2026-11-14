@@ -18,6 +18,9 @@
     GET  /api/requests/<id> -> 요청 하나의 전문 (목록은 600자로 잘림)
     GET  /api/projects/<이름>/files, /file?path= -> 프로젝트 결과물 목록·본문 (텍스트, 가림 적용)
     GET  /app/<이름>/<경로> -> `app.json` 이 선언한 앱 폴더의 정적 파일 (인증 뒤, /app/ CSP)
+    GET|HEAD|POST /app/~<티켓>/<이름>/api/... -> `app.json` `server` 가 있는 앱의 서버(`app_server.py`)로 이어 줌
+                  (티켓 검사는 정적 파일과 같은 한 벌, 쿠키·Authorization·Origin 은 싣지 않음, 감사 로그 `app-api`)
+    OPTIONS /app/~<티켓>/<이름>/api/... -> sandbox 화면의 사전 요청, 같은 검사 뒤 204 (그 밖의 OPTIONS 는 거절)
     GET  /api/managers/<세션 id> -> 관리자 세션 상세 (최근 단계·마지막 보고·라운드 기록·이벤트·그래프, 도구 출력 제외)
     POST /api/requests/<id>/edit -> NEW·미분담 요청의 제목·본문 수정 (Q-261110-549a)
     POST /api/fleet/<동작> -> 함대 제어 prepare|run|pause|stop|round|switch (tools/fleet_ctl.py)
@@ -83,6 +86,7 @@ from . import (AUTH_EXEMPT_PATHS, AUTH_UNAUTH_REDIRECT_PATHS, AUTH_UNAUTH_REDIRE
                SESSION_COOKIE, SESSION_SUBJECT_GITHUB_PREFIX, SESSION_SUBJECT_TOKEN,
                SESSION_TTL_SEC, SESSION_VERSION, TLS_DIR, TOKEN_FILE, REQUEST_ROW_KEYS,
                PROJECTS_DIR, PROJECT_NAME_RE)
+from . import app_server
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 STATIC = pathlib.Path(__file__).resolve().parent / "static"
@@ -2186,6 +2190,29 @@ def _app_inside(base, parts):
         return False
 
 
+_APP_CONNECT_RE = re.compile(r"https://(?:[a-z0-9-]+\.)+[a-z0-9-]+(?::[0-9]{1,5})?")
+APP_CONNECT_MAX = 10
+
+
+def app_connect_origins(value):
+    """app.json `connect` 에서 CSP connect-src 에 보탤 수 있는 출처만 걸러 돌려줍니다(보안 경계).
+
+    각 항목은 정확히 `https://<호스트>[:<포트>]` (소문자·숫자·점·하이픈, 점 하나 이상). 앞 10개만 보고
+    어긋난 항목은 그 항목만 버립니다. 목록이 아니면 빈 목록."""
+    if not isinstance(value, list):
+        return []
+    out = []
+    for item in value[:APP_CONNECT_MAX]:
+        if not isinstance(item, str) or not _APP_CONNECT_RE.fullmatch(item):
+            continue
+        port = item.rsplit(":", 1)[1] if item.count(":") == 2 else None
+        if port is not None and not 1 <= int(port) <= 65535:
+            continue
+        if item not in out:
+            out.append(item)
+    return out
+
+
 def project_app(name, root=ROOT):
     """`projects/<이름>/app.json` 선언을 읽습니다.
 
@@ -2232,8 +2259,34 @@ def project_app(name, root=ROOT):
     if not isinstance(title_value, str):
         title_value = name
     title_value = title_value[:80]
-    return {"runnable": True, "url": f"{PROJECT_APP_URL_PREFIX}{name}/", "title": title_value,
-            "root": root_value, "entry": entry_value}
+    app = {"runnable": True, "url": f"{PROJECT_APP_URL_PREFIX}{name}/", "title": title_value,
+           "root": root_value, "entry": entry_value}
+    connect = app_connect_origins(data.get("connect"))
+    if connect:
+        app["connect"] = connect
+    if "server" in data:
+        server_rel, why = _app_server_decl(d, data.get("server"))
+        if server_rel:
+            app["server"] = server_rel
+        else:
+            app["server_error"] = why      # 앱 전체는 그대로 실행 가능, 서버만 이어 주지 않는다
+    return app
+
+
+def _app_server_decl(d, value):
+    """app.json `server` (프로젝트 폴더 기준 `.py` 상대 경로) 검사. (상대 경로, 오류 글)."""
+    parts, why = _app_parts(value, "server")
+    if why:
+        return None, why
+    if not parts[-1].endswith(".py") or len(parts[-1]) <= 3:
+        return None, "server 는 .py 파일이어야 합니다"
+    target = d.joinpath(*parts)
+    try:
+        if not _app_inside(d, parts) or target.is_symlink() or not target.is_file():
+            return None, "server 가 프로젝트 안의 실제 파일이 아닙니다"
+    except OSError:
+        return None, "server 를 확인하지 못했습니다"
+    return "/".join(parts), None
 
 
 def project_app_file(name, rel, root=ROOT):
@@ -2286,9 +2339,28 @@ def project_app_file(name, rel, root=ROOT):
     return 200, raw, CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
 
 
-def app_csp(origin=""):
-    """`/app/` 응답에 붙는 CSP. `origin` 은 `https://host:port` 또는 빈 문자열."""
+def _is_app_api(rel):
+    """`/app/<앱>/` 아래 `api/...` 길인가 (디코딩한 경로 기준)."""
+    return isinstance(rel, str) and rel.startswith("api/")
+
+
+def _app_server_target(name, root=ROOT):
+    """`server` 를 선언한 실행 가능한 앱이면 (스크립트 경로, 프로젝트 폴더), 아니면 None."""
+    app = project_app(name, root)
+    if not app or not app.get("runnable") or not app.get("server"):
+        return None
+    d, err = _project_dir(name, root)
+    if err:
+        return None
+    return d.joinpath(*app["server"].split("/")), d
+
+
+def app_csp(origin="", connect=None):
+    """`/app/` 응답에 붙는 CSP. `origin` 은 `https://host:port` 또는 빈 문자열.
+
+    `connect` 는 app.json 이 선언한 외부 출처(여기서 한 번 더 걸러 connect-src 에만 보탭니다)."""
     o = f" {origin}" if origin else ""
+    extra = "".join(f" {c}" for c in app_connect_origins(list(connect or ())))
 
     def with_self(tail=""):
         return f"'self'{o}{tail}"
@@ -2298,7 +2370,7 @@ def app_csp(origin=""):
         f"img-src {with_self(' data: blob:')}",
         f"style-src {with_self(' ')}'unsafe-inline'",
         f"script-src {with_self()}",
-        f"connect-src {with_self()}",
+        f"connect-src {with_self(extra)}",
         f"font-src {with_self(' data:')}",
         "frame-ancestors 'self'",
         "base-uri 'none'",
@@ -2792,6 +2864,132 @@ class Handler(http.server.BaseHTTPRequestHandler):
         ctype = CONTENT_TYPES.get(target.suffix, "application/octet-stream")
         return self._send(200, target.read_bytes(), ctype)
 
+    # -- /app/~<티켓>/<앱>/api/... 이어 주기 (R32, 앱의 serve.py) --------------------
+    def _app_ticket_check(self, app_name, ticket, raw_path):
+        """티켓 검사 한 벌 (GET·POST·OPTIONS 공용). 통과면 티켓 주체, 아니면 403 을 보내고 None."""
+        def deny(reason, subject=None, authenticated=False):
+            _audit_denied(self.root, "app-ticket-bad", self._client_ip(), subject,
+                          raw_path, self.command, reason, authenticated=authenticated)
+            self._json(403, {"ok": False, "error": APP_TICKET_INVALID_ERROR})
+            return None
+
+        if not _app_ticket_parts(ticket):
+            return deny("형식")
+        key = _app_ticket_key(self)
+        candidates = [SESSION_SUBJECT_TOKEN, APP_TICKET_NO_SUBJECT]
+        candidates += ["gh:" + login for login in github_allowed_logins(self.root)]
+        ticket_subject = app_ticket_resolve(ticket, key, candidates)
+        if ticket_subject is None:
+            return deny("주체 못 찾음(회수 또는 위조)")
+        if not app_ticket_ok(ticket, app_name, key, ticket_subject):
+            return deny("서명·만료", ticket_subject)
+        if self.require_auth and ticket_subject == APP_TICKET_NO_SUBJECT:
+            return deny("무주체", ticket_subject)
+        credential_subject = self._subject()
+        if credential_subject is not None and (
+                _app_ticket_canon(credential_subject) != _app_ticket_canon(ticket_subject)):
+            return deny("주체 불일치", credential_subject, authenticated=True)
+        return ticket_subject
+
+    def _app_headers(self):
+        """앱 응답에 붙는 머리: 불투명 출처(sandbox) 가 읽을 수 있게 + /app/ CSP."""
+        return [("Access-Control-Allow-Origin", "null"), ("Vary", "Origin")]
+
+    def _app_error(self, code, message, app_name=None):
+        connect = ((project_app(app_name, self.root) or {}).get("connect")) if app_name else None
+        return self._send(code, json.dumps({"ok": False, "error": message}, ensure_ascii=False),
+                          extra=self._app_headers(), csp=app_csp(self._app_origin(), connect))
+
+    def _read_app_body(self, app_name, limit):
+        """`/app/` 아래 POST 본문 (bytes 또는 None). 상한을 **읽기 전에** 겁니다 (`_read_json_body` 와 같은 규칙)."""
+        raw_len = self.headers.get("Content-Length")
+        if raw_len is None:
+            self._app_error(411, "Content-Length 가 필요합니다", app_name)
+            return None
+        try:
+            length = int(raw_len)
+        except ValueError:
+            self._app_error(400, "Content-Length 가 숫자가 아닙니다", app_name)
+            return None
+        if length < 0:
+            self._app_error(400, "Content-Length 가 음수입니다", app_name)
+            return None
+        if length > limit:
+            self._app_error(413, f"본문이 {limit}바이트를 넘습니다", app_name)
+            return None
+        return self.rfile.read(length) if length else b""
+
+    def _app_api(self, app_name, raw_rel, ticket_subject, body):
+        """티켓 검사를 지난 `/app/~…/<앱>/api/...` 한 건을 그 앱의 서버에 이어 주고 응답을 돌려줍니다."""
+        target = _app_server_target(app_name, self.root)
+        if target is None:
+            return self._json(404, {"ok": False, "error": "이 앱에는 서버가 없습니다"})
+        script, cwd = target
+        segs = urllib.parse.unquote(raw_rel or "").split("/")
+        if any(s in (".", "..") for s in segs) or "\x00" in "".join(segs):
+            return self._app_error(404, "찾을 수 없습니다", app_name)
+        query = urllib.parse.urlparse(self.path).query
+        path_qs = "/" + raw_rel + (("?" + query) if query else "")
+        shown = _TICKET_LOG_RE.sub("/app/~***", f"/app/{app_name}/{urllib.parse.unquote(raw_rel)}")
+        reg = app_server.registry(self.root)
+        t0 = time.monotonic()
+        hdrs = {k: self.headers.get(k) for k in ("Content-Type", "Accept") if self.headers.get(k)}
+        err = None
+        try:
+            status, ctype, data = reg.forward(app_name, script, cwd, self.command, path_qs, hdrs, body or b"")
+        except app_server.AppServerError as e:
+            err, status = e, e.status
+        # 응답을 내보내기 **전에** 남깁니다 - 응답을 받은 쪽이 바로 로그를 읽어도 줄이 있어야 합니다.
+        audit(self.root, "app-api", self._client_ip(), ticket_subject,
+              f"{app_name[:40]} {self.command} {shown[:200]} {status} {int((time.monotonic() - t0) * 1000)}ms")
+        if err is not None:
+            return self._app_error(err.status, err.message, app_name)
+        connect = (project_app(app_name, self.root) or {}).get("connect")
+        return self._send(status, data, ctype, extra=self._app_headers(),
+                          csp=app_csp(self._app_origin(), connect))
+
+    def _app_post(self, raw_path):
+        """`POST /app/...` - 티켓·`api/` 길만 받습니다. 본문을 읽지 않고 거절하면 연결을 닫습니다."""
+        self.close_connection = True
+        am = _APP_RE.match(raw_path)
+        if not am or am.group("ticket") is None:
+            return self._json(403, {"ok": False, "error": "티켓이 필요합니다"})
+        app_name = urllib.parse.unquote(am.group("name"))
+        ticket_subject = self._app_ticket_check(app_name, am.group("ticket"), raw_path)
+        if ticket_subject is None:
+            return None
+        rel = urllib.parse.unquote(am.group("rel") or "")
+        if not _is_app_api(rel) or _app_server_target(app_name, self.root) is None:
+            return self._json(404, {"ok": False, "error": f"없는 경로입니다: {_TICKET_LOG_RE.sub('/app/~***', raw_path)[:200]}"})
+        body = self._read_app_body(app_name, app_server.registry(self.root).max_req_body)
+        if body is None:
+            return None
+        self.close_connection = False
+        return self._app_api(app_name, am.group("rel"), ticket_subject, body)
+
+    def do_OPTIONS(self):
+        """sandbox(불투명 출처) 화면의 사전 요청. 티켓 검사를 지난 선언된 앱의 `api/` 만 204, 나머지는 지금처럼 거절."""
+        path = self._path()
+        if path is None:
+            return self._json(400, {"ok": False, "error": "경로에 널바이트가 있습니다"})
+        if self._auth_gate(path):
+            return None
+        raw_path = urllib.parse.urlparse(self.path).path
+        am = _APP_RE.match(raw_path) if raw_path.startswith("/app/") else None
+        if am and am.group("ticket") is not None:
+            app_name = urllib.parse.unquote(am.group("name"))
+            rel = urllib.parse.unquote(am.group("rel") or "")
+            # 티켓 검사가 먼저(GET·POST 와 같은 순서) - 위조 티켓이면 선언 유무와 상관없이 같은 응답.
+            if self._app_ticket_check(app_name, am.group("ticket"), raw_path) is None:
+                return None
+            if _is_app_api(rel) and _app_server_target(app_name, self.root) is not None:
+                connect = (project_app(app_name, self.root) or {}).get("connect")
+                return self._send(204, b"", extra=self._app_headers() + [
+                    ("Access-Control-Allow-Methods", "GET, POST"),
+                    ("Access-Control-Allow-Headers", "Content-Type"),
+                    ("Access-Control-Max-Age", "600")], csp=app_csp(self._app_origin(), connect))
+        return self.send_error(501, "Unsupported method ('OPTIONS')")
+
     # -- 라우팅 --------------------------------------------------------------
     def do_GET(self):
         path = self._path()
@@ -2868,39 +3066,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if rel:
                     location += rel
                 return self._redirect(location)
-            parts = _app_ticket_parts(ticket)
-            if not parts:
-                _audit_denied(self.root, "app-ticket-bad", self._client_ip(), None,
-                              raw_path, self.command, "형식")
-                return self._json(403, {"ok": False, "error": APP_TICKET_INVALID_ERROR})
-            key = _app_ticket_key(self)
-            candidates = [SESSION_SUBJECT_TOKEN, APP_TICKET_NO_SUBJECT]
-            candidates += ["gh:" + login for login in github_allowed_logins(self.root)]
-            ticket_subject = app_ticket_resolve(ticket, key, candidates)
+            ticket_subject = self._app_ticket_check(app_name, ticket, raw_path)
             if ticket_subject is None:
-                _audit_denied(self.root, "app-ticket-bad", self._client_ip(), None,
-                              raw_path, self.command, "주체 못 찾음(회수 또는 위조)")
-                return self._json(403, {"ok": False, "error": APP_TICKET_INVALID_ERROR})
-            if not app_ticket_ok(ticket, app_name, key, ticket_subject):
-                _audit_denied(self.root, "app-ticket-bad", self._client_ip(), ticket_subject,
-                              raw_path, self.command, "서명·만료")
-                return self._json(403, {"ok": False, "error": APP_TICKET_INVALID_ERROR})
-            if self.require_auth and ticket_subject == APP_TICKET_NO_SUBJECT:
-                _audit_denied(self.root, "app-ticket-bad", self._client_ip(), ticket_subject,
-                              raw_path, self.command, "무주체")
-                return self._json(403, {"ok": False, "error": APP_TICKET_INVALID_ERROR})
-            credential_subject = self._subject()
-            if credential_subject is not None and (
-                    _app_ticket_canon(credential_subject) != _app_ticket_canon(ticket_subject)):
-                _audit_denied(self.root, "app-ticket-bad", self._client_ip(), credential_subject,
-                              raw_path, self.command, "주체 불일치", authenticated=True)
-                return self._json(403, {"ok": False, "error": APP_TICKET_INVALID_ERROR})
+                return None
             rel = urllib.parse.unquote(am.group("rel") or "").split("?", 1)[0]
+            if _is_app_api(rel) and _app_server_target(app_name, self.root) is not None:
+                return self._app_api(app_name, am.group("rel"), ticket_subject, None)
             code, data, ctype = project_app_file(app_name, rel, self.root)
             if code == 200:
+                connect = (project_app(app_name, self.root) or {}).get("connect")
                 return self._send(200, data, ctype,
                                   extra=[("Access-Control-Allow-Origin", "null"), ("Vary", "Origin")],
-                                  csp=app_csp(self._app_origin()))
+                                  csp=app_csp(self._app_origin(), connect))
             return self._json(code, data)
         if path in ("/", "/index.html"):
             return self._static("index.html")
@@ -2947,6 +3124,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(400, {"ok": False, "error": "경로에 널바이트가 있습니다"})
         if self._auth_gate(path):
             return None
+        if path.startswith("/app/"):
+            return self._app_post(urllib.parse.urlparse(self.path).path)
         if path == "/api/login":
             return self._login()
         if path == GITHUB_DEVICE_START_PATH:
@@ -3002,6 +3181,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                                  f"웹({subject_label(who)})" if who else "웹", self.root)
             if isinstance(payload, dict) and payload.get("dry_run", False) is False:      # 실행 시도는 결과와 상관없이 남긴다
                 self._audit("project-remove", f"{code} {pname[:40]!r} moved={result.get('moved_to')}")
+                if code == 200:       # 지운 프로젝트의 앱 서버가 남지 않게
+                    try:
+                        app_server.registry(self.root).stop(pname)
+                    except app_server.AppServerError:
+                        pass
             return self._json(code, result)
         if slot_m or slot_add_path:
             # 슬롯 관리 - 함대 제어와 같이 속도 제한 없이, CSRF·인증은 거친다. 감사 로그에 남긴다.
@@ -3303,6 +3487,21 @@ def serve(host=HOST, port=PORT, root=ROOT, once=False, tls=False, auth=None):
         httpd = http.server.ThreadingHTTPServer((host, port), handler)
     scheme = "https" if tls else "http"
     log_line(f"AIMEM 모니터: {scheme}://{host}:{port}/  (저장소 {root})")
+    servers = app_server.registry(root)
+    try:    # 지난 모니터가 남긴 앱 서버(자식)를 내린다
+        for pid in servers.cleanup_stale():
+            log_line(f"  지난 모니터가 남긴 앱 서버 {pid} 를 내렸습니다")
+    except Exception as e:  # noqa: BLE001
+        log_line(f"  앱 서버 정리 실패: {type(e).__name__}")
+    reap_stop = threading.Event()
+
+    def _reap_loop():
+        while not reap_stop.wait(60):      # 오래 안 쓴 앱 서버를 내림
+            try:
+                servers.reap_idle()
+            except Exception:  # noqa: BLE001
+                pass
+    threading.Thread(target=_reap_loop, name="app-server-reaper", daemon=True).start()
     log_line("  GET  /api/state  GET /api/health  POST /api/requests")
     if require_auth:
         log_line(f"  인증 켬 - /login 에서 토큰을 넣거나 `Authorization: Bearer <토큰>`")
@@ -3334,6 +3533,11 @@ def serve(host=HOST, port=PORT, root=ROOT, once=False, tls=False, auth=None):
                 signal.signal(signal.SIGTERM, old_sigterm)
             except (ValueError, OSError):
                 pass
+        reap_stop.set()
+        try:
+            servers.stop_all()
+        except Exception:  # noqa: BLE001
+            pass
         flush_denied_audit(root)
         httpd.server_close()
     return 0

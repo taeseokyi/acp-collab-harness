@@ -2,17 +2,25 @@
 
 명령은 모두 **저장소 루트**(`projects/` 가 보이는 곳)에서 돌립니다.
 
-## 네 벌과 돌리는 명령
+## 여섯 벌과 돌리는 명령
 
 | 무엇 | 파일 | 명령 | 초록이면 |
 |---|---|---|---|
-| 로직·저장 | `test_game.mjs` · `test_jamo.mjs` · `test_storage.mjs` | `node --test projects/자모맞히기/tests/*.mjs` | `ℹ pass 66`, `ℹ fail 0` |
-| 낱말 목록 | `test_words.py` | `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'` | `Ran 13 tests`, `OK` |
+| 로직·저장 | `test_game.mjs` · `test_jamo.mjs` · `test_storage.mjs` · `test_dict.mjs` · `test_trend.mjs` | `node --test projects/자모맞히기/tests/*.mjs` | `ℹ pass 107`, `ℹ fail 0` |
+| 낱말 목록·사전 서버·정답 고르기 | `test_words.py` · `test_dict_server.py` · `test_pick_answers.py` · `test_trend_news.py` · `test_trend_store.py` | `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'` | `Ran 132 tests`, `OK` |
 | 브라우저 - 그려진 화면 | `browser_game.py` | `python3 projects/자모맞히기/tests/browser_game.py` | rc 0, `통과 121 / 전체 121` |
 | 브라우저 - 모드 오가기·시스템 테마 | `browser_modes.py` | `python3 projects/자모맞히기/tests/browser_modes.py` | rc 0, `통과 100 / 전체 100` |
+| 브라우저 - 외부 사전 조회(R31) | `browser_dict.py` | `python3 projects/자모맞히기/tests/browser_dict.py` | rc 0, `통과 75 / 전체 75` |
+| 브라우저 - 뉴스 정답 고르기(R31·R32) | `browser_trend.py` | `python3 projects/자모맞히기/tests/browser_trend.py` | rc 0, `통과 81 / 전체 81` |
 
-2026-11-13 (R28 T-302) 에 네 벌이 초록: 로직 `pass 66`·`fail 0`, 낱말 목록 `Ran 13 tests`·`OK`,
-화면 `통과 121 / 전체 121` rc 0, 모드 `통과 100 / 전체 100` rc 0.
+2026-11-15 (R32 T-334) 단위 검사 수: 로직 `pass 107`·`fail 0`, 파이썬 `Ran 132 tests`·`OK`, 화면 `통과 121 / 전체 121` rc 0,
+모드 `통과 100 / 전체 100` rc 0, 사전 `통과 75 / 전체 75` rc 0, 트렌드 `통과 81 / 전체 81` rc 0 - 여섯 벌 모두 초록.
+(R31 T-318 때는 로직 90·파이썬 97·트렌드 45, 그 앞 R28 T-302 때는 로직 66·낱말 13.)
+`test_trend_store.py`(R32)는 서버 정답 저장소 `trend_store.py` 를 임시 파일로만 검사하고(진짜 `data/` 는 안 건드림),
+`test_trend.mjs`(R32)는 `web/js/trend.js` 의 `sinceText`·`mergeTrend` 를 검사합니다. 함대 쪽
+`tests/browser_monitor_app_server.py` 는 모니터의 '앱 열기' 가 이 프로젝트의 `serve.py` 를 띄워 `/api/*` 를 이어 주는지
+보는 검사입니다(이 프로젝트가 첫 사용자, 임시 루트에 진짜 모니터를 띄우고 임시 복사본만 씀).
+
 `browser_modes.py` 는 R24 의 N4~N9·N12·N13 을 그려진 화면으로 묻고, 연습 정답 토스트가 모드를 따라
 새지 않는지(R24-N5), 연습 쪽 하드 맞춤이 빈 연습 판에 닿는지(T-301 `scenario_hard_reaches_empty_practice`),
 입력 중 글자가 정렬 뒤에도 남는지(T-301 `scenario_typed_letters_survive_align`), 낸 줄이 있는 판의 하드 잠금
@@ -22,14 +30,25 @@
 의심하십시오.** 브라우저 스크립트는 맨 끝에 `통과 n / 전체 m` 을 찍고, rc 는 실패한 검사 수입니다.
 브라우저를 못 띄우면 rc 2 입니다.
 
+`browser_dict.py` (T-316) 는 외부 사전(R31)을 그려진 설정 창과 추측 흐름으로 묻습니다: 설정 절·기본 켬·출처 목록,
+gemini 일 때만 보이는 키 입력, 있음(줄·색·`jamo.extraWords`·새로 고친 뒤 조회 없이 받아들임)·없음·오류 토스트, 끄면 요청 0,
+느린 조회 중 Enter 를 여러 번 눌러도 요청 하나, 사용자 LLM 더하기(`http://` 거절·`https://` 저장·`.dict-del`),
+320px 가로 넘침, `#dict-test` 결과. **외부망은 모두 `page.route` 가짜**(서버 `/api/*`·위키·LLM 모두)이며
+진짜 외부망을 부르지 않습니다. 목록에 없는 6칸 낱말은 페이지에서 `ALLOWED` 를 보고 그때그때 고릅니다.
+
+**고쳐짐 (T-318, `Game.allowWord`):** 사전이 '있음' 이면 `ui.js` 가 `g.allowWord(guess)` 로 이미 만들어진 `Game` 의
+허용 목록에 낱말을 바로 더합니다. 전에는 `ui.js` 의 `ALLOWED_SET.add()` 가 생성 때 복사된 사본만 고쳐(`game.js:toAllowedSet`)
+`submit()` 이 다시 `unknown` 이 되고 같은 낱말을 무한히 되묻는(`…에서 찾았습니다` 토스트가 쌓임) 결함이 있었습니다.
+`browser_dict.py` 가 그 흐름(줄이 하나 들어감·칸 색·조회 요청 한 번)을 지킵니다 - 지금은 `통과 75 / 전체 75`.
+
 ## 브라우저 검사에 필요한 것
 
 - Python 용 `playwright` 와 그 chromium (`python3 -m playwright install chromium`).
-- **서버는 띄우지 마십시오.** `browser_harness.server()` 가 `serve.py` 의 `Handler` 로 `127.0.0.1` 의
+- **이 폴더의 브라우저 검사는 서버를 따로 띄우지 마십시오.** `browser_harness.server()` 가 `serve.py` 의 `Handler` 로 `127.0.0.1` 의
   빈 포트(포트 0)를 잡아 `web/` 을 내보내고 끝나면 닫습니다.
 - 시나리오마다 새 브라우저 context 를 써서 localStorage 는 늘 비어 있는 첫 방문에서 시작합니다.
 - 오늘의 정답은 숫자로 박지 않고 페이지 안에서
-  `answerForDate(new Date(), ANSWERS)` 로 그때그때 구합니다. 자정 무렵에 돌리면 `ui.js` 의 날짜 바꿈
+  `answerForDate(new Date(), ANSWERS, TREND)` 로 그때그때 구합니다(`words.js` 의 `TREND` 에 오늘이 들어 있으면 그 낱말이 정답이라 `TREND` 를 꼭 넘깁니다). 자정 무렵에 돌리면 `ui.js` 의 날짜 바꿈
   처리(30초마다·창 포커스 때)가 판을 갈아 끼워 실패할 수 있습니다 - 자정 근처는 피하십시오.
 
 ## 스크린숏
@@ -53,7 +72,7 @@
 
 | 목표 | 증명하는 파일:함수 | 증명됨/미증명 |
 |---|---|---|
-| 프로젝트 뼈대 - 정적 서버로 열림 | `browser_game.py` 의 모든 시나리오가 `server()` 로 `index.html` 을 열고 `#board .tile` 이 뜰 때까지 기다림, `scenario_layout` | 부분 - `app.json` 으로 함대 모니터에서 실행되는 것은 브라우저 검사가 아님 |
+| 프로젝트 뼈대 - 정적 서버로 열림 | `browser_game.py` 의 모든 시나리오가 `server()` 로 `index.html` 을 열고 `#board .tile` 이 뜰 때까지 기다림, `scenario_layout` | 증명됨 - 함대 모니터의 '앱 열기' 는 `tests/browser_monitor_app_server.py`(함대 검사)가 임시 루트의 진짜 모니터로 봄 |
 | 자모 규칙 - 풀기·조합·겹자음/겹모음/겹받침 | `test_jamo.mjs` (`UNITS`·`SHIFTED`·`KEYMAP`·`toUnits`·`composeUnits`), `browser_game.py:scenario_physical_keys`·`scenario_screen_shift`·`scenario_preview`·`scenario_help`, `browser_modes.py:scenario_preview_fixed`·`scenario_help_table` (미리보기 고정값 `닭`·`갑시`, 도움말 표를 README 규칙 절과 대조) | 증명됨 |
 | 판정 로직 - 겹치는 자모 | `test_game.mjs` (`scoreGuess`·`keyboardState`), `browser_game.py:scenario_score` (파이썬 독립 구현과 칸·키 색 대조) | 증명됨 |
 | 낱말 목록 - 생성물, 여섯 칸, 출처 | `test_words.py` (모든 낱말 6칸·중복 없음·ANSWERS⊆ALLOWED·다시 만들어도 같음), `data/README.md` | 증명됨 |
@@ -67,7 +86,7 @@
 | 어두운 모드 - 시스템 설정 따름 + 단추로 바꿈, 저장됨 | `browser_game.py:scenario_dark` (계산된 body 배경 밝기, 새로 고침 뒤 같은 색·체크박스), `browser_modes.py:scenario_system_dark`·`scenario_system_light` (`color_scheme='dark'`/`'light'` 첫 방문 body 배경 밝기, 어두운 문맥에서 설정을 끄면 새로 고침 뒤에도 밝음) | 증명됨 |
 | 접근성 - 키보드만으로 완주, `aria-live` | `browser_game.py:scenario_keyboard_only` (Escape 로 첫 도움말, Tab+Enter 로 다시 열기, Tab 으로 모드 단추, 물리 자판으로 이김, `#toasts[aria-live=polite]` 에 결과 글), `browser_modes.py:scenario_enter_buttons` (모드 단추·`#btn-new` 에 포커스 + Enter 가 그 단추를 누르고 제출로 새지 않음) | 증명됨 |
 | 통계 - 판수·승률·연승·최대 연승·분포 | `browser_game.py:scenario_win` (첫 판 `1 100 1 1`, 분포 `1 0 0 0 0 0`, 이긴 줄만 `hl`, 새로 고침 뒤 그대로) | 증명됨(날마다 모드만) - 연습은 통계를 안 남긴다는 것도 `scenario_practice` 가 봄 |
-| 검사 - 로직·브라우저 모두 초록 | 이 표의 네 명령 | 예 - 네 벌 모두 초록(로직 66·낱말 13·화면 121·모드 100) |
+| 검사 - 로직·브라우저 모두 초록 | 이 표의 여섯 명령 | 증명됨 - 로직 107·파이썬 132·화면 121·모드 100·사전 75·트렌드 81 모두 초록 |
 
 ## 이 검사가 일부러 보지 않는 것 / 약점
 

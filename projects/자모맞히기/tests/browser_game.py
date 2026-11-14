@@ -115,7 +115,7 @@ def answer_word(page):
     return page.evaluate(
         "async () => { const g = await import('./js/game.js');"
         " const w = await import('./js/words.js');"
-        " return g.answerForDate(new Date(), w.ANSWERS); }"
+        " return g.answerForDate(new Date(), w.ANSWERS, w.TREND); }"
     )
 
 

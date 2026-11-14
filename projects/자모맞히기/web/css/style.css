@@ -334,6 +334,38 @@ html[data-theme="light"]:not([data-colorblind="on"]) .primary { background: #4a7
 .setting small { display: block; color: var(--muted); font-size: .75rem; margin-top: 2px; }
 .setting input { width: 22px; height: 22px; flex: none; accent-color: var(--correct); cursor: pointer; }
 
+/* 외부 사전 설정 (T-313) */
+.dict-sec { min-width: 0; }
+.dict-sec h3 { text-align: left; }
+.dict-row { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; min-width: 0; }
+.dict-warn { display: block; color: var(--muted); font-size: .75rem; line-height: 1.4; margin: 2px 0 6px; overflow-wrap: anywhere; min-width: 0; }
+.dict-row label small { display: block; color: var(--muted); font-size: .75rem; margin-top: 2px; }
+.dict-row select, .dict-row input[type="text"], .dict-row input[type="url"], .dict-row input[type="password"] {
+  width: 100%; min-width: 0; box-sizing: border-box; padding: 8px 10px; font: inherit; font-size: .9rem;
+  color: var(--fg); background: transparent; border: 1px solid var(--border); border-radius: 6px;
+}
+.dict-row select option { color: #1a1a1b; background: #fff; }
+.dict-test-row { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 10px; }
+.dict-btn {
+  flex: none; padding: 8px 14px; font: inherit; font-size: .9rem; font-weight: 700; cursor: pointer;
+  color: inherit; background: transparent; border: 1px solid var(--border); border-radius: 6px;
+}
+.dict-btn:disabled { opacity: .5; cursor: progress; }
+#trend-since { flex: 1 1 100%; }
+#trend-pick { max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
+.dict-status { flex: 1 1 120px; min-width: 0; font-size: .85rem; color: var(--muted); overflow-wrap: anywhere; }
+.dict-add-box { padding: 8px 0; }
+.dict-add-box summary { cursor: pointer; font-size: .9rem; font-weight: 700; }
+.dict-customs { list-style: none; margin: 0; padding: 0; }
+.dict-customs li {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 0; font-size: .9rem; min-width: 0; overflow-wrap: anywhere;
+}
+.dict-del {
+  flex: none; padding: 4px 10px; font: inherit; font-size: .8rem; cursor: pointer;
+  color: inherit; background: transparent; border: 1px solid var(--border); border-radius: 6px;
+}
+
 @media (max-width: 400px) {
   .krow { gap: 4px; margin-bottom: 6px; }
   .key {

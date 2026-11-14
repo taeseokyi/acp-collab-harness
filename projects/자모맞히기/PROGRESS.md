@@ -21,6 +21,63 @@ R24 에서 체크한 것은 적대적 검수 3번(`rounds/R24/REVIEW-r24*.md`)�
 - [x] 접근성 - 키보드만으로 완주, 결과가 `aria-live` 로 읽힘
 - [x] 통계 - 판수·승률·연승·추측 분포
 - [x] 검사 - 로직 단위 검사·브라우저 검사(그려진 것)가 모두 초록, 적대적 검수 통과
+- [x] 외부 사전 조회 - 목록에 없는 6칸 추측을 고른 사전·AI 로 확인해 있으면 받아 줌, 찾은 낱말은 저장 (R31, 요청 `Q-261114-e40c`)
+- [x] 출처 미리 등록·고르기 - 위키낱말사전·위키백과·국립국어원 3종·KISTI·EXAONE(함대 설정)·Gemini·OpenRouter, 사용자 LLM 더하기·지우기 (R31)
+- [x] 키 보호 - 서버 키는 응답·오류·로그에 안 나옴, 로컬 서버는 남의 출처 요청 거절, 화면에 평문 저장 주의 (R31)
+- [x] 뉴스로 정답 정하기(파이썬) - 연합뉴스 RSS → 6칸·꼬리표/지명 빼기·기사 수 순 → 사전 확인 → 날짜별 정답, 명령줄과 설정 단추가 같은 함수 (R31)
+- [x] 정한 정답을 서버가 저장하고 게임이 다시 빌드 없이 받아 씀 + 단추 옆 '마지막으로 정한 뒤 지난 시간' (R32, 큐 R31-P1)
+- [x] 모니터 '앱 열기' 에서도 사전 서버·정답 정하기가 됨 - app.json `"server": "serve.py"` 를 모니터가 따로 떨어진 자식 프로세스로 띄워 `api/*` 를 이어 줌 (R32, 요청 `Q-261115-4aff`; 옛 'api 선언 파일 한 번 실행' 안은 태석님이 거둠)
+
+## R32 (2026-11-15)
+
+**한 일** - 요청 `Q-261115-4aff`(모니터가 앱의 serve.py 를 띄워 이어 줌) + 큐 R31-P1·R31-N8·R31-N10~N14 를 그래프 G-069(8노드) + 후속 G-070(2노드)로,
+운영 방식 '빠른 구현', 약 47분, 재시도·이동 0. 슬롯: S5·S4 sonnet(만들기), S3 무료(품질 결함·문서), S1 opus(검수). 목표 21 → 21 (21 체크, 줄 하나를 새 방법으로 고쳐 씀).
+
+- 서버 정답 저장: 새 `trend_store.py`(`read_trend`·`append_picks`(있는 날짜 안 덮음, 임시 파일→`os.replace`, 스레드 잠금 + `fcntl.flock` 프로세스 잠금)·`last_run`·`record_run`·`pick_and_store`),
+  `serve.py` `GET /api/trend` → `{trend, last_run}`, `POST /api/trend/pick` 이 `data/trend.txt` 에 덧붙이고 `data/trend_meta.json` 에 마지막 시각, `Handler.timeout = 30`.
+  명령줄 `tools/pick_answers.py` 도 같은 `pick_and_store`
+- 화면: 새 `web/js/trend.js`(`sinceText`·`mergeTrend`), 시작·단추 뒤 `GET api/trend` → 하루 정답에 `{...TREND, ...서버}`(다시 빌드 없이), 단추 옆 `#trend-since`('3시간 전에 정함'·'아직 정한 적 없음', 창 열 때마다 다시),
+  브라우저 `jamo.trend` 걷어냄, 줄 있는 오늘 판은 새로 고쳐도 정답 고정(R31-N8), 404·405·501·JSON 아님 → 서버 없음 글(R31-N10)
+- 뉴스 품질(R31-N11~N14): RSS 2MB 상한, `pick(deadline=120)`, `trend_stop.txt` 기업명·시군, 3음절 이상 1글자 조사는 원형도 후보, `checked` 실제 수
+- 함대(모니터): 새 `tools/aimem_monitor/app_server.py`(앱당 하나·좁은 환경·이어 줄 머리 화이트리스트·크기·시간·동시 상한·유휴 내림·죽으면 다시·pid 로 내림·cleanup_stale),
+  `server.py` `project_app` 의 `server` 선언 검사, `/app/~<티켓>/<앱>/api/*` GET·POST 이어 주기·`OPTIONS` 사전 요청·감사 `app-api`·시작 정리·유휴 스레드·종료 정리·프로젝트 삭제 뒤 내림. **모니터 재시작 필요**
+- `app.json` 에 `"server": "serve.py"`. 문서: `README.md` 트렌드 정답 절·모니터에서 서버·EXAONE 429 안내, `tests/README.md` 수
+
+**검증** - 관리자 검증 도구 `.aimem/graph/inputs/r32/v.py`(노드마다 엔진 verify), 관리자가 다시 돌려 재현: node 107 · python 133 · 브라우저 game 121 · modes 100 · dict 75 · trend 81 모두 초록,
+함대 `tests/browser_monitor_app_server.py` 21/21(인증 켠 모니터 → 앱 열기 → 정답 정하기 → '방금 정함' → 새로 고쳐도 유지, 끝나고 자식 없음), 함대 검사 1025 OK.
+적대적 검수 `rounds/R32/REVIEW-r32.md`(S1 opus, 판정 통과): 중 R32-N1(trend_store 프로세스 사이 잠금 없음) → G-070 에서 고침, 하 N2·N4·N6 고침, N3·N5 큐.
+
+**남은 일**
+1. 큐 `[함대]` R32-N3·N5(하): 모니터 둘이 같은 저장소일 때 cleanup_stale, 앱이 setsid 로 띄운 손자 - 프로젝트 일 아님
+2. 사람: 운영 모니터 재시작(클로드 코드가 코드 검토 뒤) - 그 전에는 운영 '앱 열기' 에서 정답 정하기가 '서버 없음' 글
+3. 사람: 국립국어원 키를 `.env` 에 넣으면 그 출처가 켜짐(README 외부 사전 절)
+
+## R31 (2026-11-15)
+
+**한 일** - 요청 `Q-261114-e40c`(낱말 사전 외부 조회 + 뉴스로 정답)를 그래프 다섯(G-064 8노드, 후속 G-065·G-066·G-067·G-068)으로,
+운영 방식 '빠른 구현', 약 1시간 20분. 슬롯: S4 sonnet·S5 sonnet(관리자 추가)·S6 오픈라우터 deepseek(관리자 추가, 끝나고 지움)·S3 무료·S1 opus 검수. 목표 15 → 21 (19 체크).
+
+- 외부 사전: `web/js/dict.js`(출처 표·조회 경로·LLM 요청과 답 읽기), `dict_server.py`(서버 조회·키는 `.env`/환경변수·fleet.toml 의 KISTI/EXAONE),
+  `serve.py` `GET /api/sources`·`GET /api/lookup`(Host·Origin 같은 출처만), 설정 창 `#set-dict`(켜기·출처·키·사용자 LLM·확인해 보기), 추측 흐름(조회 중 입력 막기, 한 추측 한 조회,
+  찾으면 `Game.allowWord` 로 그 판에 반영·`jamo.extraWords` 저장)
+- 모니터: `tools/aimem_monitor/server.py` `/app/` CSP 의 `connect-src` 에 `app.json` `connect` 출처(https 만, 10개)를 보탬 → 모니터에서도 위키 직접 조회·사용자 키 LLM 이 됨. **모니터 재시작 필요**
+- 추론 LLM: EXAONE 이 `max_tokens 8` 에 생각하다 잘려 빈 답(관리자 실물) → 1024·`<think>` 걷기·429 안내·LLM 30초
+- 뉴스 정답: `trend_news.py`(연합뉴스 RSS 7개 피드 → 조사 떼기·6칸·`data/trend_stop.txt` 빼기·기사 수 순 → 위키낱말사전 50개씩 묶음·명사 분류 확인 → 날짜),
+  명령줄 `tools/pick_answers.py`(Gemini 경로 뺌 - 구글이 키를 막음), `serve.py` `POST /api/trend/pick`, 설정 창 `#set-trend` 단추(지금은 결과를 그 브라우저 `jamo.trend` 에 저장),
+  `tools/build_words.py` 가 `data/trend.txt` → `words.js` `TREND`, `game.js` `answerForDate(…, trend)`
+- 실물 한 번: `data/trend.txt` 에 2026-11-15~21 일곱 날(제목 668건·후보 501개), `words.js` 재생성
+- 검사: 새 `test_dict.mjs`·`test_dict_server.py`·`test_trend_news.py`·`test_pick_answers.py`·`browser_dict.py`·`browser_trend.py`, 브라우저 검사 오늘 정답에 `TREND`
+
+**검증** - 관리자 검증 도구 `.aimem/graph/inputs/r31/v.py`(노드마다 엔진 verify), 관리자가 `v.py real` 로 재현: node 94 · python 97 · 브라우저 121 · 100 · 75 · 45 모두 초록,
+함대 검사 981 OK. 관리자 실물 조회: 위키 두 곳 정확(한국·바다 있음, 뷁쉙 없음), EXAONE 고친 뒤 '한국 → 예'(연달아 부르면 429), kistillm 시간 초과(장애), 국립국어원·Gemini 키 없음.
+적대적 검수 두 번 `rounds/R31/REVIEW-r31.md`(판정 통과, 중 2·하 5 → G-066 에서 모두 고침), `rounds/R31/REVIEW-r31b.md`(판정 통과, 중 2·하 5 → 큐).
+
+**남은 일** (대기 큐, 태석님 INBOX 01:15·01:22·01:26 지시가 이번 라운드 상한 뒤에 와서 넘김)
+1. 큐 R31-P1 `[자모맞히기]`: 정한 정답을 **서버가** `data/trend.txt` 와 마지막 시각에 저장, `GET api/trend` 로 게임이 받아 씀(브라우저 `jamo.trend` 걷어냄), 단추 옆 '3시간 전에 정함'.
+   R31-N8(고르는 중 오늘 판에 줄을 내면 늦은 응답이 오늘 정답을 바꿈)·R31-N10 함께
+2. 큐 R31-P2 `[함대]`: 모니터 '앱 열기' 에서 `app.json` `api` 선언 파이썬 파일을 한 번 실행해 응답(상주 서버 없음), `serve.py` 도 같은 약속. 적대적 검수 필수
+3. 큐 R31-N11~N14 (하): RSS 크기 상한, 전체 마감, 정답 품질(기업명·잘린 토막), 검사 빈틈
+4. 사람: 국립국어원(표준국어대사전·우리말샘·기초사전) 키를 `.env` 에 넣으면 그 출처가 켜짐(받는 곳은 README 외부 사전 절)
 
 ## R30 (2026-11-14)
 

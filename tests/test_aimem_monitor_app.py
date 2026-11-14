@@ -184,6 +184,73 @@ class ProjectAppTests(unittest.TestCase):
         self.assertNotIn("  ;", empty)
         self.assertNotIn(" ;", empty)
 
+    def test_csp_connect_declared_origins_are_added_to_connect_src_only(self):
+        base = server.app_csp("https://h:1")
+        origins = ["https://ko.wiktionary.org", "https://a.example.com:8443"]
+        csp = server.app_csp("https://h:1", connect=origins)
+        self.assertIn("connect-src 'self' https://h:1 https://ko.wiktionary.org "
+                      "https://a.example.com:8443;", csp)
+        self.assertEqual(csp.replace(" https://ko.wiktionary.org https://a.example.com:8443", ""), base)
+        for text in origins:
+            self.assertEqual(csp.count(text), 1)
+
+    def test_csp_without_connect_is_identical_to_before(self):
+        for origin in ("", "https://h:1"):
+            self.assertEqual(server.app_csp(origin, connect=None), server.app_csp(origin))
+            self.assertEqual(server.app_csp(origin, connect=[]), server.app_csp(origin))
+        self.assertIn("connect-src 'self' https://h:1;", server.app_csp("https://h:1"))
+
+    def test_csp_bad_connect_items_are_dropped_and_good_ones_kept(self):
+        bad = ["http://x.com", "https://x.com/path", "https://x.com/?q=1", "*", "https://*.x.com",
+               "https://x.com;", "'unsafe-inline'", "https://x.com 'unsafe-inline'",
+               "https://x.com ", " https://x.com", "https://X.com", "https://localhost",
+               "https://x.com:0", "https://x.com:99999", "https://x.com:", "https://x.com\n",
+               "https://.x.com", "https://x..com", "https://x.com'", 'https://x.com"', 7, None, ["https://y.com"]]
+        good = "https://ok.example.org"
+        self.assertEqual(server.app_connect_origins(bad + [good]), [])  # 11번째 이후는 안 봄
+        self.assertEqual(server.app_connect_origins([good] + bad), [good])
+        csp = server.app_csp("", connect=[good] + bad)
+        self.assertEqual(csp, server.app_csp("", connect=[good]))
+        self.assertIn(f"connect-src 'self' {good};", csp)
+        for text in ("http://", "unsafe-inline' https", "*", "x.com"):
+            self.assertNotIn(text, csp.split("connect-src")[1].split(";")[0])
+        self.assertEqual(server.app_connect_origins("https://a.com"), [])
+        self.assertEqual(server.app_connect_origins(None), [])
+
+    def test_csp_connect_limit_is_ten_and_duplicates_collapse(self):
+        ten = [f"https://h{i}.example.com" for i in range(10)]
+        self.assertEqual(server.app_connect_origins(ten + ["https://eleventh.example.com"]), ten)
+        self.assertEqual(server.app_connect_origins(["https://a.com", "https://a.com"]), ["https://a.com"])
+
+    def test_csp_connect_leaves_other_directives_unchanged(self):
+        def without_connect(csp):
+            return [d for d in csp.split("; ") if not d.startswith("connect-src")]
+        a = server.app_csp("https://h:1")
+        b = server.app_csp("https://h:1", connect=["https://ko.wiktionary.org"])
+        self.assertEqual(without_connect(a), without_connect(b))
+        self.assertNotIn("allow-same-origin", b)
+        self.assertEqual(b.count("https://ko.wiktionary.org"), 1)
+
+    def test_app_json_connect_is_filtered_and_reaches_the_response_csp(self):
+        d = self.app()
+        self.manifest(d, {"root": "web", "entry": "index.html",
+                          "connect": ["https://ko.wiktionary.org", "http://bad.com", "*"]})
+        self.assertEqual(server.project_app("알파", self.root)["connect"], ["https://ko.wiktionary.org"])
+        _, headers, _ = self.route("/app/알파/")
+        location = dict(headers)["Location"]
+        status, headers, body = self.route(location)
+        self.assertEqual(status[-1], 200)
+        csp = dict(headers)["Content-Security-Policy"]
+        self.assertIn("connect-src 'self' http://localhost:18799 https://ko.wiktionary.org;", csp)
+        self.assertNotIn("bad.com", csp)
+
+    def test_app_json_without_connect_has_no_connect_key_and_plain_csp(self):
+        self.app()
+        self.assertNotIn("connect", server.project_app("알파", self.root))
+        _, headers, _ = self.route("/app/알파/")
+        _, headers, _ = self.route(dict(headers)["Location"])
+        self.assertIn("connect-src 'self' http://localhost:18799;", dict(headers)["Content-Security-Policy"])
+
     def test_csp_sandbox_makes_origin_opaque(self):
         csp = server.app_csp("https://h:1")
         self.assertTrue(csp.startswith("sandbox allow-scripts allow-popups allow-modals; "))

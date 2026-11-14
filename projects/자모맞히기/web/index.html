@@ -72,6 +72,43 @@
       <label class="setting"><span><b>하드 모드</b><small>찾은 자모 힌트를 다음 추측에 꼭 써야 합니다 (판 시작 전에만 변경)</small></span><input type="checkbox" id="set-hard" role="switch"></label>
       <label class="setting"><span><b>어두운 테마</b></span><input type="checkbox" id="set-dark" role="switch"></label>
       <label class="setting"><span><b>색약 모드</b><small>주황·파랑으로 구분합니다</small></span><input type="checkbox" id="set-cb" role="switch"></label>
+      <section id="set-dict" class="dict-sec" aria-labelledby="t-dict">
+        <h3 id="t-dict">외부 사전</h3>
+        <label class="setting"><span><b>외부 사전으로 확인</b><small>낱말 목록에 없는 추측을 사전·AI 로 조회해 있으면 받아 줍니다</small></span><input type="checkbox" id="dict-on" role="switch" checked></label>
+        <div class="dict-row">
+          <label for="dict-source"><b>사전·모델</b></label>
+          <select id="dict-source"></select>
+        </div>
+        <div class="dict-row" id="dict-key-row" hidden>
+          <label for="dict-key"><b>API 키</b><small id="dict-signup"></small></label>
+          <input type="password" id="dict-key" autocomplete="off" spellcheck="false" placeholder="이 기기에만 저장됩니다">
+        </div>
+        <small class="dict-warn">키는 이 브라우저에 평문으로 저장됩니다. 한도 있는 무료 키만 넣고, 공용 기기에서는 지우십시오.</small>
+        <div class="dict-row dict-test-row">
+          <button type="button" id="dict-test" class="dict-btn">확인해 보기</button>
+          <span id="dict-status" class="dict-status" aria-live="polite"></span>
+        </div>
+        <details class="dict-add-box">
+          <summary>AI 모델 더하기 (OpenAI 호환)</summary>
+          <div class="dict-row"><label for="dict-add-name">이름</label><input type="text" id="dict-add-name" autocomplete="off"></div>
+          <div class="dict-row"><label for="dict-add-url">주소 (https://…)</label><input type="url" id="dict-add-url" autocomplete="off" placeholder="https://example.com/v1"></div>
+          <div class="dict-row"><label for="dict-add-model">모델</label><input type="text" id="dict-add-model" autocomplete="off"></div>
+          <div class="dict-row"><label for="dict-add-key">API 키</label><input type="password" id="dict-add-key" autocomplete="off"></div>
+          <small class="dict-warn">키는 이 브라우저에 평문으로 저장됩니다. 한도 있는 무료 키만 넣고, 공용 기기에서는 지우십시오.</small>
+          <button type="button" id="dict-add" class="dict-btn">더하기</button>
+        </details>
+        <ul id="dict-customs" class="dict-customs"></ul>
+      </section>
+      <section id="set-trend" class="dict-sec" aria-labelledby="t-trend">
+        <h3 id="t-trend">뉴스로 정답 고르기</h3>
+        <div class="dict-row dict-test-row">
+          <button type="button" id="trend-pick" class="dict-btn">지금 뉴스에서 정답 고르기</button>
+          <span id="trend-since" class="dict-status"></span>
+          <span id="trend-status" class="dict-status" aria-live="polite"></span>
+        </div>
+
+        <small class="dict-warn">연합뉴스 제목에서 고르고 위 사전으로 확인합니다</small>
+      </section>
     </div>
   </div>
 

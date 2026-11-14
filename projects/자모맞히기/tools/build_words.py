@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""data/answers.txt·data/allowed.txt·data/words/*.txt 에서 web/js/words.js 를 만듭니다.
+"""data/answers.txt·data/allowed.txt·data/words/*.txt·data/trend.txt 에서 web/js/words.js 를 만듭니다.
 
 손으로 고른 낱말 원본을 읽어 완성형 한글 음절만으로 된 6칸 낱말만 남기고,
 정답 후보(ANSWERS)는 고정 씨앗으로 섞고 추측 목록(ALLOWED)은 정렬합니다.
-표준 라이브러리만 씁니다. `--out PATH` 로 출력 위치를 바꿀 수 있습니다.
+`data/trend.txt` 의 날짜별 정답은 `TREND` 로 더하고 그 낱말들을 ALLOWED 에도 보탭니다.
+표준 라이브러리만 씁니다. `--out PATH`·`--trend PATH` 로 경로를 바꿀 수 있습니다.
 """
 
 from __future__ import annotations
@@ -11,7 +12,9 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 import sys
+from datetime import date
 from pathlib import Path
 
 
@@ -19,10 +22,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ANSWERS_IN = PROJECT_ROOT / "data" / "answers.txt"
 ALLOWED_IN = PROJECT_ROOT / "data" / "allowed.txt"
 WORDS_DIR = PROJECT_ROOT / "data" / "words"
+TREND_IN = PROJECT_ROOT / "data" / "trend.txt"
 OUTPUT = PROJECT_ROOT / "web" / "js" / "words.js"
 
 SEED = 20261113
 WORD_UNITS = 6
+DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
 JUNG = [
@@ -79,6 +84,59 @@ def format_array(name: str, words: list[str]) -> str:
     return f"export const {name} = {json.dumps(words, ensure_ascii=False)};"
 
 
+def is_date(text: str) -> bool:
+    """`YYYY-MM-DD` 꼴이고 달력에 있는 날짜면 True."""
+    if not DATE.fullmatch(text):
+        return False
+    try:
+        date.fromisoformat(text)
+    except ValueError:
+        return False
+    return True
+
+
+def load_trend(path: Path) -> tuple[dict[str, str], int]:
+    """trend.txt 를 읽어 {날짜: 낱말} 로 만듭니다.
+
+    꼴이 틀린 줄(`YYYY-MM-DD 낱말` 이 아님)·6칸이 아닌 낱말·같은 날짜가 두 번 나온 줄은
+    버리고 경고를 찍습니다. 파일이 없으면 빈 dict 를 돌려줍니다.
+    """
+    trend: dict[str, str] = {}
+    dropped = 0
+    if not path.is_file():
+        return trend, dropped
+    with path.open(encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) != 2:
+                print(f"trend: 줄 꼴이 틀려 버림: {line!r}", file=sys.stderr)
+                dropped += 1
+                continue
+            day, word = parts
+            if not is_date(day):
+                print(f"trend: 날짜 꼴이 틀려 버림: {line!r}", file=sys.stderr)
+                dropped += 1
+                continue
+            if (units(word) is None) or len(units(word)) != WORD_UNITS:
+                print(f"trend: 6칸이 아니라 버림: {line!r}", file=sys.stderr)
+                dropped += 1
+                continue
+            if day in trend:
+                print(f"trend: 같은 날짜가 두 번이라 버림: {line!r}", file=sys.stderr)
+                dropped += 1
+                continue
+            trend[day] = word
+    return trend, dropped
+
+
+def format_trend(trend: dict[str, str]) -> str:
+    ordered = {day: trend[day] for day in sorted(trend)}
+    return f"export const TREND = {json.dumps(ordered, ensure_ascii=False)};"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="낱말 목록으로 words.js 생성")
     parser.add_argument(
@@ -86,6 +144,12 @@ def main() -> int:
         type=Path,
         default=OUTPUT,
         help="출력 파일 경로 (기본: web/js/words.js)",
+    )
+    parser.add_argument(
+        "--trend",
+        type=Path,
+        default=TREND_IN,
+        help="트렌드 원본 경로 (기본: data/trend.txt)",
     )
     args = parser.parse_args()
     output = args.out
@@ -98,12 +162,14 @@ def main() -> int:
     answers, dropped_answers = load_words(ANSWERS_IN)
     allowed, dropped_allowed = load_words(ALLOWED_IN)
     branches = [(p, *load_words(p)) for p in sorted(WORDS_DIR.glob("*.txt"))]
+    trend, dropped_trend = load_trend(args.trend)
 
     ordered_answers = sorted(answers)
     random.Random(SEED).shuffle(ordered_answers)
     union_set = set(answers) | set(allowed)
     for _, words, _ in branches:
         union_set.update(words)
+    union_set.update(trend.values())
     union = sorted(union_set)
 
     content = "\n".join(
@@ -111,6 +177,7 @@ def main() -> int:
             "// 생성물 - 손으로 고치지 말고 tools/build_words.py 로 다시 만드십시오",
             format_array("ANSWERS", ordered_answers),
             format_array("ALLOWED", union),
+            format_trend(trend),
         ]
     ) + "\n"
 
@@ -120,6 +187,7 @@ def main() -> int:
     print(f"allowed: {len(union)}개 (원본 {len(allowed)}개, 걸러 냄 {dropped_allowed}줄)")
     for path, words, dropped in branches:
         print(f"  {path.name}: {len(words)}개 (걸러 냄 {dropped}줄)")
+    print(f"trend: {len(trend)}개 (걸러 냄 {dropped_trend}줄)")
     print(f"wrote {output}")
     return 0
 

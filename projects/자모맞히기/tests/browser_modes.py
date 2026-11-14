@@ -164,7 +164,7 @@ def answer_word(page):
     return page.evaluate(
         "async () => { const g = await import('./js/game.js');"
         " const w = await import('./js/words.js');"
-        " return g.answerForDate(new Date(), w.ANSWERS); }"
+        " return g.answerForDate(new Date(), w.ANSWERS, w.TREND); }"
     )
 
 
@@ -480,7 +480,7 @@ def scenario_saved_hard_empty_daily(page, checks):
           const J = await import('./js/jamo.js');
           const G = await import('./js/game.js');
           const now = new Date();
-          const answer = J.toUnits(G.answerForDate(now, W.ANSWERS));
+          const answer = J.toUnits(G.answerForDate(now, W.ANSWERS, W.TREND));
           const p = (n) => String(n).padStart(2, '0');
           const key = 'jamo.daily.' + now.getFullYear() + '-' + p(now.getMonth() + 1)
             + '-' + p(now.getDate());

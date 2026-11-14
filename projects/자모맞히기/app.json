@@ -1,6 +1,13 @@
 {
   "root": "web",
   "entry": "index.html",
+  "server": "serve.py",
   "title": "자모맞히기",
-  "note": "정적 파일만 - 백엔드가 없습니다"
+  "note": "serve.py 를 모니터가 대신 띄워 이어 줌 - 서버 사전·뉴스로 정답 정하기가 '앱 열기'에서도 됨(외부 사전은 connect 목록의 출처만)",
+  "connect": [
+    "https://ko.wiktionary.org",
+    "https://ko.wikipedia.org",
+    "https://generativelanguage.googleapis.com",
+    "https://openrouter.ai"
+  ]
 }

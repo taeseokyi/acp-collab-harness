@@ -1,15 +1,16 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-14T01:30:54 / REV 178
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-15T02:34:34 / REV 183
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | `a41f0c` | claude | opus | R30 마지막 가벼운 적대적 재검수(T-309) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S1 | `a41f0c` | claude | opus | R32 적대적 검수(T-335): 모니터 앱 서버 이어 주기 | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
 | S2 | `d27e93` | codex | kisti/kistillm | R30 대기 (일이 둘뿐 - 막힌 노드 받기) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
-| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R30 만들기: 배우다 보태기(T-308, 무료) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
-| S4 | `6cd650` | claude | sonnet | R30 빠른 구현: 하드 잠금 저장 설정 시험(T-307) | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
+| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R32 만들기: 뉴스 정답 품질 결함·문서 (무료) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
+| S4 | `6cd650` | claude | sonnet | R32 빠른 구현: 모니터 app_server.py → server.py 잇기 | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
+| S5 | `61dfcc` | claude | sonnet | R32 빠른 구현: 서버 정답 저장 → 화면 → 끝에서 끝 검사 |  |
 
 ## 3. 작업 보드
 
@@ -229,11 +230,40 @@
 | T-307 | Q-261114-a3cf | 브라우저: 하드 잠금 뒤 저장 설정 시험 - V19 (R29-N1) | S4 | DONE |  |
 | T-308 | Q-261114-a3cf | 낱말: 배우다 보태기·words.js 재생성 (R29-N2) | S4 | DONE |  |
 | T-309 | Q-261114-a3cf | 가벼운 적대적 재검수: R29-N1·N2 | S1 | DONE |  |
+| T-310 | Q-261114-e40c | 브라우저 사전 모듈 web/js/dict.js + test_dict.mjs | S4 | DONE |  |
+| T-311 | Q-261114-e40c | 사전 서버 dict_server.py + serve.py /api/lookup·/api/sources + 시험 | S5 | DONE |  |
+| T-312 | Q-261114-e40c | 트렌드 정답 빌드: trend.txt → words.js TREND, game.js answerForDate(trend) | S6 | DONE |  |
+| T-313 | Q-261114-e40c | 설정 화면 '외부 사전'·추측 흐름·저장 (ui·index·style·storage) | S4 | DONE |  |
+| T-314 | Q-261114-e40c | 트렌드 정답 고르는 도구 tools/pick_answers.py (Gemini+검색, 사전 확인) + 시험 | S3 | DONE |  |
+| T-315 | Q-261114-e40c | 모니터 /app/ CSP connect-src 에 app.json connect 목록 + 시험 | S5 | DONE |  |
+| T-316 | Q-261114-e40c | 브라우저 사전 검사 browser_dict.py + tests/README | S5 | DONE |  |
+| T-317 | Q-261114-e40c | 마지막 적대적 검수 (R31 외부 사전 전체) | S1 | DONE |  |
+| T-318 | Q-261114-e40c | 고침: 사전에서 찾은 낱말이 진행 중인 판에 반영 안 됨(무한 재조회) | S4 | DONE |  |
+| T-319 | Q-261114-e40c | 검수 후속 R31-N1·N3·N6: serve.py 교차 출처 막기·낱말 꼴·시험 독립 | S5 | DONE |  |
+| T-320 | Q-261114-e40c | 검수 후속 R31-N2·N7: 키 저장 위험 안내·custom https 재확인 | S4 | DONE |  |
+| T-321 | Q-261114-e40c | 검수 후속 R31-N4·N5: README 외부 사전 절·tests README | S6 | DONE |  |
+| T-322 | Q-261114-e40c | 실물 결함: 추론 LLM(EXAONE) max_tokens 8 빈 답 - 서버 | S5 | DONE |  |
+| T-323 | Q-261114-e40c | 실물 결함: 추론 LLM 빈 답 - 브라우저 dict.js | S4 | DONE |  |
+| T-324 | Q-261114-e40c | 연합뉴스 RSS 정답 고르기: trend_news.py + /api/trend/pick + pick_answers.py 다시 씀 | S5 | DONE |  |
+| T-325 | Q-261114-e40c | 설정 창 '지금 뉴스에서 정답 고르기' 단추·저장·날마다 정답 반영 + browser_trend.py | S4 | DONE |  |
+| T-326 | Q-261114-e40c | 실물 한 번: 연합뉴스로 오늘부터 7일치 정답 + 브라우저 검사 TREND + README | S5 | DONE |  |
+| T-327 | Q-261114-e40c | 가벼운 적대적 검수: 연합뉴스 정답 고르기 | S1 | DONE |  |
+| T-328 | Q-261115-4aff | 서버가 정답 저장: trend_store.py + serve.py GET /api/trend·pick 저장 + pick_answers.py 같은 함수 | S5 | DONE |  |
+| T-329 | Q-261115-4aff | 모니터: 앱 서버 관리 모듈 app_server.py (띄우기·다시 씀·이어 주기·내리기) | S4 | DONE |  |
+| T-330 | Q-261115-4aff | 뉴스 정답 품질 결함 R31-N11~N14: RSS 2MB 상한·전체 마감·기업명/시군·조사 원형·checked 실제 수 | S3 | DONE |  |
+| T-331 | Q-261115-4aff | 화면: 서버 정답 받아 쓰기·지난 시간 표시·jamo.trend 걷기·오늘 판 정답 고정(R31-N8)·서버 없음 글(R31-N10) | S5 | DONE |  |
+| T-332 | Q-261115-4aff | 모니터: app.json server 선언 + /app/…/api/* 이어 주기·사전 요청·감사 로그·정리 잇기 | S4 | DONE |  |
+| T-333 | Q-261115-4aff | 끝에서 끝: 자모맞히기 app.json server 선언 + 모니터 '앱 열기' 에서 정답 정하기·지난 시간 브라우저 검사 | S5 | DONE |  |
+| T-334 | Q-261115-4aff | 문서: 프로젝트 README(서버 저장·모니터에서 서버)·tests/README 수 맞춤·EXAONE 429 안내 | S3 | DONE |  |
+| T-335 | Q-261115-4aff | 적대적 검수: 모니터가 앱 serve.py 를 띄워 이어 주는 길 + 서버 정답 저장·화면 | S1 | DONE |  |
+| T-336 | Q-261115-4aff | 검수 후속 R32-N1: trend_store 프로세스 사이 잠금(fcntl.flock) + 두 프로세스 검사 | S5 | DONE |  |
+| T-337 | Q-261115-4aff | 검수 후속 R32-N2·N4·N6: cleanup_stale pid 확인 좁힘, server 바뀌면 다시 띄움, OPTIONS 티켓 먼저 | S4 | DONE |  |
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
+| 1 | [함대] R32-N3·R32-N5 (하, rounds/R32/REVIEW-r32.md 5절): 같은 저장소를 모니터 둘이 보면 둘째의 cleanup_stale 이 첫째의 살아 있는 앱 서버를 내림 - 기록에 모니터 pid(owner)를 넣고 살아 있으면 건너뜀(R32-N3). 앱이 setsid 로 띄운 손자는 stop 뒤에도 남음 - /proc/<pid>/task/*/children 으로 거둠(R32-N5). 덧붙여 R32 마감 때 /tmp 임시 저장소의 가짜 앱 서버(projects/알파/serve.py) 하나가 고아로 남아 있었음 - 어느 검사·실험이 남겼는지 찾아 검사 tearDown 을 단단히 |  |  |
 
 ## 6. 파일 소유권
 
@@ -280,33 +310,51 @@
 | `projects/웹워들/web/js/storage.js` | S2 | R13 T-161 부모 모드 저장 (S4 유료→S2 무료, 만들기·고치기는 무료 슬롯) |
 | `projects/웹워들/web/js/ui.js` | S2 | R13 T-161 await init() 호출 자리 (storage.js 와 같은 슬롯) |
 | `projects/웹워들/web/js/words.js` | S2 | R7 단어 목록 생성물 |
-| `projects/자모맞히기/app.json` | S2 | R23 |
+| `projects/자모맞히기/README.md` | S3 | R32 |
+| `projects/자모맞히기/app.json` | S5 | R32 |
 | `projects/자모맞히기/data/**` | S2 | R24 T-284 |
 | `projects/자모맞히기/data/README.md` | S4 | G-060 T-298 S2→S4 |
 | `projects/자모맞히기/data/allowed.txt` | S4 | G-060 T-298 S2→S4 |
 | `projects/자모맞히기/data/answers.txt` | S4 | G-060 T-298 S2→S4 |
+| `projects/자모맞히기/data/trend.txt` | S5 | R31 |
+| `projects/자모맞히기/data/trend_stop.txt` | S3 | R32 |
 | `projects/자모맞히기/data/words/**` | S4 | R28 |
 | `projects/자모맞히기/data/words/사회.txt` | S4 | G-060 T-295 S3→S4 |
 | `projects/자모맞히기/data/words/자연마음.txt` | S4 | G-060 T-296 S3→S4 |
 | `projects/자모맞히기/data/words/풀이씨.txt` | S4 | R30 T-308 S3→S4 |
-| `projects/자모맞히기/tests/README.md` | S4 | R30 |
-| `projects/자모맞히기/tests/browser_game.py` | S3 | R24 T-282 |
-| `projects/자모맞히기/tests/browser_modes.py` | S4 | R30 |
-| `projects/자모맞히기/tests/test_game.mjs` | S3 | R24 T-281 |
+| `projects/자모맞히기/dict_server.py` | S5 | R31 |
+| `projects/자모맞히기/serve.py` | S5 | R32 |
+| `projects/자모맞히기/tests/README.md` | S3 | R32 |
+| `projects/자모맞히기/tests/browser_dict.py` | S5 | R31 |
+| `projects/자모맞히기/tests/browser_game.py` | S5 | R31 |
+| `projects/자모맞히기/tests/browser_harness.py` | S4 | R31 |
+| `projects/자모맞히기/tests/browser_modes.py` | S5 | R31 |
+| `projects/자모맞히기/tests/browser_trend.py` | S5 | R32 |
+| `projects/자모맞히기/tests/test_dict.mjs` | S4 | R31 |
+| `projects/자모맞히기/tests/test_dict_server.py` | S5 | R32 |
+| `projects/자모맞히기/tests/test_game.mjs` | S4 | R31 |
 | `projects/자모맞히기/tests/test_jamo.mjs` | S3 | R24 T-281 |
 | `projects/자모맞히기/tests/test_logic.mjs` | S3 | R23 |
-| `projects/자모맞히기/tests/test_storage.mjs` | S3 | R24 T-280 |
-| `projects/자모맞히기/tests/test_words.py` | S2 | R29 |
+| `projects/자모맞히기/tests/test_pick_answers.py` | S5 | R32 |
+| `projects/자모맞히기/tests/test_storage.mjs` | S5 | R32 |
+| `projects/자모맞히기/tests/test_trend.mjs` | S5 | R32 |
+| `projects/자모맞히기/tests/test_trend_news.py` | S3 | R32 |
+| `projects/자모맞히기/tests/test_trend_store.py` | S5 | R32 후속 |
 | `projects/자모맞히기/tools/**` | S2 | R24 T-284 |
-| `projects/자모맞히기/tools/build_words.py` | S4 | G-060 T-298 S2→S4 |
+| `projects/자모맞히기/tools/pick_answers.py` | S5 | R32 |
+| `projects/자모맞히기/trend_news.py` | S3 | R32 |
+| `projects/자모맞히기/trend_store.py` | S5 | R32 후속 |
 | `projects/자모맞히기/web/css/**` | S3 | R24 T-280 |
-| `projects/자모맞히기/web/index.html` | S3 | R24 T-280 |
+| `projects/자모맞히기/web/css/style.css` | S5 | R32 |
+| `projects/자모맞히기/web/index.html` | S5 | R32 |
 | `projects/자모맞히기/web/js/app.js` | S2 | R23 |
-| `projects/자모맞히기/web/js/game.js` | S2 | R24 T-278 (S3→S2 균형) |
+| `projects/자모맞히기/web/js/dict.js` | S4 | R31 |
+| `projects/자모맞히기/web/js/game.js` | S4 | R31 |
 | `projects/자모맞히기/web/js/jamo.js` | S2 | R24 T-276 |
-| `projects/자모맞히기/web/js/storage.js` | S3 | R24 T-280 |
-| `projects/자모맞히기/web/js/ui.js` | S4 | G-060 T-293 S3→S4 |
-| `projects/자모맞히기/web/js/words.js` | S4 | R30 T-308 S3→S4 |
+| `projects/자모맞히기/web/js/storage.js` | S5 | R32 |
+| `projects/자모맞히기/web/js/trend.js` | S5 | R32 |
+| `projects/자모맞히기/web/js/ui.js` | S5 | R32 |
+| `projects/자모맞히기/web/js/words.js` | S5 | R31 |
 | `rounds/**` | 관리자 | 라운드 기록 폴더 rounds/R<N>/ - brief.md·REPORT.md 만 (결과물은 projects/) |
 | `rounds/R10/REVIEW.md` | S1 | R10 |
 | `rounds/R11/REVIEW-A.md` | S1 | R11 T-136 적대적 검수 A |
@@ -342,8 +390,12 @@
 | `rounds/R28/REVIEW-r28.md` | S1 | R28 |
 | `rounds/R29/REVIEW-r29.md` | S1 | R29 |
 | `rounds/R30/REVIEW-r30.md` | S1 | R30 |
+| `rounds/R31/REVIEW-r31.md` | S1 | R31 |
+| `rounds/R31/REVIEW-r31b.md` | S1 | R31 |
+| `rounds/R32/REVIEW-r32.md` | S1 | R32 |
 | `skills/**` | 관리자 | **현재 비어 있음** (REV 101 에서 `acp-slot-lifecycle` 제거). 되살아나면 이 행이 그대로 적용된다 |
 | `tests/browser_monitor_app.py` | S3 | R10 T-131 |
+| `tests/browser_monitor_app_server.py` | S5 | R32 |
 | `tests/browser_monitor_auth.py` | S3 | R10 T-135 |
 | `tests/browser_monitor_preview.py` | S2 | R14 T-185 웹워들 미리보기 보관함 브라우저 실측 (새 파일, app.js 보관함을 쓴 R13 S2 와 같은 슬롯이나 검사 대상은 R13 산출물) |
 | `tests/browser_monitor_preview_guard.py` | S3 | R14 T-185 미리보기 보관함 방어 실측 (새 파일) |
@@ -353,7 +405,9 @@
 | `tests/test_aimem_db_cli.py` | S3 | R14 T-180 (aimem_db.py 를 고친 S2 와 다른 슬롯) |
 | `tests/test_aimem_lint.py` | S2 | T-005B. R5 에 S4 로 잠시 이관(KISTI 장애) → 2026-11-10 09:15 S2 복구로 환원(태석님 지시) |
 | `tests/test_aimem_monitor*.py` | S2 | 웹 UI 계약 테스트. R5 에 S4 로 잠시 이관 → 2026-11-10 09:15 S2 복구로 환원(태석님 지시) |
-| `tests/test_aimem_monitor_app.py` | S2 | R10 |
+| `tests/test_aimem_monitor_app.py` | S4 | R32 |
+| `tests/test_aimem_monitor_app_proxy.py` | S4 | R32 후속 |
+| `tests/test_aimem_monitor_app_server.py` | S4 | R32 후속 |
 | `tests/test_archive_api.py` | S3 | R14 T-183 /api/archive 계약 시험 (새 파일, server.py 를 고친 S2 와 다른 슬롯) |
 | `tests/test_fleet*.py` | S2 | `fleet.py` 회귀 테스트. 태석님 승인 2026-11-10 R6 브리프 (9절 2번 해소 - 승인 당시 S4 였으나 S2 복귀로 S2) |
 | `tests/test_fleet_graph.py` | S3 | R19 T-243 한도 오인 회귀 시험 (fleet_graph.py 를 고친 S2 와 다른 슬롯) |
@@ -365,8 +419,9 @@
 | `tools/aimem_lint.py` | S1 | T-005A |
 | `tools/aimem_monitor/__init__.py` | S2 | R10 |
 | `tools/aimem_monitor/__main__.py` | 관리자 | 라운드 3 웹 UI. `python3 -m aimem_monitor` 진입점 |
+| `tools/aimem_monitor/app_server.py` | S4 | R32 후속 |
 | `tools/aimem_monitor/reader.py` | S2 | R13 T-166·T-168 goal 제거·ETA 수정 (S1 유료→S2 무료) |
-| `tools/aimem_monitor/server.py` | S2 | R10 |
+| `tools/aimem_monitor/server.py` | S4 | R32 후속 |
 | `tools/aimem_monitor/static/**` | S3 | 라운드 3 웹 UI. 정적 프런트엔드 (HTML/JS/CSS) |
 | `tools/aimem_monitor/static/app.js` | S2 | R10 |
 | `tools/aimem_monitor/static/index.html` | S2 | R13 T-167 KISTI 카드 제거 (app.js 와 같은 슬롯) |
@@ -425,3 +480,5 @@
 | Q-261113-292d | 자모맞히기: 남은 목표 1개 이어 가기 (R27 뒤 자동) | 함대 이어 달리기 | DONE | 2026-11-13T23:20:46 |
 | Q-261114-23ef | 자모맞히기: 대기 큐 1건 처리 (R28 뒤 자동) | 함대 이어 달리기 | DONE | 2026-11-14T00:18:27 |
 | Q-261114-a3cf | 자모맞히기: 대기 큐 1건 처리 (R29 뒤 자동) | 함대 이어 달리기 | DONE | 2026-11-14T00:52:27 |
+| Q-261114-e40c | 낱말 사전 외부 조회 | 태석 | DONE | 2026-11-14T23:34:06 |
+| Q-261115-4aff | 모니터 '앱 열기' 에서 앱의 serve.py 를 띄워 서버 쪽 기능이 그대로 되게 (일반 장치, 큐 R31-P2 를 대신함) | 태석(클로드 코드) | DONE | 2026-11-15T01:47:14 |
