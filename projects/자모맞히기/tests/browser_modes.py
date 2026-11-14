@@ -988,6 +988,98 @@ def scenario_typed_letters_survive_align(page, checks):
     )
 
 
+def scenario_hard_locked_after_play(page, checks):
+    # V16: 줄을 낸 판에서는 같은 모드에서도 하드를 바꿀 수 없다(되돌리고 토스트, 낸 줄 유지)
+    dismiss_help(page)
+    answer = units_of(page, answer_word(page))
+    _word, guess = first_wrong(allowed_pairs(page), answer)
+    type_units(page, guess)
+    page.keyboard.press("Enter")
+    wait_settled(page, 0)
+    page.click("#btn-settings")
+    page.wait_for_selector("#modal-settings:not([hidden])", timeout=3000)
+    page.click("#set-hard")
+    page.wait_for_function(
+        "() => Array.from(document.querySelectorAll('#toasts .toast'))"
+        ".some((t) => t.textContent.includes('판이 시작된 뒤에는 바꿀 수 없습니다'))",
+        timeout=3000,
+    )
+    toast = page.locator("#toasts .toast", has_text="판이 시작된 뒤에는 바꿀 수 없습니다")
+    checks.ok(
+        "T-304 낸 줄이 있으면 하드 체크가 되돌려지고 잠금 토스트가 보임",
+        not page.is_checked("#set-hard") and toast.first.is_visible(),
+        f"체크 {page.is_checked('#set-hard')}",
+    )
+    stored = page.evaluate("() => JSON.parse(localStorage.getItem('jamo.settings'))")
+    checks.ok(
+        "T-304 잠금 시도 뒤 저장된 설정의 하드가 참이 아님",
+        not (isinstance(stored, dict) and stored.get("hardMode") is True),
+        f"실제 {stored}",
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_function("() => document.getElementById('modal-settings').hidden === true")
+    checks.ok(
+        "T-304 잠금 뒤에도 첫 줄이 그대로",
+        row_text(page, 0) == guess,
+        f"줄 {row_text(page, 0)!r} 기대 {guess!r}",
+    )
+    page.reload(wait_until="load")
+    page.wait_for_selector("#board .tile", timeout=10000)
+    page.wait_for_timeout(200)
+    dismiss_help(page)
+    visible, value = open_settings_checked(page)
+    checks.ok(
+        "T-304 새로 고친 뒤에도 첫 줄 그대로, 하드 꺼짐",
+        visible and not value and row_text(page, 0) == guess,
+        f"체크 {value} 줄 {row_text(page, 0)!r}",
+    )
+    stored = page.evaluate("() => JSON.parse(localStorage.getItem('jamo.settings'))")
+    checks.ok(
+        "T-304 새로 고친 뒤에도 저장된 설정의 하드가 참이 아님",
+        not (isinstance(stored, dict) and stored.get("hardMode") is True),
+        f"실제 {stored}",
+    )
+    page.click("#mode-practice")
+    page.wait_for_timeout(200)
+    visible, value = open_settings_checked(page)
+    checks.ok(
+        "T-304 잠금 시도 뒤 빈 연습 판의 하드 체크박스가 꺼짐",
+        visible and not value and empty_board(page),
+        f"체크 {value}",
+    )
+
+
+def scenario_align_keeps_puzzle_number(page, checks):
+    # V14: 연습을 연 뒤 하드를 바꾸고 날마다로 와도 빈 날마다 판의 번호가 오늘 번호(1)로 남는다
+    dismiss_help(page)
+    set_hard_in_practice(page, True)
+    page.click("#mode-daily")
+    page.wait_for_timeout(200)
+    visible, value = open_settings_checked(page)
+    checks.ok(
+        "T-304 연습에서 하드 켠 뒤 빈 날마다 판에 설정이 닿음",
+        visible and value and empty_board(page),
+        f"체크 {value}",
+    )
+    word = answer_word(page)
+    type_units(page, units_of(page, word))
+    page.keyboard.press("Enter")
+    wait_settled(page, 0)
+    page.wait_for_selector("#modal-stats:not([hidden])", timeout=6000)
+    page.click("#btn-share")
+    page.wait_for_function(
+        "() => Array.from(document.querySelectorAll('#toasts .toast'))"
+        ".some((t) => t.textContent.includes('클립보드에 복사했습니다'))",
+        timeout=3000,
+    )
+    first = page.evaluate("() => navigator.clipboard.readText()").split("\n")[0]
+    checks.ok(
+        "T-304 맞춤으로 새로 만든 날마다 판의 공유 첫 줄 번호가 0 이 아닌 오늘 번호(1)",
+        first.startswith("자모맞히기 1 ") and "연습" not in first,
+        f"실제 {first!r}",
+    )
+
+
 def run(label, checks, scenario, browser, base, **page_options):
     page = open_page(browser, base, **page_options)
     try:
@@ -1097,6 +1189,16 @@ def main():
                 run("T-293 낸 줄 있는 판은 유지", checks, scenario_hard_keeps_played_board, browser, base)
                 run("T-301 하드 설정이 빈 연습 판에 닿음", checks, scenario_hard_reaches_empty_practice, browser, base)
                 run("T-301 입력 중 글자 유지", checks, scenario_typed_letters_survive_align, browser, base)
+                run("T-304 낸 줄 뒤 하드 잠금", checks, scenario_hard_locked_after_play, browser, base)
+                run(
+                    "T-304 맞춤이 판 번호를 지킴",
+                    checks,
+                    scenario_align_keeps_puzzle_number,
+                    browser,
+                    base,
+                    clipboard=True,
+                    init_scripts=[FAKE_DATE],
+                )
                 run("N12 도움말↔README", checks, scenario_help_table, browser, base)
             finally:
                 browser.close()

@@ -9,13 +9,14 @@
 | 로직·저장 | `test_game.mjs` · `test_jamo.mjs` · `test_storage.mjs` | `node --test projects/자모맞히기/tests/*.mjs` | `ℹ pass 66`, `ℹ fail 0` |
 | 낱말 목록 | `test_words.py` | `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'` | `Ran 13 tests`, `OK` |
 | 브라우저 - 그려진 화면 | `browser_game.py` | `python3 projects/자모맞히기/tests/browser_game.py` | rc 0, `통과 121 / 전체 121` |
-| 브라우저 - 모드 오가기·시스템 테마 | `browser_modes.py` | `python3 projects/자모맞히기/tests/browser_modes.py` | rc 0, `통과 90 / 전체 90` |
+| 브라우저 - 모드 오가기·시스템 테마 | `browser_modes.py` | `python3 projects/자모맞히기/tests/browser_modes.py` | rc 0, `통과 100 / 전체 100` |
 
 2026-11-13 (R28 T-302) 에 네 벌이 초록: 로직 `pass 66`·`fail 0`, 낱말 목록 `Ran 13 tests`·`OK`,
-화면 `통과 121 / 전체 121` rc 0, 모드 `통과 90 / 전체 90` rc 0.
+화면 `통과 121 / 전체 121` rc 0, 모드 `통과 100 / 전체 100` rc 0.
 `browser_modes.py` 는 R24 의 N4~N9·N12·N13 을 그려진 화면으로 묻고, 연습 정답 토스트가 모드를 따라
 새지 않는지(R24-N5), 연습 쪽 하드 맞춤이 빈 연습 판에 닿는지(T-301 `scenario_hard_reaches_empty_practice`),
-입력 중 글자가 정렬 뒤에도 남는지(T-301 `scenario_typed_letters_survive_align`)도 지킵니다.
+입력 중 글자가 정렬 뒤에도 남는지(T-301 `scenario_typed_letters_survive_align`), 낸 줄이 있는 판의 하드 잠금
+(T-304 `scenario_hard_locked_after_play`), 빈 판 맞춤이 판 번호를 지키는지(T-304 `scenario_align_keeps_puzzle_number`)도 지킵니다.
 
 검사 수는 시나리오가 중간에 죽으면 줄어듭니다(남은 검사가 기록되지 않음). **수가 위와 다르면 rc 0 이어도
 의심하십시오.** 브라우저 스크립트는 맨 끝에 `통과 n / 전체 m` 을 찍고, rc 는 실패한 검사 수입니다.
@@ -66,7 +67,7 @@
 | 어두운 모드 - 시스템 설정 따름 + 단추로 바꿈, 저장됨 | `browser_game.py:scenario_dark` (계산된 body 배경 밝기, 새로 고침 뒤 같은 색·체크박스), `browser_modes.py:scenario_system_dark`·`scenario_system_light` (`color_scheme='dark'`/`'light'` 첫 방문 body 배경 밝기, 어두운 문맥에서 설정을 끄면 새로 고침 뒤에도 밝음) | 증명됨 |
 | 접근성 - 키보드만으로 완주, `aria-live` | `browser_game.py:scenario_keyboard_only` (Escape 로 첫 도움말, Tab+Enter 로 다시 열기, Tab 으로 모드 단추, 물리 자판으로 이김, `#toasts[aria-live=polite]` 에 결과 글), `browser_modes.py:scenario_enter_buttons` (모드 단추·`#btn-new` 에 포커스 + Enter 가 그 단추를 누르고 제출로 새지 않음) | 증명됨 |
 | 통계 - 판수·승률·연승·최대 연승·분포 | `browser_game.py:scenario_win` (첫 판 `1 100 1 1`, 분포 `1 0 0 0 0 0`, 이긴 줄만 `hl`, 새로 고침 뒤 그대로) | 증명됨(날마다 모드만) - 연습은 통계를 안 남긴다는 것도 `scenario_practice` 가 봄 |
-| 검사 - 로직·브라우저 모두 초록 | 이 표의 네 명령 | 예 - 네 벌 모두 초록(로직 66·낱말 13·화면 121·모드 90) |
+| 검사 - 로직·브라우저 모두 초록 | 이 표의 네 명령 | 예 - 네 벌 모두 초록(로직 66·낱말 13·화면 121·모드 100) |
 
 ## 이 검사가 일부러 보지 않는 것 / 약점
 

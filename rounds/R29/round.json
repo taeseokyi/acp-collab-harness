@@ -1,0 +1,40 @@
+{
+ "round": 29,
+ "at": "2026-11-14T00:18:27",
+ "brief": "manager-round-standard.md",
+ "requests": [
+  "Q-261114-23ef"
+ ],
+ "projects": [
+  "자모맞히기"
+ ],
+ "session": "M-R29-001827",
+ "policy": "speed",
+ "metrics": {
+  "workers": 3,
+  "peak_parallel": 2,
+  "minutes": {
+   "free": 7.53,
+   "paid": 22.12
+  },
+  "by_slot": {
+   "S1": {
+    "runs": 1,
+    "minutes": 16.07,
+    "tier": "paid"
+   },
+   "S2": {
+    "runs": 1,
+    "minutes": 7.53,
+    "tier": "free"
+   },
+   "S4": {
+    "runs": 1,
+    "minutes": 6.05,
+    "tier": "paid"
+   }
+  },
+  "moves": 0,
+  "manager_slots": []
+ }
+}
