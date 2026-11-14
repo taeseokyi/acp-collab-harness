@@ -439,6 +439,8 @@ def collect(root: pathlib.Path | None = None) -> dict:
                       "role": _s(r.get("role")), "note": _s(r.get("note")), "model": model, "model_source": src,
                       # 관리자가 라운드 중에 더한 슬롯의 표식 (`aimem_db.slot_add` 의 origin·round)
                       "origin": "manager" if o == "manager" else "owner",
+                      # 사람이 일시 사용 중지한 슬롯 (`fleet_ctl.slot_pause`) - 멈춘 시각과 까닭
+                      "paused": _s(r.get("paused")), "paused_note": _s(r.get("paused_note")),
                       "round": rn if o == "manager" and isinstance(rn, int) and not isinstance(rn, bool) else None})
 
     board = [{"id": _s(r.get("id")), "task": _s(r.get("title")), "slot": _s(r.get("slot")) or "-",

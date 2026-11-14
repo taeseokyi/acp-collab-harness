@@ -2270,6 +2270,10 @@ function modelOptions(models, harness, current) {
   return sel;
 }
 
+function pausedLine(s) {
+  return `${fmtDateTime(s.paused)}부터 일시 사용 중지` + (s.paused_note ? ` · 까닭: ${s.paused_note}` : '');
+}
+
 function openSlotForm(existing, runId, isRunning) {
   const isNew = !existing;
   openPanel(isNew ? '슬롯 추가' : `슬롯 ${existing.slot}`, (body) => {
@@ -2278,6 +2282,15 @@ function openSlotForm(existing, runId, isRunning) {
       act.className = 'detail-actions';
       act.appendChild(linkButton(isRunning ? '지금 도는 실행 보기 →' : '마지막 실행 보기 →', () => openDetail(runId)));
       body.appendChild(act);
+    }
+    if (existing && existing.paused) {
+      // 멈춘 슬롯 - 무엇이 멈췄고 왜인지, 어떻게 푸는지를 맨 위에
+      const box = document.createElement('div'); box.className = 'slot-paused-note';
+      box.appendChild(badge('일시 중지', 'blocked'));
+      const t = document.createElement('span');
+      t.textContent = pausedLine(existing) + ' - 엔진이 이 슬롯에 일을 주지 않습니다. 아래 \'사용 재개\' 로 풉니다.';
+      box.appendChild(t);
+      body.appendChild(box);
     }
     const form = document.createElement('form');
     form.className = 'slot-form';
@@ -2304,7 +2317,7 @@ function openSlotForm(existing, runId, isRunning) {
     const gov = document.createElement('p'); gov.className = 'hint';
     gov.textContent = isNew
       ? '역할·비고는 여기서 적지 않습니다 - 새 슬롯은 "(미배정)" 으로 들어가고, 라운드 관리자가 다음 라운드 시작 때 역할을 정해 적습니다. 여기서는 어떤 엔진(하네스·모델)을 둘지만 정합니다.'
-      : '여기서 바꿀 수 있는 것은 하네스·모델입니다. 역할·비고는 라운드 관리자가 브리프 의도에 따라 정합니다(aimem_db.py slot set --role/--note).';
+      : '여기서 바꿀 수 있는 것은 하네스·모델입니다. 역할·비고는 라운드 관리자가 브리프 의도에 따라 정합니다(aimem_db.py slot set --role/--note). 일시 사용 중지·삭제는 라운드 도중에도 됩니다 - 도는 작업은 취소되고 관리자가 다른 슬롯에 다시 나눕니다.';
     form.appendChild(gov);
     const actions = document.createElement('div'); actions.className = 'slot-actions';
     const save = document.createElement('button'); save.type = 'submit'; save.className = 'btn-primary'; save.textContent = isNew ? '추가' : '저장';
@@ -2315,7 +2328,7 @@ function openSlotForm(existing, runId, isRunning) {
       const removeSlot = async (force) => {
         del.disabled = true;
         const r = await slotRequest(`/api/slots/${existing.slot}/remove`, force ? { force: true } : {});
-        if (r.ok) { closeDetail(); state.slotMsg = { ok: true, text: `${existing.slot} 삭제됨` + (r.body.notice ? ` · 관리자 통지 요청 ${r.body.notice} 생성` : '') }; await refresh(); return; }
+        if (r.ok) { closeDetail(); state.slotMsg = { ok: true, text: `${existing.slot} 삭제됨` + (r.body.cancelled && r.body.cancelled.length ? ` · 작업 ${r.body.cancelled.length}건 취소` : '') + (r.body.round != null ? ` · R${r.body.round} 관리자에게 알림(재배정)` : '') + (r.body.notice ? ` · 관리자 통지 요청 ${r.body.notice} 생성` : '') }; await refresh(); return; }
         del.disabled = false;
         msg.textContent = r.body.error || '실패';
         msg.classList.add('is-error');
@@ -2327,8 +2340,34 @@ function openSlotForm(existing, runId, isRunning) {
         }
       };
       del.addEventListener('click', () => {
-        if (window.confirm(`${existing.slot} 을(를) 명부에서 지웁니다. 계속할까요?`)) removeSlot(false);
+        const live = isRunning ? ' 지금 도는 작업자는 끊기고, 이 슬롯의 남은 일은 관리자가 다른 슬롯에 다시 나눕니다.' : '';
+        if (window.confirm(`${existing.slot} 을(를) 명부에서 지웁니다.${live} 계속할까요?`)) removeSlot(false);
       });
+      // 일시 사용 중지 / 다시 쓰기 - 명부에는 남기고 엔진이 이 슬롯을 쓰지 않게 한다 (장애 때). 다시 나누는 것은 관리자
+      const pz = document.createElement('button'); pz.type = 'button'; pz.className = 'slot-pause';
+      pz.textContent = existing.paused ? '사용 재개' : '일시 사용 중지';
+      pz.title = existing.paused ? '이 슬롯을 다시 씁니다 - 기다리던 일은 엔진이 다시 띄웁니다'
+        : '명부에는 남기고 엔진이 이 슬롯에 일을 주지 않게 합니다 (장애 때). 도는 작업은 취소되고 관리자가 다른 슬롯에 다시 나눕니다';
+      pz.addEventListener('click', async () => {
+        let payload = {};
+        if (!existing.paused) {
+          const why = window.prompt(`${existing.slot} 을(를) 일시 사용 중지합니다.` + (isRunning ? ' 지금 도는 작업은 취소되고 관리자가 다른 슬롯에 다시 나눕니다.' : '') + '\n까닭 (비워도 됩니다):', '');
+          if (why === null) return;
+          payload = { why: why.trim().slice(0, 200) };
+        }
+        pz.disabled = true;
+        const r = await slotRequest(`/api/slots/${existing.slot}/${existing.paused ? 'resume' : 'pause'}`, payload);
+        if (r.ok) {
+          closeDetail();
+          const b = r.body;
+          state.slotMsg = { ok: true, text: existing.paused ? `${existing.slot} 사용 재개` + (b.round != null ? ` · R${b.round} 관리자에게 알림` : '')
+            : `${existing.slot} 일시 중지됨` + (b.cancelled && b.cancelled.length ? ` · 작업 ${b.cancelled.length}건 취소` : '')
+              + (b.round != null ? ` · R${b.round} 관리자에게 알림(재배정)` : '') + (b.refused && b.refused.length ? ` · 끊지 못한 작업자 ${b.refused.length} - 확인 필요` : '') };
+          await refresh(); return;
+        }
+        pz.disabled = false; msg.textContent = r.body.error || '실패'; msg.classList.add('is-error');
+      });
+      actions.appendChild(pz);
       actions.appendChild(del);
     }
     form.appendChild(actions); form.appendChild(msg);
@@ -2351,7 +2390,7 @@ function openSlotForm(existing, runId, isRunning) {
       else r = await slotRequest(`/api/slots/${existing.slot}/set`, payload);
       if (r.ok) {
         closeDetail();
-        const notice = r.body.notice ? ` · 관리자 통지 요청 ${r.body.notice} 생성` : '';
+        const notice = (r.body.round != null ? ` · R${r.body.round} 관리자에게 알림` : '') + (r.body.notice ? ` · 관리자 통지 요청 ${r.body.notice} 생성` : '');
         state.slotMsg = { ok: true, text: (isNew ? `${(r.body.slot || {}).slot} 추가됨` : `${existing.slot} 저장됨` + (r.body.changes && r.body.changes.length ? ' (' + r.body.changes.join(', ') + ')' : ' - 바뀐 것 없음')) + notice };
         await refresh();
       }
@@ -2414,7 +2453,15 @@ function renderSlots(data) {
     runIds.push(r ? r.id : (last ? last.id : null));   // 대기 중이면 마지막 실행 상세로
     const now = document.createElement('div');
     now.className = 'slot-state';
-    now.appendChild(r ? badge('실행 중', 'running') : badge('쉬는 중', 'idle'));
+    now.appendChild(r ? badge('실행 중', 'running') : (s.paused ? badge('일시 중지', 'blocked') : badge('쉬는 중', 'idle')));
+    if (s.paused) {
+      const sub = document.createElement('span');
+      sub.className = 'sub';
+      // 까닭을 앞에 - 칸이 좁아 잘리면 시각보다 까닭이 남아야 한다 (전문은 title·패널)
+      sub.textContent = (s.paused_note ? s.paused_note + ' · ' : '') + fmtDateTime(s.paused).slice(5) + '부터';
+      sub.title = pausedLine(s);
+      now.appendChild(sub);
+    }
     if (r) {
       const sub = document.createElement('span');
       sub.className = 'sub';
@@ -2442,7 +2489,7 @@ function renderSlots(data) {
     }
     return [slotCell, now, show(s.harness), modelCell, show(s.role), plainText(s.note) || '-'];
   });
-  const rowClasses = slots.map((s) => (running.has(s.slot) ? 'row-running' : ''));   // 색은 지금 도는 슬롯에만 (전에는 마지막 실행이 있으면 전부 칠했다)
+  const rowClasses = slots.map((s) => (running.has(s.slot) ? 'row-running' : (s.paused ? 'row-paused' : '')));   // 색은 지금 도는 슬롯에만 (전에는 마지막 실행이 있으면 전부 칠했다)
   // 행을 누르면 그 슬롯의 패널(실행으로 가는 길 + 하네스·모델·역할 변경·삭제). 전에는 행은 마지막 실행을, 맨 끝 '변경' 단추는 슬롯을 열었다
   wrap.appendChild(newTable(['슬롯', '지금', '하네스', '모델', '역할', '비고'], rows, rowClasses, {
     className: 'slots-table',
@@ -2875,13 +2922,13 @@ const INFRA_HINT = '태스크 잘못이 아닙니다 - 공급자가 돌아오면
 const FAIL_KIND_LABEL = { work: '작업 실패', infra: '공급자 장애', limit: '사용 한도', timeout: '시간 초과' };
 // "provider:kisti" -> {kind, name}. 모르는 꼴이면 null (조용히 안 보여 준다)
 function parseWaiting(raw) {
-  const m = /^(provider|probe|slot):(.+)$/.exec(String(raw || ''));
+  const m = /^(provider|probe|slot|paused|removed):(.+)$/.exec(String(raw || ''));
   return m ? { kind: m[1], name: m[2] } : null;
 }
 function waitingNote(n) {
   const w = parseWaiting(n && n.waiting);
   if (!w) return '';
-  const label = { provider: '공급자 대기', probe: '공급자 응답 대기', slot: '슬롯 대기' }[w.kind];
+  const label = { provider: '공급자 대기', probe: '공급자 응답 대기', slot: '슬롯 대기', paused: '슬롯 일시 중지 - 관리자 재배정 대기', removed: '슬롯 삭제됨 - 관리자 재배정 대기' }[w.kind];
   return `${label} (${w.name})`;
 }
 function nodeIsInfra(n) { return !!(n && n.infra && String(n.status || '').toLowerCase() === 'blocked'); }

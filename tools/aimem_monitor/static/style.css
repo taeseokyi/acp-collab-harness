@@ -365,6 +365,11 @@ tbody tr:hover td {
   background: var(--row-running-bg);
 }
 
+/* 일시 사용 중지한 슬롯 - 흐리게 (지금 칸의 '일시 중지' 배지는 그대로 또렷하게) */
+.row-paused td:not(:nth-child(2)) {
+  opacity: 0.55;
+}
+
 .row-lost td {
   background: var(--row-lost-bg);
 }
@@ -1264,8 +1269,13 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .mgr-list div.mgr-body .md > :last-child { margin-bottom: 0; }
 
 /* ---- 슬롯 관리 (2026-11-10) ---- */
-.slot-bar { display: flex; align-items: center; gap: 12px; margin-top: var(--st-s-2); }
-.slot-msg { font-size: var(--st-fs-sm); color: var(--st-accent-ink, var(--st-ink)); }
+.slot-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: var(--st-s-2); }
+.slot-bar > button { flex: none; white-space: nowrap; }
+/* 글자색은 accent-text - accent-ink 는 채운 단추 위의 글자색(밝은 테마에서 흰색)이라 흰 바탕에서 안 보였다 */
+.slot-msg { font-size: var(--st-fs-sm); color: var(--st-accent-text); min-width: 0; }
+.slot-paused-note { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; padding: 10px 12px; max-width: 640px;
+  border-radius: var(--st-r-sm); background: var(--st-danger-tint); color: var(--st-danger-text); font-size: var(--st-fs-sm); line-height: 1.5; }
+.slot-paused-note .badge { flex: none; }
 .slot-msg.is-error, .hint.is-error { color: var(--st-danger, #e0283f); }
 .slot-form { display: grid; gap: 10px; max-width: 640px; }
 .slot-field { display: grid; grid-template-columns: 140px 1fr; align-items: start; gap: 10px; font-size: var(--st-fs-sm); }

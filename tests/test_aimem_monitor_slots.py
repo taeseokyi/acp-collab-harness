@@ -94,10 +94,27 @@ class SlotActionTest(unittest.TestCase):
         self.assertEqual(server.slot_action("add", None, {"harness": "claude"}, "웹", other)[0], 403)   # 운영 저장소 밖
         server.slot_action("add", "S1", {"harness": "claude"}, "웹", self.root)
         with mock.patch.object(server, "_slot_running", lambda slot, root: "T-1-S1-a1-000000"):
-            self.assertEqual(server.slot_action("remove", "S1", {}, "웹", self.root)[0], 409)
             self.assertEqual(server.slot_action("set", "S1", {"harness": "codex"}, "웹", self.root)[0], 409)
             self.assertEqual(server.slot_action("set", "S1", {"role": "바꿈"}, "웹", self.root)[0], 400)   # 역할은 웹에서 못 바꾼다
             self.assertEqual(server.slot_action("set", "S1", {"model": "sonnet"}, "웹", self.root)[0], 200)  # 모델은 도는 중에도
+
+    def test_pause_resume_and_remove_while_running(self):
+        """일시 사용 중지·다시 쓰기·삭제는 도는 중에도 된다 - 끊고 다시 나누는 일은 `fleet_ctl` (`test_slot_pause`)."""
+        server.slot_action("add", "S1", {"harness": "claude"}, "웹", self.root)
+        self.assertEqual(server.slot_action("pause", "S9", {}, "웹", self.root)[0], 404)
+        self.assertEqual(server.slot_action("pause", "S1", {"why": 3}, "웹", self.root)[0], 400)
+        code, body = server.slot_action("pause", "S1", {"why": "공급자 장애"}, "웹(test)", self.root)
+        self.assertEqual((code, body["changed"], body["cancelled"]), (200, True, []))
+        row = aimem_db.slot_list()[0]
+        self.assertTrue(row["paused"])
+        self.assertEqual(row["paused_note"], "공급자 장애")
+        code, body = server.slot_action("resume", "S1", {}, "웹(test)", self.root)
+        self.assertEqual((code, body["changed"]), (200, True))
+        self.assertIsNone(aimem_db.slot_list()[0]["paused"])
+        with mock.patch.object(server, "_slot_running", lambda slot, root: "T-1-S1-a1-000000"):
+            code, body = server.slot_action("remove", "S1", {}, "웹", self.root)
+        self.assertEqual((code, body["ok"]), (200, True))
+        self.assertEqual(aimem_db.slot_list(), [])
 
     def test_claude_ids_and_aliases_pass_without_the_list(self):
         for m in ("opus", "sonnet", "haiku", "claude-opus-5-5", "anthropic/claude-opus-5-5"):

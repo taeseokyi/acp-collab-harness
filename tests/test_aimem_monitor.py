@@ -41,7 +41,7 @@ EXPECTED_KEYS = {
     "errors",
 }
 
-SLOT_KEYS = {"slot", "token", "harness", "role", "note", "model", "model_source", "origin", "round"}
+SLOT_KEYS = {"slot", "token", "harness", "role", "note", "model", "model_source", "origin", "round", "paused", "paused_note"}
 BOARD_KEYS = {"id", "task", "slot", "status", "handoff", "artifact"}
 QUEUE_KEYS = {"order", "task", "slots", "handoff", "note"}
 LOG_KEYS = {"when", "text"}

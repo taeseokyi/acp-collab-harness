@@ -250,7 +250,8 @@ SCHEMA = """
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS slots(slot TEXT PRIMARY KEY, token TEXT NOT NULL, harness TEXT NOT NULL,
-  model TEXT, role TEXT, note TEXT, updated TEXT, origin TEXT DEFAULT 'owner', round INTEGER);
+  model TEXT, role TEXT, note TEXT, updated TEXT, origin TEXT DEFAULT 'owner', round INTEGER,
+  paused TEXT, paused_note TEXT);
 CREATE TABLE IF NOT EXISTS ownership(path_pattern TEXT PRIMARY KEY, owner TEXT NOT NULL, note TEXT);
 CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY, title TEXT, detail TEXT, requester TEXT,
   status TEXT NOT NULL DEFAULT 'NEW', created TEXT, updated TEXT, raw JSON);
@@ -272,8 +273,9 @@ CREATE INDEX IF NOT EXISTS idx_tasks_request ON tasks(request_id);
 
 
 #: 표가 생긴 뒤에 더한 칸 (이름, 정의). 이전 마이그레이션 장치가 없어 `CREATE TABLE IF NOT EXISTS` 로는 옛 DB 에 칸이 안 생긴다 -
-#: 열 때마다 없는 칸만 `ALTER TABLE` 로 더한다. `origin`: 누가 둔 슬롯인가(owner 사람 · manager 관리자), `round`: 관리자가 더한 라운드.
-_ADDED_COLUMNS = {"slots": (("origin", "TEXT DEFAULT 'owner'"), ("round", "INTEGER"))}
+#: 열 때마다 없는 칸만 `ALTER TABLE` 로 더한다. `origin`: 누가 둔 슬롯인가(owner 사람 · manager 관리자), `round`: 관리자가 더한 라운드,
+#: `paused`: 사람이 일시 사용 중지한 시각(비었으면 쓰는 슬롯), `paused_note`: 그 까닭.
+_ADDED_COLUMNS = {"slots": (("origin", "TEXT DEFAULT 'owner'"), ("round", "INTEGER"), ("paused", "TEXT"), ("paused_note", "TEXT"))}
 
 
 def _ensure_columns(con):
@@ -1653,7 +1655,9 @@ def _manager_slot_room(con, cfg, mgr, harness, model, exclude=None):
         raise ValueError(f"운영 방식 {key} 에서 관리자는 {allowed} 슬롯만 둘 수 있습니다 - "
                          f"{harness} {model or '(하네스 기본)'} 은(는) {config.TIER_LABEL.get(tier, tier)}입니다 (공급자 {prov or '모름'})")
     if prov:
-        same = [r["slot"] for r in con.execute("SELECT * FROM slots") if r["slot"] != exclude and _slot_provider(cfg, r) == prov]
+        # 일시 중지된 슬롯은 자리를 쓰지 않는다 - 멈춘 슬롯 대신 같은 공급자의 다른 하네스를 둘 수 있게
+        same = [r["slot"] for r in con.execute("SELECT * FROM slots")
+                if r["slot"] != exclude and not r["paused"] and _slot_provider(cfg, r) == prov]
         cap = cfg.max_concurrent(prov)
         if len(same) >= cap:
             raise ValueError(f"공급자 {prov} 는 동시에 {cap}개까지라 슬롯을 더해도 빨라지지 않습니다 "
@@ -1789,6 +1793,42 @@ def slot_remove(slot, actor="관리자", force=False):
         return {"slot": slot, "ownership_removed": n_own, "open_tasks": open_tasks}
 
 
+#: 일시 사용 중지는 **사람만** 걸고 푼다(태석님 2026-11-14) - 관리자는 멈춘 슬롯의 일을 다른 슬롯에 다시 나눌 뿐이다.
+PAUSE_OWNER_ONLY = "슬롯 일시 중지·다시 쓰기는 사람이 합니다 - 관리자는 그 슬롯의 노드를 다른 슬롯으로 옮기십시오 (`fleet_graph.py move`)"
+
+
+def _slot_pause_set(slot, paused, note, actor):
+    """`slots.paused` 를 걸거나 푼다. `(행, 바뀌었나)`. 작업자를 끊고 관리자에게 알리는 일은 `fleet_ctl.slot_pause` 가 한다."""
+    _check_slot_args(slot, None, None)
+    if manager_caller() is not None:
+        raise ValueError(PAUSE_OWNER_ONLY)
+    note = " ".join(str(note or "").split())[:200]
+    with connect() as con:
+        cur = con.execute("SELECT * FROM slots WHERE slot=?", (slot,)).fetchone()
+        if not cur:
+            raise ValueError(f"{slot} 이 명부에 없습니다")
+        if bool(cur["paused"]) == bool(paused):
+            return dict(cur), False
+        if paused:
+            con.execute("UPDATE slots SET paused=?, paused_note=? WHERE slot=?", (_now(), note, slot))
+            _slot_event(con, actor, f"slot pause {slot} (일시 사용 중지)" + (f" - {note}" if note else ""))
+        else:
+            con.execute("UPDATE slots SET paused=NULL, paused_note=NULL WHERE slot=?", (slot,))
+            _slot_event(con, actor, f"slot resume {slot} (다시 씀, {cur['paused']} 부터 멈춰 있었음)")
+        con.commit()
+        return dict(con.execute("SELECT * FROM slots WHERE slot=?", (slot,)).fetchone()), True
+
+
+def slot_pause(slot, note="", actor="사람"):
+    """슬롯 일시 사용 중지 - 명부에는 남고, 엔진이 그 슬롯으로 작업자를 띄우지 않는다. `(행, 바뀌었나)`."""
+    return _slot_pause_set(slot, True, note, actor)
+
+
+def slot_resume(slot, actor="사람"):
+    """일시 중지한 슬롯을 다시 쓴다. `(행, 바뀌었나)`."""
+    return _slot_pause_set(slot, False, "", actor)
+
+
 def slot_origin_label(r):
     """`slot list`·모니터의 작은 표식 - 관리자가 더한 슬롯만 `관리자 추가 R<N>`."""
     if (r.get("origin") if isinstance(r, dict) else None) != "manager":
@@ -1801,7 +1841,8 @@ def cmd_slot(a):
         for r in slot_list():
             mark = slot_origin_label(r)
             print(f"  {r['slot']}  {r['token']}  {r['harness']:<9} 모델 {r['model'] or '(하네스 기본)'}  {r['role'] or ''}"
-                  + (f"  [{mark}]" if mark else ""))
+                  + (f"  [{mark}]" if mark else "")
+                  + (f"  [일시 중지 {r['paused']}" + (f" - {r['paused_note']}" if r.get("paused_note") else "") + "]" if r.get("paused") else ""))
         return 0
     try:
         if a.action == "add":

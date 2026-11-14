@@ -1448,7 +1448,7 @@ _REQ_FLEET_RE = re.compile(r"\A/api/fleet/(prepare|run|pause|stop|round|chain|sw
 # -- 슬롯 관리 (2026-11-10, 태석님 지시 "슬롯 하네스 추가·삭제, 모델 지정") ----------------------------
 # 정본은 `.aimem/aimem.db` slots - `tools/aimem_db.py slot *` 과 같은 함수를 부른다. 모델은 **`fleet.toml` 에 설정된
 # 모델 목록**(`fleet_rt.config`)에서 고른다. 쓰기는 인증 뒤에서만, 감사 로그에 남긴다.
-_REQ_SLOT_RE = re.compile(r"\A/api/slots/(S\d{1,3})/(set|remove)\Z")
+_REQ_SLOT_RE = re.compile(r"\A/api/slots/(S\d{1,3})/(set|remove|pause|resume)\Z")
 
 
 def archive_action(payload, by, root=ROOT):
@@ -1590,14 +1590,36 @@ def _notify_manager_slot_change(action, row, by, changes, root):
         return None
 
 
+def _tell_round(root, fn, *args):
+    """도는 라운드의 관리자에게 알린다(`fleet_ctl.slot_changed` 등, INBOX). 알린 라운드 번호 또는 None - 실패해도 슬롯 변경은 그대로다."""
+    try:
+        return getattr(_fleet_ctl(root), fn)(*args)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def slot_action(action, slot, payload, by, root=ROOT):
-    """(HTTP 코드, 응답). action: add | set | remove. 운영 저장소에서만 쓴다. 성공하면 관리자용 NEW 요청을 남긴다."""
+    """(HTTP 코드, 응답). action: add | set | remove | pause | resume. 운영 저장소에서만 쓴다.
+    add·set·remove 는 관리자용 NEW 요청을 남기고, 라운드가 돌고 있으면 그 관리자에게도 바로 알린다(INBOX).
+    pause·resume·remove 는 `fleet_ctl` 이 한다 - 도는 작업자를 끊고, 다시 나누는 것은 관리자."""
     if pathlib.Path(root).resolve() != ROOT:
         return 403, {"ok": False, "error": "운영 저장소가 아닙니다"}
     if not isinstance(payload, dict):
         return 400, {"ok": False, "error": "JSON 객체가 아닙니다"}
     db = _aimem_db(root)
     try:
+        if action in ("pause", "resume"):
+            ctl = _fleet_ctl(root)
+            if action == "pause":
+                why = payload.get("why")
+                if why is not None and (not isinstance(why, str) or len(why) > 200):
+                    return 400, {"ok": False, "error": "까닭은 200자 이하 문자열"}
+                out = ctl.slot_pause(slot, why or "", by)
+            else:
+                out = ctl.slot_resume(slot, by)
+            if not out.get("ok"):
+                return (404 if "명부에 없습니다" in str(out.get("error")) else 400), out
+            return 200, out
         p_slot, harness, model, role, note = _slot_payload_fields(payload)
         # 역할·비고는 **라운드 관리자의 몫**이다(8.0-1 "슬롯은 좁게, 전체 그림은 관리자만", 태석님 2026-11-10).
         # 웹(사람)은 하네스·모델 - 어떤 엔진을 몇 개 둘지 - 만 바꾼다. 역할·비고를 보내면 거절한다.
@@ -1613,7 +1635,8 @@ def slot_action(action, slot, payload, by, root=ROOT):
             row = db.slot_add(p_slot or None, harness, model or None, db.SLOT_ROLE_UNASSIGNED,
                               f"{stamp} 웹에서 추가({by}). 역할·비고는 관리자가 라운드 시작 때 정한다", by)
             notice = _notify_manager_slot_change("add", row, by, [], root)
-            return 201, {"ok": True, "slot": {k: v for k, v in row.items() if k != "token"}, "notice": notice}
+            return 201, {"ok": True, "slot": {k: v for k, v in row.items() if k != "token"}, "notice": notice,
+                         "round": _tell_round(root, "slot_changed", "add", row, by)}
         if action == "set":
             cur = next((r for r in db.slot_list() if r["slot"] == slot), None)
             if cur is None:
@@ -1631,14 +1654,15 @@ def slot_action(action, slot, payload, by, root=ROOT):
                     return 400, {"ok": False, "error": why}
             row, changes = db.slot_set(slot, harness, None if clear else model, None, None, by, clear_model=clear)
             notice = _notify_manager_slot_change("set", row, by, changes, root) if changes else None
-            return 200, {"ok": True, "slot": {k: v for k, v in row.items() if k != "token"}, "changes": changes, "notice": notice}
+            return 200, {"ok": True, "slot": {k: v for k, v in row.items() if k != "token"}, "changes": changes, "notice": notice,
+                         "round": _tell_round(root, "slot_changed", "set", row, by, changes) if changes else None}
         if action == "remove":
-            running = _slot_running(slot, root)
-            if running:
-                return 409, {"ok": False, "error": f"{slot} 에 작업자가 돌고 있습니다 ({running}) - 끝난 뒤 삭제하십시오"}
-            res = db.slot_remove(slot, by, force=bool(payload.get("force")))
+            # 라운드 도중에도 지운다 - 도는 작업자는 끊고, 그 슬롯의 노드는 관리자가 다시 나눈다 (`fleet_ctl.slot_remove`)
+            res = _fleet_ctl(root).slot_remove(slot, by, force=bool(payload.get("force")))
+            if not res.get("ok"):
+                raise ValueError(res.get("error") or "실패")
             notice = _notify_manager_slot_change("remove", res, by, [], root)
-            return 200, {"ok": True, **res, "notice": notice}
+            return 200, {**res, "notice": notice}
     except ValueError as e:
         msg = str(e)
         code = 409 if "끝나지 않은 태스크" in msg else (404 if "명부에 없습니다" in msg else 400)

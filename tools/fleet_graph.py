@@ -153,12 +153,15 @@ def validate_graph(g, spawnable_only=False):
     problems = []
     nodes = {n["id"]: n for n in g["nodes"]}
     roster = fleet.roster()
+    paused = {} if spawnable_only else fleet.paused_slots()    # run/step 은 막지 않는다 - 멈춘 슬롯의 노드는 기다릴 뿐이다
     for n in g["nodes"]:
+        if n.get("slot") in paused and n.get("status", "todo") == "todo":
+            problems.append(f"{n['id']}: 슬롯 {n.get('slot')} 은 일시 사용 중지 중 - 다른 슬롯에 배정하십시오")
         for d in n.get("deps", []):
             if d not in nodes:
                 problems.append(f"{n['id']}: 의존 {d} 가 그래프에 없음")
-        if spawnable_only and n.get("status", "todo") != "todo":
-            pass
+        if spawnable_only and (n.get("status", "todo") != "todo" or (roster and n.get("slot") not in roster)):
+            pass        # 도는 그래프: 명부에서 빠진 슬롯의 todo 노드는 실행기가 대기(`removed:<S>`)로 두고 관리자가 옮긴다
         elif n.get("slot") not in roster:
             problems.append(f"{n['id']}: 슬롯 {n.get('slot')} 이 명부에 없음")
         else:
@@ -329,6 +332,67 @@ def _live_scan(g):
         else:
             busy.update(str(n.get("slot")) for n in g.get("nodes", []) if n.get("slot"))
     return busy, by_prov
+
+
+#: 사람이 도중에 뺀 슬롯 - 일시 사용 중지(`paused`) 또는 명부에서 삭제(`removed`). 실행기는 그 슬롯의 작업자를 끊고
+#: 노드를 대기(`waiting = "<종류>:<슬롯>"`)로 두며, 다른 슬롯에 다시 나누는 것은 관리자다(`move`).
+UNUSABLE_LABEL = {"paused": "일시 사용 중지", "removed": "명부에서 삭제됨"}
+
+
+def unusable_slots(g):
+    """이 그래프의 노드가 쓰는 슬롯 가운데 지금 쓸 수 없는 것 `{슬롯: "paused"|"removed"}`.
+    명부를 읽지 못했으면(빈 명부) 삭제로 보지 않는다 - DB 가 잠깐 안 읽혔다고 도는 작업자를 끊지 않게."""
+    out = {}
+    paused = fleet.paused_slots()
+    roster = fleet.roster()
+    for n in g.get("nodes") or []:
+        s = n.get("slot")
+        if not s or s in out:
+            continue
+        if roster and s not in roster:
+            out[s] = "removed"
+        elif s in paused:
+            out[s] = "paused"
+    return out
+
+
+def _cut_unusable(g, n, att, kind, state, rc):
+    """쓸 수 없게 된 슬롯에서 돌던 시도를 정리한다. 처리했으면 True (False 면 호출자가 보통대로 거둔다).
+
+    - 이미 제대로 끝난 실행(rc 0)은 건드리지 않는다 - 멈추기 직전에 끝난 일은 거둔다
+    - 살아 있으면 끊는다. 못 끊으면(`refused`) `blocked` 로 사람에게 넘긴다
+    - 끊긴 시도는 `stopped_attempts` 로 옮겨 **재시도 횟수로 세지 않고** 노드를 `todo` + 대기로 둔다 (`halt_running` 과 같다)
+    """
+    if state == "done" and rc == 0:
+        return False
+    slot, label = n.get("slot"), UNUSABLE_LABEL[kind]
+    outcome = "gone"
+    if state == "running":
+        _pid, outcome = _kill_run(att["run_id"], with_outcome=True)
+        if outcome == "refused":
+            att.update({"kill_outcome": "refused", "kill_reason": _LAST_REFUSAL.get(att["run_id"])})
+            n["status"] = "blocked"
+            _log(g, f"cut {n['id']} - 슬롯 {slot} {label}, 죽이지 못했습니다 ({_LAST_REFUSAL.get(att['run_id'])}). 사람이 확인해야 합니다")
+            return True
+    att.update({"ended": _now(), "state": "stopped", "kill_outcome": outcome, "stopped_by": f"슬롯 {slot} {label}"})
+    try:    # 끊긴 작업자가 그때까지 적은 말 - 옮겨 받은 슬롯의 브리프가 참고한다
+        _store_report(att, fleet.run_report(att["run_id"]))
+    except Exception:  # noqa: BLE001
+        pass
+    n.setdefault("stopped_attempts", []).append(n["attempts"].pop())
+    n["status"] = "todo"
+    _log(g, f"cut {n['id']} ({att['run_id']}, {outcome}) - 슬롯 {slot} {label}. 재시도 횟수로 세지 않음, 관리자가 다른 슬롯으로 옮깁니다")
+    _set_waiting(g, n, f"{kind}:{slot}")
+    return True
+
+
+def stuck_on_unusable(g):
+    """도는 노드가 없고, 띄울 수 있는 노드가 모두 쓸 수 없는 슬롯에 걸려 있으면 그 노드들 - 기다려도 풀리지 않는다."""
+    if any(n.get("status") == "running" for n in g["nodes"]):
+        return []
+    ready = _ready(g)
+    held = [n for n in ready if str(n.get("waiting") or "").split(":")[0] in UNUSABLE_LABEL]
+    return held if ready and len(held) == len(ready) else []
 
 
 def _spawn_node(g, n, attempt_no):
@@ -918,6 +982,7 @@ def _step(g, concurrency=None, allow_spawn=None, hold_on_block=False):
             return all(n.get("status") in TERMINAL for n in g["nodes"])
         allow_spawn = m == "running"
     changed = False
+    unusable = unusable_slots(g)       # 사람이 멈췄거나 지운 슬롯 - 도는 것은 끊고, 새로 띄우지 않는다
     # 한 틱에 /proc 훑기는 한 번 - 이 색인을 `fleet_rt.sessions` 가 1초 캐시로 들고 있어 노드마다 다시 훑지 않는다
     if any(n.get("status") == "running" for n in g["nodes"]):
         try:
@@ -938,6 +1003,9 @@ def _step(g, concurrency=None, allow_spawn=None, hold_on_block=False):
             continue
         att = n["attempts"][-1]
         state, rc, sinfo = _run_info(att["run_id"])
+        if n.get("slot") in unusable and _cut_unusable(g, n, att, unusable[n["slot"]], state, rc):
+            changed = True
+            continue
         cut_orphan = False
         if state == "running" and (sinfo or {}).get("orphaned"):
             # 감독 없이 하네스만 남았다 - 노드 한도까지 기다리지 않고 끊고 기반 장애로 다시 넣는다. 거부되면 running 인 채 둔다.
@@ -1030,7 +1098,8 @@ def _step(g, concurrency=None, allow_spawn=None, hold_on_block=False):
     if ready and running >= conc:
         # 동시성 상한이 붙잡고 있다는 것도 다른 까닭처럼 적는다 - 말없이 늦어지지 않게
         for n in ready:
-            changed |= _set_waiting(g, n, f"concurrency:{conc}")
+            s_ = n.get("slot")
+            changed |= _set_waiting(g, n, f"{unusable[s_]}:{s_}" if s_ in unusable else f"concurrency:{conc}")
         ready = []
     if ready:
         busy, by_prov = _live_scan(g)
@@ -1040,10 +1109,13 @@ def _step(g, concurrency=None, allow_spawn=None, hold_on_block=False):
         # 같은 자리를 다투면 뒤에 걸린 노드가 많은 것부터, 같으면 그래프 순서 (설계 5.4)
         ready.sort(key=lambda n: (-deps_on.get(n["id"], 0), order[n["id"]]))
     for n in ready:
+        slot = n.get("slot")
+        if slot in unusable:
+            changed |= _set_waiting(g, n, f"{unusable[slot]}:{slot}", UNUSABLE_LABEL[unusable[slot]])
+            continue
         if running >= conc:
             changed |= _set_waiting(g, n, f"concurrency:{conc}")
             continue
-        slot = n.get("slot")
         if slot in busy:
             changed |= _set_waiting(g, n, f"slot:{slot}")
             continue
@@ -1275,7 +1347,7 @@ def cmd_run(a):
             # 빨리·잘 하려는 라운드는 막힌 노드를 관리자가 곧바로 옮기거나 풀어야 한다 - 무료 중심은 끝까지 돌린다
             stop_on_block = graph_policy(g) in ("speed", "quality")
         bad0 = {n["id"] for n in g["nodes"] if n.get("status") in ("failed", "blocked")}
-        spawn, blocked_new = True, []
+        spawn, blocked_new, stuck = True, [], []
         while time.time() < deadline:
             # 띄우기를 멈춘 뒤에도 '완전 중지' 면 함대 모드에 맡긴다 - 떠 있는 작업자를 거두는 일(`halt_running`)이 거기 있다
             if step(g, a.concurrency, allow_spawn=None if spawn or _fleet_mode() == "stopped" else False,
@@ -1286,6 +1358,9 @@ def cmd_run(a):
                 break
             if _mtime(box) != box0:
                 inbox = True
+                break
+            stuck = stuck_on_unusable(g) if spawn and _fleet_mode() == "running" else []
+            if stuck:
                 break
             if stop_on_block and spawn:
                 blocked_new = [n["id"] for n in g["nodes"] if n.get("status") in ("failed", "blocked") and n["id"] not in bad0]
@@ -1306,6 +1381,13 @@ def cmd_run(a):
             last = n["attempts"][-1] if n.get("attempts") else {}
             print(f"  {n['id']:<6} {n.get('status','todo'):<8} {n['slot']:<3} 시도 {len(n.get('attempts',[]))}  "
                   f"run {last.get('run_id','-')}  rc {last.get('rc','-')}/{last.get('verify_rc','-')}  {n.get('title','')}")
+        held = [n for n in g["nodes"] if n.get("status", "todo") == "todo"
+                and str(n.get("waiting") or "").split(":")[0] in UNUSABLE_LABEL]
+        if held:
+            names = ", ".join(f"{n['id']}({n['waiting'].split(':')[1]} {UNUSABLE_LABEL[n['waiting'].split(':')[0]]})" for n in held)
+            print(f"쓸 수 없는 슬롯에 걸린 노드: {names} - 사람이 그 슬롯을 멈췄거나 지웠습니다. "
+                  f"`fleet_graph.py move {g['id']} <노드> --slot S<n>` 으로 쓸 수 있는 슬롯에 다시 나눈 뒤 `run` 하십시오. "
+                  f"옮길 슬롯이 없으면 (운영 방식이 허락하는 만큼) 슬롯을 더하거나, 남은 노드를 보고에 적고 마감하십시오")
         if halted:
             return 3
         if inbox:
@@ -1313,6 +1395,8 @@ def cmd_run(a):
             print(f"사람이 말을 남겼습니다: {box.relative_to(fleet.ROOT) if box else INBOX_NAME} - 읽고 판단한 뒤 "
                   f"`fleet_graph.py run {g['id']}` 로 이어 가십시오 (rc {RC_INBOX})")
             return RC_INBOX
+        if stuck:
+            return 1
         if not spawn:
             gone = [n for n in g["nodes"] if n["id"] in blocked_new]
             names = ", ".join(f"{n['id']}({n.get('status')}, {n.get('slot')})" for n in gone)
@@ -1463,6 +1547,8 @@ def move_node(g, node_id, slot, policy=None, why=""):
     roster = fleet.roster()
     if slot not in roster:
         return False, f"{slot} 이 명부에 없습니다 (`aimem_db.py slot list`)"
+    if slot in fleet.paused_slots():
+        return False, f"{slot} 은(는) 일시 사용 중지 중입니다 - 쓸 수 있는 다른 슬롯으로 옮기십시오"
     last = ((n.get("attempts") or []) + (n.get("infra_attempts") or []) or [{}])[-1]
     if isinstance(last, dict) and last.get("run_id") and fleet._run_state(last["run_id"])[0] == "running":
         return False, f"{node_id} 의 작업자가 아직 살아 있습니다 (run {last['run_id']}) - 끝나거나 사람이 내린 뒤에"

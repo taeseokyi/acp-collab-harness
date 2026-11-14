@@ -77,6 +77,24 @@ def roster():
             if re.fullmatch(r"S\d+", r["slot"] or "")}
 
 
+def paused_slots():
+    """사람이 일시 사용 중지한 슬롯 -> 까닭 (`slots.paused`, `fleet_ctl.slot_pause`). 캐시 없이 그 칸만 읽는다 -
+    멈춘 직후의 스폰이 5초 묵은 명부를 보지 않게. 못 읽거나 칸이 없는 옛 DB 면 빈 dict.
+    DB 는 실행 기록 옆(`RUNS` 의 부모) - 임시 폴더로 갈아 끼운 검사가 운영 DB 를 읽지 않게 (`spawn`·보드 동기화와 같다)."""
+    try:
+        import sqlite3  # noqa: PLC0415
+        db = pathlib.Path(RUNS).parent / "aimem.db"
+        if not db.is_file():
+            return {}
+        con = sqlite3.connect(db.as_uri() + "?mode=ro", uri=True, timeout=2)
+        try:
+            return {r[0]: r[1] or "" for r in con.execute("SELECT slot, paused_note FROM slots WHERE paused IS NOT NULL AND paused != ''")}
+        finally:
+            con.close()
+    except Exception:  # noqa: BLE001 - 판단을 못 하면 '멈춘 슬롯 없음' (옛 동작)
+        return {}
+
+
 def board_rows():
     """(태스크 id, 제목, 담당 슬롯, 상태) 의 리스트."""
     s = db_state() or {}
@@ -408,6 +426,8 @@ def spawn(slot, task_text, *, write=(), label="", task_id=None, attempt=1, harne
     r = roster()
     if slot not in r:
         sys.exit(_roster_miss(slot))
+    if slot in paused_slots():
+        sys.exit(f"{slot} 은(는) 일시 사용 중지된 슬롯입니다 - 다른 슬롯에 맡기거나 사람이 다시 쓰게 한 뒤에 (`fleet_ctl.py slot resume {slot}`)")
     token = r[slot][0]
     harness, model = spawn_harness_model(slot, harness, model)
     if harness not in HARNESSES:

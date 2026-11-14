@@ -354,6 +354,9 @@ def slot_roster_lines(rows=None, cfg=None):
             parts.append(role[:80])
         if r.get("origin") == "manager":
             parts.append("관리자 추가")
+        if r.get("paused"):
+            why = " ".join(str(r.get("paused_note") or "").split())[:80]
+            parts.append("**일시 사용 중지 - 쓰지 않음**" + (f"({why})" if why else ""))
         out.append("- " + " · ".join(parts))
     return "\n".join(out) if out else "- (명부가 비어 있음)"
 
@@ -816,7 +819,10 @@ def _runtime_checks():
         roster = {}
         checks.append(_check("슬롯 명부", False, f"{type(e).__name__}: {e}"))
     unknown = []
+    paused = fleet.paused_slots()
     for slot in sorted(roster):
+        if slot in paused:
+            continue                    # 일시 중지한 슬롯은 쓰지 않는다 - 그 하네스·공급자가 죽어 있어도 준비를 막지 않는다
         h = roster[slot][1]
         harn.setdefault(h, []).append(slot)
         if cfg is None:
@@ -2062,6 +2068,159 @@ def _inbox_add(n, text, by):
     return {"ok": True, "round": n, "path": str(p.relative_to(fleet.ROOT))}
 
 
+# ----------------------------------------------------------------- 슬롯을 도중에 빼고 더하기 (태석님 2026-11-14)
+# 멈추기·지우기·더하기는 사람이 하고, 그 뒤의 역할·분담은 관리자가 한다. 엔진의 몫은 셋: (1) 뺀 슬롯의 작업자를 끊고
+# (2) 그 슬롯으로 새로 띄우지 않으며(`fleet.spawn`·그래프 실행기) (3) 도는 라운드의 관리자에게 알린다(INBOX → 실행기 rc 4).
+def _roster_is_live():
+    """고친 명부(`aimem_db.DB`)가 이 엔진의 세션·그래프·라운드와 같은 `.aimem` 의 것인가. 아니면(임시 DB 를 고치는 검사 등)
+    작업자를 끊지도 관리자에게 알리지도 않는다 - 다른 명부의 슬롯 번호로 운영 작업자를 끊으면 안 된다."""
+    try:
+        import aimem_db  # noqa: PLC0415
+        return pathlib.Path(aimem_db.DB).resolve().parent == _aimem_dir().resolve()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _slot_open_nodes(slot):
+    """끝나지 않은 그래프에서 그 슬롯에 걸린 남은 노드 `[{graph, node, status, title}]` (todo·running)."""
+    out = []
+    d = _graphs_dir()
+    if not d.exists() or not _roster_is_live():
+        return out
+    for f in sorted(d.glob("*.json")):
+        try:
+            g = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(g, dict) or not isinstance(g.get("nodes"), list):
+            continue
+        for n in g["nodes"]:
+            if isinstance(n, dict) and n.get("slot") == slot and n.get("status", "todo") in ("todo", "running"):
+                out.append({"graph": g.get("id", f.stem), "node": n.get("id"), "status": n.get("status", "todo"),
+                            "title": str(n.get("title") or "")[:80]})
+    return out
+
+
+def _cut_slot_workers(slot, why):
+    """그 슬롯으로 도는 작업자 세션을 끊는다. `(끊은 실행 id 들, 못 끊은 [(id, 까닭)])`.
+    그래프의 노드는 실행기가 정리한다(`fleet_graph._cut_unusable` - 재시도로 세지 않고 대기로)."""
+    cut, refused = [], []
+    for r in (running_runs() if _roster_is_live() else []):
+        if r.get("slot") != slot:
+            continue
+        sd = fleet._session_dir(r["id"])
+        if sd is None:
+            continue
+        outcome = _rt().cancel(sd, why=why)
+        if outcome == "refused":
+            refused.append((r["id"], _rt().LAST_REFUSAL.get(str(sd)) or "안전 검사 거부"))
+        else:
+            cut.append(r["id"])
+    return cut, refused
+
+
+def _nodes_text(nodes):
+    return ", ".join(f"{x['graph']} {x['node']}({x['status']})" for x in nodes[:20]) + (f" 외 {len(nodes) - 20}" if len(nodes) > 20 else "")
+
+
+REASSIGN_HOWTO = ("관리자 할 일: 이 노드들을 쓸 수 있는 슬롯에 다시 나누십시오 - `python3 tools/fleet_graph.py move <G> <노드> --slot S<n>` 뒤 "
+                  "`run`. 끊긴 시도는 재시도 횟수로 세지 않습니다. 옮길 슬롯이 없으면 운영 방식의 한도 안에서 슬롯을 더하거나"
+                  "(`aimem_db.py slot add`), 남은 노드를 보고에 적고 마감하십시오. 새 그래프에는 이 슬롯을 쓰지 않습니다.")
+
+
+def _slot_notice(text, by):
+    """도는 라운드가 있으면 그 관리자에게 알린다(INBOX). 알렸으면 라운드 번호, 아니면 None - 다음 라운드는 브리프의 슬롯 목록이 알린다."""
+    n = active_round() if _roster_is_live() else None
+    if n is None:
+        return None
+    out = _inbox_add(n, text + "\n\n지금 슬롯:\n" + slot_roster_lines(), by)
+    return n if out.get("ok") else None
+
+
+def slot_pause(slot, why="", by="사람"):
+    """슬롯 일시 사용 중지 (라운드 앞·도중 모두). 명부에는 남는다. 그 슬롯의 작업자를 끊고, 도는 라운드가 있으면
+    관리자에게 알려 걸린 노드를 다른 슬롯에 다시 나누게 한다. 푸는 것은 `slot_resume`."""
+    import aimem_db  # noqa: PLC0415
+    try:
+        row, changed = aimem_db.slot_pause(slot, why, by)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    cut, refused = _cut_slot_workers(slot, f"슬롯 {slot} 일시 사용 중지")
+    nodes = _slot_open_nodes(slot)
+    out = {"ok": True, "slot": slot, "changed": changed, "paused": row.get("paused"), "cancelled": cut,
+           "refused": [f"{i} ({w})" for i, w in refused], "nodes": nodes, "round": None}
+    if changed or cut:
+        note = " ".join(str(why or "").split())[:200]
+        out["round"] = _slot_notice(
+            f"슬롯 {slot} 을(를) 일시 사용 중지했습니다" + (f" (까닭: {note})" if note else "") + ". 엔진이 이 슬롯으로는 작업자를 띄우지 않습니다.\n"
+            + (f"- 끊은 작업자: {', '.join(cut)}\n" if cut else "")
+            + (f"- 끊지 못한 작업자(사람이 확인): {'; '.join(out['refused'])}\n" if refused else "")
+            + (f"- 이 슬롯에 걸린 노드: {_nodes_text(nodes)}\n" if nodes else "- 이 슬롯에 걸린 남은 노드는 없습니다.\n")
+            + "\n" + REASSIGN_HOWTO, by)
+    return out
+
+
+def slot_resume(slot, by="사람"):
+    """일시 중지한 슬롯을 다시 쓴다. 기다리던 노드는 실행기가 다음 틱에 띄운다."""
+    import aimem_db  # noqa: PLC0415
+    try:
+        _row, changed = aimem_db.slot_resume(slot, by)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    out = {"ok": True, "slot": slot, "changed": changed, "round": None}
+    if changed:
+        out["round"] = _slot_notice(f"슬롯 {slot} 을(를) 다시 씁니다(일시 중지 풂). 이 슬롯에 남겨 둔 노드는 엔진이 다시 띄우고, "
+                                    "관리자는 판단에 따라 이 슬롯에 일을 다시 나눠도 됩니다.", by)
+    return out
+
+
+def slot_remove(slot, by="사람", force=False):
+    """슬롯 삭제 (라운드 앞·도중 모두). 도는 작업자가 있으면 끊고 지운다 - 그 슬롯의 남은 노드는 실행기가 대기로 두고,
+    도는 라운드의 관리자가 다른 슬롯에 다시 나눈다. 끝나지 않은 태스크가 배정돼 있으면 `force` 없이는 거절(끊기 전에).
+    관리자 세션이 부르면 전과 같다 - 자기가 더한 슬롯만, 작업자가 돌면 거절."""
+    import aimem_db  # noqa: PLC0415
+    try:
+        if aimem_db.manager_caller() is not None:
+            return {"ok": True, **aimem_db.slot_remove(slot, by, force=force), "cancelled": [], "nodes": [], "round": None}
+        if not any(r["slot"] == slot for r in aimem_db.slot_list()):
+            raise ValueError(f"{slot} 이 명부에 없습니다")
+        live = [r["id"] for r in running_runs() if r.get("slot") == slot] if _roster_is_live() else []
+        open_tasks = aimem_db.slot_open_tasks(slot)
+        if open_tasks and not force:
+            raise ValueError(f"{slot} 에 끝나지 않은 태스크가 있습니다: {', '.join(open_tasks)} (force 로 강제)"
+                             + (f" - 지우면 도는 작업자 {', '.join(live)} 를 끊습니다" if live else ""))
+        cut, refused = _cut_slot_workers(slot, f"슬롯 {slot} 삭제")
+        if refused:
+            raise ValueError(f"{slot} 의 작업자를 끊지 못해 지우지 않았습니다: " + "; ".join(f"{i} ({w})" for i, w in refused))
+        nodes = _slot_open_nodes(slot)
+        res = aimem_db.slot_remove(slot, by, force=force)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    fleet._DB_CACHE["at"] = 0.0
+    rnd = _slot_notice(
+        f"슬롯 {slot} 을(를) 명부에서 지웠습니다. 소유 경로 {res.get('ownership_removed', 0)}행이 같이 내려갔습니다.\n"
+        + (f"- 끊은 작업자: {', '.join(cut)}\n" if cut else "")
+        + (f"- 이 슬롯에 걸린 노드: {_nodes_text(nodes)}\n" if nodes else "- 이 슬롯에 걸린 남은 노드는 없습니다.\n")
+        + (f"- 이 슬롯에 배정돼 있던 태스크: {', '.join(res.get('open_tasks') or [])}\n" if res.get("open_tasks") else "")
+        + "\n" + REASSIGN_HOWTO + " (`move` 가 쓰기 경로의 소유를 새 슬롯으로 옮깁니다.)", by)
+    return {"ok": True, **res, "cancelled": cut, "nodes": nodes, "round": rnd}
+
+
+def slot_changed(action, row, by="사람", changes=()):
+    """사람이 슬롯을 더하거나(add) 엔진을 바꾼(set) 것을 도는 라운드의 관리자에게 알린다. 알린 라운드 번호 또는 None.
+    역할을 정하고 일을 나누는 것은 관리자다."""
+    slot = (row or {}).get("slot")
+    eng = f"{(row or {}).get('harness')}, 모델 {(row or {}).get('model') or '하네스 기본'}"
+    if action == "add":
+        text = (f"슬롯 {slot} 이(가) 추가됐습니다 ({eng}). 관리자 판단으로 이번 라운드의 역할을 정하고"
+                f"(`python3 tools/aimem_db.py slot set --slot {slot} --role \"…\"`), 남은 일을 나눠 쓰십시오 - 쓰기 경로는 `ownership set`, "
+                f"남은 노드는 `fleet_graph.py move <G> <노드> --slot {slot}`, 새 일은 새 그래프에. 쓰지 않기로 했으면 그 까닭을 보고에 적습니다.")
+    else:
+        text = (f"슬롯 {slot} 의 엔진이 바뀌었습니다: {', '.join(changes) or '(바뀐 것 없음)'} (지금 {eng}). "
+                "이 슬롯에 맡긴 일이 새 엔진과 맞는지 보고, 필요하면 역할·배정을 고치십시오.")
+    return _slot_notice(text, by)
+
+
 # ----------------------------------------------------------------- 도는 라운드의 운영 방식을 지금 바꾸기
 SWITCH_RUNNER_WAIT_SEC = 8     # 완전 중지 뒤 관리자 밖 실행기가 그래프 잠금을 놓기를 기다리는 시간 (틱 2초)
 
@@ -2419,6 +2578,12 @@ def main(argv=None):
     pj.add_argument("name")
     pj.add_argument("--dry-run", action="store_true", help="무엇이 닫히고 옮겨지는지만 보인다")
     pj.add_argument("--by", default="CLI")
+    sl = sub.add_parser("slot", help="슬롯 일시 사용 중지·다시 쓰기·삭제 - 도는 작업자를 끊고 관리자에게 알린다 (추가·변경은 aimem_db.py slot)")
+    sl.add_argument("action", choices=["pause", "resume", "remove"])
+    sl.add_argument("slot")
+    sl.add_argument("--why", default="", help="pause: 까닭 (관리자와 화면에 보인다)")
+    sl.add_argument("--force", action="store_true", help="remove: 끝나지 않은 태스크가 배정돼 있어도 지운다")
+    sl.add_argument("--by", default="CLI")
     t = sub.add_parser("tell", help="돌고 있는 라운드의 관리자에게 말을 남긴다 (rounds/R<N>/INBOX.md)")
     t.add_argument("message")
     t.add_argument("--by", default="CLI")
@@ -2437,6 +2602,11 @@ def main(argv=None):
         return 0 if out.get("ok") else 1
     if a.cmd == "project":
         out = project_remove_plan(a.name) if a.dry_run else project_remove(a.name, a.by)
+        print(json.dumps(out, ensure_ascii=False, indent=1))
+        return 0 if out.get("ok") else 1
+    if a.cmd == "slot":
+        out = (slot_pause(a.slot, a.why, a.by) if a.action == "pause" else slot_resume(a.slot, a.by) if a.action == "resume"
+               else slot_remove(a.slot, a.by, force=a.force))
         print(json.dumps(out, ensure_ascii=False, indent=1))
         return 0 if out.get("ok") else 1
     if a.cmd == "tell":
