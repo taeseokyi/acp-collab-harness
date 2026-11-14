@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/a
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 179** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-14 17:22 KST
+- **REV: 180** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-14 17:51 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **the `role=manager` session the engine starts for a round** (harness claude,
@@ -243,8 +243,10 @@ body, and leave a pointer in the body.
   `AIMEM-rev129-full.md`), in the same REV that removes them
 - Finished tasks, closed requests, finished graphs → `python3 tools/aimem_db.py archive [--days 14] [--dry-run]`
   after 14 days, inclusive cutoff (tasks → `board-<YYYY-MM>.md`, requests → `requests-<YYYY-MM>/`, graphs with their
-  files → `graph-<YYYY-MM>/`; old session folders too). Run by the Manager at round close and by Taeseok from the
-  web ("끝난 것 정리…")
+  files → `graph-<YYYY-MM>/`; old session folders too; round records `rounds/R<N>/` → `rounds-<YYYY-MM>/`, except
+  the highest round and rounds still in use). It also drops ownership rows of projects whose folder is gone. Run by
+  the Manager at round close and by Taeseok from the web ("끝난 것 정리…")
+- A removed project's folder → `.aimem/archive/projects-<YYYY-MM>/<name>-<time>/` (not in git; `Section 8` table)
 - Closed history: the outbox `.aimem/outbox/**` and `retired-tools/`
 
 This list is deliberately not a table - the linter would read a table in `Section 6` as a leftover state table.
@@ -497,6 +499,7 @@ nothing to do the Manager reports and ends.
 | Request creation, editing while NEW | Taeseok | request form | start step 3 / checkpoint (d) |
 | Request splitting and status | Manager | `aimem_db.py request set`, graphs | - |
 | Archive run | Manager (close 2) / Taeseok (web) | `aimem_db.py archive` / `POST /api/archive` | `events(kind=archive)` |
+| Project removal (finished or in progress) | Taeseok, while nothing runs | web project card / `fleet_ctl.py project remove <name>` | folder moved to the archive, its open requests `REJECTED`, its queue items, unfinished graph nodes and ownership rows dropped; `events(kind=project)` and a handoff entry |
 | Fleet mode (prepare, run, stop) | Taeseok | web fleet bar | `fleet_graph.py run` prints `함대 모드:`; paused/ready spawn nothing and wait; rc 3 only when stopped → checkpoint, report `PARTIAL` |
 | Message to a running round | Taeseok | `fleet_ctl.py tell` | `INBOX.md`, rc 4 |
 | Chained rounds (`이어 달리기`) | Taeseok switches it on with a round cap and picks the targets: the fleet's own work, any number of projects, or everything | web fleet bar / `fleet_ctl.py chain` | while the targets have open requests or unchecked goals, the next round is launched when one ends; it stops when nothing is left, the report is not DONE, or a round closed no request and checked no goal; at the cap it stops, or (renew / autonomous) starts a new batch up to 30 rounds |

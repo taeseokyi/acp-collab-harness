@@ -2593,6 +2593,70 @@ async function archiveRequest(days, dryRun) {
   return { ok: res.ok && body.ok !== false, body };
 }
 
+// ---- 프로젝트 삭제 (REV 180) - 미리보기로 무엇이 닫히는지 보인 뒤 지운다. 완성된 것도 구현 중인 것도
+async function projectRemoveRequest(name, dryRun) {
+  const { res, body } = await api('/api/projects/' + encodeURIComponent(name) + '/remove',
+    dryRun ? { dry_run: true } : { dry_run: false, confirm: name });
+  return { ok: res.ok && body.ok !== false, body };
+}
+
+function openProjectRemove(pr) {
+  const name = show(pr.name, '');
+  openPanel(`프로젝트 삭제 - ${name}`, (body) => {
+    const intro = document.createElement('p');
+    intro.className = 'hint';
+    intro.textContent = '프로젝트를 치웁니다. 폴더는 지우지 않고 .aimem/archive/ 로 옮기며(git 제외), 열린 요청은 거절로 닫고 큐·그래프·소유 경로에서 뺍니다.';
+    body.appendChild(intro);
+    const out = document.createElement('div'); out.className = 'archive-out'; body.appendChild(out);
+    const row = document.createElement('div'); row.className = 'slot-actions';
+    const del = document.createElement('button'); del.type = 'button'; del.className = 'btn-danger'; del.textContent = '프로젝트 삭제'; del.disabled = true;
+    row.appendChild(del); body.appendChild(row);
+    const line = (text, cls) => { const p = document.createElement('p'); if (cls) p.className = cls; p.textContent = text; out.appendChild(p); };
+    const render = (r) => {
+      out.textContent = '';
+      const b = r.body || {};
+      const plan = b.dry_run ? b : (b.plan || {});
+      if (!r.ok && !plan.project) { line(b.error || '실패', 'hint is-error'); return; }
+      line(plan.exists
+        ? `폴더 projects/${plan.project}/ (파일 ${plan.files}${plan.files_capped ? '+' : ''}개) → .aimem/archive/ 로 옮김`
+        : '폴더는 없습니다 - 기록만 닫습니다');
+      const reqs = plan.requests || [], queue = plan.queue || [], graphs = plan.graphs || [];
+      line(`열린 요청 ${reqs.length}건 거절로 닫음 · 미완 태스크 ${(plan.tasks || []).length}건 막음 · 큐 ${queue.length}건 · `
+        + `그래프 노드 ${graphs.reduce((n, g) => n + (g.nodes || []).length, 0)}개 · 소유 경로 ${plan.ownership || 0}행`
+        + (plan.chain ? ' · 이어 달리기 대상에서 뺌' : ''), 'hint');
+      const list = (title, items, fmt) => {
+        if (!items.length) return;
+        const sec = document.createElement('section'); sec.className = 'detail-section';
+        const h3 = document.createElement('h3'); h3.textContent = title; sec.appendChild(h3);
+        const ul = document.createElement('ul'); ul.className = 'mgr-list';
+        for (const it of items) { const li = document.createElement('li'); li.textContent = fmt(it); ul.appendChild(li); }
+        sec.appendChild(ul); out.appendChild(sec);
+      };
+      list('닫을 요청', reqs, (q) => `${q.id} · ${show(q.title)} · ${show(q.status)}`);
+      list('지울 큐 항목', queue, (q) => `${q.pos} · ${plainText(q.task)}`);
+      list('막을 그래프 노드', graphs, (g) => `${g.graph} · ${(g.nodes || []).join(', ')}`);
+      if (plan.blocked) line(plan.blocked, 'hint is-error');
+      del.disabled = !b.dry_run || !!plan.blocked;
+    };
+    del.addEventListener('click', async () => {
+      if (!window.confirm(`프로젝트 ${name} 을(를) 삭제합니다. 열린 요청과 남은 일도 함께 닫힙니다. 계속할까요?`)) return;
+      del.disabled = true;
+      const r = await projectRemoveRequest(name, false);
+      if (r.ok) {
+        closeDetail();
+        state.slotMsg = { ok: true, text: `프로젝트 ${name} 삭제됨` + (r.body.moved_to ? ` · 폴더는 ${r.body.moved_to}` : '')
+          + (r.body.graph_error ? ' · 그래프 노드를 막지 못했습니다 - 다시 삭제를 누르십시오' : '')
+          + (r.body.handoff_error ? ' · 핸드오프 기록 실패' : '') };
+        await refresh();
+        return;
+      }
+      render(r);
+      line(r.body.error || '실패', 'hint is-error');
+    });
+    projectRemoveRequest(name, true).then(render);
+  });
+}
+
 function openArchivePanel() {
   openPanel('끝난 것 정리 (아카이브)', (body) => {
     const intro = document.createElement('p');
@@ -3814,6 +3878,10 @@ function renderProjects(data) {
       view.title = `projects/${show(pr.name, '')}/ 의 파일 목록과 본문`;
       actions.appendChild(view);
     }
+    const rm = linkButton('삭제…', () => openProjectRemove(pr));
+    rm.classList.add('proj-remove');
+    rm.title = '프로젝트를 치웁니다 - 폴더는 .aimem/archive/ 로 옮기고 열린 요청·큐·그래프를 닫습니다 (먼저 미리보기)';
+    actions.appendChild(rm);
     item.appendChild(head);
     item.appendChild(meta);
     if (pr.app && !pr.app.runnable) {

@@ -2283,6 +2283,31 @@ def app_csp(origin=""):
 
 
 _REQ_PROJECT_RE = re.compile(r"\A/api/projects/([^/]{1,400})/(files|file)\Z")
+_REQ_PROJECT_REMOVE_RE = re.compile(r"\A/api/projects/([^/]{1,400})/remove\Z")
+
+
+def project_remove_action(name, payload, by, root=ROOT):
+    """`POST /api/projects/<이름>/remove` {dry_run, confirm} → `fleet_ctl.project_remove_plan/project_remove`.
+
+    프로젝트를 치웁니다 - 폴더는 `.aimem/archive/projects-<달>/` 로 옮기고 열린 요청·큐·그래프 노드·소유 경로를 닫습니다.
+    dry_run 은 계획만 돌려줍니다(쓰기 없음). 실행은 `confirm` 이 프로젝트 이름과 같아야 합니다. 운영 저장소에서만."""
+    if pathlib.Path(root).resolve() != ROOT:
+        return 403, {"ok": False, "error": "운영 저장소가 아닙니다"}
+    if not isinstance(payload, dict):
+        return 400, {"ok": False, "error": "JSON 객체가 아닙니다"}
+    if not isinstance(name, str) or not _PROJECT_RE.match(name):
+        return 400, {"ok": False, "error": "프로젝트 이름이 아닙니다"}
+    ctl = _fleet_ctl(root)
+    try:
+        if payload.get("dry_run", False) is not False:
+            plan = ctl.project_remove_plan(name)
+            return (200 if plan.get("ok") else 404), dict(plan, dry_run=True)
+        if payload.get("confirm") != name:
+            return 400, {"ok": False, "error": "`confirm` 에 프로젝트 이름을 그대로 적어야 지웁니다"}
+        out = ctl.project_remove(name, by)
+    except Exception as e:  # noqa: BLE001 - 화면에는 이유가 보여야 한다
+        return 500, {"ok": False, "error": f"프로젝트를 지우지 못했습니다: {type(e).__name__}: {str(e)[:160]}"}
+    return (200 if out.get("ok") else 409), dict(out, dry_run=False)
 _APP_RE = re.compile(
     r"\A/app/(?:~(?P<ticket>[^/]{1,160})/)?(?P<name>[^/~][^/]{0,399})(?P<slash>/(?P<rel>.*))?\Z", re.S)
 
@@ -2913,7 +2938,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         slot_m = _REQ_SLOT_RE.match(path)
         slot_add_path = path == "/api/slots"
         archive_path = path == "/api/archive"
-        if path != "/api/requests" and not edit and not fleet_act and not slot_m and not slot_add_path and not archive_path:
+        proj_rm = _REQ_PROJECT_REMOVE_RE.match(path)
+        if (path != "/api/requests" and not edit and not fleet_act and not slot_m and not slot_add_path and not archive_path
+                and not proj_rm):
             return self._json(404, {"ok": False, "error": f"없는 경로입니다: {path}"})
         # CSRF (S4 검수 4번). 세션 쿠키가 `SameSite=Strict` 라 1차 방어는 되지만,
         # 쿠키 정책 하나에만 기대지 않습니다. `<form enctype="text/plain">` 으로는
@@ -2940,6 +2967,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not result.get("dry_run", True):
                 self._audit("archive", f"{code} days={result.get('plan', {}).get('days')} "
                                        f"moved={json.dumps(result.get('moved_counts', {}), ensure_ascii=False)[:300]}")
+            return self._json(code, result)
+        if proj_rm:
+            payload, sent = self._read_json_body()
+            if sent:
+                return None
+            who = self._subject()
+            pname = urllib.parse.unquote(proj_rm.group(1))
+            code, result = project_remove_action(pname, payload if isinstance(payload, dict) else {},
+                                                 f"웹({subject_label(who)})" if who else "웹", self.root)
+            if isinstance(payload, dict) and payload.get("dry_run", False) is False:      # 실행 시도는 결과와 상관없이 남긴다
+                self._audit("project-remove", f"{code} {pname[:40]!r} moved={result.get('moved_to')}")
             return self._json(code, result)
         if slot_m or slot_add_path:
             # 슬롯 관리 - 함대 제어와 같이 속도 제한 없이, CSRF·인증은 거친다. 감사 로그에 남긴다.

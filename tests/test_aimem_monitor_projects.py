@@ -186,5 +186,63 @@ class ProjectTests(unittest.TestCase):
         self.assertIn("projects", SERVER_KEYS)
 
 
+class ProjectRemoveApiTest(unittest.TestCase):
+    """`POST /api/projects/<이름>/remove` (REV 180) - 미리보기는 쓰기 없음, 실행은 `confirm` 이 이름과 같아야."""
+
+    def setUp(self):
+        import contextlib, io
+        from unittest import mock
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "tools"))
+        import aimem_db, fleet, fleet_ctl, fleet_graph
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name).resolve()
+        (self.root / ".aimem" / "requests").mkdir(parents=True)
+        (self.root / "projects" / "알파").mkdir(parents=True)
+        (self.root / "projects" / "알파" / "a.txt").write_text("x", encoding="utf-8")
+        for module, attr, value in ((server, "ROOT", self.root), (fleet, "ROOT", self.root),
+                                    (fleet, "RUNS", self.root / ".aimem" / "runs"),
+                                    (fleet_graph, "GRAPHS", self.root / ".aimem" / "graph"),
+                                    (fleet_ctl, "_aimem_dir", lambda: self.root / ".aimem"),
+                                    (aimem_db, "ROOT", self.root), (aimem_db, "DB", self.root / ".aimem" / "aimem.db"),
+                                    (aimem_db, "AIMEM", self.root / "AIMEM.md"),
+                                    (aimem_db, "HANDOFF", self.root / ".aimem" / "handoff.md")):
+            p = mock.patch.object(module, attr, value)
+            p.start()
+            self.addCleanup(p.stop)
+        with contextlib.redirect_stdout(io.StringIO()):
+            aimem_db.cmd_init()
+
+    def call(self, name, payload, root=None):
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            return server.project_remove_action(name, payload, "웹(t)", root or self.root)
+
+    def test_preview_writes_nothing_and_remove_needs_the_name(self):
+        code, res = self.call("알파", {"dry_run": True})
+        self.assertEqual((code, res["ok"], res["dry_run"], res["files"]), (200, True, True, 1))
+        for payload in ({}, {"confirm": "알파 "}, {"confirm": "베타"}, {"dry_run": False, "confirm": ["알파"]}):
+            code, res = self.call("알파", payload)
+            self.assertEqual(code, 400, payload)
+        code, res = self.call("알파", {"dry_run": "false", "confirm": "알파"})      # 거짓이 아닌 값은 미리보기로 본다
+        self.assertEqual((code, res["dry_run"]), (200, True))
+        self.assertTrue((self.root / "projects" / "알파" / "a.txt").is_file())
+        code, res = self.call("알파", {"dry_run": False, "confirm": "알파"})
+        self.assertEqual((code, res["ok"], res["dry_run"]), (200, True, False))
+        self.assertFalse((self.root / "projects" / "알파").exists())
+        self.assertEqual([p["name"] for p in server.list_projects(self.root)], [])
+
+    def test_refusals(self):
+        for bad in ("../알파", "알파/..", "", "a b", None):
+            self.assertEqual(self.call(bad, {"dry_run": True})[0], 400, bad)
+        self.assertEqual(self.call("없는것", {"dry_run": True})[0], 404)
+        self.assertEqual(self.call("없는것", {"confirm": "없는것"})[0], 409)
+        other = tempfile.TemporaryDirectory()
+        self.addCleanup(other.cleanup)
+        self.assertEqual(self.call("알파", {"confirm": "알파"}, root=other.name)[0], 403)
+        self.assertEqual(self.call("알파", ["알파"])[0], 400)
+        self.assertTrue((self.root / "projects" / "알파" / "a.txt").is_file())
+
+
 if __name__ == "__main__":
     unittest.main()

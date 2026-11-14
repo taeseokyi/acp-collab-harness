@@ -853,3 +853,161 @@ class CanStopTest(unittest.TestCase):
         self.assertTrue(fleet_ctl.public_state()["can"]["stop"])
         fleet_ctl.set_mode("paused", "test")
         self.assertTrue(fleet_ctl.public_state()["can"]["stop"])
+
+
+class ProjectRemoveTest(unittest.TestCase):
+    """프로젝트 삭제 (REV 180) - 완성된 것도 구현 중인 것도. 폴더는 아카이브로 옮기고 딸린 것을 닫는다."""
+
+    def setUp(self):
+        import aimem_db
+        self.db = aimem_db
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = pathlib.Path(tmp.name).resolve()
+        (self.repo / ".aimem" / "requests").mkdir(parents=True)
+        (self.repo / ".aimem" / "graph").mkdir()
+        for module, attr, value in ((fleet, "ROOT", self.repo), (fleet, "RUNS", self.repo / ".aimem" / "runs"),
+                                    (fleet_graph, "GRAPHS", self.repo / ".aimem" / "graph"),
+                                    (fleet_ctl, "_aimem_dir", lambda: self.repo / ".aimem"),
+                                    (aimem_db, "ROOT", self.repo), (aimem_db, "DB", self.repo / ".aimem" / "aimem.db"),
+                                    (aimem_db, "AIMEM", self.repo / "AIMEM.md"),
+                                    (aimem_db, "HANDOFF", self.repo / ".aimem" / "handoff.md")):
+            p = mock.patch.object(module, attr, value)
+            p.start()
+            self.addCleanup(p.stop)
+        with contextlib.redirect_stdout(io.StringIO()):
+            aimem_db.cmd_init()
+
+    def seed(self):
+        """구현 중인 `알파` 와 건드리면 안 되는 `베타`·함대의 일."""
+        db = self.db
+        for name in ("알파", "베타"):
+            d = self.repo / "projects" / name / "web"
+            d.mkdir(parents=True)
+            (d / "index.html").write_text("x", encoding="utf-8")
+        rdir = self.repo / ".aimem" / "requests"
+        for rid, proj, status in (("Q-1", "알파", "IN-PROGRESS"), ("Q-2", "알파", "DONE"), ("Q-3", "베타", "NEW"), ("Q-4", "", "NEW")):
+            (rdir / f"{rid}.json").write_text(json.dumps({"id": rid, "project": proj, "status": status, "title": rid,
+                                                          "created": "2026-11-01 10:00"}), encoding="utf-8")
+        with db.connect() as con:
+            db.load_request_files(con)
+            for tid, rid, st in (("T-1", "Q-1", "IN-PROGRESS"), ("T-2", "Q-1", "DONE"), ("T-3", "Q-3", "TODO")):
+                con.execute("INSERT INTO tasks(id,request_id,title,slot,status,inherited,artifacts,created,updated) "
+                            "VALUES(?,?,?,?,?,?,?,?,?)", (tid, rid, tid, "S1", st, "", "", "2026-11-01 10:00", "2026-11-01 10:00"))
+            for i, task in enumerate(("[알파] 남은 일", "[함대] 엔진 일", "[베타] 다른 일", "[알파] 또 남은 일"), 1):
+                con.execute("INSERT INTO queue(pos,task) VALUES(?,?)", (i, task))
+            con.commit()
+        for path in ("projects/알파/web/**", "projects/알파/app.json", "projects/베타/web/**", "projects/**"):
+            db.ownership_set(path, "S2", actor="t")
+        (self.repo / ".aimem" / "graph" / "G-1.json").write_text(json.dumps(
+            {"id": "G-1", "round": 3, "nodes": [{"id": "T-1", "status": "todo", "project": "알파"},
+                                                {"id": "T-2", "status": "done", "project": "알파"},
+                                                {"id": "T-3", "status": "todo", "project": "베타"},
+                                                {"id": "T-4", "status": "todo", "write": ["projects/알파/web/x.js"]},
+                                                {"id": "T-5", "status": "todo", "write": ["projects/알파2/x.js", "tools/x.py"]}]}), encoding="utf-8")
+        (self.repo / ".aimem" / "fleet-chain.json").write_text(json.dumps({"on": False, "projects": ["알파"], "log": []}), encoding="utf-8")
+
+    def rows(self, sql):
+        with self.db.connect() as con:
+            return [tuple(r) for r in con.execute(sql)]
+
+    def test_plan_changes_nothing(self):
+        self.seed()
+        plan = fleet_ctl.project_remove_plan("알파")
+        self.assertEqual((plan["ok"], plan["exists"], plan["files"], plan["ownership"], plan["chain"], plan["blocked"]),
+                         (True, True, 1, 2, False, None))
+        self.assertEqual(([r["id"] for r in plan["requests"]], plan["tasks"], [q["pos"] for q in plan["queue"]]), (["Q-1"], ["T-1"], [1, 4]))
+        self.assertEqual(plan["graphs"], [{"graph": "G-1", "nodes": ["T-1", "T-4"]}])     # project 칸이 없어도 쓰는 경로로 안다
+        self.assertTrue((self.repo / "projects" / "알파" / "web" / "index.html").is_file())
+        self.assertEqual(len(self.rows("SELECT pos FROM queue")), 4)
+
+    def test_removing_a_project_in_progress_closes_what_belongs_to_it(self):
+        self.seed()
+        out = fleet_ctl.project_remove("알파", "t")
+        self.assertTrue(out["ok"], out)
+        self.assertFalse((self.repo / "projects" / "알파").exists())
+        self.assertRegex(out["moved_to"], r"\A\.aimem/archive/projects-\d{4}-\d{2}/알파-\d{8}-\d{6}\Z")
+        self.assertTrue((self.repo / out["moved_to"] / "web" / "index.html").is_file())
+        self.assertEqual(self.rows("SELECT id,status FROM requests ORDER BY id"),
+                         [("Q-1", "REJECTED"), ("Q-2", "DONE"), ("Q-3", "NEW"), ("Q-4", "NEW")])
+        self.assertEqual(json.loads((self.repo / ".aimem" / "requests" / "Q-1.json").read_text(encoding="utf-8"))["status"], "REJECTED")
+        self.assertEqual(self.rows("SELECT id,status FROM tasks ORDER BY id"), [("T-1", "BLOCKED"), ("T-2", "DONE"), ("T-3", "TODO")])
+        self.assertEqual(self.rows("SELECT pos,task FROM queue ORDER BY pos"), [(1, "[함대] 엔진 일"), (2, "[베타] 다른 일")])
+        self.assertEqual([r[0] for r in self.rows("SELECT path_pattern FROM ownership ORDER BY path_pattern")],
+                         ["projects/**", "projects/베타/web/**"])
+        g = json.loads((self.repo / ".aimem" / "graph" / "G-1.json").read_text(encoding="utf-8"))
+        self.assertEqual([(n["id"], n["status"]) for n in g["nodes"]],
+                         [("T-1", "blocked"), ("T-2", "done"), ("T-3", "todo"), ("T-4", "blocked"), ("T-5", "todo")])
+        self.assertIn("삭제", g["nodes"][0]["dropped"])
+        self.assertEqual(fleet_ctl.chain_state()["projects"], [])
+        self.assertTrue((self.repo / "projects" / "베타" / "web" / "index.html").is_file())
+        self.assertEqual(len(self.rows("SELECT 1 FROM events WHERE kind='project'")), 1)
+        self.assertIn("프로젝트 `알파` 삭제", (self.repo / ".aimem" / "handoff.md").read_text(encoding="utf-8"))
+        # 다시 지우려 하면 요청 기록만 남은 이름이다 - 닫을 것이 없어도 실패하지 않는다
+        again = fleet_ctl.project_remove("알파", "t")
+        self.assertEqual((again["ok"], again["moved_to"], again["closed"]["requests"]), (True, None, []))
+
+    def test_a_finished_project_just_moves(self):
+        self.seed()
+        out = fleet_ctl.project_remove("베타", "t")      # 열린 요청 Q-3 이 있다 - 닫힌다
+        self.assertEqual(out["closed"]["requests"], ["Q-3"])
+        self.assertEqual(fleet_ctl.chain_state()["projects"], ["알파"])       # 남의 이어 달리기 대상은 그대로
+
+    def test_refused_while_something_runs_and_nothing_changes(self):
+        self.seed()
+        with mock.patch.object(fleet_ctl, "manager_running", lambda: [{"round": 3}]):
+            out = fleet_ctl.project_remove("알파", "t")
+        self.assertFalse(out["ok"])
+        self.assertIn("완전 중지", out["error"])
+        self.assertTrue((self.repo / "projects" / "알파").is_dir())
+        self.assertEqual(self.rows("SELECT status FROM requests WHERE id='Q-1'"), [("IN-PROGRESS",)])
+        self.assertEqual(len(self.rows("SELECT pos FROM queue")), 4)
+
+    def test_bad_names_links_and_unknown_projects_are_refused(self):
+        self.seed()
+        (self.repo / "outside").mkdir()
+        (self.repo / "outside" / "keep.txt").write_text("x", encoding="utf-8")
+        (self.repo / "projects" / "링크").symlink_to(self.repo / "outside")
+        with self.db.connect() as con:
+            con.execute("INSERT INTO queue(pos,task) VALUES(9,'[없는것] 큐 글머리만으로는 프로젝트가 아니다')")
+            con.commit()
+        (self.repo / "projects" / "파일").write_text("x", encoding="utf-8")
+        for bad in ("", "../알파", "알파/web", ".", "a b", None, "없는것", "함대", "링크", "파일"):
+            out = fleet_ctl.project_remove(bad, "t")
+            self.assertFalse(out["ok"], bad)
+        self.assertTrue((self.repo / "outside" / "keep.txt").is_file())
+        self.assertTrue((self.repo / "projects" / "알파").is_dir())
+        self.assertFalse((self.repo / ".aimem" / "archive").exists())
+        self.assertEqual(len(self.rows("SELECT pos FROM queue")), 5)
+
+    def test_refused_while_the_chain_run_is_on(self):
+        self.seed()
+        (self.repo / ".aimem" / "fleet-chain.json").write_text(json.dumps({"on": True, "projects": ["알파"]}), encoding="utf-8")
+        out = fleet_ctl.project_remove("알파", "t")
+        self.assertFalse(out["ok"])
+        self.assertIn("이어 달리기", out["error"])
+        self.assertTrue((self.repo / "projects" / "알파").is_dir())
+
+    def test_a_failed_close_puts_the_folder_back(self):
+        self.seed()
+        with mock.patch.object(self.db, "project_close", side_effect=RuntimeError("database is locked")):
+            out = fleet_ctl.project_remove("알파", "t")
+        self.assertEqual((out["ok"], out["moved_to"]), (False, None))
+        self.assertTrue((self.repo / "projects" / "알파" / "web" / "index.html").is_file())
+        self.assertEqual(self.rows("SELECT status FROM requests WHERE id='Q-1'"), [("IN-PROGRESS",)])
+
+    def test_request_file_without_an_id_is_closed_too_and_the_archive_link_is_refused(self):
+        self.seed()
+        f = self.repo / ".aimem" / "requests" / "Q-7.json"
+        f.write_text(json.dumps({"project": "알파", "status": "NEW", "title": "id 없음"}), encoding="utf-8")
+        (self.repo / "outside").mkdir()
+        (self.repo / ".aimem" / "archive").symlink_to(self.repo / "outside")
+        self.assertFalse(fleet_ctl.project_remove("알파", "t")["ok"])                # 아카이브가 링크면 밖으로 옮기지 않는다
+        self.assertTrue((self.repo / "projects" / "알파").is_dir())
+        (self.repo / ".aimem" / "archive").unlink()
+        out = fleet_ctl.project_remove("알파", "t")
+        self.assertEqual(out["closed"]["requests"], ["Q-1", "Q-7"])
+        self.assertEqual(json.loads(f.read_text(encoding="utf-8"))["status"], "REJECTED")
+        with self.db.connect() as con:
+            self.db.load_request_files(con)
+            self.assertEqual(con.execute("SELECT status FROM requests WHERE id='Q-7'").fetchone()[0], "REJECTED")

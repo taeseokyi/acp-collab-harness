@@ -1430,6 +1430,88 @@ def _check_queue_text(*texts):
                  " → 예) R17-N5, R17-N5·N6, R19-P2 (번호는 검수 보고서마다 1부터 다시 셉니다. 앞의 R숫자가 라운드)")
 
 
+def _queue_renumber(con):
+    """큐 번호를 1부터 다시 매긴다. `pos` 가 PRIMARY KEY 라 한 번에 `-1` 하면 충돌하므로 통째로 읽어 지우고 다시 넣는다
+    (큐는 수십 건이라 비용이 문제되지 않는다)."""
+    rest = [dict(r) for r in con.execute("SELECT task,slot_hint,inherited,note FROM queue ORDER BY pos")]
+    con.execute("DELETE FROM queue")
+    for i, r in enumerate(rest, 1):
+        con.execute("INSERT INTO queue(pos,task,slot_hint,inherited,note) VALUES(?,?,?,?,?)",
+                    (i, r["task"], r["slot_hint"], r["inherited"], r["note"]))
+
+
+# ---------------------------------------------------------------- 프로젝트 삭제 (REV 180) - DB·요청 파일 쪽
+def _project_refs(con, name):
+    """프로젝트에 딸린 것: 열린 요청, 그 요청의 미완 태스크, 큐의 `[<이름>]` 항목, 소유 경로 행. `known` = 요청이 하나라도 가리키나."""
+    reqs, known = [], False
+    rdir = ROOT / ".aimem" / "requests"
+    for f in sorted(rdir.glob("*.json")) if rdir.is_dir() else []:
+        d = _read_json_file(f)
+        if not d or d.get("project") != name:
+            continue
+        known = True
+        if str(d.get("status") or "NEW").upper() not in ARCHIVE_REQUEST_CLOSED:
+            reqs.append({"id": str(d.get("id") or f.stem), "title": str(d.get("title") or ""), "status": str(d.get("status") or "NEW"),
+                         "file": f.name})
+    ids = [r["id"] for r in reqs]
+    tasks = [r["id"] for r in con.execute(
+        f"SELECT id FROM tasks WHERE request_id IN ({','.join('?' * len(ids))}) AND status NOT IN ('DONE','BLOCKED') ORDER BY id",
+        ids)] if ids else []
+    tag = re.compile(r"\A\s*\[\s*" + re.escape(name) + r"\s*\]")
+    queue = [{"pos": r["pos"], "task": r["task"]} for r in con.execute("SELECT pos,task FROM queue ORDER BY pos")
+             if tag.match(str(r["task"] or ""))]
+    own = [r["path_pattern"] for r in con.execute("SELECT path_pattern FROM ownership ORDER BY path_pattern")
+           if str(r["path_pattern"] or "").startswith(f"projects/{name}/")]
+    return {"requests": reqs, "tasks": tasks, "queue": queue, "ownership": own, "known": known}
+
+
+def project_refs(name):
+    """`_project_refs` 를 읽기만 (삭제 미리보기)."""
+    with connect() as con:
+        return _project_refs(con, name)
+
+
+def project_close(name, actor="사람"):
+    """프로젝트 삭제의 DB 쪽: 열린 요청은 `REJECTED`, 그 미완 태스크는 `BLOCKED`, 큐 항목과 소유 경로 행은 지운다.
+    쓰기 트랜잭션 하나. 폴더와 그래프는 부르는 쪽(`fleet_ctl.project_remove`)이 다룬다. 닫은 것을 돌려준다."""
+    if not isinstance(name, str) or not re.match(PROJECT_NAME_RE, name):
+        raise ValueError("프로젝트 이름이 아닙니다")
+    now = _now()
+    with _write_txn() as con:
+        load_request_files(con, now)          # 웹에서 만든 요청은 파일뿐일 수 있다
+        refs = _project_refs(con, name)
+        ids = [r["id"] for r in refs["requests"]]
+        if ids:
+            marks = ",".join("?" * len(ids))
+            con.execute(f"UPDATE requests SET status='REJECTED', updated=? WHERE id IN ({marks})", (now, *ids))
+            con.execute(f"UPDATE tasks SET status='BLOCKED', updated=? WHERE request_id IN ({marks}) "
+                        "AND status NOT IN ('DONE','BLOCKED')", (now, *ids))
+        for q in refs["queue"]:
+            con.execute("DELETE FROM queue WHERE pos=?", (q["pos"],))
+        if refs["queue"]:
+            _queue_renumber(con)
+        for path in refs["ownership"]:
+            con.execute("DELETE FROM ownership WHERE path_pattern=?", (path,))
+        con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
+                    (now, actor, rev(con), "project",
+                     f"{name} 삭제 - 요청 {len(ids)}건 REJECTED" + (f" ({', '.join(ids)})" if ids else "")
+                     + f", 태스크 {len(refs['tasks'])}건 BLOCKED, 큐 {len(refs['queue'])}건, 소유 경로 {len(refs['ownership'])}행"))
+        # 요청 파일은 **찾은 그 파일**을 커밋 전에 고친다 - 파일이 NEW 로 남으면 다음 적재가 DB 를 되돌린다.
+        # 못 쓰면 예외가 나가 DB 도 되돌아간다.
+        for r in refs["requests"]:
+            f = ROOT / ".aimem" / "requests" / r["file"]
+            obj = _read_json_file(f)
+            if obj is None:
+                raise OSError(f"요청 파일 {r['file']} 을(를) 다시 읽지 못했습니다")
+            obj["status"], obj["updated"] = "REJECTED", now
+            _write_atomic(f, json.dumps(obj, ensure_ascii=False, indent=1) + "\n")
+    try:
+        render(sync_aimem=False)
+    except Exception as e:  # noqa: BLE001 - 생성물 갱신 실패가 삭제를 되돌리지는 않는다
+        refs["render_error"] = f"{type(e).__name__}: {e}"
+    return refs
+
+
 def cmd_queue(a):
     """`4.5` 대기 큐 - 유일한 큐 편집 경로. `pos` 는 1부터 연속이라 `drop` 뒤에 다시 매긴다("맨 위"가 모호해지지 않게)."""
     with connect() as con:
@@ -1467,13 +1549,7 @@ def cmd_queue(a):
                 print(f"큐에 {a.pos} 번이 없습니다")
                 return 1
             con.execute("DELETE FROM queue WHERE pos=?", (a.pos,))
-            # 번호 다시 매기기. `pos` 가 PRIMARY KEY 라 한 번에 `-1` 하면 충돌하므로
-            # 통째로 읽어 지우고 다시 넣습니다 (큐는 수십 건이라 비용이 문제되지 않습니다).
-            rest = [dict(r) for r in con.execute("SELECT task,slot_hint,inherited,note FROM queue ORDER BY pos")]
-            con.execute("DELETE FROM queue")
-            for i, r in enumerate(rest, 1):
-                con.execute("INSERT INTO queue(pos,task,slot_hint,inherited,note) VALUES(?,?,?,?,?)",
-                            (i, r["task"], r["slot_hint"], r["inherited"], r["note"]))
+            _queue_renumber(con)
             body = f"queue -{a.pos} {row['task']}"
         con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
                     (_now(), a.actor, rev(con), "queue", body))

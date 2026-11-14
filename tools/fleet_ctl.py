@@ -2066,9 +2066,10 @@ def _inbox_add(n, text, by):
 SWITCH_RUNNER_WAIT_SEC = 8     # 완전 중지 뒤 관리자 밖 실행기가 그래프 잠금을 놓기를 기다리는 시간 (틱 2초)
 
 
-def _drop_unfinished_graphs(why, round_n):
+def _drop_unfinished_graphs(why, round_n, project=None):
     """라운드 R<round_n> 의(그리고 라운드 표시가 없는) 끝나지 않은 그래프의 남은 노드(done·failed·blocked 가 아닌 것)를
     `blocked` + `dropped` 로 막는다 - 그래프를 버린다. 다른 라운드의 그래프는 건드리지 않는다.
+    `project` 를 주면 라운드를 가리지 않고 **그 프로젝트의 노드만** 막는다 (프로젝트 삭제).
     끝난 노드와 그 결과물은 그대로다. 보드의 태스크는 BLOCKED 로 옮긴다(닫는 것은 다음 관리자). 버린 것 `[{graph, nodes}]`.
     실행기가 잡고 있는 그래프는 건드리지 않는다 - 부르는 쪽이 완전 중지 뒤에 부른다."""
     import fleet_graph  # noqa: PLC0415 - 순환 import 회피
@@ -2080,12 +2081,14 @@ def _drop_unfinished_graphs(why, round_n):
             with fleet_graph.graph_lock(gi["id"], "drop"):
                 g = fleet_graph._load(gi["id"])
                 rn = g.get("round")
-                if isinstance(rn, int) and not isinstance(rn, bool) and rn != int(round_n):
+                if project is None and isinstance(rn, int) and not isinstance(rn, bool) and rn != int(round_n):
                     continue
                 before = {str(n.get("id")): n.get("status", "todo") for n in g.get("nodes") or []}
                 hit = []
                 for n in g.get("nodes") or []:
                     if n.get("status", "todo") in ("done", "failed", "blocked"):
+                        continue
+                    if project is not None and not _node_of_project(g, n, project):
                         continue
                     n["status"], n["dropped"] = "blocked", why
                     n.pop("waiting", None)
@@ -2099,6 +2102,180 @@ def _drop_unfinished_graphs(why, round_n):
         except SystemExit:
             continue
     return out
+
+
+# ----------------------------------------------------------------- 프로젝트 삭제 (REV 180)
+PROJECT_FILES_COUNT_MAX = 5000
+
+
+def _node_of_project(g, n, name):
+    """그 노드가 프로젝트 `name` 의 일인가 - `project` 칸이 그 이름이거나, 쓰는 경로가 `projects/<name>/` 아래다
+    (`project` 칸은 관리자가 적는 것이라 빠질 수 있다)."""
+    if (n.get("project") or g.get("project")) == name:
+        return True
+    w = n.get("write")
+    return isinstance(w, list) and any(isinstance(x, str) and x.startswith(f"projects/{name}/") for x in w)
+
+
+def _project_graph_nodes(name):
+    """안 끝난 그래프에 남은 그 프로젝트의 노드 `[{graph, nodes}]` (읽기만)."""
+    out = []
+    try:
+        files = sorted(_graphs_dir().glob("*.json"))
+    except OSError:
+        return out
+    for f in files:
+        try:
+            g = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(g, dict) or not isinstance(g.get("nodes"), list):
+            continue
+        hit = [str(n.get("id")) for n in g["nodes"] if isinstance(n, dict)
+               and n.get("status", "todo") not in ("done", "failed", "blocked")
+               and _node_of_project(g, n, name)]
+        if hit:
+            out.append({"graph": str(g.get("id", f.stem)), "nodes": hit})
+    return out
+
+
+def _fleet_busy():
+    """관리자·작업자·그래프 실행기 가운데 도는 것 (없으면 None)."""
+    if manager_running():
+        return "관리자가 돌고 있습니다"
+    if running_runs():
+        return "작업자가 돌고 있습니다"
+    if any(g["runner"] for g in graphs_overview()):
+        return "그래프 실행기가 돌고 있습니다"
+    if chain_state().get("on"):          # 라운드 사이의 감시자가 곧 다음 라운드를 띄운다
+        return "이어 달리기가 켜져 있습니다"
+    return None
+
+
+def project_remove_plan(name):
+    """프로젝트를 지우면 무엇이 닫히고 옮겨지는가 (쓰기 없음). 못 지우는 까닭은 `blocked`."""
+    name = name.strip() if isinstance(name, str) else ""
+    if not re.match(fleet.PROJECT_NAME_RE, name):
+        return {"ok": False, "error": "프로젝트 이름이 아닙니다"}
+    base = fleet.ROOT / "projects"
+    d = base / name
+    try:
+        if d.is_symlink() or base.is_symlink():
+            return {"ok": False, "error": f"projects/{name} 이(가) 심볼릭 링크라 지우지 않습니다"}
+        exists = d.is_dir()
+        if d.exists() and not exists:
+            return {"ok": False, "error": f"projects/{name} 이(가) 폴더가 아니라 지우지 않습니다"}
+    except OSError as e:
+        return {"ok": False, "error": f"projects/{name} 을(를) 읽지 못했습니다: {type(e).__name__}"}
+    import aimem_db  # noqa: PLC0415
+    refs = aimem_db.project_refs(name)
+    graphs = _project_graph_nodes(name)
+    # 큐 글머리만으로는 프로젝트가 아니다 (`[함대]` 도 이름 꼴이다) - `queue_project` 와 같은 기준
+    if not exists and not refs["known"] and not refs["ownership"] and not graphs:
+        return {"ok": False, "error": f"프로젝트 {name} 이(가) 없습니다"}
+    files = 0
+    if exists:
+        for _, _, names in os.walk(d):          # 링크 폴더는 따라가지 않는다(기본)
+            files += len(names)
+            if files >= PROJECT_FILES_COUNT_MAX:
+                break
+    st = chain_state()
+    busy = _fleet_busy()
+    return {"ok": True, "project": name, "exists": exists, "files": files, "files_capped": files >= PROJECT_FILES_COUNT_MAX,
+            "requests": refs["requests"], "tasks": refs["tasks"], "queue": refs["queue"],
+            "graphs": graphs, "ownership": len(refs["ownership"]),
+            "chain": bool(st.get("on")) and name in (st.get("projects") or []),
+            "blocked": (busy + (" - 끄고 지우십시오" if "이어 달리기" in busy else " - 완전 중지 뒤에 지우십시오")) if busy else None}
+
+
+@_not_while_switching
+def project_remove(name, by="사람"):
+    """프로젝트를 치운다 - 완성된 것이든 구현 중인 것이든. 도는 것이 있으면 거절한다.
+
+    폴더는 지우지 않고 `.aimem/archive/projects-<YYYY-MM>/<이름>-<시각>/` 로 옮긴다(git 제외 - 커밋 안 된 작업이 있을 수 있다).
+    안 끝난 그래프의 그 프로젝트 노드는 막고, 열린 요청은 `REJECTED`, 큐 항목·소유 경로 행은 지우고, 이어 달리기 대상에서 뺀다.
+    라운드 띄우기 잠금을 잡고 한다 - 지우는 사이에 라운드가 뜨지 않게."""
+    try:
+        _aimem_dir().mkdir(parents=True, exist_ok=True)
+        lock = open(_aimem_dir() / "fleet-launch.lock", "a")
+    except OSError as e:
+        return {"ok": False, "error": f"라운드 띄우기 잠금 파일을 열지 못했습니다: {type(e).__name__}"}
+    with lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return {"ok": False, "error": "라운드를 띄우는 중입니다 - 끝난 뒤 다시 하십시오"}
+        if switching():                      # 잠금을 기다리는 사이에 시작됐을 수 있다
+            return {"ok": False, "mode": mode(), "error": SWITCHING_ERROR}
+        plan = project_remove_plan(name)
+        if not plan["ok"]:
+            return plan
+        if plan["blocked"]:
+            return {"ok": False, "error": plan["blocked"], "plan": plan}
+        name = plan["project"]
+        out = {"ok": True, "project": name, "plan": plan, "moved_to": None}
+        # 1) 폴더 먼저 - 못 옮기면 아무것도 안 바꾼 채 끝난다
+        if plan["exists"]:
+            now = dt.datetime.now()
+            dest = _aimem_dir() / "archive" / f"projects-{now:%Y-%m}" / f"{name}-{now:%Y%m%d-%H%M%S}"
+            src = fleet.ROOT / "projects" / name
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                if (dest.exists() or src.is_symlink() or src.resolve().parent != (fleet.ROOT / "projects").resolve()
+                        or dest.parent.resolve() != (_aimem_dir().resolve() / "archive" / dest.parent.name)):
+                    return {"ok": False, "error": f"projects/{name} 을(를) 옮길 수 없습니다", "plan": plan}
+                src.replace(dest)
+            except OSError as e:
+                return {"ok": False, "error": f"projects/{name} 을(를) 옮기지 못했습니다: {type(e).__name__}", "plan": plan}
+            try:
+                out["moved_to"] = str(dest.relative_to(fleet.ROOT))
+            except ValueError:
+                out["moved_to"] = str(dest)
+        # 2) 요청·태스크·큐·소유 경로 → 3) 그래프 노드 → 4) 이어 달리기 대상 → 5) 다음 관리자에게 알림
+        import aimem_db  # noqa: PLC0415
+        try:
+            refs = aimem_db.project_close(name, by)
+        except Exception as e:  # noqa: BLE001 - DB 는 되돌아갔다. 폴더도 제자리로 돌려 아무것도 안 바뀐 채 끝낸다
+            back = ""
+            if out["moved_to"]:
+                try:
+                    dest.replace(src)
+                    out["moved_to"] = None
+                except OSError:
+                    back = f" 폴더는 {out['moved_to']} 에 있습니다 - 손으로 되돌리십시오."
+            return {"ok": False, "error": f"프로젝트를 닫지 못했습니다: {type(e).__name__}: {str(e)[:120]}.{back}",
+                    "plan": plan, "moved_to": out["moved_to"]}
+        try:
+            out["dropped_graphs"] = _drop_unfinished_graphs(f"프로젝트 {name} 삭제 ({by})", None, project=name)
+        except Exception as e:  # noqa: BLE001 - 요청은 닫혔다. 남은 노드는 다시 지우기를 누르면 막힌다
+            out["dropped_graphs"] = []
+            out["graph_error"] = f"{type(e).__name__}: {str(e)[:120]}"
+        out["closed"] = {"requests": [r["id"] for r in refs["requests"]], "tasks": refs["tasks"],
+                         "queue": len(refs["queue"]), "ownership": len(refs["ownership"])}
+        st = chain_state()
+        if name in (st.get("projects") or []):
+            st["projects"] = [p for p in st["projects"] if p != name]
+            st["label"] = chain_label(bool(st.get("fleet")), st["projects"], bool(st.get("all")))
+            st.setdefault("log", []).append(f"{_now()} 대상에서 뺌 - 프로젝트 {name} 삭제 ({by})")
+            if st.get("on") and not st.get("all") and not st.get("fleet") and not st["projects"]:
+                _chain_stop(st, "off", f"대상 프로젝트 {name} 이(가) 삭제됐습니다")
+                out["chain_off"] = True
+            else:
+                _chain_write(st)
+        try:
+            c = out["closed"]
+            aimem_db.handoff_add(
+                f"**프로젝트 `{name}` 삭제 ({by}).** "
+                + (f"폴더는 `{out['moved_to']}` 로 옮김(git 제외). " if out["moved_to"] else "폴더는 없었음. ")
+                + f"열린 요청 {len(c['requests'])}건 REJECTED"
+                + (f"({', '.join(c['requests'][:8])}{' 외 ' + str(len(c['requests']) - 8) + '건' if len(c['requests']) > 8 else ''})"
+                   if c["requests"] else "")
+                + f", 태스크 {len(c['tasks'])}건 BLOCKED, 큐 {c['queue']}건·소유 경로 {c['ownership']}행 내림, "
+                + f"그래프 노드 {sum(len(g['nodes']) for g in out['dropped_graphs'])}개 막음."
+                + (" 이어 달리기는 대상이 없어 꺼짐." if out.get("chain_off") else ""), actor=by)
+        except Exception as e:  # noqa: BLE001 - 알림을 못 남겨도 삭제는 끝났다
+            out["handoff_error"] = f"{type(e).__name__}: {str(e)[:120]}"
+        return out
 
 
 def _switch_preflight():
@@ -2237,6 +2414,11 @@ def main(argv=None):
     c.add_argument("--policy", choices=[x["key"] for x in POLICY_CHOICES], default=None,
                    help="이어 띄울 라운드의 운영 방식 (없으면: 켜져 있는 중이면 지금 것, 꺼진 데서 켜면 fleet.toml 기본값)")
     c.add_argument("--by", default="CLI")
+    pj = sub.add_parser("project", help="프로젝트 삭제: 폴더를 .aimem/archive/ 로 옮기고 열린 요청·큐·그래프·소유 경로를 닫는다")
+    pj.add_argument("action", choices=["remove"])
+    pj.add_argument("name")
+    pj.add_argument("--dry-run", action="store_true", help="무엇이 닫히고 옮겨지는지만 보인다")
+    pj.add_argument("--by", default="CLI")
     t = sub.add_parser("tell", help="돌고 있는 라운드의 관리자에게 말을 남긴다 (rounds/R<N>/INBOX.md)")
     t.add_argument("message")
     t.add_argument("--by", default="CLI")
@@ -2251,6 +2433,10 @@ def main(argv=None):
         return _chain_wait_and_step(a.round, close_only=a.close_only)
     if a.cmd == "resume-manager":
         out = resume_manager(a.round, by=a.by)
+        print(json.dumps(out, ensure_ascii=False, indent=1))
+        return 0 if out.get("ok") else 1
+    if a.cmd == "project":
+        out = project_remove_plan(a.name) if a.dry_run else project_remove(a.name, a.by)
         print(json.dumps(out, ensure_ascii=False, indent=1))
         return 0 if out.get("ok") else 1
     if a.cmd == "tell":
