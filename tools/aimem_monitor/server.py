@@ -1472,7 +1472,9 @@ def archive_action(payload, by, root=ROOT):
                "requests": [{"id": r["id"], "title": r["title"], "status": r["status"], "when": r["when"]} for r in plan["requests"]],
                "graphs": [{"id": g["id"], "request": g["request"], "when": g["when"], "counts": g["counts"],
                            "files": 1 + len(g["side_files"]) + len(g["inputs"])} for g in plan["graphs"]]}
+    summary["rounds"] = [r["round"] for r in plan.get("rounds") or []]
     summary["records"] = {
+        "ownership": len(plan.get("ownership") or []),
         "runs":      len(plan.get("runs") or []),
         "events":    len(plan.get("events") or []),
         "handoff":   len(plan.get("handoff") or []),
@@ -1965,10 +1967,12 @@ def _project_progress_file(root, name):
 
 
 def _round_records(root):
-    """`rounds/R<N>/round.json` 들 -> {프로젝트: {라운드: 띄운 시각}}. `fleet_ctl` 이 라운드를 띄울 때 씁니다."""
+    """`rounds/R<N>/round.json` 들 -> {프로젝트: {라운드: 띄운 시각}}. `fleet_ctl` 이 라운드를 띄울 때 씁니다.
+    정리로 내려간 기록(`.aimem/archive/rounds-<달>/`)도 셉니다 - 살아 있는 프로젝트의 거친 라운드가 줄지 않게."""
     out = {}
     try:
-        files = sorted((pathlib.Path(root) / "rounds").glob("R*/round.json"))[:1000]
+        files = (sorted((pathlib.Path(root) / ".aimem" / "archive").glob("rounds-*/R*/round.json"))[:1000]
+                 + sorted((pathlib.Path(root) / "rounds").glob("R*/round.json"))[:1000])
     except OSError:
         return out
     for f in files:
@@ -1989,7 +1993,8 @@ def _round_records(root):
 def list_projects(root=ROOT, requests=None):
     """프로젝트별 진행 상황 (2026-11-10 태석님: "각 프로젝트가 얼마나 진행되고 있나").
 
-    프로젝트 = `projects/` 아래 폴더 + 요청이 가리키는 이름. 진행률(`percent`)은 **목표 대비**입니다 - 관리자가
+    프로젝트 = `projects/` 아래 폴더 + **열린** 요청이 가리키는 이름(폴더가 아직 안 생긴 새 프로젝트). 폴더를 지운
+    프로젝트는 끝난 요청·라운드 기록이 남아 있어도 싣지 않습니다 - 폴더를 지우는 것이 프로젝트를 치우는 것입니다. 진행률(`percent`)은 **목표 대비**입니다 - 관리자가
     `PROGRESS.md` 의 `## 목표` 체크리스트에 적은 것 중 끝난 비율(`basis: "goals"`, REV 148). 목표가 아직 안 적힌
     프로젝트는 예전처럼 그 프로젝트 **요청들의 평균**(`basis: "requests"`)입니다 - 끝난 요청 100, 진행 중인 요청은
     그 요청의 진행율(`progress_pct`), 거절된 요청은 셈에서 뺍니다. 요청 평균은 `request_percent` 로 늘 따로 싣습니다.
@@ -2028,7 +2033,7 @@ def list_projects(root=ROOT, requests=None):
     for pr, st in _archived_request_projects(root):
         per.setdefault(pr, []).append((st, 100.0 if st == "DONE" else 0.0))
     launched = _round_records(root)
-    names |= set(per) | set(launched)
+    names |= {pr for pr, rows in per.items() if any(st not in ("DONE", "REJECTED") for st, _ in rows)}
     out = []
     for n in sorted(names):
         rows = [r for r in per.get(n, []) if r[0] != "REJECTED"]

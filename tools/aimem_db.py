@@ -802,13 +802,15 @@ def _monitor_log_held():
 
 
 def archive_plan(days=14, now=None):
-    """무엇을 내릴지 계산만 한다 (파일·DB 를 건드리지 않는다). 태스크·요청·그래프와 그 기록.
+    """무엇을 내릴지 계산만 한다 (파일·DB 를 건드리지 않는다). 태스크·요청·그래프와 그 기록, 라운드 기록 폴더,
+    폴더를 지운 프로젝트의 소유 경로 행.
 
     기준 시각은 포함(`<=`)이라 `--days 0` 이 같은 초에 끝난 것도 내린다. 시각은 모두 초 단위 ISO 라 문자열 비교로 충분하다."""
     now = now or dt.datetime.now()
     cutoff = (now - dt.timedelta(days=days)).isoformat(timespec="seconds")
     plan = {"days": days, "cutoff": cutoff, "tasks": [], "requests": [], "graphs": [],
-            "sessions": [], "events": [], "handoff": [], "relay": [], "logs": [], "total_records": 0}
+            "sessions": [], "events": [], "handoff": [], "relay": [], "logs": [], "rounds": [], "ownership": [],
+            "total_records": 0}
     with connect() as con:
         for r in con.execute("SELECT id,title,slot,status,inherited,artifacts,updated FROM tasks "
                              "WHERE status='DONE' AND COALESCE(updated,created,'') <= ? ORDER BY id", (cutoff,)):
@@ -825,6 +827,7 @@ def archive_plan(days=14, now=None):
                 plan["handoff"].append({"seq": row["seq"], "at": row["at"], "line": _handoff_line(row)})
     rdir = ROOT / ".aimem" / "requests"
     open_request_ids = set()
+    open_projects = set()      # 열린 요청이 가리키는 프로젝트 - 폴더가 아직 없어도 살아 있는 프로젝트다
     if rdir.is_dir():
         for f in sorted(rdir.glob("*.json")):
             try:
@@ -837,6 +840,8 @@ def archive_plan(days=14, now=None):
             status = str(d.get("status") or "").upper()
             if status not in ARCHIVE_REQUEST_CLOSED:
                 open_request_ids.add(rid)
+                if isinstance(d.get("project"), str):
+                    open_projects.add(d["project"])
             if status in ARCHIVE_REQUEST_CLOSED and when <= cutoff:
                 plan["requests"].append({"id": rid, "file": f.name, "status": d.get("status"), "title": d.get("title"), "when": when})
     gdir = ROOT / ".aimem" / "graph"
@@ -982,6 +987,36 @@ def archive_plan(days=14, now=None):
                                if x.name.startswith(f"r{n}.") or x.name.startswith(f"r{n}-"))
                 plan["relay"].append({"round": n, "files": files})
 
+    # 라운드 기록 폴더 `rounds/R<N>/`. 가장 높은 번호는 남긴다 - 다음 라운드 번호와 '지난 라운드' 요약이 거기서 나온다.
+    # 관리자가 아직 도는 라운드, 안 끝난 그래프가 딸린 라운드도 남긴다. 기준 시각은 띄운 시각(`round.json` 의 `at`).
+    rounds_dir = ROOT / "rounds"
+    records = {}
+    if rounds_dir.is_dir() and not unknown_graph_round:
+        for d in rounds_dir.iterdir():
+            m = re.fullmatch(r"R(\d+)", d.name)
+            if m and d.is_dir() and not d.is_symlink():
+                records[int(m.group(1))] = d
+    live_rounds = set()
+    for d in sess_dir.iterdir() if sess_dir.is_dir() else []:
+        m = re.match(r"M-R(\d+)-", d.name)
+        if m and d.is_dir() and not (d / "end.json").is_file():
+            live_rounds.add(int(m.group(1)))
+    for n in sorted(records)[:-1]:
+        if n in live_rounds or str(n) in remaining_graph_rounds:
+            continue
+        at = _iso((_read_json_file(records[n] / "round.json") or {}).get("at"))
+        if at and at <= cutoff:
+            plan["rounds"].append({"round": n, "when": at})
+
+    # 폴더를 지운 프로젝트의 소유 경로 행. 열린 요청이 있는 프로젝트는 폴더가 아직 안 생긴 것이라 남긴다.
+    with connect() as con:
+        for r in con.execute("SELECT path_pattern,owner FROM ownership ORDER BY path_pattern"):
+            m = re.match(r"projects/([^/*]+)/", r["path_pattern"] or "")
+            name = m.group(1) if m else ""
+            if (name and re.match(PROJECT_NAME_RE, name) and name not in open_projects
+                    and not (ROOT / "projects" / name).is_dir()):
+                plan["ownership"].append({"path": r["path_pattern"], "owner": r["owner"], "project": name})
+
     for log_path in (ROOT / ".aimem" / "monitor.log", ROOT / ".aimem" / "fleet-mode.log"):
         if not log_path.is_file():
             continue
@@ -1003,7 +1038,8 @@ def archive_plan(days=14, now=None):
 
     plan["total_records"] = (len(plan["sessions"]) + len(plan["events"]) + len(plan["handoff"])
                              + len(plan["relay"]) + sum(x["lines"] for x in plan["logs"]))
-    plan["total"] = len(plan["tasks"]) + len(plan["requests"]) + len(plan["graphs"])
+    plan["total"] = (len(plan["tasks"]) + len(plan["requests"]) + len(plan["graphs"])
+                     + len(plan["rounds"]) + len(plan["ownership"]))
     return plan
 
 
@@ -1012,7 +1048,7 @@ def archive_apply(plan, actor="관리자"):
     arch = ROOT / ".aimem" / "archive"
     arch.mkdir(parents=True, exist_ok=True)
     out = {"tasks": [], "requests": [], "graphs": [], "sessions": [], "events": [],
-           "handoff": [], "relay": [], "log_lines": 0, "files": 0}
+           "handoff": [], "relay": [], "rounds": [], "ownership": [], "log_lines": 0, "files": 0}
     moved_any = False
     cell = lambda v: str(v or "-").replace("|", "\\|").replace("\n", " ")
     rows = plan["tasks"]
@@ -1194,6 +1230,26 @@ def archive_apply(plan, actor="관리자"):
                 moved_any = True
         out["relay"].append(n)
 
+    for r in plan.get("rounds", []):
+        src = ROOT / "rounds" / f"R{r['round']}"
+        dest = arch / f"rounds-{(r.get('when') or plan['cutoff'])[:7] or 'undated'}"
+        # 같은 번호가 이미 내려가 있으면 덮지 않고 남긴다
+        if src.is_symlink() or not src.is_dir() or (dest / src.name).exists():
+            continue
+        dest.mkdir(parents=True, exist_ok=True)
+        src.replace(dest / src.name)
+        out["rounds"].append(r["round"]); out["files"] += 1
+        moved_any = True
+
+    if plan.get("ownership"):
+        with connect() as con:
+            for o in plan["ownership"]:
+                if (ROOT / "projects" / o["project"]).is_dir():      # 계획 뒤에 폴더가 되살아났으면 남긴다
+                    continue
+                if con.execute("DELETE FROM ownership WHERE path_pattern=? AND owner=?", (o["path"], o["owner"])).rowcount:
+                    out["ownership"].append(o["path"])
+            con.commit()
+
     log_total = 0
     for log_path in (ROOT / ".aimem" / "monitor.log", ROOT / ".aimem" / "fleet-mode.log"):
         if not log_path.is_file():
@@ -1255,13 +1311,14 @@ def archive_apply(plan, actor="관리자"):
             out["files"] += 1
     out["log_lines"] = log_total
 
-    changed = any(out[k] for k in ("tasks", "requests", "graphs", "sessions", "events", "handoff", "relay", "log_lines"))
+    changed = any(out[k] for k in ("tasks", "requests", "graphs", "sessions", "events", "handoff", "relay", "rounds", "ownership", "log_lines"))
     if changed:
         with connect() as con:
             body = (f"{plan['days']}일 경과 - 태스크 {len(out['tasks'])}건, 요청 {len(out['requests'])}건, 그래프 {len(out['graphs'])}개 아카이브"
                     + (f" (태스크 {', '.join(out['tasks'])})" if out["tasks"] else "")
                     + f", 세션 {len(out['sessions'])}건, 이벤트 {len(out['events'])}건"
-                    + f", 핸드오프 {len(out['handoff'])}건, 전달 {len(out['relay'])}개, 로그 {out['log_lines']}줄")
+                    + f", 핸드오프 {len(out['handoff'])}건, 전달 {len(out['relay'])}개, 로그 {out['log_lines']}줄"
+                    + f", 라운드 기록 {len(out['rounds'])}개, 소유 경로 {len(out['ownership'])}행")
             con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
                         (_now(), actor, rev(con), "archive", body))
             con.commit()
@@ -1304,6 +1361,11 @@ def cmd_archive(a):
         print(f"archive: 핸드오프 <- {len(plan['handoff'])}건")
     if plan["relay"]:
         print("archive: 전달 <- " + ", ".join(f"R{r['round']}" for r in plan["relay"]))
+    if plan["rounds"]:
+        print("archive: 라운드 기록 <- " + ", ".join(f"R{r['round']}" for r in plan["rounds"]))
+    if plan["ownership"]:
+        print(f"archive: 소유 경로 <- {len(plan['ownership'])}행 (폴더 없는 프로젝트: "
+              + ", ".join(sorted({o['project'] for o in plan['ownership']})) + ")")
     for log in plan["logs"]:
         print(f"archive: 로그 <- {log['file']} {log['lines']}줄")
     print(f"archive: 건수 - 핸드오프 {len(plan['handoff'])}건, 전달 {len(plan['relay'])}개, 로그 {sum(x['lines'] for x in plan['logs'])}줄")
@@ -1313,7 +1375,7 @@ def cmd_archive(a):
         out = archive_apply(plan, a.actor)
     except RuntimeError as e:
         sys.exit(str(e))
-    print(f"archive: 태스크 {len(out['tasks'])}건, 요청 {len(out['requests'])}건, 그래프 {len(out['graphs'])}개, 세션 {len(out['sessions'])}건, 이벤트 {len(out['events'])}건, 핸드오프 {len(out['handoff'])}건, 전달 {len(out['relay'])}개, 로그 {out['log_lines']}줄 옮김 (파일 {out['files']})")
+    print(f"archive: 태스크 {len(out['tasks'])}건, 요청 {len(out['requests'])}건, 그래프 {len(out['graphs'])}개, 세션 {len(out['sessions'])}건, 이벤트 {len(out['events'])}건, 핸드오프 {len(out['handoff'])}건, 전달 {len(out['relay'])}개, 로그 {out['log_lines']}줄, 라운드 기록 {len(out['rounds'])}개 옮김 (파일 {out['files']}), 소유 경로 {len(out['ownership'])}행 내림")
     if out.get("render_error"):
         print(f"archive: render 실패 - 생성물 갱신 안 됨 ({out['render_error']})")
     return 0

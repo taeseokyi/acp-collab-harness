@@ -2611,13 +2611,13 @@ function openArchivePanel() {
       if (!r.ok) { const e = document.createElement('p'); e.className = 'hint is-error'; e.textContent = r.body.error || '실패'; out.appendChild(e); return; }
       const plan = r.body.plan || {};
       const h = document.createElement('p');
-      h.textContent = (dry ? '옮길 것: ' : '옮김: ') + `태스크 ${(plan.tasks || []).length}건 · 요청 ${(plan.requests || []).length}건 · 그래프 ${(plan.graphs || []).length}개 (기준 ${fmtDateTime(plan.cutoff)})`;
+      h.textContent = (dry ? '옮길 것: ' : '옮김: ') + `태스크 ${(plan.tasks || []).length}건 · 요청 ${(plan.requests || []).length}건 · 그래프 ${(plan.graphs || []).length}개 · 라운드 기록 ${(plan.rounds || []).length}개 (기준 ${fmtDateTime(plan.cutoff)})`;
       out.appendChild(h);
       const counts = dry ? plan.records : r.body.moved_counts;
       if (counts) {
         const line = document.createElement('p');
         line.className = 'hint';
-        line.textContent = `이벤트 ${counts.events || 0}건 · 핸드오프 ${counts.handoff || 0}건 · 로그 ${counts.log_lines || 0}줄`;
+        line.textContent = `이벤트 ${counts.events || 0}건 · 핸드오프 ${counts.handoff || 0}건 · 로그 ${counts.log_lines || 0}줄 · 지운 프로젝트의 소유 경로 ${counts.ownership || 0}행`;
         out.appendChild(line);
       }
       const list = (title, items, fmt) => {
@@ -2630,6 +2630,7 @@ function openArchivePanel() {
       };
       list('태스크', plan.tasks || [], (t) => `${t.id} · ${plainText(t.title)} · ${show(t.slot)}`);
       list('요청', plan.requests || [], (q) => `${q.id} · ${show(q.title)} · ${show(q.status)}`);
+      list('라운드 기록', plan.rounds || [], (n) => `R${n} · rounds/R${n}/`);
       list('그래프', plan.graphs || [], (g) => `${g.id} · ${plainText(g.request)} · 파일 ${g.files}`);
       apply.disabled = !dry || !(plan.total > 0);
     };
@@ -3709,6 +3710,8 @@ function openProjectApp(pr) {
 // 프로젝트가 끝났나 - 탭 숫자와 필터가 같은 기준을 쓴다 (목표가 있으면 목표, 없으면 요청 진행률)
 function projectDone(p) {
   const g = p && p.goals;
+  const rq = (p && p.requests) || {};
+  if ((rq.new || 0) + (rq.active || 0) > 0) return false;   // 열린 요청이 있으면 목표가 다 찼어도 진행 중
   if (g && g.total) return g.done >= g.total;
   return Number(p && p.percent) >= 100;
 }

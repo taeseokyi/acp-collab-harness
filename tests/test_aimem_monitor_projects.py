@@ -77,7 +77,7 @@ class ProjectTests(unittest.TestCase):
                 {"id": "e", "project": "", "status": "NEW"},
                 {"id": "f", "project": "../x", "status": "NEW"}]
         got = {p["name"]: p for p in server.list_projects(self.root, reqs)}
-        self.assertEqual(sorted(got), ["베타", "알파"])
+        self.assertEqual(sorted(got), ["알파"])       # 베타는 폴더도 열린 요청도 없이 라운드 기록에만 있다 - 싣지 않는다
         a = got["알파"]
         self.assertEqual(a["requests"], {"total": 4, "done": 2, "new": 1, "active": 1})   # 거절은 빼고, 아카이브된 완료는 센다
         self.assertEqual(a["percent"], 62.5)                                              # (100+100+50+0)/4
@@ -86,8 +86,25 @@ class ProjectTests(unittest.TestCase):
         self.assertTrue(a["summary"].startswith("## R8"))
         self.assertIn("남은 일: 배포", a["summary"])
         self.assertNotIn("R7", a["summary"])
-        b = got["베타"]
-        self.assertEqual((b["exists"], b["rounds"], b["percent"], b["summary"]), (False, [8], None, ""))
+
+    def test_a_project_whose_folder_was_removed_leaves_the_list(self):
+        """폴더를 지우는 것이 프로젝트를 치우는 것 - 끝난 요청·라운드 기록이 남아 있어도 목록에 없다."""
+        (self.root / "projects" / "산것").mkdir(parents=True)
+        for where, n in (("rounds", 4), (".aimem/archive/rounds-2026-10", 3)):
+            r = self.root / where / f"R{n}"
+            r.mkdir(parents=True)
+            (r / "round.json").write_text(json.dumps({"round": n, "at": "2026-10-01T09:00:00", "projects": ["산것", "치운것"]}),
+                                          encoding="utf-8")
+        arch = self.root / ".aimem" / "archive" / "requests-2026-10"
+        arch.mkdir(parents=True)
+        (arch / "old.json").write_text(json.dumps({"id": "Q-1", "project": "치운것", "status": "DONE"}), encoding="utf-8")
+        reqs = [{"id": "a", "project": "치운것", "status": "DONE"}, {"id": "b", "project": "치운것", "status": "REJECTED"}]
+        got = {p["name"]: p for p in server.list_projects(self.root, reqs)}
+        self.assertEqual(sorted(got), ["산것"])
+        self.assertEqual(got["산것"]["rounds"], [3, 4])            # 정리로 내려간 라운드 기록도 센다
+        # 폴더가 아직 없는 새 프로젝트는 열린 요청이 있어 보인다
+        got = server.list_projects(self.root, reqs + [{"id": "c", "project": "치운것", "status": "NEW"}])
+        self.assertEqual([(p["name"], p["exists"], p["requests"]["total"]) for p in got], [("산것", True, 0), ("치운것", False, 3)])
 
     def test_progress_is_against_goals_when_the_manager_wrote_them(self):
         """REV 148: 요청을 다 끝내도 프로젝트가 덜 됐으면 100% 가 아니어야 한다 - `## 목표` 체크리스트 기준."""

@@ -294,6 +294,56 @@ class ArchiveRequestsGraphsTest(DbFixture, unittest.TestCase):
         plan0 = aimem_db.archive_plan(0)
         self.assertEqual([r["id"] for r in plan0["requests"]], ["Q-3"])
 
+    def _round(self, n, at="2026-01-01T10:00:00"):
+        d = self.root / "rounds" / f"R{n}"
+        d.mkdir(parents=True)
+        (d / "round.json").write_text(json.dumps({"round": n, "at": at, "projects": ["가"]}), encoding="utf-8")
+        (d / "REPORT.md").write_text("상태: DONE\n", encoding="utf-8")
+        return d
+
+    def test_round_records_move_but_the_latest_and_live_ones_stay(self):
+        for n in (1, 2, 3, 4, 5):
+            self._round(n)
+        self._round(6, at=aimem_db._now())                                   # 가장 높은 번호 - 다음 번호의 근거
+        (self.root / "rounds" / "R1" / "round.json").write_text("{깨진", encoding="utf-8")   # 언제 떴는지 모르면 남긴다
+        gdir = self.root / ".aimem" / "graph"
+        gdir.mkdir(parents=True)
+        (gdir / "G-9.json").write_text(json.dumps({"id": "G-9", "round": 2, "nodes": [{"id": "T-90", "status": "todo"}]}), encoding="utf-8")
+        live = self.root / ".aimem" / "sessions" / "M-R3-101010"
+        live.mkdir(parents=True)                                             # end.json 없음 = 관리자가 아직 돈다
+        (self.root / "outside").mkdir()
+        (self.root / "rounds" / "R0").symlink_to(self.root / "outside")
+        plan = aimem_db.archive_plan(14)
+        self.assertEqual([r["round"] for r in plan["rounds"]], [4, 5])
+        out = aimem_db.archive_apply(plan, actor="t")
+        self.assertEqual(out["rounds"], [4, 5])
+        arch = self.root / ".aimem" / "archive" / "rounds-2026-01"
+        self.assertTrue((arch / "R4" / "REPORT.md").is_file() and (arch / "R5" / "round.json").is_file())
+        self.assertEqual(sorted(d.name for d in (self.root / "rounds").iterdir()), ["R0", "R1", "R2", "R3", "R6"])
+        with aimem_db.connect() as con:
+            body = con.execute("SELECT body FROM events WHERE kind='archive'").fetchone()[0]
+        self.assertIn("라운드 기록 2개", body)
+        self.assertEqual(aimem_db.archive_plan(14)["rounds"], [])
+
+    def test_ownership_rows_of_a_removed_project_are_dropped(self):
+        (self.root / "projects" / "산것").mkdir(parents=True)
+        for path, owner in (("projects/산것/web/**", "S2"), ("projects/치운것/web/**", "S2"), ("projects/치운것/app.json", "S3"),
+                            ("projects/새것/**", "S2"), ("projects/**", "관리자"), ("tools/**", "S1")):
+            aimem_db.ownership_set(path, owner, actor="t")
+        rdir = self.root / ".aimem" / "requests"
+        rdir.mkdir(parents=True, exist_ok=True)
+        (rdir / "Q-9-new.json").write_text(json.dumps({"id": "Q-9", "status": "NEW", "project": "새것", "created": aimem_db._now()}), encoding="utf-8")
+        plan = aimem_db.archive_plan(14)
+        self.assertEqual([o["path"] for o in plan["ownership"]], ["projects/치운것/app.json", "projects/치운것/web/**"])
+        self.assertEqual(plan["total"], 2)
+        (self.root / "projects" / "치운것").mkdir()                          # 계획 뒤에 되살아나면 남긴다
+        self.assertEqual(aimem_db.archive_apply(plan, actor="t")["ownership"], [])
+        (self.root / "projects" / "치운것").rmdir()
+        out = aimem_db.archive_apply(aimem_db.archive_plan(14), actor="t")
+        self.assertEqual(len(out["ownership"]), 2)
+        left = [r[0] for r in self.rows("SELECT path_pattern FROM ownership ORDER BY path_pattern")]
+        self.assertEqual(left, ["projects/**", "projects/산것/web/**", "projects/새것/**", "tools/**"])
+
     def test_cutoff_is_inclusive_same_second(self):
         """REV 119 메모의 결함: 기준 시각과 같은 초에 끝난 태스크·요청·그래프가 `<` 비교로 빠져 두 번 돌려야 했다."""
         now = aimem_db.dt.datetime(2026, 11, 10, 12, 0, 0)
