@@ -479,6 +479,25 @@ def make_server(host, port, data_dir, token=None, env=None, stt_fn=None, llm_run
     return server
 
 
+SETTINGS_FILE = HERE / "settings.json"
+
+
+def load_settings(path=SETTINGS_FILE, environ=None):
+    """서버 설정 = settings.json 의 `VOXLOG_*` 글 값 위에 환경 변수를 덮은 것 (환경 변수가 이긴다).
+
+    모니터의 '앱 열기'·배포는 환경을 좁혀 띄우므로 음성인식 주소 같은 설정은 이 파일에 둔다. 비밀 값은 넣지 않는다."""
+    env = {}
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = None
+    if isinstance(data, dict):
+        env.update({k: v for k, v in data.items()
+                    if isinstance(k, str) and k.startswith("VOXLOG_") and isinstance(v, str) and v})
+    env.update(os.environ if environ is None else environ)
+    return env
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="VoxLog 서버")
     ap.add_argument("--host", default="127.0.0.1")
@@ -506,7 +525,7 @@ def main(argv=None):
             print("TLS 인증서를 읽을 수 없습니다: %s" % exc, file=sys.stderr)
             return 2
 
-    server = make_server(args.host, args.port, args.data, token=args.token)
+    server = make_server(args.host, args.port, args.data, token=args.token, env=load_settings())
     if ctx is not None:
         server.socket = ctx.wrap_socket(server.socket, server_side=True)
 

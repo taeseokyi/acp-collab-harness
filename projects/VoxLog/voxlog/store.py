@@ -447,7 +447,7 @@ class Store:
             path = self._transcript_path(meta)
             self._atomic_write(path, text.encode("utf-8"))
             self._drop_cache(path)
-            meta["title"] = text[:40]
+            meta["title"] = " ".join(text.split())[:40]     # 화자 구분 글은 여러 줄 - 제목은 한 줄로
             meta["chars"] = len(text)
             meta["status"] = "done"
             meta["error"] = None

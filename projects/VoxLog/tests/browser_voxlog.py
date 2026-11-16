@@ -323,8 +323,21 @@ def run_all(browser, base, data, tmp, procs):
         pg.wait_for_selector("#rec")
         pg.click("#settings-btn")
         pg.click("#health-check")
-        need(wait_for(lambda: pg.inner_text("#health-out").startswith("실패") or "인증" in pg.inner_text("#health-out"), 8),
-             "토큰 없이 '연결 확인' 오류 안내가 없음: " + pg.inner_text("#health-out"))
+        need(wait_for(lambda: "토큰을 넣어야 합니다" in pg.inner_text("#health-out"), 8),
+             "토큰 없이 '연결 확인' 이 토큰을 넣으라고 하지 않음: " + pg.inner_text("#health-out"))
+        need("인증 필요" in pg.inner_text("#conn"), "토큰 없이 '연결 확인' 뒤 연결 표시가 '인증 필요' 가 아님: " + pg.inner_text("#conn"))
+        pg.fill("#token", "wrong")
+        pg.dispatch_event("#token", "change")
+        pg.click("#health-check")
+        need(wait_for(lambda: "토큰이 틀립니다" in pg.inner_text("#health-out"), 8),
+             "틀린 토큰으로 '연결 확인' 이 틀렸다고 하지 않음: " + pg.inner_text("#health-out"))
+        pg.fill("#token", "t1")
+        pg.dispatch_event("#token", "change")
+        pg.click("#health-check")
+        need(wait_for(lambda: "인증: 통과" in pg.inner_text("#health-out"), 8),
+             "맞는 토큰으로 '연결 확인' 이 통과라고 하지 않음: " + pg.inner_text("#health-out"))
+        pg.fill("#token", "")
+        pg.dispatch_event("#token", "change")
         open_tab(pg, "list")
         need(wait_for(lambda: "인증 필요" in pg.inner_text("#conn"), 8), "목록에서 '인증 필요' 안내가 없음: " + pg.inner_text("#conn"))
         need(wait_for(lambda: pg.is_visible("#toast") and pg.inner_text("#toast").strip(), 5), "오류 토스트가 보이지 않음")

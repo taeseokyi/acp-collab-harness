@@ -114,16 +114,30 @@
     return api().setConfig(partial);
   }
 
+  // 서버가 살아 있는지(api/health, 토큰 없이 답함)와 넣은 토큰이 통하는지(토큰이 필요한 호출)를 따로 본다.
   function checkHealth(showOut) {
     var out = $('health-out');
     if (showOut) out.textContent = '확인 중…';
     return api().json('api/health').then(function (h) {
-      setConn('ok', '연결됨');
-      var stt = { command: '명령', openrouter: 'OpenRouter', none: '없음' }[h.stt] || String(h.stt);
-      if (showOut) {
-        out.textContent = '음성인식: ' + stt + ' · 묻기(claude): ' + (h.llm ? '준비됨' : '없음') +
-          ' · 인증: ' + (h.auth ? '필요' : '안 씀');
+      var stt = { command: '명령', api: '서버', none: '없음' }[h.stt] || String(h.stt);
+      var head = '음성인식: ' + stt + ' · 묻기(claude): ' + (h.llm ? '준비됨' : '없음') + ' · 인증: ';
+      if (!h.auth) {
+        setConn('ok', '연결됨');
+        if (showOut) out.textContent = head + '안 씀';
+        return;
       }
+      return api().json('api/answers').then(function () {
+        setConn('ok', '연결됨');
+        if (showOut) out.textContent = head + '통과';
+      }, function (e) {
+        onApiErrorQuiet(e);
+        if (!showOut) return;
+        if (e && e.status === 401) {
+          out.textContent = head + (state.cfg.token ? '토큰이 틀립니다' : '토큰을 넣어야 합니다');
+        } else {
+          out.textContent = '실패: ' + e.message;
+        }
+      });
     }, function (e) {
       if (showOut) out.textContent = '실패: ' + e.message;
       onApiErrorQuiet(e);

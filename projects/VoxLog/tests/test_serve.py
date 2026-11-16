@@ -495,5 +495,18 @@ class TestMain(unittest.TestCase):
         self.assertIn("토큰", proc.stderr)
 
 
+class SettingsTest(unittest.TestCase):
+    def test_settings_file_gives_voxlog_values_and_environment_wins(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "settings.json"
+            f.write_text(json.dumps({"VOXLOG_STT_URL": "https://a/v1", "VOXLOG_STT_MODEL": "m",
+                                     "PATH": "/evil", "VOXLOG_X": 3, "VOXLOG_EMPTY": ""}), encoding="utf-8")
+            env = serve.load_settings(f, environ={"PATH": "/bin", "VOXLOG_STT_MODEL": "from-env"})
+            self.assertEqual(env, {"VOXLOG_STT_URL": "https://a/v1", "VOXLOG_STT_MODEL": "from-env", "PATH": "/bin"})
+            f.write_text("not json", encoding="utf-8")
+            self.assertEqual(serve.load_settings(f, environ={}), {})
+            self.assertEqual(serve.load_settings(Path(d) / "none.json", environ={"A": "b"}), {"A": "b"})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -17,15 +17,13 @@ import urllib.error
 import urllib.request
 
 
-STT_INSTRUCTION = (
-    "다음 음성을 들리는 그대로 한국어로 받아 적어라. "
-    "받아 적은 글만 출력하고 설명·따옴표를 붙이지 마라. 말이 없으면 빈 줄."
-)
+# "api" 백엔드: OpenAI 꼴 받아쓰기 엔드포인트(POST multipart `file`·`model`·`language` → {"text": …}).
+# 주소는 VOXLOG_STT_URL (예: https://<호스트>/v1/audio/transcriptions), 모델은 VOXLOG_STT_MODEL.
+DEFAULT_LANG = "ko"
+DIARIZE_TIMEOUT = 3600  # 화자 구분은 녹음 전체를 한 번에 보낸다 (서버가 전체에서 화자를 나눠야 끝까지 같은 번호) - 오래 기다린다
+CHUNK_SECONDS = 600     # 긴 녹음은 이 길이로 잘라 차례로 보낸다 (받아쓰기 서버 권장: 한 요청 10분·25MB 이하. 32kbps mp3 10분 ≈ 2.4MB)
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "google/gemini-2.5-flash"
-
-NO_BACKEND_MESSAGE = "음성인식 백엔드가 없습니다 - VOXLOG_STT_CMD 또는 OPENROUTER_API_KEY"
+NO_BACKEND_MESSAGE = "음성인식 백엔드가 없습니다 - VOXLOG_STT_URL 또는 VOXLOG_STT_CMD"
 
 
 class SttUnavailable(Exception):
@@ -43,8 +41,8 @@ def backend_name(env=None) -> str:
         return env["VOXLOG_STT"]
     if env.get("VOXLOG_STT_CMD"):
         return "command"
-    if env.get("OPENROUTER_API_KEY"):
-        return "openrouter"
+    if env.get("VOXLOG_STT_URL"):
+        return "api"
     return "none"
 
 
@@ -127,48 +125,122 @@ def _transcribe_command(path, env) -> str:
         wav.unlink(missing_ok=True)
 
 
-def _transcribe_openrouter(path, mime, env, opener) -> str:
-    key = env.get("OPENROUTER_API_KEY")
-    if not key:
-        raise SttUnavailable(NO_BACKEND_MESSAGE)
-    mp3 = to_audio(path, "mp3")
+def split_audio(src: pathlib.Path, seconds=None):
+    """ffmpeg 로 16kHz 모노 mp3 조각들을 임시 폴더에 만든다. (폴더, [조각 경로 - 시간 차례]).
+
+    입력 형식·프로토콜 제한은 to_audio 와 같다. 폴더는 호출한 쪽이 지운다."""
+    src = pathlib.Path(src)
+    input_fmt = _input_format(src)
+    if shutil.which("ffmpeg") is None:
+        raise SttError("ffmpeg 가 없습니다")
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="voxlog-stt-"))
+    cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-protocol_whitelist", "file,pipe", "-f", input_fmt,
+        "-i", str(src), "-ac", "1", "-ar", "16000", "-b:a", "32k",
+        "-f", "segment", "-segment_time", str(int(seconds or CHUNK_SECONDS)), "-reset_timestamps", "1",
+        str(tmp / "part-%04d.mp3"),
+    ]
     try:
-        data = base64.b64encode(mp3.read_bytes()).decode("ascii")
-        model = env.get("VOXLOG_STT_MODEL") or DEFAULT_MODEL
-        body = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": STT_INSTRUCTION},
-                        {
-                            "type": "input_audio",
-                            "input_audio": {"data": data, "format": "mp3"},
-                        },
-                    ],
-                }
-            ],
-        }
-        req = urllib.request.Request(
-            OPENROUTER_URL,
-            data=json.dumps(body).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": "Bearer " + key,
-            },
-            method="POST",
-        )
-        if opener is None:
-            opener = _default_opener
-        try:
-            raw = opener(req, 180)
-        except urllib.error.HTTPError as exc:
-            raise SttError("OpenRouter %d" % exc.code) from None
-        obj = json.loads(_decode(raw))
-        return (obj["choices"][0]["message"]["content"] or "").strip()
+        proc = subprocess.run(cmd, capture_output=True, timeout=600)
+    except Exception:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    parts = sorted(tmp.glob("part-*.mp3"))
+    if proc.returncode != 0 or not parts:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise SttError(_decode(proc.stderr)[-200:] or "ffmpeg 변환 실패")
+    return tmp, parts
+
+
+def _multipart(fields, filename, data):
+    boundary = "voxlog-" + base64.b16encode(os.urandom(12)).decode("ascii")
+    out = []
+    for k, v in fields.items():
+        out.append(("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n" % (boundary, k, v)).encode("utf-8"))
+    out.append(("--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n"
+                "Content-Type: audio/mpeg\r\n\r\n" % (boundary, filename)).encode("utf-8"))
+    out.append(data)
+    out.append(("\r\n--%s--\r\n" % boundary).encode("utf-8"))
+    return b"".join(out), "multipart/form-data; boundary=" + boundary
+
+
+def _speaker_lines(segments, names):
+    """화자 구분 응답의 segments([{speaker, text}, …])를 '화자 N: 글' 줄들로. 같은 화자가 이어지면 한 줄로 잇는다.
+
+    names 는 {서버가 준 화자 표시: 번호} - 번호는 처음 나온 차례. 화자 구분이 없는 응답이면 None."""
+    if not isinstance(segments, list):
+        return None
+    lines = []
+    last = None
+    for seg in segments:
+        if not isinstance(seg, dict) or seg.get("speaker") is None:
+            continue
+        text = seg.get("text")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        label = str(seg["speaker"])[:40]
+        n = names.setdefault(label, len(names) + 1)
+        if n == last:
+            lines[-1] += " " + text.strip()
+        else:
+            lines.append("화자 %d: %s" % (n, text.strip()))
+            last = n
+    return lines or None
+
+
+def _transcribe_api(path, mime, env, opener) -> str:
+    url = env.get("VOXLOG_STT_URL")
+    if not url:
+        raise SttUnavailable(NO_BACKEND_MESSAGE)
+    if not url.startswith(("https://", "http://")):
+        raise SttError("VOXLOG_STT_URL 이 http(s) 주소가 아닙니다")
+    fields = {"language": env.get("VOXLOG_STT_LANG") or DEFAULT_LANG}
+    if env.get("VOXLOG_STT_MODEL"):
+        fields["model"] = env["VOXLOG_STT_MODEL"]
+    diarize = (env.get("VOXLOG_STT_DIARIZE") or "").strip().lower() in ("1", "true", "yes", "on")
+    if diarize:
+        fields["response_format"] = "diarized_json"   # 응답에 segments([{speaker, start, end, text}, …])가 실린다
+    headers = {}
+    if env.get("VOXLOG_STT_API_KEY"):
+        headers["Authorization"] = "Bearer " + env["VOXLOG_STT_API_KEY"]
+    if opener is None:
+        opener = _default_opener
+    if diarize:
+        whole = to_audio(path, "mp3")
+        tmp, parts, timeout = whole.parent, [whole], DIARIZE_TIMEOUT
+    else:
+        (tmp, parts), timeout = split_audio(path), 180
+    try:
+        texts = []
+        names = {}
+        by_speaker = False
+        for part in parts:
+            body, ctype = _multipart(fields, part.name, part.read_bytes())
+            req = urllib.request.Request(url, data=body, headers=dict(headers, **{"Content-Type": ctype}), method="POST")
+            try:
+                raw = opener(req, timeout)
+            except urllib.error.HTTPError as exc:
+                raise SttError("음성인식 서버 %d" % exc.code) from None
+            except (urllib.error.URLError, OSError):
+                raise SttError("음성인식 서버에 연결하지 못했습니다") from None
+            try:
+                obj = json.loads(_decode(raw))
+                text = obj["text"]
+            except (ValueError, KeyError, TypeError):
+                raise SttError("음성인식 서버 응답을 읽지 못했습니다") from None
+            lines = _speaker_lines(obj.get("segments"), names) if diarize else None
+            if lines:
+                by_speaker = True
+                texts.extend(lines)
+            elif isinstance(text, str) and text.strip():
+                texts.append(text.strip())
+        return ("\n" if by_speaker else " ").join(texts)
     finally:
-        mp3.unlink(missing_ok=True)
+        if diarize:
+            parts[0].unlink(missing_ok=True)
+        else:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _default_opener(req, timeout):
@@ -181,8 +253,8 @@ def transcribe(path: pathlib.Path, mime: str, env=None, opener=None) -> str:
     name = backend_name(env)
     if name == "command":
         return _transcribe_command(path, env)
-    if name == "openrouter":
-        return _transcribe_openrouter(path, mime, env, opener)
+    if name == "api":
+        return _transcribe_api(path, mime, env, opener)
     raise SttUnavailable(NO_BACKEND_MESSAGE)
 
 

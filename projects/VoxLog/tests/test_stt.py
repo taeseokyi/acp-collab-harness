@@ -189,14 +189,15 @@ class ToAudioRealFfmpegTest(unittest.TestCase):
 
 class BackendNameTest(unittest.TestCase):
     def test_voxlog_stt_wins(self):
-        env = {"VOXLOG_STT": "command", "VOXLOG_STT_CMD": "x", "OPENROUTER_API_KEY": "k"}
+        env = {"VOXLOG_STT": "command", "VOXLOG_STT_CMD": "x", "VOXLOG_STT_URL": "https://h/v1"}
         self.assertEqual(stt.backend_name(env), "command")
 
     def test_command_when_cmd_set(self):
         self.assertEqual(stt.backend_name({"VOXLOG_STT_CMD": "x"}), "command")
 
-    def test_openrouter_when_key_set(self):
-        self.assertEqual(stt.backend_name({"OPENROUTER_API_KEY": "k"}), "openrouter")
+    def test_api_when_url_set(self):
+        self.assertEqual(stt.backend_name({"VOXLOG_STT_URL": "https://h/v1"}), "api")
+        self.assertEqual(stt.backend_name({"OPENROUTER_API_KEY": "k"}), "none")
 
     def test_none_when_nothing_set(self):
         self.assertEqual(stt.backend_name({}), "none")
@@ -242,7 +243,9 @@ class CommandBackendTest(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg 가 없습니다")
-class OpenRouterBackendTest(unittest.TestCase):
+class ApiBackendTest(unittest.TestCase):
+    URL = "https://stt.example/v1/audio/transcriptions"
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = pathlib.Path(self.tmp.name)
@@ -250,7 +253,7 @@ class OpenRouterBackendTest(unittest.TestCase):
         subprocess.run(
             [
                 "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
                 "-c:a", "libopus", str(self.src),
             ],
             check=True,
@@ -260,33 +263,97 @@ class OpenRouterBackendTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_openrouter_posts_audio_and_returns_text(self):
-        payload = {"choices": [{"message": {"content": "  안녕하세요  "}}]}
-        opener = FakeOpener(response=json.dumps(payload).encode("utf-8"))
-        env = {"OPENROUTER_API_KEY": "test-key-abc", "VOXLOG_STT_MODEL": "my/model"}
+    def test_api_posts_multipart_and_returns_text(self):
+        opener = FakeOpener(response=json.dumps({"text": "  안녕하세요  ", "usage": {}}).encode("utf-8"))
+        env = {"VOXLOG_STT_URL": self.URL, "VOXLOG_STT_MODEL": "my/model"}
         text = stt.transcribe(self.src, "audio/webm", env=env, opener=opener)
         self.assertEqual(text, "안녕하세요")
         req = opener.last_req
-        body = json.loads(req.data.decode("utf-8"))
-        self.assertEqual(body["model"], "my/model")
-        content = body["messages"][0]["content"]
-        self.assertEqual(content[0]["type"], "text")
-        self.assertEqual(content[1]["type"], "input_audio")
-        self.assertEqual(content[1]["input_audio"]["format"], "mp3")
-        self.assertTrue(content[1]["input_audio"]["data"])
-        self.assertEqual(req.get_header("Authorization"), "Bearer test-key-abc")
+        self.assertEqual(req.full_url, self.URL)
+        self.assertTrue(req.get_header("Content-type").startswith("multipart/form-data; boundary="))
+        self.assertIsNone(req.get_header("Authorization"))
+        body = req.data
+        self.assertIn(b'name="model"\r\n\r\nmy/model\r\n', body)
+        self.assertIn(b'name="language"\r\n\r\nko\r\n', body)
+        self.assertIn(b'name="file"; filename="part-0000.mp3"', body)
         self.assertEqual(opener.calls, [180])
 
-    def test_openrouter_http_error_hides_key(self):
+    def test_api_key_and_language_are_optional_settings(self):
+        opener = FakeOpener(response=json.dumps({"text": "hi"}).encode("utf-8"))
+        env = {"VOXLOG_STT_URL": self.URL, "VOXLOG_STT_API_KEY": "test-key-abc", "VOXLOG_STT_LANG": "en"}
+        stt.transcribe(self.src, "audio/webm", env=env, opener=opener)
+        self.assertEqual(opener.last_req.get_header("Authorization"), "Bearer test-key-abc")
+        self.assertIn(b'name="language"\r\n\r\nen\r\n', opener.last_req.data)
+        self.assertNotIn(b'name="model"', opener.last_req.data)
+
+    def test_long_audio_is_sent_in_chunks_and_joined_in_order(self):
+        names = []
+
+        def opener(req, timeout):
+            name = req.data.split(b'filename="', 1)[1].split(b'"', 1)[0].decode("ascii")
+            names.append(name)
+            return json.dumps({"text": " <%s> " % name}).encode("utf-8")
+
+        with mock.patch.object(stt, "CHUNK_SECONDS", 1):
+            text = stt.transcribe(self.src, "audio/webm", env={"VOXLOG_STT_URL": self.URL}, opener=opener)
+        self.assertGreaterEqual(len(names), 3)                       # 3초를 1초씩
+        self.assertEqual(names, sorted(names))
+        self.assertEqual(names[0], "part-0000.mp3")
+        self.assertEqual(text, " ".join("<%s>" % n for n in names))
+
+    def test_diarize_asks_the_server_and_writes_speaker_lines(self):
+        payload = {"text": "네 안녕하세요 반갑습니다 저도요", "segments": [
+            {"speaker": "SPEAKER_01", "start": 0.0, "end": 1.0, "text": "네 안녕하세요"},
+            {"speaker": "SPEAKER_01", "start": 1.0, "end": 2.0, "text": " 반갑습니다 "},
+            {"speaker": "SPEAKER_00", "start": 2.0, "end": 3.0, "text": "저도요"},
+            {"speaker": "SPEAKER_00", "start": 3.0, "end": 3.1, "text": "  "},
+            {"start": 3.1, "end": 3.2, "text": "화자 없음"}]}
+        opener = FakeOpener(response=json.dumps(payload).encode("utf-8"))
+        env = {"VOXLOG_STT_URL": self.URL, "VOXLOG_STT_DIARIZE": "1"}
+        text = stt.transcribe(self.src, "audio/webm", env=env, opener=opener)
+        self.assertIn(b'name="response_format"\r\n\r\ndiarized_json\r\n', opener.last_req.data)
+        self.assertEqual(text, "화자 1: 네 안녕하세요 반갑습니다\n화자 2: 저도요")
+
+    def test_diarize_falls_back_to_plain_text_and_is_off_by_default(self):
+        opener = FakeOpener(response=json.dumps({"text": "그냥 글"}).encode("utf-8"))
+        env = {"VOXLOG_STT_URL": self.URL, "VOXLOG_STT_DIARIZE": "1"}
+        self.assertEqual(stt.transcribe(self.src, "audio/webm", env=env, opener=opener), "그냥 글")
+        payload = {"text": "글", "segments": [{"speaker": "A", "text": "글"}]}
+        opener = FakeOpener(response=json.dumps(payload).encode("utf-8"))
+        self.assertEqual(stt.transcribe(self.src, "audio/webm", env={"VOXLOG_STT_URL": self.URL}, opener=opener), "글")
+        self.assertNotIn(b'name="response_format"', opener.last_req.data)
+
+    def test_diarize_sends_the_whole_recording_in_one_request(self):
+        payload = json.dumps({"text": "A: 말", "segments": [{"speaker": "A", "text": "말"}]}).encode("utf-8")
+        opener = FakeOpener(response=payload)
+        with mock.patch.object(stt, "CHUNK_SECONDS", 1):
+            text = stt.transcribe(self.src, "audio/webm",
+                                  env={"VOXLOG_STT_URL": self.URL, "VOXLOG_STT_DIARIZE": "1"}, opener=opener)
+        self.assertEqual(text, "화자 1: 말")
+        self.assertEqual(opener.calls, [stt.DIARIZE_TIMEOUT])        # 자르지 않고 한 번, 오래 기다림
+        name = opener.last_req.data.split(b'filename="', 1)[1].split(b'"', 1)[0].decode("ascii")
+        self.assertFalse(pathlib.Path(tempfile.gettempdir(), name).exists())   # 임시 파일을 지웠다
+
+    def test_api_unreadable_response_is_stt_error(self):
+        opener = FakeOpener(response=json.dumps({"choices": []}).encode("utf-8"))
+        with self.assertRaises(stt.SttError):
+            stt.transcribe(self.src, "audio/webm", env={"VOXLOG_STT_URL": self.URL}, opener=opener)
+
+    def test_api_rejects_non_http_url(self):
+        with self.assertRaises(stt.SttError):
+            stt.transcribe(self.src, "audio/webm", env={"VOXLOG_STT_URL": "file:///etc/passwd"}, opener=FakeOpener())
+
+    def test_api_http_error_hides_key_and_url(self):
         secret = "SUPER-SECRET-KEY-9999"
         opener = FakeOpener(fail_code=401)
-        env = {"OPENROUTER_API_KEY": secret}
+        env = {"VOXLOG_STT_URL": self.URL, "VOXLOG_STT_API_KEY": secret}
         try:
             stt.transcribe(self.src, "audio/webm", env=env, opener=opener)
         except stt.SttError as exc:
             self.assertIn("401", str(exc))
             self.assertNotIn(secret, str(exc))
             self.assertNotIn(secret, repr(exc))
+            self.assertNotIn("stt.example", str(exc))
         else:
             self.fail("SttError 가 나야 합니다")
 

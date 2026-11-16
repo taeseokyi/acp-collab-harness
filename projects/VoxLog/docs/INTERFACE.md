@@ -80,14 +80,18 @@ class Store:
 ```python
 class SttUnavailable(Exception)   # 백엔드가 없음 → 메타 status "no-stt"
 class SttError(Exception)         # 실패 → status "failed", error 에 짧은 까닭(키·주소 없이)
-def backend_name(env=None) -> str  # "command" | "openrouter" | "none"
-    # VOXLOG_STT 가 있으면 그것. 없으면 VOXLOG_STT_CMD 가 있으면 "command", OPENROUTER_API_KEY 가 있으면 "openrouter", 아니면 "none"
+def backend_name(env=None) -> str  # "command" | "api" | "none"
+    # VOXLOG_STT 가 있으면 그것. 없으면 VOXLOG_STT_CMD 가 있으면 "command", VOXLOG_STT_URL 이 있으면 "api", 아니면 "none"
 def to_audio(src: pathlib.Path, fmt: str) -> pathlib.Path   # ffmpeg 로 16kHz 모노 wav/mp3 임시 파일 (ffmpeg 없으면 SttError)
 def transcribe(path: pathlib.Path, mime: str, env=None, opener=None) -> str
     # command: VOXLOG_STT_CMD 를 shlex.split, "{wav}" 자리에 16k 모노 wav 경로, shell 없이 실행, stdout 이 글, 시간 상한 600초
-    # openrouter: mp3 로 바꿔 base64, POST https://openrouter.ai/api/v1/chat/completions
-    #   model=VOXLOG_STT_MODEL(기본 "google/gemini-2.5-flash"), content=[{"type":"text","text":받아쓰기 지시},
-    #   {"type":"input_audio","input_audio":{"data":b64,"format":"mp3"}}], 시간 상한 180초, opener 는 검사용 주입
+    # api: OpenAI 꼴 받아쓰기 엔드포인트. split_audio 로 16kHz 모노 mp3 를 CHUNK_SECONDS(600초)씩 잘라 차례로
+    #   POST VOXLOG_STT_URL (multipart: file, language=VOXLOG_STT_LANG(기본 "ko"), model=VOXLOG_STT_MODEL(있을 때)),
+    #   VOXLOG_STT_API_KEY 가 있으면 Bearer. 응답 {"text": …} 을 빈칸으로 이어 붙임. 조각마다 시간 상한 180초, opener 는 검사용 주입
+    #   VOXLOG_STT_DIARIZE=1 이면 자르지 않고 mp3 하나로 통째로 보내며 response_format=diarized_json 을 더 보냄
+    #   (시간 상한 DIARIZE_TIMEOUT 3600초). 응답에 segments([{speaker, text, …}])가 있으면 "화자 N: 글" 줄들로 적음
+    #   (같은 화자가 이어지면 한 줄, 번호는 처음 나온 차례). segments 가 없으면 text 그대로
+def split_audio(src: pathlib.Path, seconds=None) -> (pathlib.Path, list)   # (임시 폴더, 조각 경로들) - 폴더는 호출한 쪽이 지움
 class Transcriber:
     def __init__(self, store, env=None, transcribe_fn=transcribe)
     def start(self)            # 데몬 스레드 하나, store.pending_ids() 를 먼저 넣음

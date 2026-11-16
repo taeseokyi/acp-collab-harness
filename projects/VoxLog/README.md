@@ -39,11 +39,18 @@ python3 serve.py --host 0.0.0.0 --token <비밀> --tls-cert cert.pem --tls-key k
   (루프백이 아닌 주소에 토큰 없이는 시작을 거절).
 - 음성인식 백엔드 (`VOXLOG_STT`):
   - `command` - `VOXLOG_STT_CMD="whisper-cli -m model.bin -f {wav} -nt -l ko"` 처럼 받아쓰기 명령(16kHz 모노 wav 를 받음)
-  - `openrouter` - `OPENROUTER_API_KEY` 로 오디오를 받는 모델(`VOXLOG_STT_MODEL`, 기본 `google/gemini-2.5-flash`)
+  - `api` - `VOXLOG_STT_URL` 의 OpenAI 꼴 받아쓰기 엔드포인트(`…/v1/audio/transcriptions`). 모델 `VOXLOG_STT_MODEL`,
+    언어 `VOXLOG_STT_LANG`(기본 `ko`), 키가 필요한 서버면 `VOXLOG_STT_API_KEY`. 화자 구분 없이 받아쓸 때는 긴 녹음을 10분씩 잘라 보냅니다(서버 권장: 한 요청 10분·25MB 이하).
+    지금 설정(`settings.json`)은 KISTI 의 `Qwen3-ASR-1.7B`
+  - 화자 구분: `VOXLOG_STT_DIARIZE=1` 이면 녹음을 자르지 않고 통째로 `response_format=diarized_json` 과 함께 보내고,
+    서버가 돌려준 `segments`(`speaker`·`text`)를 `화자 1: …` 줄로 적습니다(지금 설정은 켜 둠). 서버가 녹음 전체에서
+    화자를 나누므로 긴 녹음도 화자 번호가 끝까지 같습니다
   - 없으면 녹음은 쌓이고 상태가 '음성인식 없음' - 나중에 백엔드를 켜고 '다시 받아쓰기'
   - 음성 변환에 `ffmpeg` 가 필요합니다
 - 묻기는 `claude` CLI(`claude -p`, 도구 없이)를 씁니다. 다른 명령은 `VOXLOG_LLM_CMD`.
 - 데이터는 `data/`(git 제외) 또는 `VOXLOG_DATA`.
+- 서버 설정은 `settings.json` 의 `VOXLOG_*` 값 위에 환경 변수를 덮은 것입니다(환경 변수가 이김). 모니터의 '앱 열기'·배포는
+  환경을 좁혀 띄우므로 음성인식 주소·모델은 이 파일에 둡니다. 비밀 값은 넣지 않습니다.
 
 ### 모니터 '앱 열기'
 
