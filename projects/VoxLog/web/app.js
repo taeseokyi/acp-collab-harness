@@ -715,12 +715,18 @@
     var box = $('answer');
     if (a.status === 'done') {
       st.textContent = (KIND[a.kind] || a.kind) + ' · ' + fmtTime(a.created) + ' · 녹취 ' + (a.ids || []).length + '건';
-      box.textContent = a.answer || '(빈 답)';
+      // 답은 마크다운으로 그린다 (md.js - DOM 으로만 만들어 답에 든 HTML 은 글자로 보인다)
+      box.classList.add('md');
+      box.textContent = '';
+      if (a.answer && window.VoxMd) box.appendChild(window.VoxMd.render(a.answer));
+      else box.textContent = a.answer || '(빈 답)';
     } else if (a.status === 'failed') {
       st.textContent = '실패';
+      box.classList.remove('md');
       box.textContent = a.error || '답을 만들지 못했습니다.';
     } else {
       st.textContent = '묻는 중… (보통 수십 초 걸립니다)';
+      box.classList.remove('md');
       box.textContent = '';
     }
   }

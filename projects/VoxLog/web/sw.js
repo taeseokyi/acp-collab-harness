@@ -2,10 +2,10 @@
  * 업로드 규칙은 queue.js 와 같음(importScripts 없이 여기에 따로 둠 - 고치면 둘 다 고칠 것). */
 'use strict';
 
-var VERSION = 5;
+var VERSION = 6;
 var CACHE = 'voxlog-shell-v' + VERSION;
 var SHELL = [
-  './', 'index.html', 'style.css', 'app.js', 'api.js', 'queue.js', 'manifest.webmanifest',
+  './', 'index.html', 'style.css', 'app.js', 'api.js', 'md.js', 'queue.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'
 ];
 

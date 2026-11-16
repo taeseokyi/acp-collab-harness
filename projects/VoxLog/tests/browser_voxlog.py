@@ -225,6 +225,20 @@ def run_all(browser, base, data, tmp, procs):
         need(wait_for(lambda: "가짜 답" in page.inner_text("#answer"), 20), "#answer 에 '가짜 답' 없음: " +
              page.inner_text("#answer")[:80] + " / " + page.inner_text("#answer-status")[:80])
         need(page.is_visible("#answer"), "#answer 가 보이지 않음")
+        # 답은 마크다운으로 그려진다
+        n = lambda sel: page.locator("#answer " + sel).count()
+        need(page.inner_text("#answer h4") == "요약", "제목이 h4 로 그려지지 않음")
+        need(n("ul > li") >= 2 and n("ul > li > ul > li") == 1, "글머리 목록·겹친 목록이 아님")
+        need(n("ol > li") == 2, "번호 목록이 아님")
+        need(page.inner_text("#answer strong") == "굵은" and page.inner_text("#answer li code") == "코드", "굵게·코드가 아님")
+        a = page.locator("#answer a")
+        need(a.get_attribute("href") == "https://example.org/a" and "noopener" in a.get_attribute("rel"), "링크가 아님")
+        need(n("table th") == 2 and n("table td") == 2, "표가 아님")
+        need(page.inner_text("#answer td >> nth=1") == "<b>나</b>" and n("td b") == 0, "표 안 HTML 이 글자로 남지 않음")
+        need(page.inner_text("#answer blockquote").strip() == "인용", "인용이 아님")
+        need(page.inner_text("#answer pre code") == "code *그대로*" and n("pre em") == 0, "코드 블록 안이 그대로가 아님")
+        need(n("img") == 0 and "onerror" in page.inner_text("#answer") and page.title() != "XSS", "답의 HTML 이 실행됨")
+        need("**" not in page.inner_text("#answer") and "##" not in page.inner_text("#answer"), "마크다운 표시가 그대로 보임")
     check("7 묻기(오늘·요약) 답", t7)
 
     def t8():
