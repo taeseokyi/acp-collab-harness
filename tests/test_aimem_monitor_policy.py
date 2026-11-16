@@ -70,5 +70,39 @@ class PolicyPassThrough(unittest.TestCase):
         self.assertEqual((code, out["error"]), (409, "거절"))
 
 
+class TellPassThrough(unittest.TestCase):
+    """`POST /api/fleet/tell` - 말은 엔진(`fleet_ctl.tell`)에 그대로 넘기고, 판정도 엔진이 한다."""
+
+    def go(self, payload, out):
+        calls = []
+
+        class Ctl:
+            @staticmethod
+            def tell(message, by): calls.append((message, by)); return out
+
+        tmp = pathlib.Path(tempfile.gettempdir())
+        with mock.patch.object(server, "_fleet_ctl", return_value=Ctl), mock.patch.object(server, "ROOT", tmp.resolve()):
+            return server.fleet_action("tell", "웹(태석)", tmp, payload), calls
+
+    def test_message_forwarded_with_who(self):
+        (code, out), calls = self.go({"message": "요청을 고쳤습니다"}, {"ok": True, "round": 33})
+        self.assertEqual((code, out["round"]), (200, 33))
+        self.assertEqual(calls, [("요청을 고쳤습니다", "웹(태석)")])
+
+    def test_engine_refusal_is_409(self):
+        (code, out), _ = self.go({"message": "x"}, {"ok": False, "error": "돌고 있는 라운드가 없습니다"})
+        self.assertEqual(code, 409)
+        self.assertFalse(out["ok"])
+
+    def test_non_string_message_400_without_calling_engine(self):
+        for bad in (None, {}, {"message": 3}, {"message": ["x"]}):
+            (code, _), calls = self.go(bad, {"ok": True})
+            self.assertEqual(code, 400)
+            self.assertEqual(calls, [])
+
+    def test_route_is_known(self):
+        self.assertTrue(server._REQ_FLEET_RE.match("/api/fleet/tell"))
+
+
 if __name__ == "__main__":
     unittest.main()

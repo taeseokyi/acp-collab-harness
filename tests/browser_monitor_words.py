@@ -167,6 +167,22 @@ def run(browser, base, checks):
               len(page.dialogs) == 1 and removes == [{}, {"force": True}], f"{page.dialogs} {removes} {shown}")
     ctx.close()
 
+    # ---- 관리자가 더한 슬롯: 슬롯 칸에는 이름만, '관리자 추가 R<N>' 은 비고 칸 앞에 글로 (칩은 좁은 칸에서 잘렸다)
+    def with_added(d):
+        base_slot = {"harness": "opencode", "role": "r", "model": "m", "model_source": ""}
+        d["slots"] = [{**base_slot, "slot": "S1", "note": "태석님 배정", "origin": "owner", "round": None},
+                      {**base_slot, "slot": "S6", "note": "", "origin": "manager", "round": 33},
+                      {**base_slot, "slot": "S7", "note": "**임시**", "origin": "manager", "round": None}]
+    page, ctx = open_page(browser, base, fleet(), tweak=with_added)
+    page.wait_for_selector("#slots-table-wrap tbody tr")
+    cells = page.evaluate("[...document.querySelectorAll('#slots-table-wrap tbody tr')].map((r) =>"
+                          " [r.cells[0].textContent.trim(), r.cells[5].textContent.trim(), r.cells[5].title])")
+    checks.ok("관리자 추가 슬롯: 슬롯 칸은 이름만, 비고 칸에 '관리자 추가 R<N>' (원래 비고는 뒤에)",
+              cells == [["S1", "태석님 배정", "태석님 배정"], ["S6", "관리자 추가 R33", "관리자 추가 R33"],
+                        ["S7", "관리자 추가 · 임시", "관리자 추가 · 임시"]], cells)
+    checks.ok("슬롯 칸에 칩이 없다", page.locator("#slots-table-wrap .slot-origin, #slots-table-wrap td:first-child .badge").count() == 0)
+    ctx.close()
+
 
 def main():
     checks = Checks()

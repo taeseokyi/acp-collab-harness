@@ -44,6 +44,32 @@ class RequestEditTest(unittest.TestCase):
         self.assertEqual((rec["requester"], rec["status"]), ("태석", "NEW"))
         self.assertIn("edited", rec)
 
+    def held(self, out):
+        """운영 저장소인 것처럼 - 도는 라운드가 가져간 요청을 `out` 으로 답하는 엔진."""
+        from unittest import mock  # noqa: PLC0415
+
+        class Ctl:
+            @staticmethod
+            def held_requests(): return out
+        return mock.patch.multiple(server, ROOT=self.root.resolve(), _fleet_ctl=lambda root: Ctl)
+
+    def test_edit_refused_while_the_running_round_holds_the_request(self):
+        f = self.put("Q-261110-eeee")
+        self.put("Q-261110-ffff")
+        before = f.read_text(encoding="utf-8")
+        with self.held({"round": 33, "requests": ["Q-261110-eeee"]}):
+            code, body = server.update_request("Q-261110-eeee", {"title": "새 제목"}, self.root)
+            self.assertEqual((code, body["held_round"]), (409, 33))
+            self.assertIn("말 남기기", body["error"])
+            self.assertEqual(f.read_text(encoding="utf-8"), before)
+            d = server.request_detail("Q-261110-eeee", self.root)[1]
+            self.assertEqual((d["editable"], d["held_round"]), (False, 33))
+            # 도중에 새로 넣은 요청은 그 라운드 것이 아니다 - 고칠 수 있다
+            self.assertEqual(server.update_request("Q-261110-ffff", {"title": "새 제목"}, self.root)[0], 200)
+        with self.held(None):       # 라운드가 끝났다 - NEW 로 남았으면 다시 고칠 수 있다
+            self.assertEqual(server.update_request("Q-261110-eeee", {"title": "새 제목"}, self.root)[0], 200)
+            self.assertTrue(server.request_detail("Q-261110-eeee", self.root)[1]["editable"])
+
     def test_edit_refused_after_assignment(self):
         self.put("Q-261110-bbbb", subtasks=[{"id": "T-1"}])
         self.put("Q-261110-cccc", status="IN-PROGRESS")

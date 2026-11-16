@@ -1025,6 +1025,34 @@ class InboxReturnsEarly(unittest.TestCase):
             self.assertFalse(fleet_ctl.tell("x")["ok"])
         self.assertFalse(fleet_ctl.tell("   ")["ok"])
 
+    def test_inbox_list_reads_back_what_tell_wrote(self):
+        import fleet_ctl  # noqa: PLC0415
+        with tempfile.TemporaryDirectory() as t:
+            root = pathlib.Path(t)
+            with mock.patch.object(fleet, "ROOT", root), mock.patch.object(fleet_ctl, "active_round", return_value=7):
+                self.assertEqual(fleet_ctl.inbox_list(7), [])
+                fleet_ctl.tell("첫 말\n\n둘째 문단", "웹(태석)")
+                fleet_ctl.tell("## 제목처럼 보이는 줄\n다음 말", "검사")
+                items = fleet_ctl.inbox_list(7)
+            self.assertEqual([i["by"] for i in items], ["웹(태석)", "검사"])
+            self.assertEqual(items[0]["text"], "첫 말\n\n둘째 문단")
+            self.assertEqual(items[1]["text"], "## 제목처럼 보이는 줄\n다음 말")
+            self.assertRegex(items[0]["at"], r"^\d{4}-\d\d-\d\dT")
+
+    def test_held_requests_are_the_running_rounds_launch_list(self):
+        import fleet_ctl  # noqa: PLC0415
+        with tempfile.TemporaryDirectory() as t:
+            root = pathlib.Path(t)
+            (root / "rounds" / "R7").mkdir(parents=True)
+            (root / "rounds" / "R7" / "round.json").write_text(json.dumps({"round": 7, "requests": ["Q-1", 3, "Q-2"]}), encoding="utf-8")
+            with mock.patch.object(fleet, "ROOT", root):
+                with mock.patch.object(fleet_ctl, "active_round", return_value=7):
+                    self.assertEqual(fleet_ctl.held_requests(), {"round": 7, "requests": ["Q-1", "Q-2"]})
+                with mock.patch.object(fleet_ctl, "active_round", return_value=8):       # 기록이 없는 라운드
+                    self.assertEqual(fleet_ctl.held_requests(), {"round": 8, "requests": []})
+                with mock.patch.object(fleet_ctl, "active_round", return_value=None):
+                    self.assertIsNone(fleet_ctl.held_requests())
+
 
 class Reverify(unittest.TestCase):
     """verify 만 고친 노드는 작업자를 다시 띄우지 않고 검증만 다시 돈다."""

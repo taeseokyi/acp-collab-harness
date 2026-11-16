@@ -1447,7 +1447,7 @@ def manager_detail(sid, root=ROOT, all_steps=False):
 # 전부 `fleet_ctl` 이 합니다 - 서버는 부르기만 합니다 (CLI 와 화면이 같은 규칙을 쓰게).
 
 FLEET_ACTIONS = ("prepare", "run", "pause", "stop", "round")
-_REQ_FLEET_RE = re.compile(r"\A/api/fleet/(prepare|run|pause|stop|round|chain|switch)\Z")
+_REQ_FLEET_RE = re.compile(r"\A/api/fleet/(prepare|run|pause|stop|round|chain|switch|tell)\Z")
 
 # -- 슬롯 관리 (2026-11-10, 태석님 지시 "슬롯 하네스 추가·삭제, 모델 지정") ----------------------------
 # 정본은 `.aimem/aimem.db` slots - `tools/aimem_db.py slot *` 과 같은 함수를 부른다. 모델은 **`fleet.toml` 에 설정된
@@ -1749,6 +1749,18 @@ def fleet_action(action, by, root=ROOT, payload=None):
             return 400, {"ok": False, "error": "`round` (멈출 라운드 번호)가 없습니다"}
         try:
             out = ctl.switch_policy(pol, by, expect_round=rn) if when == "now" else ctl.chain_policy(pol, by)
+        except Exception as e:  # noqa: BLE001
+            return 500, {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+        return (200 if out.get("ok") else 409), out
+    if action == "tell":
+        # 도는 라운드의 관리자에게 말 남기기 (`fleet_ctl.tell` → rounds/R<N>/INBOX.md). 길이·라운드 유무는 엔진이 판정한다
+        if pathlib.Path(root).resolve() != ROOT:
+            return 409, {"ok": False, "error": "운영 저장소가 아닙니다"}
+        msg = payload.get("message") if isinstance(payload, dict) else None
+        if not isinstance(msg, str):
+            return 400, {"ok": False, "error": "`message` 는 문자열이어야 합니다"}
+        try:
+            out = _fleet_ctl(root).tell(msg, by)
         except Exception as e:  # noqa: BLE001
             return 500, {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
         return (200 if out.get("ok") else 409), out
@@ -2510,9 +2522,22 @@ def request_detail(req_id, root=ROOT):
     mask = _detail_masker(root)
     out = {k: rec.get(k) for k in ("id", "created", "edited", "requester", "project", "title", "detail", "status")}
     out["subtasks"] = len(rec.get("subtasks") or [])
-    out["editable"] = rec.get("status") == REQUEST_STATES[0] and not rec.get("subtasks")
+    held = _held_round(req_id, root)
+    out["held_round"] = held
+    out["editable"] = rec.get("status") == REQUEST_STATES[0] and not rec.get("subtasks") and held is None
     out["ok"] = True
     return 200, mask_deep(out, mask)
+
+
+def _held_round(req_id, root):
+    """이 요청을 가져간 **도는 라운드** 번호, 없으면 None (`fleet_ctl.held_requests`). 운영 저장소에서만 본다."""
+    if pathlib.Path(root).resolve() != ROOT:
+        return None
+    try:
+        held = _fleet_ctl(root).held_requests()
+    except Exception:  # noqa: BLE001 - 판정을 못 하면 예전처럼 NEW 여부만 본다
+        return None
+    return held["round"] if held and req_id in held["requests"] else None
 
 
 def update_request(req_id, payload, root=ROOT):
@@ -2523,6 +2548,8 @@ def update_request(req_id, payload, root=ROOT):
     쓰기입니다 - 범위를 **같은 요청 파일, NEW 상태, 제목·본문 두 필드**로 묶었습니다.
     요청자·상태·분담은 바꾸지 않습니다. 분담이 시작된 요청은 409 로 거절합니다(관리자가
     이미 읽고 쪼갠 내용이 웹에서 바뀌면 분담 근거가 사라집니다).
+    **도는 라운드가 가져간 요청**(`round.json` 의 `requests`)도 409 입니다 - 관리자가 읽은 뒤 분담을 적기 전의 틈에
+    고친 글은 아무도 읽지 않습니다(2026-11-16). 그 라운드가 끝나도 NEW 로 남았으면 다시 고칠 수 있습니다.
     """
     if not isinstance(payload, dict):
         return 400, {"ok": False, "error": "JSON 객체가 아닙니다"}
@@ -2546,6 +2573,11 @@ def update_request(req_id, payload, root=ROOT):
     if record.get("status") != REQUEST_STATES[0] or record.get("subtasks"):
         return 409, {"ok": False, "error": "관리자가 이미 분담을 시작한 요청은 웹에서 고칠 수 없습니다 "
                                            f"(상태 {record.get('status')})"}
+    held = _held_round(req_id, root)
+    if held is not None:
+        # 도는 라운드의 관리자가 이미 읽은 요청 (2026-11-16) - 여기서 고쳐도 관리자에게 닿지 않는다
+        return 409, {"ok": False, "held_round": held,
+                     "error": f"R{held} 관리자가 이미 읽은 요청입니다 - 바꿀 내용은 '관리자에게 말 남기기' 로 전하십시오"}
     if "project" in payload:            # 주면 바꾸고, 안 주면 그대로 (옛 화면은 이 키를 보내지 않는다)
         project, perr = _project_of(payload)
         if perr:

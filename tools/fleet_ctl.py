@@ -619,6 +619,7 @@ def public_state():
     busy_switch = switching()
     idle = md == "running" and not rr and not running_now and not any(g["runner"] for g in graphs)
     resumable = any(g["unfinished"] and not g["runner"] for g in graphs)
+    told = active_round()        # 말을 받을 관리자가 도는 라운드 - 없으면 남기기도 보여 주기도 안 한다
     can = {
         "prepare": (md in ("stopped", "paused", "ready") or idle) and not running_now and not rr,
         # '실행' 은 멈춘 라운드를 잇는 단추다 - 준비 상태에서 이을 것이 없으면 누를 일이 없다 (새 라운드는 '라운드 실행')
@@ -629,6 +630,8 @@ def public_state():
         "round": (md == "ready" or idle) and bool(b["file"]) and not running_now,
         # 도는 라운드의 운영 방식을 지금 바꾸기 (`switch_policy`) - 멈추고 그래프를 버린 뒤 다시 띄운다
         "switch": md == "running" and bool(manager_running()) and bool(b["file"]),
+        # 도는 라운드의 관리자에게 말 남기기 (`tell`) - 받을 관리자가 있을 때만
+        "tell": told is not None,
     }
     if busy_switch:            # 누가 운영 방식을 바꾸는 중 - 그 사이에는 어떤 단추도 받지 않는다
         can = {k: False for k in can}
@@ -638,6 +641,10 @@ def public_state():
             "brief": b, "prepare": last_prepare(), "manager": mgr, "can": can, "idle": idle, "switching": busy_switch,
             "chain_modes": ["stop", "renew", "autonomous"],     # 상한에 닿았을 때 할 일 - 화면은 서버가 아는 것만 보인다
             "last_round": last, "policy": policy_state(mgr, last),
+            # 사람이 도는 라운드의 관리자에게 남긴 말 - 관리자 카드가 보여 준다 (관리자가 돌 때만)
+            "inbox": {"round": told, "items": inbox_list(told)} if told is not None else None,
+            # 도는 라운드가 가져간 요청 - 화면은 이 요청의 '수정' 대신 '말 남기기' 를 낸다
+            "held": held_requests(told),
             "chain": {k: v for k, v in chain.items() if k != "log"} | {"last": (chain.get("log") or [None])[-1]}
             | {"limits": {"default": CHAIN_DEFAULT_ROUNDS, "max": CHAIN_MAX_ROUNDS, "hard": CHAIN_HARD_ROUNDS}}}
 
@@ -2066,6 +2073,43 @@ def _inbox_add(n, text, by):
     with open(p, "a", encoding="utf-8") as fh:
         fh.write(f"{head}## {_now()} · {str(by)[:60]}\n\n{text}\n\n")
     return {"ok": True, "round": n, "path": str(p.relative_to(fleet.ROOT))}
+
+
+def held_requests(n=None):
+    """도는 라운드가 가져간 요청 `{round, requests:[id…]}`, 도는 라운드가 없으면 None.
+    라운드를 띄울 때 `round.json` 에 적힌 목록이다 - 관리자가 이미 읽었으므로 웹에서 고쳐도 닿지 않는다(바꿀 것은 `tell` 로).
+    도중에 새로 넣은 요청은 여기 없다(다음 라운드 몫 - 고칠 수 있다)."""
+    n = active_round() if n is None else n
+    if n is None:
+        return None
+    ids = _round_record(n).get("requests")
+    return {"round": n, "requests": [x for x in ids if isinstance(x, str)][:200] if isinstance(ids, list) else []}
+
+
+INBOX_SHOW = 30              # 화면에 싣는 꼭지 수 (최근 것부터)
+INBOX_READ_MAX = 512 * 1024  # 이보다 큰 파일은 끝부분만 읽는다
+_INBOX_HEAD_RE = re.compile(r"^## (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}) · (.*)$", re.M)
+
+
+def inbox_list(n):
+    """`rounds/R<n>/INBOX.md` 의 꼭지 `[{at, by, text}]` (오래된 것부터, 최근 `INBOX_SHOW` 개) - 화면 표시용.
+    `_inbox_add` 가 쓰는 `## <시각> · <누가>` 머리로 나눈다. 없거나 못 읽으면 빈 목록."""
+    try:
+        p = _round_dir(n) / "INBOX.md"
+        if p.is_symlink() or not p.is_file():
+            return []
+        with open(p, "rb") as fh:
+            size = fh.seek(0, 2)
+            fh.seek(max(0, size - INBOX_READ_MAX))
+            src = fh.read().decode("utf-8", "replace")
+    except (OSError, ValueError):
+        return []
+    heads = list(_INBOX_HEAD_RE.finditer(src))
+    out = []
+    for i, m in enumerate(heads):
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(src)
+        out.append({"at": m.group(1), "by": m.group(2).strip()[:60], "text": src[m.end():end].strip()[:4000]})
+    return out[-INBOX_SHOW:]
 
 
 # ----------------------------------------------------------------- 슬롯을 도중에 빼고 더하기 (태석님 2026-11-14)

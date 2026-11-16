@@ -2129,6 +2129,115 @@ function appendPolicyChip(head, data) {
   head.appendChild(c);
 }
 
+// ---- 관리자에게 남긴 말 (rounds/R<N>/INBOX.md) - 카드에는 한 줄, 쓰기와 전체 보기는 패널에서 (카드는 5초마다 다시 그려져 입력란을 둘 수 없다)
+function fleetInbox(data) {
+  const f = (data && data.fleet) || {};
+  const ib = f.inbox && Array.isArray(f.inbox.items) ? f.inbox : null;
+  return { round: ib ? ib.round : null, items: ib ? ib.items : [], canTell: !!(f.can && f.can.tell) };
+}
+
+function appendInboxRow(box, data) {
+  const ib = fleetInbox(data);
+  if (!ib.canTell) return;          // 관리자가 돌 때만 쓰는 기능 - 끝난 라운드에는 줄을 내지 않는다
+  const row = document.createElement('div');
+  row.className = 'manager-inbox';
+  const txt = document.createElement('span');
+  txt.className = 'manager-inbox-text';
+  const last = ib.items[ib.items.length - 1];
+  txt.textContent = last
+    ? `남긴 말 ${ib.items.length}건 · 최근 ${fmtDateTime(last.at)} ${show(last.by, '')}: ${String(last.text || '').replace(/\s+/g, ' ')}`
+    : '관리자에게 남긴 말 없음';
+  if (last) txt.title = String(last.text || '');
+  row.appendChild(txt);
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'manager-inbox-btn';
+  btn.textContent = '말 남기기';
+  btn.addEventListener('click', () => openInboxPanel());
+  row.appendChild(btn);
+  box.appendChild(row);
+}
+
+function openInboxPanel(note) {
+  const ib = fleetInbox(state.data);
+  openPanel('관리자에게 남긴 말' + (ib.round != null ? ` · R${ib.round}` : ''), (body) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'inbox-panel';
+    if (ib.canTell) {
+      const hint = document.createElement('p');
+      hint.className = 'inbox-hint';
+      hint.textContent = '도는 라운드의 관리자가 그래프를 만들기 전과 체크포인트마다 읽습니다. 같은 요청 안에서는 이 말이 요청 본문보다 앞섭니다.';
+      const ta = document.createElement('textarea');
+      ta.className = 'inbox-input';
+      ta.rows = 5;
+      ta.maxLength = 4000;
+      ta.placeholder = '관리자에게 전할 말 (예: 요청 본문을 고쳤으니 다시 읽어 주십시오)';
+      ta.setAttribute('aria-label', '관리자에게 전할 말');
+      const bar = document.createElement('div');
+      bar.className = 'inbox-bar';
+      const send = document.createElement('button');
+      send.type = 'button';
+      send.className = 'inbox-send';
+      send.textContent = '남기기';
+      const msg = document.createElement('span');
+      msg.className = 'inbox-msg';
+      msg.setAttribute('role', 'status');
+      if (note) msg.textContent = note;
+      send.addEventListener('click', async () => {
+        const text = ta.value.trim();
+        if (!text) { msg.textContent = '전할 말을 적으십시오'; ta.focus(); return; }
+        send.disabled = true;
+        msg.textContent = '남기는 중…';
+        let body;
+        try {
+          ({ body } = await api('/api/fleet/tell', { message: text }));
+        } catch (err) {
+          body = { ok: false, error: err && err.message ? err.message : String(err) };
+        }
+        if (!body || body.ok === false) {
+          send.disabled = false;
+          msg.textContent = '남기지 못했습니다: ' + ((body && body.error) || '알 수 없는 오류');
+          return;
+        }
+        for (let i = 0; i < 50 && state.busy; i += 1) await new Promise((r) => setTimeout(r, 100));
+        await refresh();
+        state.panelBack = true;       // 같은 패널을 새 내용으로 다시 그린다 - '← 이전' 에 쌓지 않는다
+        openInboxPanel(`R${body.round} 관리자에게 남겼습니다`);
+      });
+      bar.appendChild(send);
+      bar.appendChild(msg);
+      wrap.appendChild(hint);
+      wrap.appendChild(ta);
+      wrap.appendChild(bar);
+    } else {
+      const p = document.createElement('p');
+      p.className = 'inbox-hint';
+      p.textContent = '라운드가 끝나 더 남길 수 없습니다.';
+      wrap.appendChild(p);
+    }
+    const list = document.createElement('div');
+    list.className = 'inbox-list';
+    if (!ib.items.length) {
+      const e = document.createElement('p');
+      e.className = 'inbox-empty';
+      e.textContent = '아직 남긴 말이 없습니다.';
+      list.appendChild(e);
+    }
+    for (const it of ib.items.slice().reverse()) {       // 최근 것이 위
+      const item = document.createElement('article');
+      item.className = 'inbox-item';
+      const h = document.createElement('div');
+      h.className = 'inbox-item-head';
+      h.textContent = `${fmtDateTime(it.at)} · ${show(it.by, '')}`;
+      item.appendChild(h);
+      item.appendChild(mdBlock(String(it.text || ''), '(빈 말)'));
+      list.appendChild(item);
+    }
+    wrap.appendChild(list);
+    body.appendChild(wrap);
+  });
+}
+
 function renderManager(data) {
   const box = $('manager-card');
   if (!box) return;
@@ -2203,6 +2312,8 @@ function renderManager(data) {
     act.textContent = parts.join(' · ');
     box.appendChild(act);
   }
+
+  appendInboxRow(box, data);
 
   const meta = document.createElement('div');
   meta.className = 'manager-meta';
@@ -2477,17 +2588,11 @@ function renderSlots(data) {
         now.appendChild(le);
       }
     }
-    // 관리자가 라운드 중에 더한 슬롯 - 사람이 둔 것과 구분해 작은 칩 하나 (지우는 것은 관리자·사람 몫)
-    let slotCell = mono(s.slot);
-    if (s.origin === 'manager') {
-      slotCell = document.createElement('div');
-      slotCell.appendChild(mono(s.slot));
-      const chip = badge('관리자 추가' + (s.round != null ? ' R' + s.round : ''), 'neutral');
-      chip.className += ' slot-origin';
-      chip.title = '라운드 관리자가 운영 방식의 한도 안에서 더한 슬롯';
-      slotCell.appendChild(chip);
-    }
-    return [slotCell, now, show(s.harness), modelCell, show(s.role), plainText(s.note) || '-'];
+    // 관리자가 라운드 중에 더한 슬롯 - 사람이 둔 것과 구분해 비고 칸 앞에 글로 적는다
+    // (2026-11-16: 슬롯 칸의 칩은 52px 칸에서 '관…' 으로 잘려 읽을 수 없었다)
+    const origin = s.origin === 'manager' ? '관리자 추가' + (s.round != null ? ' R' + s.round : '') : '';
+    const note = [origin, plainText(s.note)].filter(Boolean).join(' · ') || '-';
+    return [mono(s.slot), now, show(s.harness), modelCell, show(s.role), note];
   });
   const rowClasses = slots.map((s) => (running.has(s.slot) ? 'row-running' : (s.paused ? 'row-paused' : '')));   // 색은 지금 도는 슬롯에만 (전에는 마지막 실행이 있으면 전부 칠했다)
   // 행을 누르면 그 슬롯의 패널(실행으로 가는 길 + 하네스·모델·역할 변경·삭제). 전에는 행은 마지막 실행을, 맨 끝 '변경' 단추는 슬롯을 열었다
@@ -3175,9 +3280,16 @@ function closedItems(data) {
   };
 }
 
+// 도는 라운드가 가져간 요청이면 그 라운드 번호 - 관리자가 이미 읽어 고쳐도 닿지 않는다 (바꿀 것은 말 남기기로)
+function heldRound(req) {
+  const h = state.data && state.data.fleet && state.data.fleet.held;
+  return h && Array.isArray(h.requests) && h.requests.includes(req.id) ? h.round : null;
+}
+
 function canEditRequest(req) {
   return String(req.status || '').toUpperCase() === 'NEW'
-    && !(Array.isArray(req.subtasks) && req.subtasks.length);
+    && !(Array.isArray(req.subtasks) && req.subtasks.length)
+    && heldRound(req) === null;
 }
 
 async function saveRequestEdit(req, form) {
@@ -3394,6 +3506,14 @@ function renderRequests(data) {
         if (state.data) renderRequests(state.data);
       });
       badges.appendChild(edit);
+    } else if (heldRound(req) !== null && String(req.status || '').toUpperCase() === 'NEW') {
+      const tellBtn = document.createElement('button');
+      tellBtn.type = 'button';
+      tellBtn.className = 'req-edit-btn req-tell-btn';
+      tellBtn.textContent = `R${heldRound(req)} 에 말 남기기`;
+      tellBtn.title = `R${heldRound(req)} 관리자가 이미 읽은 요청이라 고칠 수 없습니다 - 바꿀 내용은 말로 남기십시오`;
+      tellBtn.addEventListener('click', () => openInboxPanel());
+      badges.appendChild(tellBtn);
     }
 
     top.appendChild(toggle);
