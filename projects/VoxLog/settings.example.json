@@ -1,0 +1,5 @@
+{
+  "VOXLOG_STT_URL": "https://stt.example.org/v1/audio/transcriptions",
+  "VOXLOG_STT_MODEL": "Qwen3-ASR-1.7B",
+  "VOXLOG_STT_DIARIZE": "1"
+}

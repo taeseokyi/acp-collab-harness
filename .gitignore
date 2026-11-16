@@ -44,6 +44,7 @@ projects/*/tests/screenshots/
 projects/*/**/__pycache__/
 # VoxLog 실행 데이터(녹음·받아쓴 글·위치) - 개인 자료라 커밋하지 않는다 (R33)
 projects/VoxLog/data/
+projects/VoxLog/settings.json
 
 # 이어 달리기 실행 상태 (켜짐·진행 수) - 운영 상태라 커밋하지 않는다
 .aimem/fleet-chain.json

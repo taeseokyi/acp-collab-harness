@@ -49,7 +49,8 @@ python3 serve.py --host 0.0.0.0 --token <비밀> --tls-cert cert.pem --tls-key k
   - 음성 변환에 `ffmpeg` 가 필요합니다
 - 묻기는 `claude` CLI(`claude -p`, 도구 없이)를 씁니다. 다른 명령은 `VOXLOG_LLM_CMD`.
 - 데이터는 `data/`(git 제외) 또는 `VOXLOG_DATA`.
-- 서버 설정은 `settings.json` 의 `VOXLOG_*` 값 위에 환경 변수를 덮은 것입니다(환경 변수가 이김). 모니터의 '앱 열기'·배포는
+- 서버 설정은 `settings.json` 의 `VOXLOG_*` 값 위에 환경 변수를 덮은 것입니다(환경 변수가 이김). `settings.json` 은 git 제외 -
+  `settings.example.json` 을 복사해 주소를 채웁니다. 모니터의 '앱 열기'·배포는
   환경을 좁혀 띄우므로 음성인식 주소·모델은 이 파일에 둡니다. 비밀 값은 넣지 않습니다.
 
 ### 모니터 '앱 열기'
