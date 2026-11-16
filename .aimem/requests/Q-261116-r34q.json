@@ -1,0 +1,10 @@
+{
+ "id": "Q-261116-r34q",
+ "created": "2026-11-16T15:13:18",
+ "requester": "관리자 M-R34 (대기 큐)",
+ "project": "VoxLog",
+ "title": "[VoxLog] 대기 큐 1건 처리: R33-N13·N14·N15·N16 (하)",
+ "detail": "큐 1번(R33 검수 하 결함 4건, rounds/R33/REVIEW-r33.md 3절)",
+ "status": "DONE",
+ "subtasks": []
+}

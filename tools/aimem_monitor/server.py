@@ -87,6 +87,7 @@ from . import (AUTH_EXEMPT_PATHS, AUTH_UNAUTH_REDIRECT_PATHS, AUTH_UNAUTH_REDIRE
                SESSION_TTL_SEC, SESSION_VERSION, TLS_DIR, TOKEN_FILE, REQUEST_ROW_KEYS,
                PROJECTS_DIR, PROJECT_NAME_RE)
 from . import app_server
+from . import deploy as app_deploy
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 STATIC = pathlib.Path(__file__).resolve().parent / "static"
@@ -2030,6 +2031,83 @@ def _round_records(root):
     return out
 
 
+def _deploys(root):
+    return app_deploy.Deploys(root)
+
+
+def deploy_states(root=ROOT):
+    """`{이름: {name, port, on, alive, auth, started}}` - 운영 저장소에서만 본다(시험 폴더는 빈 것). 토큰은 싣지 않는다."""
+    if pathlib.Path(root).resolve() != ROOT:
+        return {}
+    try:
+        return _deploys(root).status()
+    except Exception:  # noqa: BLE001 - 배포 상태를 못 읽어도 화면은 떠야 한다
+        return {}
+
+
+def _deploy_target(name, root):
+    """배포할 (서버 파일, 프로젝트 폴더) 또는 (None, 까닭). app.json 의 `server` 선언을 그대로 따른다('앱 열기' 와 같은 검사)."""
+    app = project_app(name, root)
+    if not app or not app.get("runnable"):
+        return None, (app or {}).get("reason") or "실행 선언(app.json)이 없는 프로젝트입니다"
+    if not app.get("server"):
+        return None, app.get("server_error") or "app.json 에 server 선언이 없습니다 - 자체 서버가 있는 앱만 배포합니다"
+    d, err = _project_dir(name, root)
+    if err:
+        return None, "프로젝트 폴더가 없습니다"
+    return (d.joinpath(*app["server"].split("/")), d), None
+
+
+def project_deploy_action(name, payload, root=ROOT):
+    """`POST /api/projects/<이름>/deploy` {action: on|off|token, auth?} → `deploy.Deploys`.
+
+    on = 앱의 자체 서버를 배포 포트(18810~)에 모니터 인증서로 띄우고 윈도우 프록시 설정에 알린다. `auth` false 면 토큰 없이.
+    off = 내린다(포트·토큰은 남는다). token = 켜 둔 배포의 토큰을 다시 보여 준다. 운영 저장소에서만."""
+    if pathlib.Path(root).resolve() != ROOT:
+        return 403, {"ok": False, "error": "운영 저장소가 아닙니다"}
+    if not isinstance(payload, dict):
+        return 400, {"ok": False, "error": "JSON 객체가 아닙니다"}
+    if not isinstance(name, str) or not _PROJECT_RE.match(name):
+        return 400, {"ok": False, "error": "프로젝트 이름이 아닙니다"}
+    action = payload.get("action")
+    if action not in ("on", "off", "token"):
+        return 400, {"ok": False, "error": "`action` 은 on · off · token 가운데 하나여야 합니다"}
+    auth = payload.get("auth")
+    if auth is not None and not isinstance(auth, bool):
+        return 400, {"ok": False, "error": "`auth` 는 true/false 여야 합니다"}
+    dep = _deploys(root)
+    try:
+        if action == "on":
+            target, why = _deploy_target(name, root)
+            if not target:
+                return 409, {"ok": False, "error": why}
+            return 200, {"ok": True, "deploy": dep.on(name, target[0], target[1], auth)}
+        if action == "off":
+            out = dep.off(name)
+            if out is None:
+                return 404, {"ok": False, "error": "배포한 적이 없는 프로젝트입니다"}
+            return 200, {"ok": True, "deploy": out}
+        st = dep.status().get(name)
+        if not st:
+            return 404, {"ok": False, "error": "배포한 적이 없는 프로젝트입니다"}
+        return 200, {"ok": True, "deploy": dict(st, token=dep.token(name))}
+    except app_deploy.DeployError as e:
+        return e.status, {"ok": False, "error": e.message}
+    except Exception as e:  # noqa: BLE001 - 화면에는 이유가 보여야 한다
+        return 500, {"ok": False, "error": f"배포하지 못했습니다: {type(e).__name__}: {str(e)[:160]}"}
+
+
+def deploy_ensure_all(root=ROOT):
+    """모니터가 뜰 때: 켜 둔 배포 가운데 죽어 있는 것을 다시 띄운다(WSL 을 껐다 켠 뒤). [(이름, 결과)]."""
+    if pathlib.Path(root).resolve() != ROOT:
+        return []
+
+    def resolve(name):
+        target, _ = _deploy_target(name, root)
+        return target
+    return _deploys(root).ensure_all(resolve)
+
+
 def list_projects(root=ROOT, requests=None):
     """프로젝트별 진행 상황 (2026-11-10 태석님: "각 프로젝트가 얼마나 진행되고 있나").
 
@@ -2074,6 +2152,7 @@ def list_projects(root=ROOT, requests=None):
         per.setdefault(pr, []).append((st, 100.0 if st == "DONE" else 0.0))
     launched = _round_records(root)
     names |= {pr for pr, rows in per.items() if any(st not in ("DONE", "REJECTED") for st, _ in rows)}
+    deploys = deploy_states(root)
     out = []
     for n in sorted(names):
         rows = [r for r in per.get(n, []) if r[0] != "REJECTED"]
@@ -2085,6 +2164,7 @@ def list_projects(root=ROOT, requests=None):
         mine = launched.get(n, {})
         rounds = sorted(set(noted) | set(mine))          # 띄운 기록(round.json) + 관리자가 적은 기록(PROGRESS.md)
         last = rounds[-1] if rounds else None
+        app = project_app(n, root) if n in have else None
         out.append({"name": n, "path": f"{PROJECTS_DIR}/{n}/", "exists": n in have,
                     "percent": round(100.0 * goals["done"] / goals["total"], 1) if goals else req_pct,
                     "basis": "goals" if goals else "requests", "goals": goals, "request_percent": req_pct,
@@ -2092,7 +2172,11 @@ def list_projects(root=ROOT, requests=None):
                     "last_round": last,
                     "last_round_at": mine.get(last) if last is not None else None,
                     "updated": updated, "summary": summary,
-                    "app": project_app(n, root) if n in have else None})
+                    "app": app,
+                    # 배포(자기 주소로 계속 띄워 둠) - 켠 적이 있으면 {port, on, alive, auth, started}, 없으면 None.
+                    # deployable = app.json 에 server 선언이 있어 배포할 수 있나
+                    "deploy": deploys.get(n),
+                    "deployable": bool(app and app.get("runnable") and app.get("server"))})
     return out
 
 
@@ -2392,6 +2476,7 @@ def app_csp(origin="", connect=None):
 
 _REQ_PROJECT_RE = re.compile(r"\A/api/projects/([^/]{1,400})/(files|file)\Z")
 _REQ_PROJECT_REMOVE_RE = re.compile(r"\A/api/projects/([^/]{1,400})/remove\Z")
+_REQ_PROJECT_DEPLOY_RE = re.compile(r"\A/api/projects/([^/]{1,400})/deploy\Z")
 
 
 def project_remove_action(name, payload, by, root=ROOT):
@@ -3174,8 +3259,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         slot_add_path = path == "/api/slots"
         archive_path = path == "/api/archive"
         proj_rm = _REQ_PROJECT_REMOVE_RE.match(path)
+        proj_dep = _REQ_PROJECT_DEPLOY_RE.match(path)
         if (path != "/api/requests" and not edit and not fleet_act and not slot_m and not slot_add_path and not archive_path
-                and not proj_rm):
+                and not proj_rm and not proj_dep):
             return self._json(404, {"ok": False, "error": f"없는 경로입니다: {path}"})
         # CSRF (S4 검수 4번). 세션 쿠키가 `SameSite=Strict` 라 1차 방어는 되지만,
         # 쿠키 정책 하나에만 기대지 않습니다. `<form enctype="text/plain">` 으로는
@@ -3203,6 +3289,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._audit("archive", f"{code} days={result.get('plan', {}).get('days')} "
                                        f"moved={json.dumps(result.get('moved_counts', {}), ensure_ascii=False)[:300]}")
             return self._json(code, result)
+        if proj_dep:
+            # 배포 켜기·내리기·토큰 보기 - 인증·CSRF 를 지난 뒤, 감사 로그에 남긴다 (토큰은 로그에 적지 않는다)
+            payload, sent = self._read_json_body()
+            if sent:
+                return None
+            pname = urllib.parse.unquote(proj_dep.group(1))
+            code, result = project_deploy_action(pname, payload, self.root)
+            d = result.get("deploy") or {}
+            self._audit("project-deploy", f"{code} {pname[:40]!r} action={str(payload.get('action'))[:8] if isinstance(payload, dict) else '-'}"
+                                          f" port={d.get('port')} auth={d.get('auth')}")
+            return self._json(code, result)
         if proj_rm:
             payload, sent = self._read_json_body()
             if sent:
@@ -3217,6 +3314,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     try:
                         app_server.registry(self.root).stop(pname)
                     except app_server.AppServerError:
+                        pass
+                    try:              # 배포도 내리고 포트·토큰을 잊는다
+                        if pathlib.Path(self.root).resolve() == ROOT:
+                            _deploys(self.root).off(pname, forget=True)
+                    except Exception:  # noqa: BLE001
                         pass
             return self._json(code, result)
         if slot_m or slot_add_path:
@@ -3525,6 +3627,13 @@ def serve(host=HOST, port=PORT, root=ROOT, once=False, tls=False, auth=None):
             log_line(f"  지난 모니터가 남긴 앱 서버 {pid} 를 내렸습니다")
     except Exception as e:  # noqa: BLE001
         log_line(f"  앱 서버 정리 실패: {type(e).__name__}")
+    def _deploy_boot():       # 켜 둔 배포 가운데 죽어 있는 것을 다시 띄운다 - 모니터가 뜨는 것을 막지 않게 따로 돈다
+        try:
+            for name, what in deploy_ensure_all(root):
+                log_line(f"  배포 {name}: {'다시 띄웠습니다' if what == 'started' else what}")
+        except Exception as e:  # noqa: BLE001
+            log_line(f"  배포 확인 실패: {type(e).__name__}")
+    threading.Thread(target=_deploy_boot, name="deploy-boot", daemon=True).start()
     reap_stop = threading.Event()
 
     def _reap_loop():

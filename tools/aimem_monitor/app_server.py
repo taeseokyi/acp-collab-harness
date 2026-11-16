@@ -47,6 +47,128 @@ def _port_open(port, timeout=0.5):
         return False
 
 
+def _pid_alive(pid):
+    """pid 가 살아 있으면 True. PermissionError(다른 사용자)도 살아 있음으로 봅니다."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _proc_start(pid):
+    """`/proc/<pid>/stat` 의 22번째 칸(starttime) - pid 재사용을 가리는 신원. 읽기 실패면 None."""
+    try:
+        raw = Path(f"/proc/{int(pid)}/stat").read_text(encoding="utf-8", errors="replace")
+    except (OSError, TypeError, ValueError):
+        return None
+    if ")" not in raw:
+        return None
+    rest = raw.rsplit(")", 1)[1].split()
+    return rest[19] if len(rest) >= 20 else None
+
+
+def _owner_is_foreign(owner, owner_start):
+    """owner 가 이 프로세스가 아닌 살아 있는 다른 모니터인가.
+
+    owner_start 가 있으면 그 시작 시각까지 같아야 남의 것으로 봅니다(pid 재사용 방지).
+    옛 기록처럼 없으면 cmdline 에 `aimem_monitor` 가 있을 때만 남의 것으로 봅니다.
+    """
+    if owner == os.getpid() or not _pid_alive(owner):
+        return False
+    if owner_start is not None:
+        return _proc_start(owner) == str(owner_start)
+    try:
+        cmd = Path(f"/proc/{owner}/cmdline").read_bytes().decode("utf-8", "replace")
+    except OSError:
+        return False
+    return "aimem_monitor" in cmd
+
+
+def _tasks(pid):
+    try:
+        return sorted(Path(f"/proc/{pid}/task").iterdir())
+    except OSError:
+        return []
+
+
+def _children_text(task):
+    try:
+        return (task / "children").read_text()
+    except OSError:
+        return ""
+
+
+def _descendants(pid):
+    """`/proc/<pid>/task/*/children` 을 따라 자손 (pid, 시작 시각) 쌍을 모읍니다. 리눅스가 아니거나 읽기 실패면 무시."""
+    out = []
+    if not Path("/proc").is_dir():
+        return out
+    seen = {pid}
+    stack = [pid]
+    while stack:
+        cur = stack.pop()
+        for task in _tasks(cur):
+            for tok in _children_text(task).split():
+                try:
+                    child = int(tok)
+                except ValueError:
+                    continue
+                if child not in seen:
+                    seen.add(child)
+                    out.append((child, _proc_start(child)))
+                    stack.append(child)
+    return out
+
+
+def _self_and_ancestors():
+    """이 프로세스와 그 조상 pid - 자손을 내릴 때 여기 있는 pid 에는 절대 신호를 보내지 않습니다."""
+    out = set()
+    cur = os.getpid()
+    for _ in range(128):
+        if cur <= 0 or cur in out:
+            break
+        out.add(cur)
+        try:
+            stat = Path(f"/proc/{cur}/stat").read_text()
+            cur = int(stat.rsplit(")", 1)[1].split()[1])
+        except (OSError, IndexError, ValueError):
+            break
+    return out
+
+
+def _kill_heirs(pairs):
+    """그룹 밖으로 빠져나간 자손에게 SIGTERM → 짧게 기다림 → SIGKILL.
+
+    모을 때의 시작 시각과 지금이 같은 pid 에만 신호를 보냅니다(pid 재사용 방지).
+    """
+    targets = [(p, st) for p, st in pairs if st is not None and _proc_start(p) == st]
+    if not targets:
+        return
+    pids = [p for p, _ in targets]
+    for p in pids:
+        try:
+            os.kill(p, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+    deadline = time.monotonic() + 1.5
+    while time.monotonic() < deadline:
+        if all(_gone(p) for p in pids):
+            return
+        time.sleep(0.05)
+    for p, st in targets:
+        if _proc_start(p) != st:  # st 는 위에서 None 이 아님이 확인됨
+            continue
+        try:
+            os.kill(p, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+
 def _gone(pid, proc=None):
     if proc is not None:
         return proc.poll() is not None
@@ -68,7 +190,13 @@ def _gone(pid, proc=None):
 
 
 def _kill_group(pid, proc=None):
-    """pid 의 프로세스 그룹에 SIGTERM, 3초 안에 안 죽으면 SIGKILL. pid 로만 부른다."""
+    """pid 의 프로세스 그룹에 SIGTERM, 3초 안에 안 죽으면 SIGKILL. pid 로만 부른다.
+
+    앱이 `start_new_session=True` 로 띄운 손자(setids)는 그룹 밖으로 빠져나가므로,
+    내리기 전에 자손 pid 를 모아 두었다가 그룹을 내린 뒤 남은 자손도 함께 거둡니다.
+    """
+    protect = _self_and_ancestors()
+    heirs = [(p, st) for p, st in _descendants(pid) if p not in protect]
     try:
         os.killpg(pid, signal.SIGTERM)
     except (ProcessLookupError, PermissionError):
@@ -77,17 +205,18 @@ def _kill_group(pid, proc=None):
                 proc.wait(timeout=1)
             except Exception:  # noqa: BLE001
                 pass
-        return
-    deadline = time.monotonic() + 3.0
-    while time.monotonic() < deadline and not _gone(pid, proc):
-        time.sleep(0.05)
-    try:
-        os.killpg(pid, signal.SIGKILL)  # 남은 그룹 구성원까지
-    except (ProcessLookupError, PermissionError):
-        pass
-    end = time.monotonic() + 1.0
-    while time.monotonic() < end and not _gone(pid, proc):
-        time.sleep(0.05)
+    else:
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and not _gone(pid, proc):
+            time.sleep(0.05)
+        try:
+            os.killpg(pid, signal.SIGKILL)  # 남은 그룹 구성원까지
+        except (ProcessLookupError, PermissionError):
+            pass
+        end = time.monotonic() + 1.0
+        while time.monotonic() < end and not _gone(pid, proc):
+            time.sleep(0.05)
+    _kill_heirs(heirs)
 
 
 class _Entry:
@@ -132,7 +261,8 @@ class AppServers:
 
     def _write_record(self, name, entry):
         rec = {"pid": entry.proc.pid, "port": entry.port, "script": entry.script,
-               "started": time.time()}
+               "started": time.time(), "owner": os.getpid(),
+               "owner_start": _proc_start(os.getpid())}
         p = self._record_path(name)
         tmp = p.with_name(p.name + ".tmp")
         tmp.write_text(json.dumps(rec), encoding="utf-8")
@@ -143,6 +273,17 @@ class AppServers:
             self._record_path(name).unlink()
         except OSError:
             pass
+
+    def _foreign_owner(self, name):
+        """이 이름의 기록이 다른 살아 있는 모니터 소유면 그 owner pid, 아니면 None."""
+        try:
+            rec = json.loads(self._record_path(name).read_text(encoding="utf-8"))
+            owner = int(rec["owner"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        if _owner_is_foreign(owner, rec.get("owner_start")):
+            return owner
+        return None
 
     def _alive(self, entry):
         return entry.proc.poll() is None and _port_open(entry.port)
@@ -200,6 +341,9 @@ class AppServers:
                 if self._alive(entry) and entry.script == str(script):
                     return entry.port
                 self._drop(name)  # 죽었거나 다른 server 로 바뀜
+            if self._foreign_owner(name) is not None:
+                # 다른 살아 있는 모니터가 쓰는 이름별 기록을 덮지 않습니다
+                raise AppServerError(503, "다른 모니터가 쓰고 있는 앱입니다")
             return self._spawn(name, script, cwd).port
 
     def forward(self, name, script, cwd, method, path_qs, headers, body):
@@ -321,6 +465,14 @@ class AppServers:
             except (OSError, ValueError, KeyError, TypeError):
                 rec_path.unlink(missing_ok=True)
                 continue
+            owner = rec.get("owner")
+            if owner is not None:
+                try:
+                    owner = int(owner)
+                except (TypeError, ValueError):
+                    owner = None
+            if owner is not None and _owner_is_foreign(owner, rec.get("owner_start")):
+                continue  # 다른 살아 있는 모니터의 자식 - 건드리지 않음
             if any(e.proc.pid == pid for e in self._entries.values()):
                 continue  # 이 모니터가 지금 쓰는 자식
             try:

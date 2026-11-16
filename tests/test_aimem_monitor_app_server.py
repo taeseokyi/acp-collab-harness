@@ -51,6 +51,33 @@ class S(http.server.ThreadingHTTPServer):
 S((host, port), H).serve_forever()
 '''
 
+# `start_new_session=True`(setsid)로 손자를 하나 띄우는 가짜 앱. 손자 pid 를 스크립트 옆에 남긴다.
+GRAND = r'''
+import http.server, os, subprocess, sys
+args = sys.argv[1:]
+host = args[args.index("--host") + 1]
+port = int(args[args.index("--port") + 1])
+grand = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                         start_new_session=True)
+here = os.path.dirname(os.path.abspath(sys.argv[0]))
+open(os.path.join(here, "grandchild.pid"), "w").write(str(grand.pid))
+
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+    def do_GET(self):
+        body = b"{}"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+class S(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+
+S((host, port), H).serve_forever()
+'''
+
 
 class Base(unittest.TestCase):
     def setUp(self):
@@ -74,6 +101,21 @@ class Base(unittest.TestCase):
         s = AppServers(self.tmp / "state", **kw)
         self.servers.append(s)
         return s
+
+    def live_other(self):
+        """다른 모니터 프로세스를 흉내 내는, 살아 있는 채로 두는 프로세스."""
+        import subprocess
+        other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                                 start_new_session=True)
+        self.addCleanup(other.wait)
+        self.addCleanup(other.kill)
+        return other
+
+    def reap(self, pid):
+        try:
+            os.kill(pid, 9)
+        except (ProcessLookupError, PermissionError):
+            pass
 
     def tearDown(self):
         for s in self.servers:
@@ -163,6 +205,85 @@ class EnsureTests(Base):
         import subprocess
         ps = subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout
         self.assertFalse([l for l in ps.splitlines() if str(idle) in l])
+
+
+class OwnerTests(Base):
+    """R32-N3: 같은 state_dir 를 모니터 둘이 볼 때 서로의 자식을 내리지 않는다."""
+
+    def _dead_pid(self):
+        import subprocess
+        p = subprocess.Popen([sys.executable, "-c", "pass"])
+        p.wait()
+        return p.pid
+
+    def test_cleanup_stale_spares_record_of_live_other_owner(self):
+        s1 = self.make()
+        s1.ensure("a", self.script, self.cwd)
+        pid = s1._entries["a"].proc.pid
+        self.pids.append(pid)
+        other = self.live_other()  # 둘째 모니터를 흉내
+        rec = json.loads((self.tmp / "state" / "a.json").read_text())
+        rec["owner"] = other.pid
+        rec["owner_start"] = app_server._proc_start(other.pid)
+        (self.tmp / "state" / "a.json").write_text(json.dumps(rec))
+        s2 = self.make()
+        self.assertEqual(s2.cleanup_stale(), [])
+        self.assertIsNone(s1._entries["a"].proc.poll())          # 첫째 자식이 살아 있음
+        self.assertTrue((self.tmp / "state" / "a.json").exists())  # 기록도 남아 있음
+
+    def test_cleanup_stale_kills_record_of_reused_owner_pid(self):
+        s1 = self.make()
+        s1.ensure("a", self.script, self.cwd)
+        pid = s1._entries["a"].proc.pid
+        self.pids.append(pid)
+        other = self.live_other()
+        rec = json.loads((self.tmp / "state" / "a.json").read_text())
+        rec["owner"] = other.pid
+        rec["owner_start"] = "wrong-start"
+        (self.tmp / "state" / "a.json").write_text(json.dumps(rec))
+        s2 = self.make()
+        self.assertEqual(s2.cleanup_stale(), [pid])
+        self.assertTrue(app_server._gone(pid))
+        self.assertFalse((self.tmp / "state" / "a.json").exists())
+        port = s2.ensure("a", self.script, self.cwd)
+        self.assertTrue(app_server._port_open(port))
+
+    def test_kill_heirs_skips_wrong_start(self):
+        import subprocess
+        p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                             start_new_session=True)
+        self.addCleanup(p.wait)
+        self.addCleanup(p.kill)
+        app_server._kill_heirs([(p.pid, "wrong-start")])
+        self.assertIsNone(p.poll())
+
+    def test_cleanup_stale_kills_record_of_dead_owner(self):
+        s1 = self.make()
+        s1.ensure("a", self.script, self.cwd)
+        pid = s1._entries["a"].proc.pid
+        self.pids.append(pid)
+        rec = json.loads((self.tmp / "state" / "a.json").read_text())
+        rec["owner"] = self._dead_pid()
+        (self.tmp / "state" / "a.json").write_text(json.dumps(rec))
+        s2 = self.make()
+        self.assertEqual(s2.cleanup_stale(), [pid])
+        self.assertTrue(app_server._gone(pid))
+        self.assertFalse((self.tmp / "state" / "a.json").exists())
+
+    def test_ensure_refuses_name_owned_by_live_other(self):
+        other = self.live_other()
+        state = self.tmp / "state"
+        state.mkdir()
+        (state / "a.json").write_text(json.dumps(
+            {"pid": other.pid, "port": 1, "script": str(self.script),
+             "started": 0, "owner": other.pid,
+             "owner_start": app_server._proc_start(other.pid)}))
+        s = self.make()
+        with self.assertRaises(AppServerError) as cm:
+            s.ensure("a", self.script, self.cwd)
+        self.assertEqual(cm.exception.status, 503)
+        self.assertFalse(s._entries)
+        self.assertEqual(json.loads((state / "a.json").read_text())["owner"], other.pid)
 
 
 class ForwardTests(Base):
@@ -264,6 +385,30 @@ class StopTests(Base):
         self.assertEqual(s.reap_idle(), [])
         self.assertEqual(s.reap_idle(now=time.time() + 120), ["a"])
         self.assertTrue(app_server._gone(pid))
+
+    def test_stop_takes_down_setsid_grandchild(self):
+        script = self.cwd / "serve_g.py"
+        script.write_text(GRAND, encoding="utf-8")
+        s = self.make()
+        s.ensure("a", script, self.cwd)
+        self.pids.append(s._entries["a"].proc.pid)
+        pidfile = self.cwd / "grandchild.pid"
+        deadline = time.time() + 5
+        while not pidfile.exists() and time.time() < deadline:
+            time.sleep(0.05)
+        grand = int(pidfile.read_text())
+        self.addCleanup(self.reap, grand)
+        os.kill(grand, 0)                             # 손자가 살아 있음
+        self.assertTrue(s.stop("a"))
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            try:
+                os.kill(grand, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(grand, 0)
 
     def test_cleanup_stale_kills_recorded(self):
         s1 = self.make()

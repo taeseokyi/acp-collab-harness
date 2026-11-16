@@ -42,6 +42,8 @@ USER.md
 # 프로젝트 브라우저 검증의 증거 스크린샷 - 돌릴 때마다 다시 생기는 실행 산출물
 projects/*/tests/screenshots/
 projects/*/**/__pycache__/
+# VoxLog 실행 데이터(녹음·받아쓴 글·위치) - 개인 자료라 커밋하지 않는다 (R33)
+projects/VoxLog/data/
 
 # 이어 달리기 실행 상태 (켜짐·진행 수) - 운영 상태라 커밋하지 않는다
 .aimem/fleet-chain.json
@@ -67,3 +69,6 @@ projects/*/**/__pycache__/
 .aimem/archive/projects-*/
 # 모니터가 띄운 앱 서버(serve.py)의 기록·로그 (REV 182, tools/aimem_monitor/app_server.py)
 .aimem/appservers/
+
+# 앱 배포 상태 (tools/aimem_monitor/deploy.py, 2026-11-16) - 배포 토큰·pid·로그. **커밋하지 않습니다**
+.aimem/deploy/

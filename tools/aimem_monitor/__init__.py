@@ -75,7 +75,7 @@ SERVER_KEYS = {
     # summary = `projects/<이름>/PROGRESS.md` 의 가장 최근 라운드 항목
     # app = 실행 선언(`projects/<이름>/app.json`). {runnable, url, title, root, entry, reason} 또는 null
     "projects": "[{name, path, exists, percent, basis, goals:{total, done}, request_percent, requests:{total, done, new, active}, rounds, round_count, "
-                "last_round, last_round_at, updated, summary, app}]",
+                "last_round, last_round_at, updated, summary, app, deploy:{name, port, on, alive, auth, started} | null (배포 - 자기 주소로 띄워 둔 앱 서버, 토큰은 안 실음), deployable}]",
     # Claude Code 상태줄이 적어 둔 `.aimem/claude-usage.json` 을 읽어 만든 사용 한도 (2026-11-12, R18).
     # 파일이 없거나 읽을 수 없으면 null.
     "claude_usage": "{at, age_seconds, rows:[{key, label, percent, resets_at_iso}]} 또는 null",

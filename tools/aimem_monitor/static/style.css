@@ -1187,6 +1187,20 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .manager-meta { font-size: var(--st-fs-sm); color: var(--st-ink-muted); }
 .run-line { display: inline-flex; gap: 4px; align-items: center; }
 .manager-detail-btn { margin-left: auto; font-size: var(--st-fs-sm); padding: 3px 12px; }
+.proj-deploy.is-on { color: var(--st-ok, #0a7d4f); font-weight: 600; }
+.proj-deploy.is-down { color: var(--st-danger, #b3261e); font-weight: 600; }
+.deploy-panel { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.deploy-panel p { margin: 0; }
+.deploy-hint, .deploy-sub { font-size: var(--st-fs-sm); color: var(--st-ink-muted); }
+.deploy-state { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.deploy-url { font-family: var(--st-mono, monospace); overflow-wrap: anywhere; }
+.deploy-auth { display: flex; align-items: center; gap: 6px; font-size: var(--st-fs-sm); }
+.deploy-auth input { width: auto; }
+.deploy-bar { display: flex; gap: 8px; flex-wrap: wrap; }
+.deploy-bar button { padding: 6px 16px; min-height: 36px; }
+.deploy-msg { font-size: var(--st-fs-sm); color: var(--st-ink-soft); }
+.deploy-token { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.deploy-token-val { overflow-wrap: anywhere; user-select: all; padding: 4px 8px; border: 1px solid var(--st-line); border-radius: 4px; }
 .manager-inbox { display: flex; align-items: center; gap: 8px; font-size: var(--st-fs-sm); color: var(--st-ink-soft); min-width: 0; }
 .manager-inbox-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .manager-inbox-btn { flex: 0 0 auto; font-size: var(--st-fs-sm); padding: 3px 12px; }

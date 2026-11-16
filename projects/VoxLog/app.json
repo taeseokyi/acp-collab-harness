@@ -1,0 +1,7 @@
+{
+  "root": "web",
+  "entry": "index.html",
+  "server": "serve.py",
+  "title": "VoxLog",
+  "note": "모니터에서는 녹취 목록·검색·묻기만 - 녹음·올리기는 VoxLog 자체 주소(HTTPS)에서"
+}

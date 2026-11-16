@@ -3954,6 +3954,128 @@ const PROJECT_FILTERS = [
 ];
 const PROJECT_SEARCH_MIN = 7;     // 이보다 많으면 이름 찾기 칸을 보인다
 
+// ---- 배포 (2026-11-16) - 앱의 자체 서버를 자기 주소로 계속 띄워 둔다. 켜고 끄기·주소·토큰은 패널에서
+function deployUrl(port) {
+  return `https://${location.hostname}:${port}/`;
+}
+
+function openProjectDeploy(name, note, shownToken) {
+  const pr = ((state.data && state.data.projects) || []).find((p) => p.name === name);
+  if (!pr) return;
+  const dp = pr.deploy || null;
+  const on = !!(dp && dp.on);
+  openPanel('배포 · ' + show(pr.name, ''), (body) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'deploy-panel';
+    const line = (cls, text) => { const p = document.createElement('p'); p.className = cls; p.textContent = text; wrap.appendChild(p); return p; };
+    line('deploy-hint', '앱의 자체 서버(app.json 의 server)를 WSL 에 계속 띄워 두고, 윈도우 프록시가 PC 의 배포 포트로 이어 줍니다. '
+      + '모니터 안의 \'앱 열기\' 와 달리 격리가 없어 마이크·설치(PWA)·오프라인 동기화가 됩니다. 인증서는 모니터 것을 같이 씁니다.');
+
+    const st = document.createElement('div');
+    st.className = 'deploy-state';
+    st.appendChild(badge(on ? (dp.alive ? '배포 중' : '켜 두었지만 서버가 죽어 있음') : '내려 있음', on ? (dp.alive ? 'running' : 'failed') : 'neutral'));
+    if (dp) {
+      const a = document.createElement(on && dp.alive ? 'a' : 'span');
+      a.className = 'deploy-url';
+      a.textContent = deployUrl(dp.port);
+      if (on && dp.alive) { a.href = deployUrl(dp.port); a.target = '_blank'; a.rel = 'noopener noreferrer'; }
+      st.appendChild(a);
+      const t = document.createElement('span');
+      t.className = 'deploy-sub';
+      t.textContent = (dp.auth ? '토큰 필요' : '토큰 없음 - 주소를 아는 누구나') + (on && dp.started ? ' · ' + fmtDateTime(dp.started) + ' 부터' : '');
+      st.appendChild(t);
+    }
+    wrap.appendChild(st);
+
+    const msg = document.createElement('p');
+    msg.className = 'deploy-msg';
+    msg.setAttribute('role', 'status');
+    if (note) msg.textContent = note;
+
+    const tokenBox = document.createElement('div');
+    tokenBox.className = 'deploy-token';
+    const showToken = (tok) => {
+      tokenBox.textContent = '';
+      const lab = document.createElement('span');
+      lab.className = 'deploy-sub';
+      lab.textContent = '토큰 (앱의 설정에 넣습니다)';
+      const code = document.createElement('code');
+      code.className = 'deploy-token-val';
+      code.textContent = tok;
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.textContent = '복사';
+      copy.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(tok); copy.textContent = '복사됨'; } catch { copy.textContent = '복사 실패 - 길게 눌러 고르십시오'; }
+      });
+      tokenBox.appendChild(lab); tokenBox.appendChild(code); tokenBox.appendChild(copy);
+    };
+    if (shownToken) showToken(shownToken);
+
+    const bar = document.createElement('div');
+    bar.className = 'deploy-bar';
+    const buttons = [];
+    const call = async (payload, okText) => {
+      buttons.forEach((b) => { b.disabled = true; });
+      msg.textContent = '처리 중…';
+      let res;
+      try {
+        ({ body: res } = await api('/api/projects/' + encodeURIComponent(pr.name) + '/deploy', payload));
+      } catch (err) {
+        res = { ok: false, error: err && err.message ? err.message : String(err) };
+      }
+      if (!res || res.ok === false) {
+        buttons.forEach((b) => { b.disabled = false; });
+        msg.textContent = '하지 못했습니다: ' + ((res && res.error) || '알 수 없는 오류');
+        return;
+      }
+      const d = res.deploy || {};
+      if (payload.action === 'token') { buttons.forEach((b) => { b.disabled = false; }); msg.textContent = ''; if (d.token) showToken(d.token); return; }
+      for (let i = 0; i < 50 && state.busy; i += 1) await new Promise((r) => setTimeout(r, 100));
+      await refresh();
+      state.panelBack = true;       // 같은 패널을 새 내용으로 다시 그린다
+      openProjectDeploy(pr.name, okText + (d.proxy === false && d.proxy_note ? ' · 주의: ' + d.proxy_note : ''), d.token || null);
+    };
+    const mk = (text, cls, fn) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = text; if (cls) b.className = cls;
+      b.addEventListener('click', fn);
+      buttons.push(b); bar.appendChild(b);
+      return b;
+    };
+    if (!on || !dp.alive) {
+      const lab = document.createElement('label');
+      lab.className = 'deploy-auth';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = dp ? !!dp.auth : true;
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(' 토큰으로 막기 (끄면 주소를 아는 누구나 씁니다)'));
+      wrap.appendChild(lab);
+      if (pr.deployable) {
+        mk(on ? '다시 띄우기' : '배포 켜기', 'btn-primary', () => {
+          if (!cb.checked && !window.confirm('토큰 없이 배포합니다. 이 주소에 닿는 누구나 앱을 쓸 수 있습니다. 계속할까요?')) return;
+          call({ action: 'on', auth: cb.checked }, '배포를 켰습니다');
+        });
+      } else {
+        line('deploy-hint warn-text', 'app.json 에 server 선언이 없어 띄울 수 없습니다.');
+      }
+    }
+    if (on) {
+      mk('내리기', 'btn-danger', () => call({ action: 'off' }, '배포를 내렸습니다 - 포트와 토큰은 그대로 남습니다'));
+      if (dp.auth) mk('토큰 보기', '', () => call({ action: 'token' }, ''));
+    }
+    wrap.appendChild(bar);
+    wrap.appendChild(msg);
+    wrap.appendChild(tokenBox);
+    if (dp) {
+      line('deploy-hint', `다른 기기에서 닿으려면 윈도우 방화벽이 포트 ${dp.port} 를 받아야 하고(관리자 권한, 한 번), 폰에는 PC 의 사설 CA 가 설치돼 있어야 `
+        + '마이크와 설치가 뜹니다. 내렸다 켜도 포트와 토큰은 바뀌지 않습니다.');
+    }
+    body.appendChild(wrap);
+  });
+}
+
 function renderProjects(data) {
   const box = document.getElementById('projects-list');
   if (!box) return;
@@ -4038,6 +4160,14 @@ function renderProjects(data) {
       run.classList.add('proj-run');
       run.title = `${pr.app.title} 을(를) 모니터 안에서 바로 돌려 봅니다 (projects/${pr.name}/${pr.app.root}/)`;
       actions.appendChild(run);
+    }
+    if (pr.deployable || pr.deploy) {
+      const dp = pr.deploy;
+      const dep = linkButton(dp && dp.on ? (dp.alive ? `배포 중 :${dp.port}` : '배포 멈춤 !') : '배포…', () => openProjectDeploy(pr.name));
+      dep.classList.add('proj-deploy');
+      if (dp && dp.on) dep.classList.add(dp.alive ? 'is-on' : 'is-down');
+      dep.title = '앱의 자체 서버를 자기 주소(HTTPS)로 띄워 둡니다 - 마이크·설치·오프라인처럼 모니터 안에서는 안 되는 것을 쓰는 앱';
+      actions.appendChild(dep);
     }
     if (pr.exists) {
       const view = linkButton('결과물 보기', () => openProjectFiles(pr));

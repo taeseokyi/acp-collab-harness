@@ -1,16 +1,16 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-15T02:34:34 / REV 183
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-16T15:42:42 / REV 186
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | `a41f0c` | claude | opus | R32 적대적 검수(T-335): 모니터 앱 서버 이어 주기 | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S1 | `a41f0c` | claude | opus | R34 적대적 검수(마지막): VoxLog N13~N16 | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
 | S2 | `d27e93` | codex | kisti/kistillm | R30 대기 (일이 둘뿐 - 막힌 노드 받기) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
-| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R32 만들기: 뉴스 정답 품질 결함·문서 (무료) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
-| S4 | `6cd650` | claude | sonnet | R32 빠른 구현: 모니터 app_server.py → server.py 잇기 | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
-| S5 | `61dfcc` | claude | sonnet | R32 빠른 구현: 서버 정답 저장 → 화면 → 끝에서 끝 검사 |  |
+| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R34 빠른 구현: VoxLog stt.py N13·N15 (무료) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
+| S4 | `6cd650` | claude | sonnet | R34 빠른 구현: VoxLog store.py N14 | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
+| S5 | `61dfcc` | claude | sonnet | R34 빠른 구현: VoxLog 화면 N16 → serve.py N13·N14 |  |
 
 ## 3. 작업 보드
 
@@ -258,12 +258,35 @@
 | T-335 | Q-261115-4aff | 적대적 검수: 모니터가 앱 serve.py 를 띄워 이어 주는 길 + 서버 정답 저장·화면 | S1 | DONE |  |
 | T-336 | Q-261115-4aff | 검수 후속 R32-N1: trend_store 프로세스 사이 잠금(fcntl.flock) + 두 프로세스 검사 | S5 | DONE |  |
 | T-337 | Q-261115-4aff | 검수 후속 R32-N2·N4·N6: cleanup_stale pid 확인 좁힘, server 바뀌면 다시 띄움, OPTIONS 티켓 먼저 | S4 | DONE |  |
+| T-338 | Q-261116-fa85 | VoxLog 저장소 store.py + 단위 검사 | S3 | DONE |  |
+| T-339 | Q-261116-fa85 | VoxLog 음성인식 stt.py + 가짜 받아쓰기 + 단위 검사 | S6 | DONE |  |
+| T-340 | Q-261116-fa85 | VoxLog 클로드 묻기 ask.py + 가짜 LLM + 단위 검사 | S7 | DONE |  |
+| T-341 | Q-261116-fa85 | VoxLog 화면: 녹음·현황·목록·상세·묻기·설정 | S4 | DONE |  |
+| T-342 | Q-261116-fa85 | VoxLog serve.py: 정적 + API + 토큰·TLS + 단위 검사 | S5 | DONE |  |
+| T-343 | Q-261116-fa85 | VoxLog 서비스 워커·업로드 대기열·매니페스트·아이콘 | S5 | DONE |  |
+| T-344 | Q-261116-fa85 | VoxLog 끝에서 끝 브라우저 검사 | S4 | DONE |  |
+| T-345 | Q-261116-fa85 | R33 적대적 검수: VoxLog + 앱 서버 정리 | S1 | DONE |  |
+| T-346 | Q-261116-fa85 | [함대] 큐 R32-N3·N5 앱 서버 정리 | S8 | DONE |  |
+| T-347 | Q-261116-fa85 | 검수 후속 N1·N4·N5·N9 + 위치: 대기열·serve.py | S5 | DONE |  |
+| T-348 | Q-261116-fa85 | 검수 후속 N3·N6 + 위치: ask.py | S7 | DONE |  |
+| T-349 | Q-261116-fa85 | 검수 후속 N7·N17: 앱 서버 pid 시작 시각 | S5 | DONE |  |
+| T-350 | Q-261116-fa85 | 검수 후속 N1·N2·N4·N8·N10~N12 + 위치: 화면·브라우저 검사 | S4 | DONE |  |
+| T-351 | Q-261116-fa85 | R33 재검수 | S1 | DONE |  |
+| T-352 | Q-261116-fa85 | 요청 수정 반영: store.py 위치정보 | S3 | DONE |  |
+| T-353 | Q-261116-fa85 | 재검수 후속 N18·N19·N20·N12: 살린 녹음 위치·이어 녹음·검사 틈 | S4 | DONE |  |
+| T-354 | Q-261116-r34q | stt.py: resubmit/busy(N13)·ffmpeg 형식 강제(N15) | S3 | DONE |  |
+| T-355 | Q-261116-r34q | store.py: 업로드 파일 받기·메타 잠금·목록 캐시(N14) | S4 | DONE |  |
+| T-356 | Q-261116-r34q | 화면: 서버 주소 설정 빼기(N16)·503/507 재시도 | S5 | DONE |  |
+| T-357 | Q-261116-r34q | serve.py: retry 409(N13)·업로드 흘려 쓰기·503·507(N14) | S5 | DONE |  |
+| T-358 | Q-261116-r34q | R34 적대적 검수 | S1 | DONE |  |
+| T-359 | Q-261116-r34q | 검수 후속 R34-N1·N2: retry 판정·전사 실패 처리 | S5 | DONE |  |
+| T-360 | Q-261116-r34q | 검수 후속 R34-N3·N5·N7: 검사 21번·Retry-After·문서 | S4 | DONE |  |
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
-| 1 | [함대] R32-N3·R32-N5 (하, rounds/R32/REVIEW-r32.md 5절): 같은 저장소를 모니터 둘이 보면 둘째의 cleanup_stale 이 첫째의 살아 있는 앱 서버를 내림 - 기록에 모니터 pid(owner)를 넣고 살아 있으면 건너뜀(R32-N3). 앱이 setsid 로 띄운 손자는 stop 뒤에도 남음 - /proc/<pid>/task/*/children 으로 거둠(R32-N5). 덧붙여 R32 마감 때 /tmp 임시 저장소의 가짜 앱 서버(projects/알파/serve.py) 하나가 고아로 남아 있었음 - 어느 검사·실험이 남겼는지 찾아 검사 tearDown 을 단단히 |  |  |
+| 1 | [VoxLog] R34-N4·N6 (하, rounds/R34/REVIEW-r34.md 3절): 503/507 을 본문을 읽기 전에 보내고 연결을 닫아 큰 녹음 쪽엔 연결 오류로 보임 - 실제 서버로 503 을 받는 브라우저 검사 하나(R34-N4); 업로드 자리 2개를 느린 연결이 오래 쥘 수 있음 - 업로드 전체 마감(length/최소 속도+여유)을 넘으면 끊기(R34-N6); 덧붙여 메타 쓰기·os.replace 의 OSError 는 응답 없이 끊김 → 500/507 로 답하기 |  |  |
 
 ## 6. 파일 소유권
 
@@ -287,6 +310,24 @@
 | `CLAUDE.md` | 관리자 | 부트스트랩. 자동 주입되는 유일한 파일 |
 | `README.md` | 관리자 | 저장소 소개 |
 | `projects/**` | 관리자 | 프로젝트 결과물 projects/<이름>/ - 여러 라운드에 걸쳐 쌓임 (REV 142). 관리자가 하위 경로를 슬롯에 배정 |
+| `projects/VoxLog/docs/INTERFACE.md` | S4 | R34 |
+| `projects/VoxLog/serve.py` | S5 | R34 |
+| `projects/VoxLog/tests/browser_voxlog.py` | S4 | R34 |
+| `projects/VoxLog/tests/test_serve.py` | S5 | R34 |
+| `projects/VoxLog/tests/test_store.py` | S4 | R34 |
+| `projects/VoxLog/tests/test_stt.py` | S5 | R34 |
+| `projects/VoxLog/voxlog/__init__.py` | S3 | R33 |
+| `projects/VoxLog/voxlog/store.py` | S4 | R34 |
+| `projects/VoxLog/voxlog/stt.py` | S5 | R34 |
+| `projects/VoxLog/web/**` | S4 | R34 |
+| `projects/VoxLog/web/api.js` | S4 | R33 |
+| `projects/VoxLog/web/app.js` | S4 | R33 |
+| `projects/VoxLog/web/icons/**` | S5 | R33 |
+| `projects/VoxLog/web/index.html` | S4 | R33 |
+| `projects/VoxLog/web/manifest.webmanifest` | S5 | R33 |
+| `projects/VoxLog/web/queue.js` | S4 | R33 T-353 |
+| `projects/VoxLog/web/style.css` | S4 | R33 |
+| `projects/VoxLog/web/sw.js` | S5 | R33 |
 | `projects/웹워들/README.md` | S3 | R10 |
 | `projects/웹워들/app.json` | S3 | R10 |
 | `projects/웹워들/docs/**` | S1 | R12 T-152 미리보기 기록 저장 설계 문서 (새 경로) |
@@ -393,6 +434,8 @@
 | `rounds/R31/REVIEW-r31.md` | S1 | R31 |
 | `rounds/R31/REVIEW-r31b.md` | S1 | R31 |
 | `rounds/R32/REVIEW-r32.md` | S1 | R32 |
+| `rounds/R33/REVIEW-r33.md` | S1 | R33 |
+| `rounds/R34/REVIEW-r34.md` | S1 | R34 |
 | `skills/**` | 관리자 | **현재 비어 있음** (REV 101 에서 `acp-slot-lifecycle` 제거). 되살아나면 이 행이 그대로 적용된다 |
 | `tests/browser_monitor_app.py` | S3 | R10 T-131 |
 | `tests/browser_monitor_app_server.py` | S5 | R32 |
@@ -407,7 +450,7 @@
 | `tests/test_aimem_monitor*.py` | S2 | 웹 UI 계약 테스트. R5 에 S4 로 잠시 이관 → 2026-11-10 09:15 S2 복구로 환원(태석님 지시) |
 | `tests/test_aimem_monitor_app.py` | S4 | R32 |
 | `tests/test_aimem_monitor_app_proxy.py` | S4 | R32 후속 |
-| `tests/test_aimem_monitor_app_server.py` | S4 | R32 후속 |
+| `tests/test_aimem_monitor_app_server.py` | S5 | G-072 T-349 S8→S5 |
 | `tests/test_archive_api.py` | S3 | R14 T-183 /api/archive 계약 시험 (새 파일, server.py 를 고친 S2 와 다른 슬롯) |
 | `tests/test_fleet*.py` | S2 | `fleet.py` 회귀 테스트. 태석님 승인 2026-11-10 R6 브리프 (9절 2번 해소 - 승인 당시 S4 였으나 S2 복귀로 S2) |
 | `tests/test_fleet_graph.py` | S3 | R19 T-243 한도 오인 회귀 시험 (fleet_graph.py 를 고친 S2 와 다른 슬롯) |
@@ -419,7 +462,7 @@
 | `tools/aimem_lint.py` | S1 | T-005A |
 | `tools/aimem_monitor/__init__.py` | S2 | R10 |
 | `tools/aimem_monitor/__main__.py` | 관리자 | 라운드 3 웹 UI. `python3 -m aimem_monitor` 진입점 |
-| `tools/aimem_monitor/app_server.py` | S4 | R32 후속 |
+| `tools/aimem_monitor/app_server.py` | S5 | G-072 T-349 S8→S5 |
 | `tools/aimem_monitor/reader.py` | S2 | R13 T-166·T-168 goal 제거·ETA 수정 (S1 유료→S2 무료) |
 | `tools/aimem_monitor/server.py` | S4 | R32 후속 |
 | `tools/aimem_monitor/static/**` | S3 | 라운드 3 웹 UI. 정적 프런트엔드 (HTML/JS/CSS) |
@@ -482,3 +525,5 @@
 | Q-261114-a3cf | 자모맞히기: 대기 큐 1건 처리 (R29 뒤 자동) | 함대 이어 달리기 | DONE | 2026-11-14T00:52:27 |
 | Q-261114-e40c | 낱말 사전 외부 조회 | 태석 | DONE | 2026-11-14T23:34:06 |
 | Q-261115-4aff | 모니터 '앱 열기' 에서 앱의 serve.py 를 띄워 서버 쪽 기능이 그대로 되게 (일반 장치, 큐 R31-P2 를 대신함) | 태석(클로드 코드) | DONE | 2026-11-15T01:47:14 |
+| Q-261116-fa85 | 녹취 기록 및 조회 크롬 앱 제작 | 태석 | DONE | 2026-11-16T13:58:37 |
+| Q-261116-r34q | [VoxLog] 대기 큐 1건 처리: R33-N13·N14·N15·N16 (하) | 관리자 M-R34 (대기 큐) | DONE | 2026-11-16T15:13:18 |

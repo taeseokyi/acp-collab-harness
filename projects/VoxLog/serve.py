@@ -1,0 +1,531 @@
+#!/usr/bin/env python3
+"""VoxLog HTTP 서버 (표준 라이브러리만): 정적 web/ + /api/*.
+
+    python3 serve.py [--host 127.0.0.1] [--port 8790] [--data DIR] [--token T]
+                     [--tls-cert C --tls-key K]
+
+토큰은 --token 또는 환경 변수 VOXLOG_TOKEN. 루프백이 아닌 host 에 토큰이 없으면 시작을 거절합니다(코드 2).
+API 표는 docs/INTERFACE.md 의 'serve.py' 절.
+"""
+import argparse
+import hmac
+import ipaddress
+import json
+import math
+import mimetypes
+import os
+import re
+import shutil
+import signal
+import socket
+import ssl
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlsplit
+
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from voxlog import ask as ask_mod  # noqa: E402
+from voxlog import stt as stt_mod  # noqa: E402
+from voxlog.store import ALLOWED_MIME, MAX_AUDIO_BYTES, Store  # noqa: E402
+
+WEB = HERE / "web"
+VERSION = "0.1"
+JSON_BODY_MAX = 1024 * 1024
+DRAIN_MAX = 64 * 1024  # 413 뒤 연결을 깨끗이 닫으려고 버리는(저장 안 함) 작은 본문의 상한
+CHUNK = 64 * 1024  # 업로드를 디스크로 흘려 쓰는 단위
+DISK_MARGIN = 100 * 1024 * 1024  # 업로드 크기에 더해 남겨야 하는 디스크 여유
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+EXTRA_MIME = {".webmanifest": "application/manifest+json", ".js": "text/javascript"}
+TEXTUAL = ("text/", "application/json", "application/manifest+json")
+
+
+def _is_loopback(host):
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+def _guess_mime(path):
+    ext = path.suffix.lower()
+    mime = EXTRA_MIME.get(ext) or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    if mime.startswith(TEXTUAL) or mime == "text/javascript":
+        mime += "; charset=utf-8"
+    return mime
+
+
+def _parse_location(raw):
+    """'<lat>,<lon>,<accuracy>' -> {"lat","lon","accuracy"} 또는 None(틀린 형식·범위 밖)."""
+    if not raw:
+        return None
+    parts = raw.strip().split(",")
+    if len(parts) != 3:
+        return None
+    try:
+        lat, lon, acc = (float(p) for p in parts)
+    except ValueError:
+        return None
+    if not all(math.isfinite(v) for v in (lat, lon, acc)):
+        return None
+    if abs(lat) > 90 or abs(lon) > 180 or acc < 0:
+        return None
+    return {"lat": lat, "lon": lon, "accuracy": acc}
+
+
+class VoxServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def server_close(self):
+        for worker in (getattr(self, "transcriber", None), getattr(self, "asker", None)):
+            if worker is not None:
+                try:
+                    worker.stop()
+                except Exception:  # noqa: BLE001
+                    pass
+        super().server_close()
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "VoxLog/" + VERSION
+    protocol_version = "HTTP/1.1"
+    timeout = 60
+
+    # ---- 로그: 한 줄(메서드·경로·코드). 머리·쿼리는 찍지 않음 ----
+    def log_request(self, code="-", size="-"):
+        path = urlsplit(self.path).path
+        sys.stderr.write("%s %s %s\n" % (self.command, path, getattr(code, "value", code)))
+
+    def log_message(self, fmt, *args):
+        sys.stderr.write("%s\n" % (fmt % args if args else fmt))
+
+    # ---- 응답 도우미 ----
+    def _send(self, status, body=b"", ctype=None, extra=None, close=False):
+        self.send_response(status)
+        if ctype:
+            self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        if close:
+            self.send_header("Connection", "close")
+            self.close_connection = True
+        self.end_headers()
+        if body and self.command != "HEAD":
+            self.wfile.write(body)
+
+    def _json(self, status, obj, close=False, extra=None):
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        hdr = {"Cache-Control": "no-store"}
+        hdr.update(extra or {})
+        self._send(status, body, "application/json; charset=utf-8", hdr, close)
+
+    def _err(self, status, msg, close=False, extra=None):
+        if self.command in ("POST", "PUT", "PATCH", "DELETE") and not self._body_read:
+            # 본문을 안 읽은 채 답하면 keep-alive 연결에 본문이 남아 다음 요청으로 오해됨 -> 닫는다.
+            # 작은 본문은 버려서(저장·해석 안 함) 응답이 RST 에 묻히지 않게 함
+            close = True
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = 0
+            if 0 < length <= DRAIN_MAX:
+                self.rfile.read(length)
+            self._body_read = True
+        self._json(status, {"error": msg}, close=close, extra=extra)
+
+    # ---- 진입 ----
+    _body_read = False
+
+    def _dispatch(self):
+        self._body_read = False
+        u = urlsplit(self.path)
+        if not self.server.token and not self._local_host():
+            # DNS 리바인딩 막기: 토큰이 없으면 루프백 이름으로 온 요청만 받는다
+            return self._err(403, "이 주소로는 열 수 없습니다")
+        if u.path == "/api" or u.path.startswith("/api/"):
+            return self._api(u)
+        if self.command not in ("GET", "HEAD"):
+            return self._err(405, "허용되지 않는 메서드입니다", extra={"Allow": "GET, HEAD"})
+        return self._static(u.path)
+
+    do_GET = do_HEAD = do_POST = do_DELETE = do_PUT = do_PATCH = _dispatch
+
+    def do_OPTIONS(self):
+        # 같은 출처만 쓰므로 CORS 머리는 붙이지 않는다
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    # ---- 정적 ----
+    def _static(self, raw_path):
+        try:
+            rel = unquote(raw_path, errors="strict")
+            if "\x00" in rel:
+                raise ValueError
+            rel = rel.lstrip("/") or "index.html"
+            web = WEB.resolve()
+            target = (web / rel).resolve()
+            target.relative_to(web)
+            if not target.is_file():
+                raise ValueError
+            fh = open(target, "rb")
+        except (ValueError, OSError, UnicodeDecodeError):
+            return self._err(404, "없는 파일입니다")
+        with fh:
+            data = fh.read()
+        extra = {}
+        if target.name == "sw.js":
+            extra["Cache-Control"] = "no-cache"
+        self._send(200, data, _guess_mime(target), extra)
+
+    # ---- 인증·출처 ----
+    def _authorized(self):
+        token = self.server.token
+        if not token:
+            return True
+        auth = self.headers.get("Authorization") or ""
+        if not auth.startswith("Bearer "):
+            return False
+        given = auth[7:].strip().encode("utf-8")
+        return hmac.compare_digest(given, token.encode("utf-8"))
+
+    def _local_host(self):
+        host = (self.headers.get("Host") or "").strip().lower()
+        if host.startswith("["):
+            name = host[1:].split("]", 1)[0]
+        else:
+            name = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+        return name in ("127.0.0.1", "localhost", "::1")
+
+    def _foreign_origin(self):
+        origin = self.headers.get("Origin")
+        if origin is None:
+            return False
+        if origin.strip().lower() == "null":
+            return True  # 샌드박스 iframe 등 - 토큰이 없을 때는 거절
+        host = (self.headers.get("Host") or "").strip().lower()
+        return urlsplit(origin).netloc.lower() != host
+
+    # ---- API ----
+    def _api(self, u):
+        path = u.path
+        method = self.command
+        if path != "/api/health":
+            if not self._authorized():
+                return self._err(401, "인증이 필요합니다", extra={"WWW-Authenticate": "Bearer"})
+            if not self.server.token and method in ("POST", "DELETE") and self._foreign_origin():
+                return self._err(403, "허용되지 않은 출처입니다")
+
+        parts = [p for p in path.split("/") if p]  # ["api", ...]
+        route = None  # (허용 메서드 목록, 처리 함수, 인자)
+        n = len(parts)
+        if parts == ["api", "health"]:
+            route = (("GET",), self._health, ())
+        elif parts == ["api", "recordings"]:
+            route = (("GET", "POST"), self._rec_list if method == "GET" else self._rec_upload, (u,))
+        elif n == 3 and parts[1] == "recordings":
+            route = (("GET", "DELETE"), self._rec_get if method == "GET" else self._rec_delete, (parts[2],))
+        elif n == 4 and parts[1] == "recordings" and parts[3] == "audio":
+            route = (("GET",), self._rec_audio, (parts[2],))
+        elif n == 4 and parts[1] == "recordings" and parts[3] == "retry":
+            route = (("POST",), self._rec_retry, (parts[2],))
+        elif parts == ["api", "ask"]:
+            route = (("POST",), self._ask, ())
+        elif parts == ["api", "answers"]:
+            route = (("GET",), self._answers, ())
+        elif n == 3 and parts[1] == "answers":
+            route = (("GET",), self._answer_one, (parts[2],))
+        if route is None:
+            return self._err(404, "없는 API 경로입니다")
+        allowed, fn, args = route
+        if method == "HEAD" and "GET" in allowed:
+            method = "GET"
+        if method not in allowed:
+            return self._err(405, "허용되지 않는 메서드입니다", extra={"Allow": ", ".join(allowed)})
+        return fn(*args)
+
+    def _health(self):
+        env = self.server.env
+        llm = shutil.which(ask_mod.llm_command(env)[0]) is not None
+        self._json(200, {"ok": True, "auth": bool(self.server.token),
+                         "stt": stt_mod.backend_name(env), "llm": llm, "version": VERSION})
+
+    def _content_length(self, limit):
+        """Content-Length 검사. 정수 길이, 아니면 이미 오류 응답을 보낸 뒤 None."""
+        raw = self.headers.get("Content-Length")
+        try:
+            length = int(raw) if raw is not None else -1
+        except ValueError:
+            length = -1
+        if length < 0:
+            self._err(400, "Content-Length 머리가 필요합니다", close=True)
+            return None
+        if length > limit:
+            self._err(413, "본문이 너무 큽니다 (최대 {} 바이트)".format(limit), close=True)
+            return None
+        return length
+
+    def _read_body(self, limit):
+        """Content-Length 필수. 돌려주는 값은 bytes, 아니면 이미 오류 응답을 보낸 뒤 None."""
+        length = self._content_length(limit)
+        if length is None:
+            return None
+        self._body_read = True
+        data = self.rfile.read(length) if length else b""
+        if len(data) != length:
+            self._err(400, "본문이 중간에 끊겼습니다", close=True)
+            return None
+        return data
+
+    def _rec_upload(self, _u):
+        length = self._content_length(MAX_AUDIO_BYTES)
+        if length is None:
+            return
+        slots = self.server.upload_slots
+        if not slots.acquire(blocking=False):
+            return self._err(503, "업로드가 몰렸습니다. 잠시 뒤 다시 보내 주세요", close=True,
+                             extra={"Retry-After": "5"})
+        try:
+            self._upload_locked(length)
+        finally:
+            slots.release()
+
+    def _upload_locked(self, length):
+        store = self.server.store
+        try:
+            free = self.server.disk_free()
+        except OSError:
+            free = None
+        if free is not None and free < length + DISK_MARGIN:
+            return self._err(507, "서버 디스크 여유가 부족합니다", close=True)
+        mime = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        recorded_at = (self.headers.get("X-Recorded-At") or "").strip()[:64] or None
+        try:
+            duration = int(self.headers.get("X-Duration-Ms", "").strip())
+            if duration < 0:
+                duration = None
+        except ValueError:
+            duration = None
+        client_id = (self.headers.get("X-Client-Id") or "").strip()[:128] or None
+        location = _parse_location(self.headers.get("X-Location"))
+        self._body_read = True
+        path = store.incoming_path()
+        try:
+            got = 0
+            try:
+                with open(path, "wb") as f:
+                    while got < length:
+                        chunk = self.rfile.read(min(CHUNK, length - got))
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        got += len(chunk)
+                    f.flush()
+                    os.fsync(f.fileno())
+            except (socket.timeout, ConnectionError):
+                pass  # 받는 도중 끊김 -> got < length 로 아래에서 400
+            if got != length:
+                try:  # 응답 전에 지운다(응답을 받은 쪽이 바로 폴더를 볼 수 있음)
+                    os.unlink(path)
+                except OSError:
+                    pass
+                return self._err(400, "본문이 중간에 끊겼습니다", close=True)
+            try:
+                meta = store.add_recording_file(
+                    path, mime, recorded_at=recorded_at, duration_ms=duration,
+                    client_id=client_id, location=location)
+            except ValueError as exc:
+                return self._err(400, str(exc))
+        finally:
+            try:  # 저장소가 옮겼거나 지웠으면 이미 없음
+                os.unlink(path)
+            except OSError:
+                pass
+        if meta.get("duplicate"):
+            return self._json(200, meta)
+        self.server.transcriber.submit(meta["id"])
+        self._json(201, meta)
+
+    def _rec_list(self, u):
+        q = parse_qs(u.query)
+
+        def one(name):
+            v = (q.get(name) or [""])[0].strip()
+            return v or None
+
+        date_from, date_to = one("from"), one("to")
+        for d in (date_from, date_to):
+            if d is not None and not DATE_RE.match(d):
+                return self._err(400, "날짜는 YYYY-MM-DD 꼴이어야 합니다")
+        limit = 200
+        if one("limit") is not None:
+            try:
+                limit = int(one("limit"))
+            except ValueError:
+                return self._err(400, "limit 는 정수여야 합니다")
+            limit = max(1, min(limit, 1000))
+        store = self.server.store
+        items = store.list(q=one("q"), date_from=date_from, date_to=date_to,
+                           status=one("status"), limit=limit)
+        self._json(200, {"items": items, "stats": store.stats()})
+
+    def _rec_get(self, rid):
+        meta = self.server.store.get(rid)
+        if meta is None:
+            return self._err(404, "없는 녹음입니다")
+        self._json(200, meta)
+
+    def _rec_audio(self, rid):
+        store = self.server.store
+        meta = store.get(rid)
+        path = store.audio_path(rid) if meta else None
+        if path is None:
+            return self._err(404, "없는 녹음입니다")
+        try:
+            fh = open(path, "rb")
+        except OSError:
+            return self._err(404, "오디오 파일이 없습니다")
+        with fh:
+            size = os.fstat(fh.fileno()).st_size
+            self.send_response(200)
+            self.send_header("Content-Type", meta.get("mime") or "application/octet-stream")
+            self.send_header("Content-Length", str(size))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if self.command != "HEAD":
+                shutil.copyfileobj(fh, self.wfile)
+
+    def _rec_retry(self, rid):
+        store = self.server.store
+        if store.get(rid) is None:
+            return self._err(404, "없는 녹음입니다")
+        tr = self.server.transcriber
+        if not tr.resubmit(rid):
+            return self._err(409, "받아쓰는 중입니다")
+        self._json(200, store.get(rid))
+
+    def _ask(self):
+        data = self._read_body(JSON_BODY_MAX)
+        if data is None:
+            return
+        try:
+            body = json.loads(data.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            body = None
+        if not isinstance(body, dict):
+            return self._err(400, "본문은 JSON 객체여야 합니다")
+        prompt = body.get("prompt", "")
+        if prompt is None:
+            prompt = ""
+        if not isinstance(prompt, str):
+            return self._err(400, "prompt 는 문자열이어야 합니다")
+        try:
+            meta = self.server.asker.submit(body.get("kind"), prompt, body.get("ids"))
+        except ValueError as exc:
+            return self._err(400, str(exc))
+        self._json(202, meta)
+
+    def _answers(self):
+        self._json(200, {"items": self.server.store.list_answers()})
+
+    def _answer_one(self, aid):
+        ans = self.server.store.get_answer(aid)
+        if ans is None:
+            return self._err(404, "없는 답입니다")
+        self._json(200, ans)
+
+    def _rec_delete(self, rid):
+        try:
+            removed = self.server.store.delete(rid)
+        except ValueError:
+            removed = False
+        if not removed:
+            return self._err(404, "없는 녹음입니다")
+        self._json(200, {"ok": True})
+
+
+def make_server(host, port, data_dir, token=None, env=None, stt_fn=None, llm_run=None,
+                max_uploads=2):
+    """검사가 임시 포트(0)·임시 폴더·가짜 함수로 띄울 수 있는 서버. 일꾼은 start() 해 둔다.
+
+    max_uploads: 동시에 받는 업로드 수(넘으면 503). server.disk_free 는 저장소 디스크 여유
+    바이트를 돌려주는 함수라 검사에서 바꿔 끼울 수 있다."""
+
+    class _Server(VoxServer):
+        address_family = socket.AF_INET6 if ":" in host else socket.AF_INET
+
+    server = _Server((host, port), Handler)
+    try:
+        server.token = token or None
+        server.env = env
+        server.store = Store(Path(data_dir))
+        server.upload_slots = threading.BoundedSemaphore(max_uploads)
+        server.disk_free = lambda: shutil.disk_usage(server.store.root).free
+        server.transcriber = stt_mod.Transcriber(
+            server.store, env, transcribe_fn=stt_fn or stt_mod.transcribe)
+        server.asker = ask_mod.Asker(server.store, env, run=llm_run or ask_mod.run_llm)
+        server.transcriber.start()
+        server.asker.start()
+    except BaseException:
+        server.server_close()
+        raise
+    return server
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="VoxLog 서버")
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=8790)
+    ap.add_argument("--data", default=os.environ.get("VOXLOG_DATA") or str(HERE / "data"))
+    ap.add_argument("--token", default=os.environ.get("VOXLOG_TOKEN") or None)
+    ap.add_argument("--tls-cert")
+    ap.add_argument("--tls-key")
+    args = ap.parse_args(argv)
+
+    if not _is_loopback(args.host) and not args.token:
+        print("루프백이 아닌 host(%s)에는 토큰이 필요합니다: --token 또는 VOXLOG_TOKEN" % args.host,
+              file=sys.stderr)
+        return 2
+    if bool(args.tls_cert) != bool(args.tls_key):
+        print("--tls-cert 와 --tls-key 는 함께 줘야 합니다", file=sys.stderr)
+        return 2
+
+    ctx = None
+    if args.tls_cert:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        try:
+            ctx.load_cert_chain(args.tls_cert, args.tls_key)
+        except (OSError, ssl.SSLError) as exc:
+            print("TLS 인증서를 읽을 수 없습니다: %s" % exc, file=sys.stderr)
+            return 2
+
+    server = make_server(args.host, args.port, args.data, token=args.token)
+    if ctx is not None:
+        server.socket = ctx.wrap_socket(server.socket, server_side=True)
+
+    def _term(_sig, _frm):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _term)
+    scheme = "https" if ctx else "http"
+    print("VoxLog %s://%s:%d  (인증 %s, 데이터 %s)" % (
+        scheme, args.host, server.server_address[1], "켜짐" if args.token else "꺼짐", args.data),
+        flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

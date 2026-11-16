@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1b6ef3">
+<title>VoxLog</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <h1>VoxLog</h1>
+    <span id="queue-count" class="queue-count" hidden></span>
+    <span id="conn" class="conn" data-state="unknown">연결 확인 전</span>
+    <button id="settings-btn" class="icon-btn" type="button" aria-expanded="false" aria-controls="settings">설정</button>
+  </header>
+
+  <section id="settings" class="settings" hidden aria-label="설정">
+    <h2>설정</h2>
+    <label class="field">토큰
+      <input id="token" type="password" autocomplete="off">
+    </label>
+    <label class="check">
+      <input id="auto-record" type="checkbox">
+      <span>앱을 열면 바로 녹음 (열 때마다 시작/멈춤)</span>
+    </label>
+    <label class="check">
+      <input id="save-location" type="checkbox" checked>
+      <span>위치 함께 저장 (녹음 시작 때의 위치를 음성과 같이 서버에 보냄)</span>
+    </label>
+    <div class="row">
+      <button id="health-check" type="button">연결 확인</button>
+      <span id="health-out" class="muted" role="status"></span>
+    </div>
+    <details class="help">
+      <summary>측면 버튼으로 녹음하기</summary>
+      <ul>
+        <li>웹 앱은 전원 버튼 누름을 직접 받을 수 없어서, 앱이 <b>열릴 때</b> 녹음을 켜고 끕니다. 위에서 '앱을 열면 바로 녹음'을 켜 두세요.</li>
+        <li><b>삼성 갤럭시:</b> 설정 → 유용한 기능 → 측면 버튼 → 두 번 누르기 → 앱 열기 → VoxLog. 두 번 누르면 시작, 다시 두 번 누르면 멈춤.</li>
+        <li>다른 안드로이드: 아이콘을 길게 눌러 '녹음 시작/멈춤' 바로가기를 홈 화면에 두세요.</li>
+        <li>녹음 중에는 화면 켜짐을 유지합니다(꺼지면 크롬이 녹음을 멈출 수 있음).</li>
+      </ul>
+    </details>
+  </section>
+
+  <nav class="tabs" role="tablist" aria-label="화면">
+    <button class="tab" role="tab" type="button" data-tab="rec" id="tabbtn-rec" aria-selected="true" aria-controls="tab-rec">녹음</button>
+    <button class="tab" role="tab" type="button" data-tab="list" id="tabbtn-list" aria-selected="false" aria-controls="tab-list">기록</button>
+    <button class="tab" role="tab" type="button" data-tab="ask" id="tabbtn-ask" aria-selected="false" aria-controls="tab-ask">묻기</button>
+  </nav>
+
+  <main>
+    <!-- 녹음 -->
+    <section id="tab-rec" class="panel" role="tabpanel" aria-labelledby="tabbtn-rec">
+      <p id="rec-unsupported" class="notice" hidden>녹음은 VoxLog 자체 주소에서 - 여기서는 기록·묻기만</p>
+      <div class="rec-wrap">
+        <button id="rec" type="button" aria-pressed="false" aria-label="녹음 시작/멈춤">
+          <span id="rec-label">녹음</span>
+        </button>
+        <div id="rec-time" class="rec-time" aria-live="off">00:00</div>
+        <p id="rec-result" class="muted" role="status">아직 녹음이 없습니다.</p>
+      </div>
+      <section id="failed-box" class="failed-box" hidden aria-label="올리지 못한 녹음">
+        <h2>올리지 못한 녹음</h2>
+        <ul id="failed-list" class="list"></ul>
+      </section>
+    </section>
+
+    <!-- 기록 -->
+    <section id="tab-list" class="panel" role="tabpanel" aria-labelledby="tabbtn-list" hidden>
+      <div id="stats" class="stats" aria-label="현황">
+        <div><b id="stat-count">0</b><span>총 건수</span></div>
+        <div><b id="stat-chars">0</b><span>글자 수</span></div>
+        <div><b id="stat-today">0</b><span>오늘</span></div>
+      </div>
+      <div class="filters">
+        <input id="search" type="search" placeholder="글에서 찾기" aria-label="검색" autocomplete="off">
+        <div class="row">
+          <label class="field half">부터 <input id="date-from" type="date"></label>
+          <label class="field half">까지 <input id="date-to" type="date"></label>
+        </div>
+        <select id="status-filter" aria-label="상태 거르기">
+          <option value="">모든 상태</option>
+          <option value="pending">대기</option>
+          <option value="transcribing">받아쓰는 중</option>
+          <option value="done">완료</option>
+          <option value="failed">실패</option>
+          <option value="no-stt">음성인식 없음</option>
+        </select>
+      </div>
+      <div class="row between">
+        <span id="sel-count" class="muted">고른 것 0건</span>
+        <button id="sel-clear" type="button" class="small">선택 해제</button>
+      </div>
+      <ul id="list" class="list"></ul>
+      <p id="list-empty" class="muted" hidden>녹취가 없습니다.</p>
+
+      <section id="detail" class="detail" hidden aria-label="녹취 상세">
+        <div class="row between">
+          <h2 id="detail-title">녹취</h2>
+          <button id="detail-close" type="button" class="small">닫기</button>
+        </div>
+        <div id="detail-meta" class="muted"></div>
+        <audio id="detail-audio" controls preload="none"></audio>
+        <div id="detail-loc" class="muted" hidden></div>
+        <p id="audio-note" class="notice" hidden>음성은 VoxLog 자체 주소에서 들으십시오.</p>
+        <pre id="transcript" class="transcript"></pre>
+        <div class="row">
+          <button id="detail-retry" type="button">다시 받아쓰기</button>
+          <button id="detail-delete" type="button" class="danger">지우기</button>
+        </div>
+      </section>
+    </section>
+
+    <!-- 묻기 -->
+    <section id="tab-ask" class="panel" role="tabpanel" aria-labelledby="tabbtn-ask" hidden>
+      <label class="field">무엇을
+        <select id="ask-kind">
+          <option value="summary">요약</option>
+          <option value="keywords">핵심어</option>
+          <option value="todo">할 일</option>
+          <option value="custom">직접 묻기</option>
+        </select>
+      </label>
+      <label class="field">범위
+        <select id="ask-scope">
+          <option value="selected">고른 것</option>
+          <option value="today">오늘</option>
+          <option value="week">최근 7일</option>
+          <option value="search">지금 검색 결과</option>
+        </select>
+      </label>
+      <p id="ask-selected-count" class="muted">고른 녹취 0건</p>
+      <label class="field">질문 <small id="ask-prompt-hint">(직접 묻기일 때 필수)</small>
+        <textarea id="ask-prompt" rows="3" placeholder="예: 이번 주 회의에서 정한 일정만 알려 줘"></textarea>
+      </label>
+      <button id="ask-go" type="button" class="primary">묻기</button>
+      <p id="answer-status" class="muted" role="status"></p>
+      <div id="answer" class="answer" aria-live="polite"></div>
+      <h2>지난 답</h2>
+      <ul id="answers" class="list"></ul>
+      <p id="answers-empty" class="muted" hidden>아직 받은 답이 없습니다.</p>
+    </section>
+  </main>
+</div>
+<div id="toast" class="toast" aria-live="polite" role="status"></div>
+
+<script src="queue.js"></script>
+<script src="api.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
