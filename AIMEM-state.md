@@ -1,16 +1,16 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-16T15:42:42 / REV 186
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-17T08:54:09 / REV 187
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | `a41f0c` | claude | opus | R34 적대적 검수(마지막): VoxLog N13~N16 | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
-| S2 | `d27e93` | codex | kisti/kistillm | R30 대기 (일이 둘뿐 - 막힌 노드 받기) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
-| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R34 빠른 구현: VoxLog stt.py N13·N15 (무료) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
-| S4 | `6cd650` | claude | sonnet | R34 빠른 구현: VoxLog store.py N14 | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
-| S5 | `61dfcc` | claude | sonnet | R34 빠른 구현: VoxLog 화면 N16 → serve.py N13·N14 |  |
+| S1 | `a41f0c` | claude | opus | R35 적대적 검수(마지막): VoxLog R34-N4·N6 | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S2 | `d27e93` | codex | kisti/kistillm | R35 대기 (막힌 노드 받기) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
+| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R35 빠른 구현: VoxLog INTERFACE.md (무료) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
+| S4 | `6cd650` | claude | sonnet | R35 빠른 구현: VoxLog serve.py 업로드 마감·OSError | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
+| S5 | `61dfcc` | claude | sonnet | R35 빠른 구현: VoxLog 실제 서버 503 브라우저 검사 |  |
 
 ## 3. 작업 보드
 
@@ -281,12 +281,16 @@
 | T-358 | Q-261116-r34q | R34 적대적 검수 | S1 | DONE |  |
 | T-359 | Q-261116-r34q | 검수 후속 R34-N1·N2: retry 판정·전사 실패 처리 | S5 | DONE |  |
 | T-360 | Q-261116-r34q | 검수 후속 R34-N3·N5·N7: 검사 21번·Retry-After·문서 | S4 | DONE |  |
+| T-361 | Q-261117-r35q | [VoxLog] R34-N6 업로드 전체 마감(408)·저장 OSError 500/507 | S4 | DONE |  |
+| T-362 | Q-261117-r35q | [VoxLog] R34-N4 실제 서버 503 브라우저 검사(22번) | S5 | DONE |  |
+| T-363 | Q-261117-r35q | [VoxLog] INTERFACE.md 업로드 408·500/507·연결 오류 | S3 | DONE |  |
+| T-364 | Q-261117-r35q | [VoxLog] R35 적대적 검수 | S1 | DONE |  |
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
-| 1 | [VoxLog] R34-N4·N6 (하, rounds/R34/REVIEW-r34.md 3절): 503/507 을 본문을 읽기 전에 보내고 연결을 닫아 큰 녹음 쪽엔 연결 오류로 보임 - 실제 서버로 503 을 받는 브라우저 검사 하나(R34-N4); 업로드 자리 2개를 느린 연결이 오래 쥘 수 있음 - 업로드 전체 마감(length/최소 속도+여유)을 넘으면 끊기(R34-N6); 덧붙여 메타 쓰기·os.replace 의 OSError 는 응답 없이 끊김 → 500/507 로 답하기 |  |  |
+| 1 | [VoxLog] R35-N1·N2·N3·N4 (하, rounds/R35/REVIEW-r35.md 3절): 업로드 마감이 선언 길이 기준이라 50MB 선언·1바이트씩이면 자리를 54분 쥠 - 실제 진척으로도 끊기(R35-N1); INTERFACE 184행 408 설명이 코드와 다름(408 은 재시도 예약 없음·대개 연결 오류로 보임) + 408 검사(R35-N2); store.incoming_path() 가 try 밖이라 mkdir OSError 는 응답 없이 끊김(R35-N3); 최소 속도 16KB/s 는 느린 폰 회선에서 큰 녹음이 영영 못 올라감 - 4KB/s 쯤으로 낮출지 태석님 판단(R35-N4) |  |  |
 
 ## 6. 파일 소유권
 
@@ -310,10 +314,10 @@
 | `CLAUDE.md` | 관리자 | 부트스트랩. 자동 주입되는 유일한 파일 |
 | `README.md` | 관리자 | 저장소 소개 |
 | `projects/**` | 관리자 | 프로젝트 결과물 projects/<이름>/ - 여러 라운드에 걸쳐 쌓임 (REV 142). 관리자가 하위 경로를 슬롯에 배정 |
-| `projects/VoxLog/docs/INTERFACE.md` | S4 | R34 |
-| `projects/VoxLog/serve.py` | S5 | R34 |
-| `projects/VoxLog/tests/browser_voxlog.py` | S4 | R34 |
-| `projects/VoxLog/tests/test_serve.py` | S5 | R34 |
+| `projects/VoxLog/docs/INTERFACE.md` | S3 | R35 |
+| `projects/VoxLog/serve.py` | S4 | R35 |
+| `projects/VoxLog/tests/browser_voxlog.py` | S5 | R35 |
+| `projects/VoxLog/tests/test_serve.py` | S4 | R35 |
 | `projects/VoxLog/tests/test_store.py` | S4 | R34 |
 | `projects/VoxLog/tests/test_stt.py` | S5 | R34 |
 | `projects/VoxLog/voxlog/__init__.py` | S3 | R33 |
@@ -436,6 +440,7 @@
 | `rounds/R32/REVIEW-r32.md` | S1 | R32 |
 | `rounds/R33/REVIEW-r33.md` | S1 | R33 |
 | `rounds/R34/REVIEW-r34.md` | S1 | R34 |
+| `rounds/R35/REVIEW-r35.md` | S1 | R35 |
 | `skills/**` | 관리자 | **현재 비어 있음** (REV 101 에서 `acp-slot-lifecycle` 제거). 되살아나면 이 행이 그대로 적용된다 |
 | `tests/browser_monitor_app.py` | S3 | R10 T-131 |
 | `tests/browser_monitor_app_server.py` | S5 | R32 |
@@ -527,3 +532,4 @@
 | Q-261115-4aff | 모니터 '앱 열기' 에서 앱의 serve.py 를 띄워 서버 쪽 기능이 그대로 되게 (일반 장치, 큐 R31-P2 를 대신함) | 태석(클로드 코드) | DONE | 2026-11-15T01:47:14 |
 | Q-261116-fa85 | 녹취 기록 및 조회 크롬 앱 제작 | 태석 | DONE | 2026-11-16T13:58:37 |
 | Q-261116-r34q | [VoxLog] 대기 큐 1건 처리: R33-N13·N14·N15·N16 (하) | 관리자 M-R34 (대기 큐) | DONE | 2026-11-16T15:13:18 |
+| Q-261117-r35q | [VoxLog] 대기 큐 1건 처리: R34-N4·N6 (하) + OSError 응답 | 관리자 M-R35 (대기 큐) | DONE | 2026-11-17T08:28:01 |

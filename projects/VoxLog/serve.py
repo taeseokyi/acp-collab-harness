@@ -8,6 +8,7 @@
 API 표는 docs/INTERFACE.md 의 'serve.py' 절.
 """
 import argparse
+import errno
 import hmac
 import ipaddress
 import json
@@ -21,6 +22,7 @@ import socket
 import ssl
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -39,6 +41,8 @@ JSON_BODY_MAX = 1024 * 1024
 DRAIN_MAX = 64 * 1024  # 413 뒤 연결을 깨끗이 닫으려고 버리는(저장 안 함) 작은 본문의 상한
 CHUNK = 64 * 1024  # 업로드를 디스크로 흘려 쓰는 단위
 DISK_MARGIN = 100 * 1024 * 1024  # 업로드 크기에 더해 남겨야 하는 디스크 여유
+UPLOAD_GRACE_S = 30  # 업로드 전체 마감 = 이 여유 + 크기 / UPLOAD_MIN_RATE
+UPLOAD_MIN_RATE = 16 * 1024  # 바이트/초: 이보다 느린 업로드는 자리를 오래 잡지 못하게 408
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 EXTRA_MIME = {".webmanifest": "application/manifest+json", ".js": "text/javascript"}
 TEXTUAL = ("text/", "application/json", "application/manifest+json")
@@ -297,6 +301,20 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             slots.release()
 
+    @staticmethod
+    def _unlink(path):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+    def _upload_err(self, status, msg, close=True):
+        """업로드 경로의 오류 응답. 끊긴 쪽에 쓰다 난 오류는 삼키고 연결을 닫는다."""
+        try:
+            self._err(status, msg, close=close)
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
+
     def _upload_locked(self, length):
         store = self.server.store
         try:
@@ -304,7 +322,7 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             free = None
         if free is not None and free < length + DISK_MARGIN:
-            return self._err(507, "서버 디스크 여유가 부족합니다", close=True)
+            return self._upload_err(507, "서버 디스크 여유가 부족합니다")
         mime = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
         recorded_at = (self.headers.get("X-Recorded-At") or "").strip()[:64] or None
         try:
@@ -317,37 +335,59 @@ class Handler(BaseHTTPRequestHandler):
         location = _parse_location(self.headers.get("X-Location"))
         self._body_read = True
         path = store.incoming_path()
+        got = 0
+        reason = None  # 'slow'(마감 넘김) | 'cut'(연결 끊김)
+        deadline = time.monotonic() + self.server.upload_grace + length / self.server.upload_min_rate
         try:
-            got = 0
             try:
                 with open(path, "wb") as f:
                     while got < length:
-                        chunk = self.rfile.read(min(CHUNK, length - got))
+                        left = deadline - time.monotonic()
+                        if left <= 0:
+                            reason = "slow"
+                            break
+                        limited = left < self.timeout
+                        self.connection.settimeout(min(self.timeout, left))
+                        try:
+                            chunk = self.rfile.read1(min(CHUNK, length - got))
+                        except socket.timeout:
+                            reason = "slow" if limited else "cut"
+                            break
+                        except ConnectionError:
+                            reason = "cut"
+                            break
                         if not chunk:
+                            reason = "cut"
                             break
                         f.write(chunk)
                         got += len(chunk)
-                    f.flush()
-                    os.fsync(f.fileno())
-            except (socket.timeout, ConnectionError):
-                pass  # 받는 도중 끊김 -> got < length 로 아래에서 400
-            if got != length:
-                try:  # 응답 전에 지운다(응답을 받은 쪽이 바로 폴더를 볼 수 있음)
-                    os.unlink(path)
-                except OSError:
-                    pass
-                return self._err(400, "본문이 중간에 끊겼습니다", close=True)
-            try:
-                meta = store.add_recording_file(
-                    path, mime, recorded_at=recorded_at, duration_ms=duration,
-                    client_id=client_id, location=location)
+                    if reason is None:
+                        f.flush()
+                        os.fsync(f.fileno())
+                if reason is None:
+                    meta = store.add_recording_file(
+                        path, mime, recorded_at=recorded_at, duration_ms=duration,
+                        client_id=client_id, location=location)
             except ValueError as exc:
-                return self._err(400, str(exc))
-        finally:
-            try:  # 저장소가 옮겼거나 지웠으면 이미 없음
-                os.unlink(path)
+                self._unlink(path)
+                return self._upload_err(400, str(exc), close=False)
+            except OSError as exc:
+                self._unlink(path)
+                if exc.errno in (errno.ENOSPC, errno.EDQUOT):
+                    return self._upload_err(507, "서버 디스크 여유가 부족합니다")
+                return self._upload_err(500, "서버가 녹음을 저장하지 못했습니다")
+            if reason == "slow":
+                self._unlink(path)
+                return self._upload_err(408, "업로드가 너무 느립니다")
+            if reason == "cut":
+                self._unlink(path)  # 응답 전에 지운다(응답을 받은 쪽이 바로 폴더를 볼 수 있음)
+                return self._upload_err(400, "본문이 중간에 끊겼습니다")
+            try:
+                self.connection.settimeout(self.timeout)
             except OSError:
                 pass
+        finally:
+            self._unlink(path)  # 저장소가 옮겼거나 지웠으면 이미 없음
         if meta.get("duplicate"):
             return self._json(200, meta)
         self.server.transcriber.submit(meta["id"])
@@ -452,11 +492,12 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def make_server(host, port, data_dir, token=None, env=None, stt_fn=None, llm_run=None,
-                max_uploads=2):
+                max_uploads=2, upload_grace=UPLOAD_GRACE_S, upload_min_rate=UPLOAD_MIN_RATE):
     """검사가 임시 포트(0)·임시 폴더·가짜 함수로 띄울 수 있는 서버. 일꾼은 start() 해 둔다.
 
     max_uploads: 동시에 받는 업로드 수(넘으면 503). server.disk_free 는 저장소 디스크 여유
-    바이트를 돌려주는 함수라 검사에서 바꿔 끼울 수 있다."""
+    바이트를 돌려주는 함수라 검사에서 바꿔 끼울 수 있다. upload_grace·upload_min_rate: 업로드 전체
+    마감(초) = grace + 크기 / min_rate(넘기면 408), server.upload_grace·upload_min_rate 로 둔다."""
 
     class _Server(VoxServer):
         address_family = socket.AF_INET6 if ":" in host else socket.AF_INET
@@ -467,6 +508,8 @@ def make_server(host, port, data_dir, token=None, env=None, stt_fn=None, llm_run
         server.env = env
         server.store = Store(Path(data_dir))
         server.upload_slots = threading.BoundedSemaphore(max_uploads)
+        server.upload_grace = upload_grace
+        server.upload_min_rate = upload_min_rate
         server.disk_free = lambda: shutil.disk_usage(server.store.root).free
         server.transcriber = stt_mod.Transcriber(
             server.store, env, transcribe_fn=stt_fn or stt_mod.transcribe)

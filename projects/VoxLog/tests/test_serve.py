@@ -1,4 +1,5 @@
 """serve.py 검사 - 임시 폴더·임시 포트·가짜 함수. 표준 라이브러리만."""
+import errno
 import http.client
 import json
 import os
@@ -453,6 +454,57 @@ class TestRetryUpload(Base):
             self.assertLess(time.time() - t0, 2)
         finally:
             conn.close()
+
+    def test_slow_upload_408_frees_slot(self):
+        self.server.upload_grace = 1
+        self.server.upload_min_rate = 10 ** 9  # 마감 ~1초
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.putrequest("POST", "/api/recordings")
+        conn.putheader("Content-Type", "audio/webm")
+        conn.putheader("Content-Length", "5000000")
+        conn.endheaders()
+        status = None
+        t0 = time.time()
+        try:
+            for _ in range(40):  # 마감(1초)보다 느리게 조금씩
+                conn.send(b"x" * 100)
+                time.sleep(0.1)
+        except OSError:
+            pass  # 서버가 먼저 닫음
+        try:
+            resp = conn.getresponse()
+            status = resp.status
+            self.assertIn("너무 느립니다", json.loads(resp.read().decode("utf-8"))["error"])
+        except (OSError, http.client.HTTPException):
+            pass
+        finally:
+            conn.close()
+        self.assertLess(time.time() - t0, 6)
+        self.assertIn(status, (408, None))
+        self.assertEqual(self.incoming(), [])
+        self.server.upload_grace = 30
+        self.server.upload_min_rate = 16 * 1024
+        self.assertEqual(self.upload()[0], 201)
+        self.assertEqual(self.upload()[0], 201)
+        self.assertEqual(self.upload()[0], 201)  # 자리가 새지 않음
+        self.assertEqual(self.incoming(), [])
+
+    def test_normal_speed_upload_201(self):
+        self.server.upload_grace = 1
+        self.assertEqual(self.upload(data=b"RIFF" + b"a" * 200000)[0], 201)
+        self.assertEqual(self.incoming(), [])
+
+    def test_store_oserror_507_500(self):
+        store = self.server.store
+        for err, want in ((errno.ENOSPC, 507), (errno.EIO, 500)):
+            with mock.patch.object(store, "add_recording_file", side_effect=OSError(err, "boom")):
+                status, hdr, raw = self.req("POST", "/api/recordings", b"RIFFx",
+                                            {"Content-Type": "audio/webm"})
+            self.assertEqual(status, want)
+            self.assertEqual(hdr.get("Connection"), "close")
+            self.assertEqual(self.incoming(), [])
+            self.assertEqual(self.upload()[0], 201)
+        self.assertEqual(self.incoming(), [])
 
 
 class TestServeToken(Base):

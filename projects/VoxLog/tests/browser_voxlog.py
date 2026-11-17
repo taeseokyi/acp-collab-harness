@@ -439,7 +439,7 @@ def run_all(browser, base, data, tmp, procs):
         pg.goto(b + "/")
         pg.wait_for_selector("#rec")
         rec_cycle(pg)
-        need(wait_for(lambda: queue_n(pg) == 0, 15), "올라가지 않음")
+        need(wait_for(lambda: len(server_items(b)) == 1, 15, pg=pg), "올라가지 않음")   # 대기 0 은 넣기 전에도 참
         today = datetime.now(ZoneInfo("Pacific/Honolulu")).strftime("%Y-%m-%d")
         it = server_items(b)[0]
         need(it["recorded_at"].endswith("-10:00"), "recorded_at 이 -10:00 으로 끝나지 않음: " + it["recorded_at"])
@@ -644,6 +644,114 @@ def run_all(browser, base, data, tmp, procs):
         need(wait_for(lambda: queue_n(pg) == 0, 10), "대기열이 비지 않음")
         c.close()
     check("21 업로드 503 → 대기열에 남고 다음 시도에 올라감", t21)
+
+    def t22():
+        # 실제 서버가 내는 503(업로드 자리 2개 모두 사용 중) - route.fulfill 가짜가 아님(R34-N4)
+        token = "t22"
+        pr, b = start_server(tmp / "d22", token=token)
+        procs.append(pr)
+        port = int(b.rsplit(":", 1)[1])
+        socks = []
+        c = None
+        try:
+            for _ in range(2):
+                s = socket.create_connection(("127.0.0.1", port), timeout=5)
+                head = ("POST /api/recordings HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
+                        "Content-Type: audio/webm\r\nContent-Length: 5000000\r\n"
+                        "Authorization: Bearer %s\r\nX-Client-Id: hold-%d\r\n\r\n" % (port, token, len(socks)))
+                s.sendall(head.encode("ascii") + b"\0" * 1024)
+                socks.append(s)
+            time.sleep(1.0)  # 서버가 두 자리를 잡을 시간
+            c = new_ctx(service_workers="block")
+            pg = c.new_page()
+            seen = {}
+
+            def on_resp(r):
+                if r.request.method == "POST" and r.url.endswith("/api/recordings"):
+                    seen["status"] = r.status
+                    seen["retry"] = r.headers.get("retry-after")
+
+            def on_fail(r):
+                if r.method == "POST" and r.url.endswith("/api/recordings"):
+                    seen["failed"] = r.failure
+            pg.on("response", on_resp)
+            pg.on("requestfailed", on_fail)
+            pg.goto(b + "/")
+            pg.wait_for_selector("#rec")
+            pg.evaluate("t => window.VoxQueue.setConfig({token: t})", token)
+            rec_cycle(pg)
+            need(wait_for(lambda: pg.evaluate(
+                "window.VoxQueue.pending().then(a => a.length === 1 && !!a[0].lastError)"), 15, pg=pg),
+                "대기열 줄에 lastError 가 생기지 않음")
+            row = pg.evaluate("window.VoxQueue.pending().then(a => a[0])")
+            if "status" in seen:
+                got = "503 문구 수신(status %s, Retry-After %s)" % (seen["status"], seen.get("retry"))
+            else:
+                got = "연결 실패(%s)" % seen.get("failed")
+            print("    22 페이지가 받은 것: %s · lastError=%r" % (got, row.get("lastError")), flush=True)
+            need(row["state"] == "waiting", "대기열 줄 state=%s (waiting 이어야 함)" % row["state"])
+            need(len(api_get(b, "/api/recordings?limit=50", token)["items"]) == 0, "자리가 없는데 서버 기록이 생김")
+            for s in socks:
+                s.close()
+            socks = []
+            # Retry-After(5초) 뒤 스스로 다시 올림. 안 되면 flush 로 재촉
+            def uploaded():
+                return len(api_get(b, "/api/recordings?limit=50", token)["items"]) == 1
+            if not wait_for(uploaded, 10, pg=pg):
+                pg.evaluate("window.VoxQueue.flush().catch(() => null)")
+                need(wait_for(uploaded, 15, pg=pg), "소켓을 닫은 뒤에도 서버 기록이 1건이 되지 않음")
+            need(wait_for(lambda: queue_n(pg) == 0, 10, pg=pg), "올라간 뒤 대기열이 비지 않음")
+            need(len(api_get(b, "/api/recordings?limit=50", token)["items"]) == 1, "서버 기록이 1건이 아님")
+        finally:
+            for s in socks:
+                try:
+                    s.close()
+                except OSError:
+                    pass
+            if c:
+                c.close()
+            stop_server(pr)
+    check("22 실제 서버 503(업로드 자리 가득) → 대기열 waiting·소켓 닫으면 올라감", t22)
+
+    def t23():
+        # 서버를 아예 내린 뒤(폰의 '연결 없음') 앱을 다시 연다 - 껍데기는 서비스 워커 캐시에서 나와야 함
+        pr, b = start_server(tmp / "d23")
+        procs.append(pr)
+        c = new_ctx()
+        try:
+            pg = c.new_page()
+            errs = []
+            pg.on("pageerror", lambda e: errs.append(str(e)))
+            pg.goto(b + "/")
+            pg.wait_for_selector("#rec")
+            need(wait_for(lambda: pg.evaluate("!!navigator.serviceWorker.controller"), 10, pg=pg),
+                 "서비스 워커가 페이지를 맡지 않음")
+            shell = pg.evaluate("caches.keys().then(ks => caches.open(ks.filter(k => k.indexOf('voxlog-shell-') === 0)[0]))"
+                                ".then(c => c.keys()).then(rs => rs.map(r => new URL(r.url).pathname))")
+            for f in ("/index.html", "/style.css", "/app.js", "/api.js", "/md.js", "/queue.js",
+                      "/manifest.webmanifest", "/icons/icon-192.png"):
+                need(f in shell, "캐시에 %s 가 없음: %s" % (f, shell))
+            stop_server(pr)
+            pg.goto(b + "/")                       # 서버 없음 - 캐시로만 열려야 함
+            pg.wait_for_selector("#rec", timeout=10000)
+            need(pg.is_visible("#rec"), "서버가 없을 때 녹음 단추가 보이지 않음")
+            need(pg.evaluate("typeof window.VoxQueue === 'object' && typeof window.VoxMd === 'object'"),
+                 "서버가 없을 때 스크립트가 다 실리지 않음")
+            need(pg.evaluate("getComputedStyle(document.body).margin") == "0px" or
+                 pg.evaluate("document.styleSheets.length") >= 1, "서버가 없을 때 스타일이 실리지 않음")
+            need(pg.evaluate("!!navigator.serviceWorker.controller"), "다시 연 페이지를 서비스 워커가 맡지 않음")
+            pg.goto(b + "/?action=toggle")         # 바로가기 주소로도 열림(검색어 무시) - 녹음이 저절로 켜짐
+            pg.wait_for_selector("#rec", timeout=10000)
+            need(wait_for(lambda: pg.get_attribute("#rec", "aria-pressed") == "true", 8, pg=pg),
+                 "서버 없이 ?action=toggle 로 열었을 때 녹음이 켜지지 않음")
+            time.sleep(2)
+            pg.click("#rec")                       # 연결 없이 녹음을 멈춤 → 대기열에 남음
+            need(wait_for(lambda: queue_n(pg) >= 1, 10, pg=pg), "서버 없이 녹음한 것이 대기열에 없음")
+            need(not errs, "페이지 오류: %s" % errs[:2])
+        finally:
+            c.close()
+            stop_server(pr)
+    check("23 PWA 오프라인: 서버를 내려도 앱이 열리고 녹음이 대기열에 남음", t23)
 
 
 if __name__ == "__main__":
