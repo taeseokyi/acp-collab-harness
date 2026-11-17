@@ -551,6 +551,16 @@ class TestRetryUpload(Base):
         self.assertEqual(self.incoming(), [])
         self.assertEqual(self.upload()[0], 201)
 
+    def test_stalled_upload_with_grace_left_is_408_not_400(self):
+        # 여유가 읽기 timeout 보다 길게 남은 채 회선이 멈춤: 연결은 살아 있으므로 408(다시 올림)이지 400(영구 실패)이 아니다
+        self.server.upload_grace = 30
+        with mock.patch.object(serve.Handler, "timeout", 0.5):
+            status, took = self._trickle(1024 * 1024, 1000, 0, 1)
+        self.assertEqual(status, 408)
+        self.assertLess(took, 4)
+        self.assertEqual(self.incoming(), [])
+        self.assertEqual(self.upload()[0], 201)
+
     def test_upload_above_min_rate_201(self):
         self.server.upload_grace = 1
         self.server.upload_min_rate = 1000

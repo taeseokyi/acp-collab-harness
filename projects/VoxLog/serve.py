@@ -351,12 +351,12 @@ class Handler(BaseHTTPRequestHandler):
                         if left <= 0:
                             reason = "slow"
                             break
-                        limited = left < self.timeout
                         self.connection.settimeout(min(self.timeout, left))
                         try:
                             chunk = self.rfile.read1(min(CHUNK, length - got))
                         except socket.timeout:
-                            reason = "slow" if limited else "cut"
+                            # 연결은 살아 있고 조용했을 뿐이다 - 영구 실패(400)가 아니라 다시 올릴 수 있는 408
+                            reason = "slow"
                             break
                         except ConnectionError:
                             reason = "cut"
