@@ -1,16 +1,16 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-17T08:54:09 / REV 187
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-17T11:38:45 / REV 188
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | `a41f0c` | claude | opus | R35 적대적 검수(마지막): VoxLog R34-N4·N6 | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
-| S2 | `d27e93` | codex | kisti/kistillm | R35 대기 (막힌 노드 받기) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
-| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R35 빠른 구현: VoxLog INTERFACE.md (무료) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
-| S4 | `6cd650` | claude | sonnet | R35 빠른 구현: VoxLog serve.py 업로드 마감·OSError | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
-| S5 | `61dfcc` | claude | sonnet | R35 빠른 구현: VoxLog 실제 서버 503 브라우저 검사 |  |
+| S1 | `a41f0c` | claude | opus | R36 적대적 검수(마지막) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S2 | `d27e93` | codex | kisti/kistillm | R36 대기 (막힌 노드 받기) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
+| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R36 빠른 구현: VoxLog INTERFACE.md (무료) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
+| S4 | `6cd650` | claude | sonnet | R36 빠른 구현: VoxLog serve.py 진척 마감·mkdir 오류 | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
+| S5 | `61dfcc` | claude | sonnet | R36 빠른 구현: VoxLog 408 재시도·브라우저 24번 |  |
 
 ## 3. 작업 보드
 
@@ -285,12 +285,16 @@
 | T-362 | Q-261117-r35q | [VoxLog] R34-N4 실제 서버 503 브라우저 검사(22번) | S5 | DONE |  |
 | T-363 | Q-261117-r35q | [VoxLog] INTERFACE.md 업로드 408·500/507·연결 오류 | S3 | DONE |  |
 | T-364 | Q-261117-r35q | [VoxLog] R35 적대적 검수 | S1 | DONE |  |
+| T-365 | Q-261117-r36q | [VoxLog] R35-N1 진척 기준 업로드 마감·R35-N3 incoming mkdir OSError | S4 | DONE | projects/VoxLog/serve.py,projects/VoxLog/tests/test_serve.py |
+| T-366 | Q-261117-r36q | [VoxLog] R35-N2 408 도 Retry-After 뒤 재시도 + 브라우저 검사 24번 | S5 | DONE | projects/VoxLog/web/queue.js,projects/VoxLog/web/sw.js,projects/VoxLog/tests/browser_voxlog.py |
+| T-367 | Q-261117-r36q | [VoxLog] INTERFACE.md 진척 마감·408 재시도·mkdir 오류 | S3 | DONE | projects/VoxLog/docs/INTERFACE.md |
+| T-368 | Q-261117-r36q | [VoxLog] R36 적대적 검수 | S1 | DONE | rounds/R36/REVIEW-r36.md |
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
-| 1 | [VoxLog] R35-N1·N2·N3·N4 (하, rounds/R35/REVIEW-r35.md 3절): 업로드 마감이 선언 길이 기준이라 50MB 선언·1바이트씩이면 자리를 54분 쥠 - 실제 진척으로도 끊기(R35-N1); INTERFACE 184행 408 설명이 코드와 다름(408 은 재시도 예약 없음·대개 연결 오류로 보임) + 408 검사(R35-N2); store.incoming_path() 가 try 밖이라 mkdir OSError 는 응답 없이 끊김(R35-N3); 최소 속도 16KB/s 는 느린 폰 회선에서 큰 녹음이 영영 못 올라감 - 4KB/s 쯤으로 낮출지 태석님 판단(R35-N4) |  |  |
+| 1 | [VoxLog] R36-N1·N2·N3 (하, rounds/R36/REVIEW-r36.md 2절): sw.js 의 408·5xx 재시도 조건을 지키는 검사 없음 - queue.js·sw.js 의 perm 줄과 재시도 조건 줄을 뽑아 같은지 비교하는 단위 검사(R36-N1); INTERFACE.md 155행 제목 '업로드 전체 마감'·164~165행 대기열 요약에 408 재시도가 빠짐(R36-N2); 60초 넘게 멈춘 업로드가 408 이 아니라 400(영구 실패)으로 답함 - socket.timeout 은 모두 slow(408)로(R36-N3, 전부터 있던 것) |  | R36 검수 |
 
 ## 6. 파일 소유권
 
@@ -314,10 +318,10 @@
 | `CLAUDE.md` | 관리자 | 부트스트랩. 자동 주입되는 유일한 파일 |
 | `README.md` | 관리자 | 저장소 소개 |
 | `projects/**` | 관리자 | 프로젝트 결과물 projects/<이름>/ - 여러 라운드에 걸쳐 쌓임 (REV 142). 관리자가 하위 경로를 슬롯에 배정 |
-| `projects/VoxLog/docs/INTERFACE.md` | S3 | R35 |
-| `projects/VoxLog/serve.py` | S4 | R35 |
-| `projects/VoxLog/tests/browser_voxlog.py` | S5 | R35 |
-| `projects/VoxLog/tests/test_serve.py` | S4 | R35 |
+| `projects/VoxLog/docs/INTERFACE.md` | S3 | R36 |
+| `projects/VoxLog/serve.py` | S4 | R36 |
+| `projects/VoxLog/tests/browser_voxlog.py` | S5 | R36 |
+| `projects/VoxLog/tests/test_serve.py` | S4 | R36 |
 | `projects/VoxLog/tests/test_store.py` | S4 | R34 |
 | `projects/VoxLog/tests/test_stt.py` | S5 | R34 |
 | `projects/VoxLog/voxlog/__init__.py` | S3 | R33 |
@@ -329,9 +333,9 @@
 | `projects/VoxLog/web/icons/**` | S5 | R33 |
 | `projects/VoxLog/web/index.html` | S4 | R33 |
 | `projects/VoxLog/web/manifest.webmanifest` | S5 | R33 |
-| `projects/VoxLog/web/queue.js` | S4 | R33 T-353 |
+| `projects/VoxLog/web/queue.js` | S5 | R36 |
 | `projects/VoxLog/web/style.css` | S4 | R33 |
-| `projects/VoxLog/web/sw.js` | S5 | R33 |
+| `projects/VoxLog/web/sw.js` | S5 | R36 |
 | `projects/웹워들/README.md` | S3 | R10 |
 | `projects/웹워들/app.json` | S3 | R10 |
 | `projects/웹워들/docs/**` | S1 | R12 T-152 미리보기 기록 저장 설계 문서 (새 경로) |
@@ -441,6 +445,7 @@
 | `rounds/R33/REVIEW-r33.md` | S1 | R33 |
 | `rounds/R34/REVIEW-r34.md` | S1 | R34 |
 | `rounds/R35/REVIEW-r35.md` | S1 | R35 |
+| `rounds/R36/REVIEW-r36.md` | S1 | R36 |
 | `skills/**` | 관리자 | **현재 비어 있음** (REV 101 에서 `acp-slot-lifecycle` 제거). 되살아나면 이 행이 그대로 적용된다 |
 | `tests/browser_monitor_app.py` | S3 | R10 T-131 |
 | `tests/browser_monitor_app_server.py` | S5 | R32 |
@@ -533,3 +538,4 @@
 | Q-261116-fa85 | 녹취 기록 및 조회 크롬 앱 제작 | 태석 | DONE | 2026-11-16T13:58:37 |
 | Q-261116-r34q | [VoxLog] 대기 큐 1건 처리: R33-N13·N14·N15·N16 (하) | 관리자 M-R34 (대기 큐) | DONE | 2026-11-16T15:13:18 |
 | Q-261117-r35q | [VoxLog] 대기 큐 1건 처리: R34-N4·N6 (하) + OSError 응답 | 관리자 M-R35 (대기 큐) | DONE | 2026-11-17T08:28:01 |
+| Q-261117-r36q | [VoxLog] 대기 큐 1건 처리: R35-N1·N2·N3 (하) | 관리자 M-R36 (대기 큐) | DONE | 2026-11-17T11:12:21 |

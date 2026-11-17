@@ -2,7 +2,7 @@
  * 업로드 규칙은 queue.js 와 같음(importScripts 없이 여기에 따로 둠 - 고치면 둘 다 고칠 것). */
 'use strict';
 
-var VERSION = 6;
+var VERSION = 7;
 var CACHE = 'voxlog-shell-v' + VERSION;
 var SHELL = [
   './', 'index.html', 'style.css', 'app.js', 'api.js', 'md.js', 'queue.js', 'manifest.webmanifest',
@@ -170,7 +170,7 @@ function doUpload() {
           return updateRow(db, row.clientId, function () { return { lastError: '인증 실패' }; });
         }
         return res.json().catch(function () { return {}; }).then(function (body) {
-          // 503(동시 업로드 자리 없음)·507(디스크 부족)은 영구 실패가 아님 - 대기열에 남겨 다시 올림
+          // 503(동시 업로드 자리 없음)·507(디스크 부족)·408(업로드 너무 느림)은 영구 실패가 아님 - 대기열에 남겨 다시 올림
           var perm = res.status === 400 || res.status === 413 || res.status === 415;
           var msg = (body && body.error) || (res.status === 413 ? '너무 큼(413)' : '서버 오류 ' + res.status);
           return updateRow(db, row.clientId, function (r) {
@@ -178,7 +178,7 @@ function doUpload() {
             if (perm) p.state = 'failed';
             return p;
           }).then(function () {
-            if (res.status >= 500) { retryError = new Error(msg); return; }
+            if (res.status >= 500 || res.status === 408) { retryError = new Error(msg); return; }
             return next();
           });
         });

@@ -753,6 +753,40 @@ def run_all(browser, base, data, tmp, procs):
             stop_server(pr)
     check("23 PWA 오프라인: 서버를 내려도 앱이 열리고 녹음이 대기열에 남음", t23)
 
+    def t24():
+        # 408(업로드 너무 느림)도 영구 실패가 아님 - waiting 으로 남고 Retry-After 뒤 저절로 다시 올라감(R35-N2)
+        b, _ = new_server("d24")
+        c = new_ctx(service_workers="block")
+        pg = c.new_page()
+        hits = {"n": 0}
+
+        def slow(route):
+            if route.request.method == "POST" and hits["n"] == 0:
+                hits["n"] += 1
+                route.fulfill(status=408, headers={"Retry-After": "1"}, content_type="application/json",
+                              body=json.dumps({"error": "업로드가 너무 느립니다"}))
+            else:
+                route.continue_()
+        pg.route("**/api/recordings", slow)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        before = len(server_items(b))
+        rec_cycle(pg)
+        need(wait_for(lambda: hits["n"] == 1, 15, pg=pg), "408 이 돌려지지 않음")
+        pg.wait_for_timeout(300)
+        need(queue_n(pg) == 1, "408 뒤 대기열 %d (기대 1)" % queue_n(pg))
+        need(pg.evaluate("window.VoxQueue.pending().then(a => a[0].state)") == "waiting", "408 이 영구 실패 상태로 감")
+        need(pg.evaluate("window.VoxQueue.pending().then(a => a[0].lastError)") == "업로드가 너무 느립니다",
+             "408 의 lastError 가 서버 문구가 아님")
+        need("서버가 받지 않았습니다" not in pg.inner_text("#failed-list"), "408 이 영구 실패 문구로 보임")
+        need(len(server_items(b)) == before, "408 인데 서버에 올라감")
+        # 다른 신호 없이 Retry-After(1초) 뒤 스스로 다시 올라가야 함
+        need(wait_for(lambda: len(server_items(b)) == before + 1, 15, pg=pg), "Retry-After 뒤 408 줄이 다시 올라가지 않음")
+        need(wait_for(lambda: queue_n(pg) == 0, 10, pg=pg), "대기열이 비지 않음")
+        need(len(server_items(b)) == before + 1, "서버 기록이 1건이 아님")
+        c.close()
+    check("24 업로드 408 → waiting 으로 남고 Retry-After 뒤 저절로 올라감", t24)
+
 
 if __name__ == "__main__":
     sys.exit(main())

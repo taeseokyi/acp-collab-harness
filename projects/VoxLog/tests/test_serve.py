@@ -506,6 +506,82 @@ class TestRetryUpload(Base):
             self.assertEqual(self.upload()[0], 201)
         self.assertEqual(self.incoming(), [])
 
+    def _trickle(self, declared, chunk, pause, count, limit=6):
+        """긴 길이를 선언하고 chunk 바이트씩 count 번 보낸 뒤 응답을 기다린다. (상태, 걸린 초)"""
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=limit)
+        conn.putrequest("POST", "/api/recordings")
+        conn.putheader("Content-Type", "audio/webm")
+        conn.putheader("Content-Length", str(declared))
+        conn.endheaders()
+        t0 = time.time()
+        status = None
+        try:
+            try:
+                for _ in range(count):
+                    conn.send(b"x" * chunk)
+                    time.sleep(pause)
+            except OSError:
+                pass  # 서버가 먼저 닫음
+            try:
+                resp = conn.getresponse()
+                status = resp.status
+                resp.read()
+            except (OSError, http.client.HTTPException):
+                pass
+        finally:
+            conn.close()
+        return status, time.time() - t0
+
+    def test_deadline_counts_received_bytes_not_declared(self):
+        self.server.upload_grace = 1  # min_rate 는 기본 16KB/s: 10MB 선언이면 옛 공식은 ~640초
+        status, took = self._trickle(10 * 1024 * 1024, 10, 0, 1)  # 10바이트 보내고 멈춤
+        self.assertEqual(status, 408)
+        self.assertLess(took, 3.5)
+        self.assertEqual(self.incoming(), [])
+        self.server.upload_grace = 30
+        for _ in range(3):
+            self.assertEqual(self.upload()[0], 201)  # 자리가 반납됨
+
+    def test_trickle_below_min_rate_408(self):
+        self.server.upload_grace = 1
+        self.server.upload_min_rate = 1000  # 초당 1000B 요구, 실제는 ~100B/s
+        status, took = self._trickle(1024 * 1024, 10, 0.1, 60)
+        self.assertEqual(status, 408)
+        self.assertLess(took, 4)
+        self.assertEqual(self.incoming(), [])
+        self.assertEqual(self.upload()[0], 201)
+
+    def test_upload_above_min_rate_201(self):
+        self.server.upload_grace = 1
+        self.server.upload_min_rate = 1000
+        body = b"RIFF" + b"a" * 3996
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.putrequest("POST", "/api/recordings")
+        conn.putheader("Content-Type", "audio/webm")
+        conn.putheader("Content-Length", str(len(body) * 10))
+        conn.endheaders()
+        try:
+            for i in range(10):  # 초당 ~40KB, 요구(1KB/s)보다 훨씬 빠름
+                conn.send(body if i == 0 else b"b" * len(body))
+                time.sleep(0.1)
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 201)
+            resp.read()
+        finally:
+            conn.close()
+        self.assertEqual(self.incoming(), [])
+
+    def test_incoming_mkdir_oserror_507_500(self):
+        store = self.server.store
+        for err, want in ((errno.ENOSPC, 507), (errno.EDQUOT, 507), (errno.EACCES, 500)):
+            with mock.patch.object(store, "incoming_path", side_effect=OSError(err, "boom")):
+                status, hdr, raw = self.req("POST", "/api/recordings", b"RIFFx",
+                                            {"Content-Type": "audio/webm"})
+            self.assertEqual(status, want)
+            self.assertIn("error", json.loads(raw.decode("utf-8")))
+            self.assertEqual(self.upload()[0], 201)  # 자리가 새지 않고 다음 업로드 정상
+        self.assertEqual(self.incoming(), [])
+
 
 class TestServeToken(Base):
     token = TOKEN

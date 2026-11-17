@@ -920,5 +920,106 @@ class ResumeAfterTransientApiError(Base):
         self.assertEqual(self.started, [])
 
 
+class ResumeWhenTheLimitResets(ResumeAfterTransientApiError):
+    """완전 자율 종주에서 관리자가 사용 한도로 끊기면 풀릴 때까지 기다렸다가 같은 대화를 잇는다. 다른 방식은 전과 같다."""
+
+    test_manual_resume_and_its_refusals = None      # 부모의 검사는 다시 돌리지 않는다
+    test_a_done_manager_is_untouched = None
+    test_a_paused_fleet_is_not_resumed = None
+    test_a_failure_that_is_not_transient_takes_the_old_path = None
+    test_after_the_resume_cap_the_old_path_runs = None
+    test_the_watcher_keeps_watching_the_resumed_manager_and_the_chain_goes_on = None
+    test_a_transient_end_resumes_the_same_conversation_and_keeps_the_worker = None
+
+    def limited(self, sid, reset=None):
+        return mock.patch.object(fleet_ctl, "_manager_limit_end", side_effect=lambda s: (s == sid, reset if s == sid else None))
+
+    def clock(self, start=1000.0):
+        t = [start]
+        waits = []
+
+        def sleep(sec):
+            waits.append(sec)
+            t[0] += sec
+        return (lambda: t[0]), sleep, waits
+
+    def autonomous(self):
+        self.assertTrue(fleet_ctl.chain_set(True, None, 3, "test", all_=True, autonomous=True)["ok"])
+
+    def test_it_waits_until_the_reset_and_resumes_the_same_conversation(self):
+        n, sid, rid = self.failed_round()
+        self.autonomous()
+        now, sleep, waits = self.clock()
+        seen = []
+        real = fleet_ctl._limit_wait_ok
+
+        def ok(*a):
+            seen.append(fleet_ctl.chain_state().get("limit_wait"))
+            return real(*a)
+        with self.limited(sid, reset=1000.0 + 3600), mock.patch.object(fleet_ctl, "_limit_wait_ok", side_effect=ok):
+            self.assertTrue(fleet_ctl._try_wait_limit(n, poll=600, sleep=sleep, clock=now))
+        self.assertEqual(sum(waits), 3600 + fleet_ctl.LIMIT_WAIT_MARGIN_SEC)
+        self.assertEqual(seen[-1]["round"], n)                                # 기다리는 동안 화면이 볼 표시가 있다
+        st = fleet_ctl.chain_state()
+        self.assertNotIn("limit_wait", st)
+        self.assertTrue(st["on"])
+        self.assertTrue(any("사용 한도로 끊김" in ln for ln in st["log"]))
+        rec = json.loads((self.root / "rounds" / f"R{n}" / "round.json").read_text(encoding="utf-8"))
+        self.assertEqual([(r["from"], r.get("kind")) for r in rec["resumes"]], [(sid, "limit")])
+        self.assertNotEqual(rec["session"], sid)
+        self.assertEqual(sessions.state(self.sroot / rid)["state"], "running")   # 작업자는 그대로
+        self.assertFalse(self.report_path(n).exists())
+        self.assertEqual(fleet_ctl._round_resumes(n) - fleet_ctl._round_resumes(n, "limit"), 0)   # API 오류 잇기 상한을 쓰지 않았다
+
+    def test_the_watcher_goes_on_after_the_wait(self):
+        n, sid, rid = self.failed_round()
+        self.autonomous()
+        with self.limited(sid, reset=None), mock.patch.object(fleet_ctl, "LIMIT_WAIT_UNKNOWN_SEC", 0.2), \
+                mock.patch.object(fleet_ctl, "chain_step", return_value={"ok": True}) as step:
+            self.assertEqual(fleet_ctl._watch(n, poll=0.05, wait=20), 0)
+        step.assert_called_once_with(n)
+        rec = json.loads((self.root / "rounds" / f"R{n}" / "round.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(rec["resumes"]), 1)
+        self.assertTrue(fleet_ctl.chain_state()["on"])
+
+    def test_other_ways_of_running_do_not_wait(self):
+        n, sid, rid = self.failed_round(worker=False)
+        with self.limited(sid, reset=1.0):
+            self.assertFalse(fleet_ctl._try_wait_limit(n, sleep=self.fail))            # 이어 달리기가 꺼져 있다
+            fleet_ctl.chain_set(True, None, 3, "test", all_=True, renew=True)
+            self.assertFalse(fleet_ctl._try_wait_limit(n, sleep=self.fail))            # 켜져 있지만 완전 자율 종주가 아니다
+        self.autonomous()
+        self.assertFalse(fleet_ctl._try_wait_limit(n, sleep=self.fail))                # 한도로 끊긴 것이 아니다
+
+    def test_a_far_reset_or_too_many_waits_take_the_old_path(self):
+        n, sid, rid = self.failed_round(worker=False)
+        self.autonomous()
+        now, sleep, waits = self.clock()
+        with self.limited(sid, reset=1000.0 + fleet_ctl.LIMIT_WAIT_MAX_SEC + 1):
+            self.assertFalse(fleet_ctl._try_wait_limit(n, sleep=self.fail, clock=now))
+        f = self.root / "rounds" / f"R{n}" / "round.json"
+        rec = json.loads(f.read_text(encoding="utf-8"))
+        rec["resumes"] = [{"from": "a", "to": "b", "kind": "limit"}] * fleet_ctl.LIMIT_RESUME_MAX
+        f.write_text(json.dumps(rec), encoding="utf-8")
+        with self.limited(sid, reset=1001.0):
+            self.assertFalse(fleet_ctl._try_wait_limit(n, sleep=self.fail, clock=now))
+        self.assertEqual([s["id"] for s in fleet_ctl.manager_sessions()], [sid])
+
+    def test_turning_it_off_while_waiting_gives_up_without_resuming(self):
+        n, sid, rid = self.failed_round(worker=False)
+        self.autonomous()
+        now, sleep, waits = self.clock()
+
+        def off_then_sleep(sec):
+            sleep(sec)
+            fleet_ctl.chain_set(False, by="test")
+        with self.limited(sid, reset=1000.0 + 3600):
+            self.assertTrue(fleet_ctl._try_wait_limit(n, poll=60, sleep=off_then_sleep, clock=now))
+            self.assertEqual(len(waits), 1)
+            self.assertFalse(fleet_ctl._try_wait_limit(n, sleep=self.fail, clock=now))    # 다음 바퀴는 전처럼 끝낸다
+        self.assertEqual([s["id"] for s in fleet_ctl.manager_sessions()], [sid])
+        self.assertNotIn("limit_wait", fleet_ctl.chain_state())
+
+
 if __name__ == "__main__":
     unittest.main()

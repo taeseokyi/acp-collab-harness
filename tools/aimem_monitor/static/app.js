@@ -1401,6 +1401,14 @@ function renderFleetChain(data) {
       + (ch.total_rounds ? ` (모두 ${ch.total_rounds} 라운드)` : '')
       + ' · 끝날 때마다 열린 요청·남은 목표를 보고 새 관리자로 다음 라운드를 띄웁니다');
     el.appendChild(t);
+    if (ch.limit_wait && ch.limit_wait.until) {
+      // 완전 자율 종주: 관리자가 사용 한도로 끊겨 풀리기를 기다리는 중 - 언제 이을지 보인다
+      const w = document.createElement('div');
+      w.className = 'fleet-chain-stop is-warn';
+      w.setAttribute('role', 'status');
+      w.textContent = `R${ch.limit_wait.round} 관리자가 사용 한도로 끊겼습니다 - ${String(ch.limit_wait.until).replace('T', ' ').slice(0, 16)} 에 같은 대화를 잇습니다`;
+      el.appendChild(w);
+    }
   } else {
     // ---- 지난번에 왜 멈췄나: 제목 한 줄 + 다음에 할 일 한 줄. 엔진이 적은 까닭(stopped_why)은 마우스를 올리면 보인다.
     if (ch.stopped_why) {
@@ -1540,7 +1548,7 @@ function renderFleetChain(data) {
     addMode('renew', '새로 이어 달리기', '끝날 때까지',
       '상한을 채우면 새 묶음으로 넘어가 라운드 수를 다시 세며 이어 갑니다. 남은 일이 없을 때까지 갑니다. 보고가 DONE 이 아니거나 진전이 없으면 멈춥니다');
     addMode('autonomous', '완전 자율 종주', '막혀도 한 번 더',
-      '새 묶음으로 이어 가며 끝까지 갑니다. 보고가 DONE 이 아니거나 진전이 없어도 한 번은 더 가 보고, 연달아 두 번 막히면 멈춥니다');
+      '새 묶음으로 이어 가며 끝까지 갑니다. 보고가 DONE 이 아니거나 진전이 없어도 한 번은 더 가 보고, 연달아 두 번 막히면 멈춥니다. 관리자가 사용 한도로 끊기면 풀릴 때까지 기다렸다가 잇습니다');
     if (!Object.values(radios).some((r) => r.checked)) radios.stop.checked = true;
     sec2.appendChild(modes);
     el.appendChild(sec2);

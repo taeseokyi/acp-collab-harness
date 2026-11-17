@@ -152,11 +152,12 @@ API (JSON, 오류는 `{"error": "한국어 까닭"}` + 4xx/5xx). 토큰이 있�
 본문 길이+여유분보다 적으면 507. 큰 본문이면 서버가 연결을 닫으므로 클라이언트에는 상태 코드 대신 **연결 오류**로 보일 수 있음
 (그래서 503·507·연결 오류는 영구 실패가 아니라 대기열에 남겨 다시 올림). 받는 도중 끊기면 400.
 
-**업로드 전체 마감**: `serve.py` 상수 `UPLOAD_GRACE_S = 30`, `UPLOAD_MIN_RATE = 16 * 1024` 바이트/초. 마감 = 30초 + 길이 / UPLOAD_MIN_RATE.
-넘으면 incoming 을 지우고 **408** `업로드가 너무 느립니다`(연결 닫음). `make_server(..., upload_grace=, upload_min_rate=)` 로 검사가 줄일 수 있음.
+**업로드 전체 마감**: `serve.py` 상수 `UPLOAD_GRACE_S = 30`, `UPLOAD_MIN_RATE = 16 * 1024` 바이트/초. 마감은 받은 만큼으로 잼:
+시작 + `UPLOAD_GRACE_S`(30초) + 지금까지 받은 바이트 / `UPLOAD_MIN_RATE`(16KB/s). 넘으면 incoming 을 지우고 **408** `업로드가 너무 느립니다`(연결 닫음).
+그래서 큰 길이를 선언하고 아주 느리게 보내는 연결도 약 30초 뒤 끊김(R35-N1). `make_server(..., upload_grace=, upload_min_rate=)` 로 검사가 줄일 수 있음.
 
 **저장 실패**: incoming 쓰기·`add_recording_file` 의 `OSError` 가 `ENOSPC`/`EDQUOT` 이면 **507**, 그 밖은 **500**
-`서버가 녹음을 저장하지 못했습니다`(연결 닫음).
+`서버가 녹음을 저장하지 못했습니다`(연결 닫음). incoming 폴더를 만들지 못해도(mkdir OSError) 같은 규칙: `ENOSPC`/`EDQUOT` **507**, 그 밖 **500**(R35-N3).
 
 **503/507 이 연결 오류로 보일 수 있음**: 503(업로드 자리 없음)·디스크 여유 507 은 본문을 읽기 전에 답하고 연결을 닫으므로,
 64KB 넘는 녹음을 보내던 쪽은 상태 코드 대신 연결 오류를 받을 수 있음. 페이지 대기열은 이를 '연결 안 됨' 으로 두고 줄을 남겨
@@ -180,9 +181,11 @@ VoxQueue.supported() -> {indexedDB, serviceWorker, backgroundSync}
 IndexedDB `voxlog` 판 1: 저장소 `queue`(keyPath `clientId`: `{clientId, blob, mime, recordedAt, durationMs, tries, lastError, addedAt}`),
 `config`(키 `"main"`). 서비스 워커 `web/sw.js` 는 `sync` 태그 `voxlog-upload` 에서 같은 DB 를 읽어
 같은 출처의 `POST api/recordings` 로 올리고(예전에 저장된 `apiBase` 는 무시; 2xx 면 지움, 401 이면 멈추고 lastError "인증 실패", 네트워크 오류면 throw 해서
-브라우저가 다시 시도), 클라이언트에 `postMessage({type:"voxlog-queue"})`. Background Sync 가 없으면 `online`·
+브라우저가 다시 시도 - 408·5xx 도 다시 시도), 클라이언트에 `postMessage({type:"voxlog-queue"})`. Background Sync 가 없으면 `online`·
 `visibilitychange`·앱 열기 때 flush. 페이지의 flush 는 5xx(500·503·507 등)나 408 을 만나면 그 줄을 `waiting` 으로 남기고 멈춘 뒤
-`Retry-After` 초(없으면 5, 최대 60)에 한 번 `setTimeout(flush)` 을 겁니다(이미 걸려 있으면 다시 걸지 않음; R34-N5). 서비스 워커는 앱 껍데기(html·css·js·아이콘)를 캐시해 오프라인에서도 열림(`/api/*` 는 캐시 안 함).
+`Retry-After` 초(없으면 5, 최대 60)에 한 번 `setTimeout(flush)` 을 겁니다(이미 걸려 있으면 다시 걸지 않음; R34-N5; R35-N2: 408 도 같음,
+서비스 워커 sync 도 408·5xx 면 브라우저가 다시 시도). 408 은 서버가 본문을 다 읽기 전에 닫으므로 클라이언트에는 대개 연결 오류(연결 안 됨)로
+보이며, 그 경우 다음 online·보임·앱 열기·sync 때 다시 올라감. 서비스 워커는 앱 껍데기(html·css·js·아이콘)를 캐시해 오프라인에서도 열림(`/api/*` 는 캐시 안 함).
 
 **R33 후속(검수 R33-N1·N4)으로 더한 것** - IndexedDB `voxlog` 판 **2**(판 1 에서 올림, 기존 줄은 `state:"waiting"`):
 ```

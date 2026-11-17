@@ -41,7 +41,7 @@ JSON_BODY_MAX = 1024 * 1024
 DRAIN_MAX = 64 * 1024  # 413 뒤 연결을 깨끗이 닫으려고 버리는(저장 안 함) 작은 본문의 상한
 CHUNK = 64 * 1024  # 업로드를 디스크로 흘려 쓰는 단위
 DISK_MARGIN = 100 * 1024 * 1024  # 업로드 크기에 더해 남겨야 하는 디스크 여유
-UPLOAD_GRACE_S = 30  # 업로드 전체 마감 = 이 여유 + 크기 / UPLOAD_MIN_RATE
+UPLOAD_GRACE_S = 30  # 업로드 마감 = 이 여유 + 지금까지 받은 바이트 / UPLOAD_MIN_RATE(선언한 길이가 아님)
 UPLOAD_MIN_RATE = 16 * 1024  # 바이트/초: 이보다 느린 업로드는 자리를 오래 잡지 못하게 408
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 EXTRA_MIME = {".webmanifest": "application/manifest+json", ".js": "text/javascript"}
@@ -303,6 +303,8 @@ class Handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _unlink(path):
+        if path is None:
+            return
         try:
             os.unlink(path)
         except OSError:
@@ -334,14 +336,17 @@ class Handler(BaseHTTPRequestHandler):
         client_id = (self.headers.get("X-Client-Id") or "").strip()[:128] or None
         location = _parse_location(self.headers.get("X-Location"))
         self._body_read = True
-        path = store.incoming_path()
+        path = None  # incoming_path() 가 mkdir 로 실패하면 None 인 채 OSError 처리로 간다
         got = 0
         reason = None  # 'slow'(마감 넘김) | 'cut'(연결 끊김)
-        deadline = time.monotonic() + self.server.upload_grace + length / self.server.upload_min_rate
+        start = time.monotonic()
         try:
             try:
+                path = store.incoming_path()
                 with open(path, "wb") as f:
                     while got < length:
+                        # 마감은 선언된 길이가 아니라 실제로 받은 바이트로 매번 다시 셈한다
+                        deadline = start + self.server.upload_grace + got / self.server.upload_min_rate
                         left = deadline - time.monotonic()
                         if left <= 0:
                             reason = "slow"
@@ -496,8 +501,8 @@ def make_server(host, port, data_dir, token=None, env=None, stt_fn=None, llm_run
     """검사가 임시 포트(0)·임시 폴더·가짜 함수로 띄울 수 있는 서버. 일꾼은 start() 해 둔다.
 
     max_uploads: 동시에 받는 업로드 수(넘으면 503). server.disk_free 는 저장소 디스크 여유
-    바이트를 돌려주는 함수라 검사에서 바꿔 끼울 수 있다. upload_grace·upload_min_rate: 업로드 전체
-    마감(초) = grace + 크기 / min_rate(넘기면 408), server.upload_grace·upload_min_rate 로 둔다."""
+    바이트를 돌려주는 함수라 검사에서 바꿔 끼울 수 있다. upload_grace·upload_min_rate: 업로드
+    마감(초) = grace + 지금까지 받은 바이트 / min_rate(매 바퀴 다시 셈, 넘기면 408), server.upload_grace·upload_min_rate 로 둔다."""
 
     class _Server(VoxServer):
         address_family = socket.AF_INET6 if ":" in host else socket.AF_INET

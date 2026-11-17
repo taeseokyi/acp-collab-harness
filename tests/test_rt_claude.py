@@ -284,6 +284,37 @@ class TransientTest(unittest.TestCase):
         self.assertIs(self._tr([_result(), bad]), True)
 
 
+class LimitEndTest(unittest.TestCase):
+    """완전 자율 종주가 기다렸다 이을지 가르는 판정 - 마지막 result 가 사용 한도인가, 언제 풀리는가."""
+
+    def _end(self, lines):
+        with tempfile.TemporaryDirectory() as tmp:
+            return claude_h.limit_end(_session_dir(tmp, lines))
+
+    def _ev(self, **info):
+        return json.dumps({"type": "rate_limit_event", "rate_limit_info": info})
+
+    def test_a_rejected_window_gives_its_reset_time(self):
+        ev = self._ev(status="rejected", resetsAt=1794504000, rateLimitType="five_hour")
+        self.assertEqual(self._end([ev, _result(is_error=True, api_error_status=429)]), (True, 1794504000.0))
+
+    def test_the_latest_rejected_window_wins_and_allowed_ones_are_ignored(self):
+        ev = self._ev(status="rejected", resetsAt=100, unifiedWindows={
+            "five_hour": {"status": "rejected", "resetsAt": 100}, "seven_day": {"status": "rejected", "resetsAt": 900},
+            "other": {"status": "allowed", "resetsAt": 5000}})
+        self.assertEqual(self._end([ev, _result(is_error=True, result="stopped")]), (True, 900.0))
+
+    def test_a_limit_without_a_reset_time(self):
+        self.assertEqual(self._end([_result(is_error=True, api_error_status=429)]), (True, None))
+        warn = self._ev(status="allowed_warning", resetsAt=1794888000)      # 경고의 시각은 풀리는 시각이 아니다
+        self.assertEqual(self._end([warn, _result(is_error=True, api_error_status=429)]), (True, None))
+
+    def test_not_a_limit(self):
+        self.assertEqual(self._end([_result()]), (False, None))
+        self.assertEqual(self._end([_result(is_error=True, api_error_status=403, terminal_reason="api_error")]), (False, None))
+        self.assertEqual(self._end([]), (False, None))
+
+
 class ResumeCommandTest(unittest.TestCase):
     def test_resume_session_uses_resume_not_session_id(self):
         from fleet_rt import manager as rt_manager

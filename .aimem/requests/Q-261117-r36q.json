@@ -1,0 +1,10 @@
+{
+ "id": "Q-261117-r36q",
+ "created": "2026-11-17T11:12:21",
+ "requester": "관리자 M-R36 (대기 큐)",
+ "project": "VoxLog",
+ "title": "[VoxLog] 대기 큐 1건 처리: R35-N1·N2·N3 (하)",
+ "detail": "큐 1번: 업로드 마감을 실제 진척으로(N1), 408 재시도를 문서대로 + 검사(N2), incoming_path mkdir OSError 를 500/507 로(N3). R35-N4 는 태석님 결정으로 닫힘(16KB/s 그대로).",
+ "status": "DONE",
+ "subtasks": []
+}

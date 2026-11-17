@@ -237,7 +237,7 @@
               .then(notify);
           }
           return res.json().catch(function () { return {}; }).then(function (body) {
-            // 503(동시 업로드 자리 없음)·507(디스크 부족)은 영구 실패가 아님 - 대기열에 남겨 다시 올림
+            // 503(동시 업로드 자리 없음)·507(디스크 부족)·408(업로드 너무 느림)은 영구 실패가 아님 - 대기열에 남겨 다시 올림
             var perm = res.status === 400 || res.status === 413 || res.status === 415;
             var msg = (body && body.error) || (res.status === 413 ? '너무 큼(413)' : '서버 오류 ' + res.status);
             result.failed++;
@@ -246,7 +246,7 @@
               if (perm) p.state = 'failed';
               return p;
             }).then(notify).then(function () {
-              if (res.status >= 500) { // 서버 문제 - 멈추고, Retry-After(없으면 5초, 최대 60초) 뒤 한 번 더
+              if (res.status >= 500 || res.status === 408) { // 서버 문제·408(업로드 너무 느림) - 멈추고, Retry-After(없으면 5초, 최대 60초) 뒤 한 번 더
                 scheduleRetry(res.headers.get('Retry-After'));
                 return;
               }

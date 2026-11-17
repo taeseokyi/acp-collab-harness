@@ -127,6 +127,38 @@ def transient_api_error(session_dir) -> bool:
     return result_transient(res, evs)
 
 
+def _limit_reset(events):
+    """마지막 한도 사건에서 뽑은 '풀리는 시각'(유닉스 초). 거절된 창이 여럿이면 가장 늦은 것. 모르면 None."""
+    info = next((d.get("rate_limit_info") for d in reversed(list(events or ()))
+                 if isinstance(d, dict) and d.get("type") == "rate_limit_event" and isinstance(d.get("rate_limit_info"), dict)), None)
+    if not info:
+        return None
+
+    def rejected(x):
+        return isinstance(x, dict) and str(x.get("status") or "").lower() in ("rejected", "blocked")
+
+    wins = info.get("unifiedWindows") if isinstance(info.get("unifiedWindows"), dict) else {}
+    times = [x.get("resetsAt") for x in [info, *wins.values()] if rejected(x)]
+    times = [float(t) for t in times if isinstance(t, (int, float)) and not isinstance(t, bool) and t > 0]
+    return max(times) if times else None
+
+
+def limit_end(session_dir):
+    """세션의 **마지막** result 가 사용 한도로 끝났나 - `(한도인가, 풀리는 시각 또는 None)`.
+
+    한도는 잠깐 쉰다고 풀리지 않으므로 `transient_api_error` 는 거짓이다. 엔진은 완전 자율 종주일 때만 이 시각까지
+    기다렸다가 같은 대화를 잇는다.
+    """
+    try:
+        evs = ADAPTER._events(session_dir)
+    except Exception:  # noqa: BLE001
+        return False, None
+    res = next((d for d in reversed(evs) if d.get("type") == "result"), None)
+    if result_limit_signal(res, evs) is not True:
+        return False, None
+    return True, _limit_reset(evs)
+
+
 class ClaudeHarness:
     name = "claude"
 

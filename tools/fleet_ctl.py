@@ -1337,7 +1337,8 @@ def record_round_metrics(n):
 # claude -p 는 모델 API 의 잠깐 오류(전송·과부하·앞단 차단)를 다시 시도하지 않고 rc 1 로 끝난다. 전에는 엔진이 그것을
 # 라운드의 끝으로 보아 작업자를 거두고 최소 마감을 쓰고 이어 달리기를 멈췄다 - 오류 한 번에 라운드 하나를 잃었다.
 # 이제 마지막 result 가 그런 오류(`harness.claude.transient_api_error`)면 잠깐 쉬었다가 **같은 대화**를 `--resume` 으로
-# 잇는다. 작업자는 따로 도는 세션이라 그동안 그대로 둔다. 사용 한도·진짜 실패는 잇지 않는다(전과 같이 끝낸다).
+# 잇는다. 작업자는 따로 도는 세션이라 그동안 그대로 둔다. 진짜 실패는 잇지 않는다(전과 같이 끝낸다). 사용 한도는
+# 완전 자율 종주일 때만 풀릴 때까지 기다렸다 잇는다(`_try_wait_limit`).
 MANAGER_RESUME_MAX = 2                    # 라운드 하나에서 이어 가는 최대 횟수 - 넘으면 전처럼 끝낸다
 MANAGER_RESUME_BACKOFF_SEC = (20, 60)     # 몇 번째 잇기 앞에 쉬는 시간 (API 가 돌아올 틈). 싼 응답 확인 수단이 없어 쉬기만 한다
 RESUME_BRIEF = ("모델 API 오류({why})로 대화가 끊겼다가 이어집니다. 그동안 엔진은 작업자를 거두지 않았습니다. "
@@ -1365,9 +1366,11 @@ def _harness_session_of(sid):
     return str(hsid) if hsid else None
 
 
-def _round_resumes(n):
+def _round_resumes(n, kind=None):
+    """그 라운드에서 이은 횟수. `kind="limit"` 이면 한도가 풀리기를 기다렸다 이은 것만 센다."""
     r = _round_record(n).get("resumes")
-    return len(r) if isinstance(r, list) else 0
+    r = r if isinstance(r, list) else []
+    return len([x for x in r if isinstance(x, dict) and x.get("kind") == kind]) if kind else len(r)
 
 
 def _resume_why(sid):
@@ -1384,14 +1387,14 @@ def _resume_text(why):
     return RESUME_BRIEF.format(why=why) + "\n"
 
 
-def _record_resume(n, old, new, why):
+def _record_resume(n, old, new, why, kind=None):
     """`round.json` 에 잇기 하나를 적고 `session` 을 새 세션으로. 다른 칸은 그대로."""
     from fleet_rt import roundrec  # noqa: PLC0415
 
     def add(rec):
         rs = rec.get("resumes") if isinstance(rec.get("resumes"), list) else []
-        return {**rec, "resumes": rs + [{"from": str(old), "to": str(new), "at": _now(), "why": str(why)[:300]}],
-                "session": str(new)}
+        one = {"from": str(old), "to": str(new), "at": _now(), "why": str(why)[:300]}
+        return {**rec, "resumes": rs + [{**one, "kind": kind} if kind else one], "session": str(new)}
     try:
         roundrec.update(_round_dir(n, create=False), add)
     except (OSError, ValueError) as e:
@@ -1416,7 +1419,7 @@ def _spawn_resumed(n, old_sid, new_sid, text):
         raise ValueError(f"이은 관리자를 띄우지 못했습니다: {type(e).__name__}: {str(e)[:200]}") from e
 
 
-def resume_manager(n=None, why=None, start_watcher=True, expect=None, by=None):
+def resume_manager(n=None, why=None, start_watcher=True, expect=None, by=None, kind=None):
     """라운드 R<n>(없으면 가장 최근 라운드)의 끝난 관리자 대화를 새 세션으로 잇는다.
 
     감시자는 잠깐의 API 오류일 때만 부른다(`_try_resume_manager`). 사람이 부를 때(`resume-manager`)는 끝난 까닭을
@@ -1463,7 +1466,7 @@ def resume_manager(n=None, why=None, start_watcher=True, expect=None, by=None):
             _spawn_resumed(n, old, new, _resume_text(why))
         except ValueError as e:
             return {"ok": False, "round": n, "session": old, "error": str(e)}
-        _record_resume(n, old, new, why)
+        _record_resume(n, old, new, why, kind)
     print(f"{_now()} R{n}: 관리자 {old} 의 대화를 {new} 로 잇습니다 ({why})", flush=True)
     watcher = _start_watcher(n, close_only=not chain_state().get("on")) if start_watcher else None
     return {"ok": True, "round": n, "from": old, "session": new, "why": why, "resumes": _round_resumes(n), "watcher": watcher}
@@ -1480,7 +1483,7 @@ def _try_resume_manager(n, sleep=None):
         return False
     if (fleet.ROOT / round_workspace(n) / "REPORT.md").exists():
         return False                       # 보고를 쓰고 끊겼다 - 이을 일이 없다
-    k = _round_resumes(n)
+    k = _round_resumes(n) - _round_resumes(n, "limit")      # 한도를 기다렸다 이은 것은 이 상한에 넣지 않는다
     if not _manager_transient_end(last["id"]):
         return False
     if k >= MANAGER_RESUME_MAX:
@@ -1492,6 +1495,87 @@ def _try_resume_manager(n, sleep=None):
           f" ({k + 1}/{MANAGER_RESUME_MAX})", flush=True)
     (sleep or time.sleep)(wait)
     res = resume_manager(n, why=why, start_watcher=False, expect=last["id"])
+    if not res.get("ok"):
+        print(f"{_now()} R{n}: 잇지 못했습니다 - {res.get('error')}", flush=True)
+    return bool(res.get("ok"))
+
+
+# ----------------------------------------------------------------- 한도가 풀리면 잇기 (완전 자율 종주)
+# 관리자가 사용 한도로 끊기면 라운드는 보고 없이 끝나고, 완전 자율 종주는 '한 번 더' 로 띄운 다음 라운드도 같은 한도에
+# 막혀 몇 분 안에 멈춘다. 완전 자율 종주는 사람 없이 끝까지 가라는 뜻이므로, 이때는 한도가 풀리는 시각까지 기다렸다가
+# **같은 대화**를 잇는다. 작업자는 거두지 않는다. 다른 방식의 이어 달리기와 한 번 띄운 라운드는 전과 같이 끝낸다.
+LIMIT_WAIT_MAX_SEC = 6 * 3600        # 이보다 늦게 풀리는 한도(주간 등)는 기다리지 않는다 - 전처럼 끝내고 사람이 본다
+LIMIT_WAIT_UNKNOWN_SEC = 1800        # 풀리는 시각을 모를 때 한 번에 기다리는 시간
+LIMIT_WAIT_MARGIN_SEC = 120          # 풀리는 시각 뒤에 두는 여유
+LIMIT_RESUME_MAX = 3                 # 라운드 하나에서 한도를 기다렸다 잇는 최대 횟수
+
+
+def _manager_limit_end(sid):
+    """관리자 세션이 사용 한도로 끝났나 `(한도인가, 풀리는 시각 또는 None)` (검사가 갈아 끼우는 이음새)."""
+    from fleet_rt.harness import claude as rt_claude  # noqa: PLC0415
+    return rt_claude.limit_end(fleet._sessions_root() / str(sid))
+
+
+def _limit_wait_note(n=None, until=None):
+    """이어 달리기 상태에 '한도 대기 중' 을 적거나(`n`, `until`) 지운다 - 화면이 언제 이을지 보인다."""
+    st = chain_state()
+    if n is None:
+        if "limit_wait" not in st:
+            return
+        st.pop("limit_wait")
+    else:
+        when = dt.datetime.fromtimestamp(until).strftime("%Y-%m-%dT%H:%M:%S")
+        st["limit_wait"] = {"round": int(n), "until": when, "at": _now()}
+        st.setdefault("log", []).append(f"{_now()} R{n} 관리자가 사용 한도로 끊김 - {when} 에 같은 대화를 잇습니다")
+    _chain_write(st)
+
+
+def _limit_wait_ok(n, sid):
+    """한도를 기다려도 되는 상태인가: 함대 '실행', 완전 자율 종주가 켜져 있음, 마지막 관리자가 그 끊긴 세션, 보고 없음."""
+    st = chain_state()
+    if mode() != "running" or not st.get("on") or not st.get("autonomous"):
+        return False
+    mine = [s for s in manager_sessions() if s.get("round") == int(n)]
+    if not mine or mine[-1]["id"] != sid or mine[-1]["status"] != "failed":
+        return False
+    return not (fleet.ROOT / round_workspace(n) / "REPORT.md").exists()
+
+
+def _try_wait_limit(n, poll=None, sleep=None, clock=None):
+    """감시자가 관리자가 끝난 것을 본 순간: 완전 자율 종주이고 사용 한도로 끊겼으면 풀릴 때까지 기다렸다 잇는다.
+
+    True = 기다렸다(이었거나, 기다리는 사이 사람이 멈추거나 꺼서 그만둠) - 감시자는 한 바퀴 더 돈다.
+    False = 손대지 않았다 - 감시자는 전처럼 한다(작업자 거두기·최소 마감·이어 달리기 판단).
+    """
+    sleep, clock = sleep or time.sleep, clock or time.time
+    poll = CHAIN_POLL_SEC if poll is None else poll
+    mine = [s for s in manager_sessions() if s.get("round") == int(n)]
+    sid = mine[-1]["id"] if mine else None
+    if sid is None or not _limit_wait_ok(n, sid):
+        return False
+    limited, reset = _manager_limit_end(sid)
+    if not limited:
+        return False
+    if _round_resumes(n, "limit") >= LIMIT_RESUME_MAX:
+        print(f"{_now()} R{n}: 관리자가 또 사용 한도로 끊겼지만 잇기 상한({LIMIT_RESUME_MAX})에 닿아 라운드를 끝냅니다", flush=True)
+        return False
+    now = clock()
+    until = max(now, reset + LIMIT_WAIT_MARGIN_SEC) if reset else now + LIMIT_WAIT_UNKNOWN_SEC
+    if until - now > LIMIT_WAIT_MAX_SEC:
+        print(f"{_now()} R{n}: 사용 한도가 {_dur(until - now)} 뒤에야 풀립니다 - 기다리지 않고 라운드를 끝냅니다", flush=True)
+        return False
+    print(f"{_now()} R{n}: 관리자 {sid} 가 사용 한도로 끊겼습니다 - {_dur(until - now)} 기다렸다가 같은 대화를 잇습니다"
+          f" ({_round_resumes(n, 'limit') + 1}/{LIMIT_RESUME_MAX})", flush=True)
+    _limit_wait_note(n, until)
+    try:
+        while clock() < until:
+            sleep(min(max(poll, 0.01), max(until - clock(), 0.01)))
+            if not _limit_wait_ok(n, sid):
+                print(f"{_now()} R{n}: 한도를 기다리는 사이 상황이 바뀌어 잇지 않습니다", flush=True)
+                return True
+    finally:
+        _limit_wait_note()
+    res = resume_manager(n, why="사용 한도 - 풀릴 때까지 기다림", start_watcher=False, expect=sid, kind="limit")
     if not res.get("ok"):
         print(f"{_now()} R{n}: 잇지 못했습니다 - {res.get('error')}", flush=True)
     return bool(res.get("ok"))
@@ -1875,6 +1959,7 @@ def _chain_stop(st, kind, why, round_n=None, left=None):
     """이어 달리기를 끄고 **왜 멈췄는지**를 남깁니다 - 화면이 종류별로 다른 안내를 보입니다."""
     st.update({"on": False, "at": _now(), "stopped_why": why, "stopped_kind": kind, "stopped_at": _now(),
                "stopped_round": round_n, "stopped_left": left})
+    st.pop("limit_wait", None)
     st.setdefault("log", []).append(f"{_now()} 멈춤[{kind}] - {why}")
     _chain_write(st)
 
@@ -1962,6 +2047,7 @@ def _chain_wait_and_step(n, poll=None, wait=None, close_only=False):
     """감시자(라운드마다 하나, `launch_round` 가 띄운다): 관리자 세션이 끝나기를 기다린다.
 
     - 관리자가 잠깐의 API 오류로 끊겼으면 같은 대화를 잇고(`_try_resume_manager`) 기다리기 시한을 새로 잡는다
+    - 완전 자율 종주에서 관리자가 사용 한도로 끊겼으면 풀릴 때까지 기다렸다가 같은 대화를 잇는다(`_try_wait_limit`)
     - 관리자가 보고 없이(done 이 아닌 상태로) 끝났으면 최소 마감을 쓴다(`close_if_unreported`, 설계 5.10)
     - 이어 달리기가 켜져 있고 라운드가 끝났으면(작업자·실행기도 없음) `chain_step` 으로 다음 라운드를 판단한다
     - 사람이 함대를 멈추면 이어 달리기를 내려놓는다 (마감은 계속 지켜본다)
@@ -2020,6 +2106,9 @@ def _watch(n, poll, wait, close_only=False):
             continue
         if closed is None and _try_resume_manager(n):
             continue                      # 잠깐의 API 오류 - 같은 대화를 이었다. 작업자는 두고 새 세션을 계속 지켜본다
+        if closed is None and not close_only and _try_wait_limit(n, poll):
+            deadline = time.time() + wait  # 한도가 풀리기를 기다린 시간은 기다리기 시한에 넣지 않는다
+            continue
         if closed is None:
             # 관리자가 어떤 상태로 끝났든(done 도) 실행기 없이 남은 이 라운드 작업자를 거둔다 - 마감보다 먼저
             last = next((s for s in reversed(manager_sessions()) if s.get("round") == int(n)), None)
