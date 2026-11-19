@@ -2046,22 +2046,22 @@ def deploy_states(root=ROOT):
 
 
 def _deploy_target(name, root):
-    """배포할 (서버 파일, 프로젝트 폴더) 또는 (None, 까닭). app.json 의 `server` 선언을 그대로 따른다('앱 열기' 와 같은 검사)."""
+    """배포 대상(`deploy.py` 의 target) 또는 (None, 까닭). 실행 선언(app.json)이 있는 프로젝트는 모두 배포할 수 있다 -
+    정적 파일은 `root` 에서, `/api/*` 는 `server` 선언이 있을 때 그 서버로('앱 열기' 와 같은 검사)."""
     app = project_app(name, root)
     if not app or not app.get("runnable"):
         return None, (app or {}).get("reason") or "실행 선언(app.json)이 없는 프로젝트입니다"
-    if not app.get("server"):
-        return None, app.get("server_error") or "app.json 에 server 선언이 없습니다 - 자체 서버가 있는 앱만 배포합니다"
     d, err = _project_dir(name, root)
     if err:
         return None, "프로젝트 폴더가 없습니다"
-    return (d.joinpath(*app["server"].split("/")), d), None
+    return {"root": d.joinpath(*app["root"].split("/")), "entry": app["entry"], "cwd": d, "title": app.get("title") or name,
+            "server": d.joinpath(*app["server"].split("/")) if app.get("server") else None}, None
 
 
 def project_deploy_action(name, payload, root=ROOT):
     """`POST /api/projects/<이름>/deploy` {action: on|off|token, auth?} → `deploy.Deploys`.
 
-    on = 앱의 자체 서버를 배포 포트(18810~)에 모니터 인증서로 띄우고 윈도우 프록시 설정에 알린다. `auth` false 면 토큰 없이.
+    on = 앱을 배포 포트(18810~)에 모니터 인증서로 띄우고(배포 문지기) 윈도우 프록시 설정에 알린다. `auth` false 면 토큰 없이.
     off = 내린다(포트·토큰은 남는다). token = 켜 둔 배포의 토큰을 다시 보여 준다. 운영 저장소에서만."""
     if pathlib.Path(root).resolve() != ROOT:
         return 403, {"ok": False, "error": "운영 저장소가 아닙니다"}
@@ -2081,7 +2081,7 @@ def project_deploy_action(name, payload, root=ROOT):
             target, why = _deploy_target(name, root)
             if not target:
                 return 409, {"ok": False, "error": why}
-            return 200, {"ok": True, "deploy": dep.on(name, target[0], target[1], auth)}
+            return 200, {"ok": True, "deploy": dep.on(name, target, auth)}
         if action == "off":
             out = dep.off(name)
             if out is None:
@@ -2174,9 +2174,9 @@ def list_projects(root=ROOT, requests=None):
                     "updated": updated, "summary": summary,
                     "app": app,
                     # 배포(자기 주소로 계속 띄워 둠) - 켠 적이 있으면 {port, on, alive, auth, started}, 없으면 None.
-                    # deployable = app.json 에 server 선언이 있어 배포할 수 있나
+                    # deployable = 실행 선언(app.json)이 있어 배포할 수 있나 (서버가 없는 앱도 된다)
                     "deploy": deploys.get(n),
-                    "deployable": bool(app and app.get("runnable") and app.get("server"))})
+                    "deployable": bool(app and app.get("runnable"))})
     return out
 
 

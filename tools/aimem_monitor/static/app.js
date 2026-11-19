@@ -3976,8 +3976,9 @@ function openProjectDeploy(name, note, shownToken) {
     const wrap = document.createElement('div');
     wrap.className = 'deploy-panel';
     const line = (cls, text) => { const p = document.createElement('p'); p.className = cls; p.textContent = text; wrap.appendChild(p); return p; };
-    line('deploy-hint', '앱의 자체 서버(app.json 의 server)를 WSL 에 계속 띄워 두고, 윈도우 프록시가 PC 의 배포 포트로 이어 줍니다. '
-      + '모니터 안의 \'앱 열기\' 와 달리 격리가 없어 마이크·설치(PWA)·오프라인 동기화가 됩니다. 인증서는 모니터 것을 같이 씁니다.');
+    line('deploy-hint', '앱을 WSL 에 계속 띄워 두고, 윈도우 프록시가 PC 의 배포 포트로 이어 줍니다. '
+      + '모니터 안의 \'앱 열기\' 와 달리 격리가 없어 마이크·설치(PWA)·오프라인 동기화가 됩니다. '
+      + '인증서와 토큰은 배포가 맡습니다 - 앱은 app.json 만 있으면 되고, 토큰으로 막을지 누구나 쓰게 할지는 켤 때 고릅니다.');
 
     const st = document.createElement('div');
     st.className = 'deploy-state';
@@ -4006,7 +4007,7 @@ function openProjectDeploy(name, note, shownToken) {
       tokenBox.textContent = '';
       const lab = document.createElement('span');
       lab.className = 'deploy-sub';
-      lab.textContent = '토큰 (앱의 설정에 넣습니다)';
+      lab.textContent = '토큰 (앱을 처음 열 때 뜨는 화면에 넣습니다)';
       const code = document.createElement('code');
       code.className = 'deploy-token-val';
       code.textContent = tok;
@@ -4066,7 +4067,7 @@ function openProjectDeploy(name, note, shownToken) {
           call({ action: 'on', auth: cb.checked }, '배포를 켰습니다');
         });
       } else {
-        line('deploy-hint warn-text', 'app.json 에 server 선언이 없어 띄울 수 없습니다.');
+        line('deploy-hint warn-text', '실행 선언(app.json)이 없어 띄울 수 없습니다.');
       }
     }
     if (on) {

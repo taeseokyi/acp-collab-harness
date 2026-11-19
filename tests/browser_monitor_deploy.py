@@ -78,7 +78,7 @@ def main():
         box = {"projects": [proj("VoxLog"), proj("웹워들", deployable=False)]}
         page, posts, errs, dialogs, ctx = open_page(browser, base, box)
         btns = page.locator(".proj-deploy").all_inner_texts()
-        checks.ok("server 선언이 있는 앱에만 '배포…' 단추가 있다", btns == ["배포…"], btns)
+        checks.ok("배포할 수 있는 앱에만 '배포…' 단추가 있다", btns == ["배포…"], btns)
         page.locator(".proj-deploy").click()
         page.wait_for_selector(".deploy-panel")
         checks.ok("처음에는 '내려 있음', 토큰으로 막기가 켜져 있다",
