@@ -20,6 +20,8 @@ ALLOWED_MIME = {
     "audio/webm": "webm",
     "audio/ogg": "ogg",
     "audio/mp4": "m4a",
+    "audio/x-m4a": "m4a",
+    "audio/m4a": "m4a",
     "audio/mpeg": "mp3",
     "audio/wav": "wav",
     "audio/x-wav": "wav",

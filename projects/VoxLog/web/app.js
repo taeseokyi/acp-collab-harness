@@ -267,6 +267,7 @@
     var ok = recSupported();
     $('rec-unsupported').hidden = ok;
     $('rec').disabled = !ok;
+    $('file-btn').hidden = isolated(); // 격리된 출처에는 대기열(IndexedDB)이 없다
   }
 
   function pickMime() {
@@ -369,6 +370,53 @@
     if (!state.rec) return;
     var mr = state.rec;
     try { if (mr.state !== 'inactive') mr.stop(); } catch (e) { finishRec(state.rc); }
+  }
+
+  // ---- 다른 앱으로 녹음한 파일 올리기 (폰 녹음 앱의 m4a 등) - 녹음과 같은 대기열로 간다 ----
+  var FILE_MAX = 50 * 1024 * 1024; // 서버 상한(MAX_AUDIO_BYTES)과 같게
+  var FILE_MIME = { webm: 'audio/webm', ogg: 'audio/ogg', m4a: 'audio/mp4', mp3: 'audio/mpeg', wav: 'audio/wav' };
+
+  function fileDuration(file) { // 길이(ms) - 못 읽으면 null
+    return new Promise(function (resolve) {
+      var url, a, done = false;
+      function end(v) {
+        if (done) return;
+        done = true;
+        try { URL.revokeObjectURL(url); } catch (e) { /* 무시 */ }
+        resolve(v);
+      }
+      try {
+        url = URL.createObjectURL(file);
+        a = new Audio();
+        a.preload = 'metadata';
+        a.onloadedmetadata = function () { end(isFinite(a.duration) && a.duration > 0 ? Math.round(a.duration * 1000) : null); };
+        a.onerror = function () { end(null); };
+        setTimeout(function () { end(null); }, 5000);
+        a.src = url;
+      } catch (e) { end(null); }
+    });
+  }
+
+  function uploadFile(file) {
+    var q = queueApi();
+    if (!file || !q) return Promise.resolve();
+    var ext = (/\.([A-Za-z0-9]+)$/.exec(file.name || '') || [])[1];
+    var mime = FILE_MIME[(ext || '').toLowerCase()];
+    if (!mime) { toast('올릴 수 있는 파일은 m4a · mp3 · wav · ogg · webm 입니다.'); return Promise.resolve(); }
+    if (!file.size) { toast('빈 파일입니다.'); return Promise.resolve(); }
+    if (file.size > FILE_MAX) { toast('파일이 너무 큽니다 (최대 50MB).'); return Promise.resolve(); }
+    $('rec-result').textContent = '파일 저장 중…';
+    return fileDuration(file).then(function (durationMs) {
+      // 녹음 시각 = 파일의 마지막 수정 시각에서 길이를 뺀 때(녹음 앱은 끝날 때 저장한다)
+      var at = new Date((file.lastModified || Date.now()) - (durationMs || 0));
+      return q.enqueue({ blob: file, mime: mime, recordedAt: localIso(at), durationMs: durationMs });
+    }).then(function () {
+      $('rec-result').textContent = '파일 ' + (file.name || '') + ' · 저장됨, 서버로 올리는 중입니다.';
+      updateQueue();
+    }, function (e) {
+      $('rec-result').textContent = '파일을 저장하지 못했습니다.';
+      toast((e && e.message) || '파일을 저장하지 못했습니다.');
+    });
   }
 
   function finishRec(rc) {
@@ -825,6 +873,12 @@
   /* ---------- 시작 ---------- */
 
   function bind() {
+    $('file-btn').addEventListener('click', function () { $('file-input').click(); });
+    $('file-input').addEventListener('change', function () {
+      var f = this.files && this.files[0];
+      this.value = ''; // 같은 파일을 다시 골라도 change 가 나게
+      uploadFile(f);
+    });
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (b) {
       b.addEventListener('click', function () { showTab(b.dataset.tab); });
     });

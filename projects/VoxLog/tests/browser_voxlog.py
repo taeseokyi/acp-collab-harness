@@ -787,6 +787,31 @@ def run_all(browser, base, data, tmp, procs):
         c.close()
     check("24 업로드 408 → waiting 으로 남고 Retry-After 뒤 저절로 올라감", t24)
 
+    def t25():
+        # 다른 앱으로 녹음한 m4a 를 '녹음 파일 올리기' 로 - 녹음과 같은 대기열을 거쳐 서버에 m4a 로 쌓임
+        b, d = new_server("d25")
+        src = tmp / "phone.m4a"
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+                        "-i", "sine=frequency=440:duration=3", "-c:a", "aac", str(src)], check=True, capture_output=True)
+        c = new_ctx()
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        need(pg.is_visible("#file-btn"), "'녹음 파일 올리기' 단추가 보이지 않음")
+        pg.set_input_files("#file-input", str(src))
+        need(wait_for(lambda: len(server_items(b)) == 1, 15, pg=pg), "파일이 서버에 올라가지 않음")
+        need(wait_for(lambda: queue_n(pg) == 0, 10, pg=pg), "대기열이 비지 않음")
+        it = server_items(b)[0]
+        need(it.get("mime") == "audio/mp4", "mime %r (기대 audio/mp4)" % it.get("mime"))
+        need(2500 <= (it.get("duration_ms") or 0) <= 3500, "길이 %r ms (기대 약 3000)" % it.get("duration_ms"))
+        need(len(list(d.glob("audio/*.m4a"))) == 1, "서버 audio 폴더에 m4a 가 없음")
+        (tmp / "note.txt").write_text("x")
+        pg.set_input_files("#file-input", str(tmp / "note.txt"))
+        pg.wait_for_timeout(500)
+        need(len(server_items(b)) == 1 and queue_n(pg) == 0, "소리 파일이 아닌 것이 대기열·서버에 들어감")
+        c.close()
+    check("25 녹음 파일 올리기: m4a 가 대기열을 거쳐 서버에 쌓임·다른 파일은 거절", t25)
+
 
 if __name__ == "__main__":
     sys.exit(main())
