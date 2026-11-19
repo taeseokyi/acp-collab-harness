@@ -71,7 +71,7 @@ class Store:
     def add_answer(self, kind, prompt, ids) -> dict      # {"id","kind","prompt","ids","created","status":"running","answer":None,"error":None}
     def set_answer(self, aid, status, answer=None, error=None) -> None   # status "done"|"failed"
     def get_answer(self, aid) -> dict|None
-    def list_answers(self, limit=50) -> list[dict]       # 최신순
+    def list_answers(self, limit=50) -> list[dict]       # 최신순. 항목마다 about = 첫 녹취의 {recorded_at, title} (지워졌으면 None)
 ```
 잘못된 id 는 get/audio_path/get_answer 가 None, set_*/delete 는 False 또는 KeyError 없이 조용히 무시하지 말고 `ValueError`.
 
@@ -88,7 +88,7 @@ def transcribe(path: pathlib.Path, mime: str, env=None, opener=None) -> str
     # api: OpenAI 꼴 받아쓰기 엔드포인트. split_audio 로 16kHz 모노 mp3 를 CHUNK_SECONDS(600초)씩 잘라 차례로
     #   POST VOXLOG_STT_URL (multipart: file, language=VOXLOG_STT_LANG(기본 "ko"), model=VOXLOG_STT_MODEL(있을 때)),
     #   VOXLOG_STT_API_KEY 가 있으면 Bearer. 응답 {"text": …} 을 빈칸으로 이어 붙임. 조각마다 시간 상한 180초, opener 는 검사용 주입
-    #   VOXLOG_STT_DIARIZE=1 이면 자르지 않고 받은 원본 그대로(다시 압축하지 않음. m4a 는 색인만 앞으로 옮긴 사본) 통째로 보내며 response_format=diarized_json 을 더 보냄
+    #   VOXLOG_STT_DIARIZE=1 이면 자르지 않고 받은 원본 그대로(다시 압축하지 않음) 통째로 보내며 response_format=diarized_json 을 더 보냄
     #   (시간 상한 DIARIZE_TIMEOUT 3600초). 응답에 segments([{speaker, text, …}])가 있으면 "화자 N: 글" 줄들로 적음
     #   (같은 화자가 이어지면 한 줄, 번호는 처음 나온 차례). segments 가 없으면 text 그대로
 def split_audio(src: pathlib.Path, seconds=None) -> (pathlib.Path, list)   # (임시 폴더, 조각 경로들) - 폴더는 호출한 쪽이 지움
@@ -144,6 +144,7 @@ API (JSON, 오류는 `{"error": "한국어 까닭"}` + 4xx/5xx). 토큰이 있�
 | `GET /api/recordings/<id>/audio` | 오디오 바이트(그 mime) |
 | `POST /api/recordings/<id>/retry` | 음성인식 다시 넣음 → 200 메타 / 404 / 409(이미 큐에 있거나 받아쓰는 중) |
 | `DELETE /api/recordings/<id>` | `{"ok":true}` |
+| `DELETE /api/answers/<id>` | `{"ok":true}` · 없으면 404 · 아직 묻는 중이면 409 |
 | `POST /api/ask` `{"kind","prompt","ids":[…]}` | 202 답 메타 |
 | `GET /api/answers` · `GET /api/answers/<aid>` | 목록 `{"items":[…]}` · 답 하나 |
 

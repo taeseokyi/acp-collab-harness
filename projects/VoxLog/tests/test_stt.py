@@ -336,20 +336,6 @@ class ApiBackendTest(unittest.TestCase):
         self.assertIn(self.src.read_bytes(), body)
         self.assertTrue(self.src.exists())                           # 원본은 지우지 않는다
 
-    def test_diarize_moves_the_m4a_index_to_the_front_without_reencoding(self):
-        src = self.dir / "rec.m4a"                                   # 색인이 끝에 있는 m4a (녹음 앱이 만드는 꼴)
-        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
-                        "-i", "sine=frequency=440:duration=3", "-c:a", "aac", str(src)], check=True, capture_output=True)
-        raw = src.read_bytes()
-        self.assertGreater(raw.find(b"moov"), raw.find(b"mdat"))
-        opener = FakeOpener(response=json.dumps({"text": "글", "segments": [{"speaker": "A", "text": "글"}]}).encode("utf-8"))
-        stt.transcribe(src, "audio/mp4", env={"VOXLOG_STT_URL": self.URL, "VOXLOG_STT_DIARIZE": "1"}, opener=opener)
-        body = opener.last_req.data
-        self.assertIn(b'filename="audio.m4a"\r\nContent-Type: audio/mp4\r\n\r\n', body)
-        self.assertLess(body.find(b"moov"), body.find(b"mdat"))     # 색인이 앞으로
-        self.assertTrue(src.exists())
-        self.assertEqual(src.read_bytes(), raw)                      # 원본은 그대로
-
     def test_api_unreadable_response_is_stt_error(self):
         opener = FakeOpener(response=json.dumps({"choices": []}).encode("utf-8"))
         with self.assertRaises(stt.SttError):

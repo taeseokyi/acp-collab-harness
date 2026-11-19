@@ -565,6 +565,23 @@ class Store:
             data = self._read_json(self.answers_dir / (aid + ".json"))
             return dict(data) if isinstance(data, dict) else None
 
+    def delete_answer(self, aid):
+        """답을 지운다. 지웠으면 True, 없으면 False, 아직 묻는 중이면 "running"(지우지 않음)."""
+        if not _valid_aid(aid):
+            return False
+        with self._lock:
+            path = self.answers_dir / (aid + ".json")
+            data = self._read_json(path)
+            if not isinstance(data, dict):
+                return False
+            if data.get("status") == "running":
+                return "running"
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                return False
+            return True
+
     def list_answers(self, limit=50):
         with self._lock:
             items = []
@@ -581,7 +598,15 @@ class Store:
                 data = self._read_json(self.answers_dir / name)
                 if isinstance(data, dict):
                     items.append(data)
-        items.sort(key=lambda a: a.get("created") or "", reverse=True)
-        if limit is not None:
-            items = items[:max(0, limit)]
+            items.sort(key=lambda a: a.get("created") or "", reverse=True)
+            if limit is not None:
+                items = items[:max(0, limit)]
+            for item in items:       # 목록에서 무엇에 대한 답인지 알아보게 - 첫 녹취의 때와 첫마디(지워졌으면 None)
+                item["about"] = None
+                for rid in item.get("ids") or []:
+                    meta = self._read_json(self._meta_path(rid)) if _valid_rid(rid) else None
+                    if isinstance(meta, dict):
+                        item["about"] = {"recorded_at": meta.get("recorded_at") or meta.get("created"),
+                                         "title": meta.get("title")}
+                        break
         return items

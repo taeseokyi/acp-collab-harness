@@ -407,9 +407,8 @@
     if (file.size > FILE_MAX) { toast('파일이 너무 큽니다 (최대 50MB).'); return Promise.resolve(); }
     $('rec-result').textContent = '파일 저장 중…';
     return fileDuration(file).then(function (durationMs) {
-      // 녹음 시각 = 파일의 마지막 수정 시각에서 길이를 뺀 때(녹음 앱은 끝날 때 저장한다)
-      var at = new Date((file.lastModified || Date.now()) - (durationMs || 0));
-      return q.enqueue({ blob: file, mime: mime, recordedAt: localIso(at), durationMs: durationMs });
+      // 기록 시각 = 올린 때(파일에 적힌 날짜가 아니라 작업한 날) - 기록 목록에 방금 한 일로 맨 위에 보인다
+      return q.enqueue({ blob: file, mime: mime, recordedAt: localIso(new Date()), durationMs: durationMs });
     }).then(function () {
       $('rec-result').textContent = '파일 ' + (file.name || '') + ' · 저장됨, 서버로 올리는 중입니다.';
       updateQueue();
@@ -763,9 +762,96 @@
     return ids;
   }
 
+  // 지난 답 목록의 제목: 답의 첫 글줄에서 마크다운 표시(#·-·*·>·번호·굵게)를 뗀 것
+  function answerTitle(text) {
+    var lines = String(text || '').split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      var t = lines[i].replace(/^[\s#>*\-+]+|^\s*\d+[.)]\s+/, '').replace(/[*_`]/g, '').replace(/\|/g, ' ').trim();
+      if (t && !/^[-:\s]+$/.test(t)) return t.slice(0, 80);
+    }
+    return '';
+  }
+
+  // 지난 답 목록의 제목: 질문 + 어떤 녹취에 대한 답인지(첫 녹취의 때·첫마디, 여러 건이면 '외 N건')
+  function answerLabel(a) {
+    var n = (a.ids || []).length;
+    var parts = [];
+    if (a.prompt) parts.push(a.prompt);
+    if (a.about) {
+      var said = String(a.about.title || '').replace(/화자 \d+:\s*/g, '').trim();
+      parts.push(fmtTime(a.about.recorded_at) + ' 녹취' + (n > 1 ? ' 외 ' + (n - 1) + '건' : '') + (said ? ' “' + said + '”' : ''));
+    } else {
+      var first = answerTitle(a.answer); // 녹취가 지워졌으면 답의 첫 글줄
+      if (first) parts.push(first);
+      parts.push('녹취 ' + n + '건');
+    }
+    return parts.join(' · ');
+  }
+
+  function copyAnswer() {
+    var text = state.shownText;
+    if (!text) return;
+    function fallback() { // 클립보드 API 가 없거나 막힌 곳 - 보이지 않는 글상자를 골라 복사
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      toast(ok ? '복사했습니다.' : '복사하지 못했습니다.');
+    }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { toast('복사했습니다.'); }, fallback);
+        return;
+      }
+    } catch (e) { /* 아래로 */ }
+    fallback();
+  }
+
+  function shareAnswer() {
+    var text = state.shownText;
+    if (!text) return;
+    try {
+      Promise.resolve(navigator.share({ title: 'VoxLog ' + state.shownHead, text: text })).catch(function (e) {
+        if (e && e.name === 'AbortError') return; // 사용자가 닫음
+        toast('공유하지 못했습니다.');
+      });
+    } catch (e) { toast('공유하지 못했습니다.'); }
+  }
+
+  function deleteAnswer(aid) {
+    if (!window.confirm('이 답을 지울까요? 되돌릴 수 없습니다. (녹취는 그대로 남습니다)')) return;
+    api().json('api/answers/' + encodeURIComponent(aid), { method: 'DELETE' }).then(function () {
+      if (state.shownAnswer === aid) { // 화면에 펼쳐 둔 답이면 같이 치운다
+        state.askToken++;
+        state.shownAnswer = null;
+        state.shownText = '';
+        $('answer-actions').hidden = true;
+        $('answer-status').textContent = '';
+        $('answer').classList.remove('md');
+        $('answer').textContent = '';
+      }
+      toast('지웠습니다.');
+      loadAnswers();
+    }, function (e) { onApiError(e); loadAnswers(); });
+  }
+
   function showAnswer(a) {
     var st = $('answer-status');
     var box = $('answer');
+    state.shownAnswer = a.id || null;
+    // 복사·공유는 다 된 답에만 - 내보내는 글은 답의 마크다운 원문
+    state.shownText = a.status === 'done' && a.answer ? a.answer : '';
+    state.shownHead = (KIND[a.kind] || a.kind || '답') + ' · ' + fmtTime(a.created);
+    $('answer-actions').hidden = !state.shownText;
+    var canShare = false;
+    try { canShare = typeof navigator.share === 'function'; } catch (e) { /* 없음 */ }
+    $('answer-share').hidden = !canShare;
     if (a.status === 'done') {
       st.textContent = (KIND[a.kind] || a.kind) + ' · ' + fmtTime(a.created) + ' · 녹취 ' + (a.ids || []).length + '건';
       // 답은 마크다운으로 그린다 (md.js - DOM 으로만 만들어 답에 든 HTML 은 글자로 보인다)
@@ -853,8 +939,11 @@
         badge.textContent = a.status === 'done' ? '완료' : a.status === 'failed' ? '실패' : '묻는 중';
         var sub = document.createElement('span');
         sub.className = 'rec-text';
-        sub.textContent = a.prompt || ('녹취 ' + (a.ids || []).length + '건');
-        b.appendChild(head); b.appendChild(badge); b.appendChild(sub);
+        sub.textContent = answerLabel(a);
+        var top = document.createElement('span'); // 기록 목록과 같은 머리줄 - 때와 상태 칩을 세로 가운데로 맞춘다
+        top.className = 'rec-head';
+        top.appendChild(head); top.appendChild(badge);
+        b.appendChild(top); b.appendChild(sub);
         b.addEventListener('click', function () {
           var token = ++state.askToken;
           $('ask-go').disabled = false;
@@ -865,6 +954,15 @@
           }, onApiError);
         });
         li.appendChild(b);
+        if (!isolated() && a.status !== 'running') { // 격리된 출처(모니터)는 DELETE 를 이어 주지 않는다
+          var del = document.createElement('button');
+          del.type = 'button';
+          del.className = 'danger small answer-del';
+          del.textContent = '지우기';
+          del.setAttribute('aria-label', '이 답 지우기');
+          del.addEventListener('click', function () { deleteAnswer(a.id); });
+          li.appendChild(del);
+        }
         ul.appendChild(li);
       });
     }, function (e) { onApiErrorQuiet(e); });
@@ -873,6 +971,8 @@
   /* ---------- 시작 ---------- */
 
   function bind() {
+    $('answer-copy').addEventListener('click', copyAnswer);
+    $('answer-share').addEventListener('click', shareAnswer);
     $('file-btn').addEventListener('click', function () { $('file-input').click(); });
     $('file-input').addEventListener('change', function () {
       var f = this.files && this.files[0];

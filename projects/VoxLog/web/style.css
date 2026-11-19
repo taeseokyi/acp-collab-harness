@@ -141,7 +141,9 @@ textarea { resize: vertical; }
 
 /* 묻기 */
 .answer-item { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+.answer-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
 .answer-open { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 8px 12px; }
+.answer-del { margin: 0 8px; }
 .answer-open .rec-text { display: block; }
 
 .toast {

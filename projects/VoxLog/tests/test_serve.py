@@ -217,6 +217,11 @@ class TestServe(Base):
         _, lst = self.jreq("GET", "/api/answers")
         self.assertEqual([a["id"] for a in lst["items"]], [ans["id"]])
         self.assertEqual(self.jreq("GET", "/api/answers/a-20200101-000000-abcd")[0], 404)
+        self.assertEqual(self.jreq("DELETE", "/api/answers/" + ans["id"]), (200, {"ok": True}))
+        self.assertEqual(self.jreq("GET", "/api/answers/" + ans["id"])[0], 404)
+        self.assertEqual(self.jreq("DELETE", "/api/answers/" + ans["id"])[0], 404)
+        self.assertEqual(self.jreq("GET", "/api/answers")[1]["items"], [])
+        self.assertEqual(self.jreq("GET", "/api/recordings/" + meta["id"])[0], 200)   # 녹취는 그대로
 
     def test_ask_bad_kind_400(self):
         _, meta = self.upload()

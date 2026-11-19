@@ -103,33 +103,6 @@ def to_audio(src: pathlib.Path, fmt: str) -> pathlib.Path:
     return out
 
 
-def _faststart(src: pathlib.Path) -> pathlib.Path:
-    """m4a 의 색인(moov)을 파일 앞으로 옮긴 임시 사본 - 소리는 다시 압축하지 않는다(-c copy).
-
-    폰 녹음 앱의 m4a 는 색인이 끝에 있어, 받은 것을 흘려 읽는 받아쓰기 서버가 풀지 못한다(400).
-    돌려준 임시 파일은 호출한 쪽이 지운다."""
-    if shutil.which("ffmpeg") is None:
-        raise SttError("ffmpeg 가 없습니다")
-    fd, name = tempfile.mkstemp(suffix=".m4a")
-    os.close(fd)
-    out = pathlib.Path(name)
-    cmd = [
-        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-        "-protocol_whitelist", "file,pipe", "-f", "mov",
-        "-i", str(src), "-vn", "-c", "copy", "-movflags", "+faststart", "-f", "ipod", str(out),
-    ]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, timeout=600)
-    except Exception:
-        out.unlink(missing_ok=True)
-        raise
-    if proc.returncode != 0:
-        reason = _decode(proc.stderr)[-200:]
-        out.unlink(missing_ok=True)
-        raise SttError(reason or "ffmpeg 변환 실패")
-    return out
-
-
 def _transcribe_command(path, env) -> str:
     cmd_str = env.get("VOXLOG_STT_CMD")
     if not cmd_str:
@@ -239,8 +212,7 @@ def _transcribe_api(path, mime, env, opener) -> str:
     path = pathlib.Path(path)
     if diarize:
         _input_format(path)                      # 모르는 확장자는 보내지 않는다
-        whole = _faststart(path) if path.suffix.lower() == ".m4a" else None
-        tmp, parts, timeout = None, [whole or path], DIARIZE_TIMEOUT
+        tmp, parts, timeout = None, [path], DIARIZE_TIMEOUT
     else:
         (tmp, parts), timeout = split_audio(path), 180
     try:
@@ -271,8 +243,6 @@ def _transcribe_api(path, mime, env, opener) -> str:
                 texts.append(text.strip())
         return ("\n" if by_speaker else " ").join(texts)
     finally:
-        if diarize and whole is not None:
-            whole.unlink(missing_ok=True)
         if tmp is not None:
             shutil.rmtree(tmp, ignore_errors=True)
 

@@ -245,7 +245,7 @@ class Handler(BaseHTTPRequestHandler):
         elif parts == ["api", "answers"]:
             route = (("GET",), self._answers, ())
         elif n == 3 and parts[1] == "answers":
-            route = (("GET",), self._answer_one, (parts[2],))
+            route = (("GET", "DELETE"), self._answer_one if method != "DELETE" else self._answer_delete, (parts[2],))
         if route is None:
             return self._err(404, "없는 API 경로입니다")
         allowed, fn, args = route
@@ -486,6 +486,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._err(404, "없는 답입니다")
         self._json(200, ans)
 
+    def _answer_delete(self, aid):
+        removed = self.server.store.delete_answer(aid)
+        if removed == "running":
+            return self._err(409, "아직 묻는 중인 답은 지울 수 없습니다")
+        if not removed:
+            return self._err(404, "없는 답입니다")
+        self._json(200, {"ok": True})
+
     def _rec_delete(self, rid):
         try:
             removed = self.server.store.delete(rid)
@@ -533,7 +541,8 @@ SETTINGS_FILE = HERE / "settings.json"
 def load_settings(path=SETTINGS_FILE, environ=None):
     """서버 설정 = settings.json 의 `VOXLOG_*` 글 값 위에 환경 변수를 덮은 것 (환경 변수가 이긴다).
 
-    모니터의 '앱 열기'·배포는 환경을 좁혀 띄우므로 음성인식 주소 같은 설정은 이 파일에 둔다. 비밀 값은 넣지 않는다."""
+    모니터의 '앱 열기'·배포는 환경을 좁혀 띄우므로 음성인식 주소·키(`VOXLOG_STT_API_KEY`) 같은 설정은 이 파일에 둔다.
+    키가 들어가므로 git 에 올리지 않고 권한은 600 으로 둔다."""
     env = {}
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))

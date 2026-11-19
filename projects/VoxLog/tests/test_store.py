@@ -192,6 +192,13 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(got["status"], "done")
         self.assertEqual(got["answer"], "짧은 답")
 
+        about = self.store.list_answers()[0]["about"]                             # 무엇에 대한 답인지: 첫 녹취의 때·첫마디
+        self.assertEqual(about, {"recorded_at": self.store.get(rid)["recorded_at"], "title": self.store.get(rid)["title"]})
+        gone = self.store.add_answer("summary", "", ["r-20200101-000000-abcd"])   # 녹취가 지워진 답
+        self.assertIsNone([a for a in self.store.list_answers() if a["id"] == gone["id"]][0]["about"])
+        self.assertIs(self.store.delete_answer(gone["id"]), "running")
+        self.store.set_answer(gone["id"], "failed", error="x")
+        self.assertIs(self.store.delete_answer(gone["id"]), True)
         other = self.store.add_answer("keywords", "", [rid])
         self.assertEqual({a["id"] for a in self.store.list_answers()},
                          {answer["id"], other["id"]})
@@ -200,7 +207,17 @@ class StoreTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.set_answer("../x", "done")
 
+        running = self.store.add_answer("summary", "", [rid])
+        self.assertEqual(self.store.delete_answer(running["id"]), "running")      # 묻는 중인 답은 안 지운다
+        self.assertIsNotNone(self.store.get_answer(running["id"]))
+        self.assertIs(self.store.delete_answer(answer["id"]), True)
+        self.assertIsNone(self.store.get_answer(answer["id"]))
+        self.assertIs(self.store.delete_answer(answer["id"]), False)
+        self.assertIs(self.store.delete_answer("../meta/x"), False)
+        self.assertIsNotNone(self.store.get(rid))                                 # 녹취는 그대로
+
     # 13
+
     def test_location_saved_and_returned(self):
         meta = self.add(recorded_at="2026-03-01T10:00:00",
                         location={"lat": "37.5", "lon": 127.0, "accuracy": 12})
