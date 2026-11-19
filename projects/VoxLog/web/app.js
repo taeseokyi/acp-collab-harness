@@ -668,6 +668,10 @@
       $('detail-meta').textContent = meta;
       renderLoc(r.location);
       $('detail-delete').hidden = isolated();
+      state.detailText = r.transcript || '';
+      state.detailHead = (r.title || '녹취') + ' · ' + fmtTime(r.recorded_at || r.created);
+      $('detail-export').hidden = !state.detailText;
+      $('detail-share').hidden = !canShare();
       var tr = $('transcript');
       if (r.transcript) tr.textContent = r.transcript;
       else if (r.status === 'pending' || r.status === 'transcribing') tr.textContent = '받아쓰는 중입니다…';
@@ -686,6 +690,8 @@
     $('detail-title').textContent = '녹취';
     $('detail-meta').textContent = '불러오는 중…';
     $('transcript').textContent = '';
+    state.detailText = '';
+    $('detail-export').hidden = true;
     Array.prototype.forEach.call($('list').children, function (li) {
       li.classList.toggle('open', li.dataset.id === id);
     });
@@ -788,8 +794,7 @@
     return parts.join(' · ');
   }
 
-  function copyAnswer() {
-    var text = state.shownText;
+  function copyText(text) {
     if (!text) return;
     function fallback() { // 클립보드 API 가 없거나 막힌 곳 - 보이지 않는 글상자를 골라 복사
       var ta = document.createElement('textarea');
@@ -813,16 +818,25 @@
     fallback();
   }
 
-  function shareAnswer() {
-    var text = state.shownText;
+  function shareText(title, text) {
     if (!text) return;
     try {
-      Promise.resolve(navigator.share({ title: 'VoxLog ' + state.shownHead, text: text })).catch(function (e) {
+      Promise.resolve(navigator.share({ title: title, text: text })).catch(function (e) {
         if (e && e.name === 'AbortError') return; // 사용자가 닫음
         toast('공유하지 못했습니다.');
       });
     } catch (e) { toast('공유하지 못했습니다.'); }
   }
+
+  function canShare() { // 기기의 공유 창이 있는가 (없으면 '공유' 단추를 숨긴다)
+    try { return typeof navigator.share === 'function'; } catch (e) { return false; }
+  }
+
+  function copyAnswer() { copyText(state.shownText); }
+  function shareAnswer() { shareText('VoxLog ' + state.shownHead, state.shownText); }
+  // 녹취 상세: 받아쓴 글 그대로 내보낸다 (받아쓰는 중·글 없음 안내는 내보내지 않는다)
+  function copyDetail() { copyText(state.detailText); }
+  function shareDetail() { shareText('VoxLog ' + state.detailHead, state.detailText); }
 
   function deleteAnswer(aid) {
     if (!window.confirm('이 답을 지울까요? 되돌릴 수 없습니다. (녹취는 그대로 남습니다)')) return;
@@ -849,9 +863,7 @@
     state.shownText = a.status === 'done' && a.answer ? a.answer : '';
     state.shownHead = (KIND[a.kind] || a.kind || '답') + ' · ' + fmtTime(a.created);
     $('answer-actions').hidden = !state.shownText;
-    var canShare = false;
-    try { canShare = typeof navigator.share === 'function'; } catch (e) { /* 없음 */ }
-    $('answer-share').hidden = !canShare;
+    $('answer-share').hidden = !canShare();
     if (a.status === 'done') {
       st.textContent = (KIND[a.kind] || a.kind) + ' · ' + fmtTime(a.created) + ' · 녹취 ' + (a.ids || []).length + '건';
       // 답은 마크다운으로 그린다 (md.js - DOM 으로만 만들어 답에 든 HTML 은 글자로 보인다)
@@ -973,6 +985,8 @@
   function bind() {
     $('answer-copy').addEventListener('click', copyAnswer);
     $('answer-share').addEventListener('click', shareAnswer);
+    $('detail-copy').addEventListener('click', copyDetail);
+    $('detail-share').addEventListener('click', shareDetail);
     $('file-btn').addEventListener('click', function () { $('file-input').click(); });
     $('file-input').addEventListener('change', function () {
       var f = this.files && this.files[0];
