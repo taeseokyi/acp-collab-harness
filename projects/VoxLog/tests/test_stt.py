@@ -331,8 +331,10 @@ class ApiBackendTest(unittest.TestCase):
                                   env={"VOXLOG_STT_URL": self.URL, "VOXLOG_STT_DIARIZE": "1"}, opener=opener)
         self.assertEqual(text, "화자 1: 말")
         self.assertEqual(opener.calls, [stt.DIARIZE_TIMEOUT])        # 자르지 않고 한 번, 오래 기다림
-        name = opener.last_req.data.split(b'filename="', 1)[1].split(b'"', 1)[0].decode("ascii")
-        self.assertFalse(pathlib.Path(tempfile.gettempdir(), name).exists())   # 임시 파일을 지웠다
+        body = opener.last_req.data                                  # 다시 압축하지 않고 받은 원본 그대로
+        self.assertIn(b'name="file"; filename="audio.webm"\r\nContent-Type: audio/webm\r\n\r\n', body)
+        self.assertIn(self.src.read_bytes(), body)
+        self.assertTrue(self.src.exists())                           # 원본은 지우지 않는다
 
     def test_api_unreadable_response_is_stt_error(self):
         opener = FakeOpener(response=json.dumps({"choices": []}).encode("utf-8"))

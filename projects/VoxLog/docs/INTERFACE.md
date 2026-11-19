@@ -88,7 +88,7 @@ def transcribe(path: pathlib.Path, mime: str, env=None, opener=None) -> str
     # api: OpenAI 꼴 받아쓰기 엔드포인트. split_audio 로 16kHz 모노 mp3 를 CHUNK_SECONDS(600초)씩 잘라 차례로
     #   POST VOXLOG_STT_URL (multipart: file, language=VOXLOG_STT_LANG(기본 "ko"), model=VOXLOG_STT_MODEL(있을 때)),
     #   VOXLOG_STT_API_KEY 가 있으면 Bearer. 응답 {"text": …} 을 빈칸으로 이어 붙임. 조각마다 시간 상한 180초, opener 는 검사용 주입
-    #   VOXLOG_STT_DIARIZE=1 이면 자르지 않고 mp3 하나로 통째로 보내며 response_format=diarized_json 을 더 보냄
+    #   VOXLOG_STT_DIARIZE=1 이면 자르지 않고 받은 원본 그대로(다시 압축하지 않음) 통째로 보내며 response_format=diarized_json 을 더 보냄
     #   (시간 상한 DIARIZE_TIMEOUT 3600초). 응답에 segments([{speaker, text, …}])가 있으면 "화자 N: 글" 줄들로 적음
     #   (같은 화자가 이어지면 한 줄, 번호는 처음 나온 차례). segments 가 없으면 text 그대로
 def split_audio(src: pathlib.Path, seconds=None) -> (pathlib.Path, list)   # (임시 폴더, 조각 경로들) - 폴더는 호출한 쪽이 지움

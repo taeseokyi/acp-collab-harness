@@ -21,6 +21,7 @@ import urllib.request
 # 주소는 VOXLOG_STT_URL (예: https://<호스트>/v1/audio/transcriptions), 모델은 VOXLOG_STT_MODEL.
 DEFAULT_LANG = "ko"
 DIARIZE_TIMEOUT = 3600  # 화자 구분은 녹음 전체를 한 번에 보낸다 (서버가 전체에서 화자를 나눠야 끝까지 같은 번호) - 오래 기다린다
+                        # 받은 원본 그대로 보낸다 - 다시 압축하면 목소리 특징이 뭉개져 여러 사람이 한 화자로 나온다
 CHUNK_SECONDS = 600     # 긴 녹음은 이 길이로 잘라 차례로 보낸다 (받아쓰기 서버 권장: 한 요청 10분·25MB 이하. 32kbps mp3 10분 ≈ 2.4MB)
 
 NO_BACKEND_MESSAGE = "음성인식 백엔드가 없습니다 - VOXLOG_STT_URL 또는 VOXLOG_STT_CMD"
@@ -51,6 +52,8 @@ def _decode(data) -> str:
         return data.decode("utf-8", errors="replace")
     return data or ""
 
+
+_UPLOAD_TYPES = {"webm": "audio/webm", "ogg": "audio/ogg", "m4a": "audio/mp4", "mp3": "audio/mpeg", "wav": "audio/wav"}
 
 _INPUT_FORMATS = {
     "webm": "matroska",
@@ -153,13 +156,13 @@ def split_audio(src: pathlib.Path, seconds=None):
     return tmp, parts
 
 
-def _multipart(fields, filename, data):
+def _multipart(fields, filename, data, ctype="audio/mpeg"):
     boundary = "voxlog-" + base64.b16encode(os.urandom(12)).decode("ascii")
     out = []
     for k, v in fields.items():
         out.append(("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n" % (boundary, k, v)).encode("utf-8"))
     out.append(("--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n"
-                "Content-Type: audio/mpeg\r\n\r\n" % (boundary, filename)).encode("utf-8"))
+                "Content-Type: %s\r\n\r\n" % (boundary, filename, ctype)).encode("utf-8"))
     out.append(data)
     out.append(("\r\n--%s--\r\n" % boundary).encode("utf-8"))
     return b"".join(out), "multipart/form-data; boundary=" + boundary
@@ -206,9 +209,10 @@ def _transcribe_api(path, mime, env, opener) -> str:
         headers["Authorization"] = "Bearer " + env["VOXLOG_STT_API_KEY"]
     if opener is None:
         opener = _default_opener
+    path = pathlib.Path(path)
     if diarize:
-        whole = to_audio(path, "mp3")
-        tmp, parts, timeout = whole.parent, [whole], DIARIZE_TIMEOUT
+        _input_format(path)                      # 모르는 확장자는 보내지 않는다
+        tmp, parts, timeout = None, [path], DIARIZE_TIMEOUT
     else:
         (tmp, parts), timeout = split_audio(path), 180
     try:
@@ -216,7 +220,9 @@ def _transcribe_api(path, mime, env, opener) -> str:
         names = {}
         by_speaker = False
         for part in parts:
-            body, ctype = _multipart(fields, part.name, part.read_bytes())
+            ext = part.suffix.lower().lstrip(".")
+            body, ctype = _multipart(fields, "audio." + ext if diarize else part.name, part.read_bytes(),
+                                     _UPLOAD_TYPES.get(ext, "application/octet-stream"))
             req = urllib.request.Request(url, data=body, headers=dict(headers, **{"Content-Type": ctype}), method="POST")
             try:
                 raw = opener(req, timeout)
@@ -237,9 +243,7 @@ def _transcribe_api(path, mime, env, opener) -> str:
                 texts.append(text.strip())
         return ("\n" if by_speaker else " ").join(texts)
     finally:
-        if diarize:
-            parts[0].unlink(missing_ok=True)
-        else:
+        if tmp is not None:
             shutil.rmtree(tmp, ignore_errors=True)
 
 

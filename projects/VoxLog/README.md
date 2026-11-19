@@ -42,7 +42,7 @@ python3 serve.py --host 0.0.0.0 --token <비밀> --tls-cert cert.pem --tls-key k
   - `api` - `VOXLOG_STT_URL` 의 OpenAI 꼴 받아쓰기 엔드포인트(`…/v1/audio/transcriptions`). 모델 `VOXLOG_STT_MODEL`,
     언어 `VOXLOG_STT_LANG`(기본 `ko`), 키가 필요한 서버면 `VOXLOG_STT_API_KEY`. 화자 구분 없이 받아쓸 때는 긴 녹음을 10분씩 잘라 보냅니다(서버 권장: 한 요청 10분·25MB 이하).
     지금 설정(`settings.json`)은 KISTI 의 `Qwen3-ASR-1.7B`
-  - 화자 구분: `VOXLOG_STT_DIARIZE=1` 이면 녹음을 자르지 않고 통째로 `response_format=diarized_json` 과 함께 보내고,
+  - 화자 구분: `VOXLOG_STT_DIARIZE=1` 이면 녹음을 자르지도 다시 압축하지도 않고 원본 그대로 `response_format=diarized_json` 과 함께 보내고,
     서버가 돌려준 `segments`(`speaker`·`text`)를 `화자 1: …` 줄로 적습니다(지금 설정은 켜 둠). 서버가 녹음 전체에서
     화자를 나누므로 긴 녹음도 화자 번호가 끝까지 같습니다
   - 없으면 녹음은 쌓이고 상태가 '음성인식 없음' - 나중에 백엔드를 켜고 '다시 받아쓰기'
