@@ -40,12 +40,12 @@ python3 serve.py --host 0.0.0.0 --token <비밀> --tls-cert cert.pem --tls-key k
   (루프백이 아닌 주소에 토큰 없이는 시작을 거절).
 - 음성인식 백엔드 (`VOXLOG_STT`):
   - `command` - `VOXLOG_STT_CMD="whisper-cli -m model.bin -f {wav} -nt -l ko"` 처럼 받아쓰기 명령(16kHz 모노 wav 를 받음)
-  - `api` - `VOXLOG_STT_URL` 의 OpenAI 꼴 받아쓰기 엔드포인트(`…/v1/audio/transcriptions`). 모델 `VOXLOG_STT_MODEL`,
-    언어 `VOXLOG_STT_LANG`(기본 `ko`), 키가 필요한 서버면 `VOXLOG_STT_API_KEY`. 화자 구분 없이 받아쓸 때는 긴 녹음을 10분씩 잘라 보냅니다(서버 권장: 한 요청 10분·25MB 이하).
-    지금 설정(`settings.json`)은 KISTI 의 `Qwen3-ASR-1.7B`
-  - 화자 구분: `VOXLOG_STT_DIARIZE=1` 이면 녹음을 자르지도 다시 압축하지도 않고 원본 그대로 `response_format=diarized_json` 과 함께 보내고,
-    서버가 돌려준 `segments`(`speaker`·`text`)를 `화자 1: …` 줄로 적습니다(지금 설정은 켜 둠). 서버가 녹음 전체에서
-    화자를 나누므로 긴 녹음도 화자 번호가 끝까지 같습니다
+  - `api` - `VOXLOG_STT_URL` 의 화자 구분 받아쓰기 서버 작업 API(`…/v1/audio/diarize/jobs`). 모델 `VOXLOG_STT_MODEL`,
+    언어 `VOXLOG_STT_LANG`(기본 `ko`), 키 `VOXLOG_STT_API_KEY`. 지금 설정(`settings.json`)은 KISTI 의 `Qwen3-ASR-1.7B`
+  - 녹음은 자르지도 다시 압축하지도 않고 원본 그대로 작업으로 맡긴 뒤 10초마다 조회해 결과를 받습니다(한 요청을 오래 붙들지 않아
+    긴 녹음도 중간에 끊기지 않음). 서버가 돌려준 `segments`(`speaker`·`text`)를 `화자 1: …` 줄로 적고, 서버가 화자를 정하지 못한
+    짧은 소리는 `화자 ?` 로 적습니다. 맡긴 작업 id 를 적어 두어 앱 서버가 다시 떠도 같은 작업을 이어 기다리고, 결과를 받으면
+    서버에 남은 것은 바로 지웁니다
   - 없으면 녹음은 쌓이고 상태가 '음성인식 없음' - 나중에 백엔드를 켜고 '다시 받아쓰기'
   - 음성 변환에 `ffmpeg` 가 필요합니다
 - 받은 답은 '복사'·'공유'(기기의 공유 창, 지원하는 기기만)로 마크다운 원문을 내보내고, '지난 답'에서 지울 수 있습니다(묻는 중인 답은 못 지움).

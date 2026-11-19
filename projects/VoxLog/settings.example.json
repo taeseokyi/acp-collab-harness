@@ -1,6 +1,5 @@
 {
-  "VOXLOG_STT_URL": "https://stt.example.org/v1/audio/transcriptions",
+  "VOXLOG_STT_URL": "https://stt.example.org/v1/audio/diarize/jobs",
   "VOXLOG_STT_MODEL": "Qwen3-ASR-1.7B",
-  "VOXLOG_STT_DIARIZE": "1",
   "VOXLOG_STT_API_KEY": "받아쓰기 서버가 준 키 (키가 없는 서버면 이 줄을 뺀다)"
 }

@@ -442,6 +442,16 @@ class Store:
             meta["error"] = error
             self._write_json(self._meta_path(rid), meta)
 
+    def set_job(self, rid, jid):
+        """받아쓰기 서버에 맡긴 작업 id 를 적는다(None 이면 지움). 앱 서버가 다시 떠도 이어 기다리는 데 쓴다."""
+        with self._lock:
+            meta = self._load_meta(rid)
+            if jid:
+                meta["stt_job"] = str(jid)[:64]
+            else:
+                meta.pop("stt_job", None)
+            self._write_json(self._meta_path(rid), meta)
+
     def set_transcript(self, rid, text):
         text = text or ""
         with self._lock:

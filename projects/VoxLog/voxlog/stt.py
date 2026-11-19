@@ -13,16 +13,24 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 
 
-# "api" 백엔드: OpenAI 꼴 받아쓰기 엔드포인트(POST multipart `file`·`model`·`language` → {"text": …}).
-# 주소는 VOXLOG_STT_URL (예: https://<호스트>/v1/audio/transcriptions), 모델은 VOXLOG_STT_MODEL.
+# "api" 백엔드: 화자 구분 받아쓰기 서버의 작업 API (맡기기 → 조회 → 결과).
+#   POST VOXLOG_STT_URL (multipart `file`·`language`·`model`) → 202 {"id"}
+#   GET  VOXLOG_STT_URL/<id> → {"status": queued|running|done|failed|cancelled, "result": {"text", "segments"}, "error"}
+#   DELETE VOXLOG_STT_URL/<id> → 서버에 남은 결과를 지움
+# 주소는 VOXLOG_STT_URL (예: https://<호스트>/v1/audio/diarize/jobs), 모델은 VOXLOG_STT_MODEL, 키는 VOXLOG_STT_API_KEY.
+# 녹음은 받은 원본 그대로 통째로 보낸다 - 다시 압축하면 목소리 특징이 뭉개져 여러 사람이 한 화자로 나온다.
+# 한 요청을 오래 붙들지 않으므로 긴 녹음도 중간 장비의 시간 제한에 끊기지 않는다.
 DEFAULT_LANG = "ko"
-DIARIZE_TIMEOUT = 3600  # 화자 구분은 녹음 전체를 한 번에 보낸다 (서버가 전체에서 화자를 나눠야 끝까지 같은 번호) - 오래 기다린다
-                        # 받은 원본 그대로 보낸다 - 다시 압축하면 목소리 특징이 뭉개져 여러 사람이 한 화자로 나온다
-CHUNK_SECONDS = 600     # 긴 녹음은 이 길이로 잘라 차례로 보낸다 (받아쓰기 서버 권장: 한 요청 10분·25MB 이하. 32kbps mp3 10분 ≈ 2.4MB)
+SUBMIT_TIMEOUT = 600    # 맡기기 한 번(파일 올리기)의 시간 상한
+POLL_TIMEOUT = 30       # 조회 한 번의 시간 상한
+POLL_SECONDS = 10       # 조회 간격
+POLL_MAX_ERRORS = 30    # 조회가 이만큼 잇달아 실패하면 그만둔다 (약 5분)
+JOB_TIMEOUT = 6 * 3600  # 맡긴 뒤 결과까지 기다리는 상한 (서버 줄 서기 포함)
 
 NO_BACKEND_MESSAGE = "음성인식 백엔드가 없습니다 - VOXLOG_STT_URL 또는 VOXLOG_STT_CMD"
 
@@ -128,34 +136,6 @@ def _transcribe_command(path, env) -> str:
         wav.unlink(missing_ok=True)
 
 
-def split_audio(src: pathlib.Path, seconds=None):
-    """ffmpeg 로 16kHz 모노 mp3 조각들을 임시 폴더에 만든다. (폴더, [조각 경로 - 시간 차례]).
-
-    입력 형식·프로토콜 제한은 to_audio 와 같다. 폴더는 호출한 쪽이 지운다."""
-    src = pathlib.Path(src)
-    input_fmt = _input_format(src)
-    if shutil.which("ffmpeg") is None:
-        raise SttError("ffmpeg 가 없습니다")
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="voxlog-stt-"))
-    cmd = [
-        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-        "-protocol_whitelist", "file,pipe", "-f", input_fmt,
-        "-i", str(src), "-ac", "1", "-ar", "16000", "-b:a", "32k",
-        "-f", "segment", "-segment_time", str(int(seconds or CHUNK_SECONDS)), "-reset_timestamps", "1",
-        str(tmp / "part-%04d.mp3"),
-    ]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, timeout=600)
-    except Exception:
-        shutil.rmtree(tmp, ignore_errors=True)
-        raise
-    parts = sorted(tmp.glob("part-*.mp3"))
-    if proc.returncode != 0 or not parts:
-        shutil.rmtree(tmp, ignore_errors=True)
-        raise SttError(_decode(proc.stderr)[-200:] or "ffmpeg 변환 실패")
-    return tmp, parts
-
-
 def _multipart(fields, filename, data, ctype="audio/mpeg"):
     boundary = "voxlog-" + base64.b16encode(os.urandom(12)).decode("ascii")
     out = []
@@ -171,7 +151,8 @@ def _multipart(fields, filename, data, ctype="audio/mpeg"):
 def _speaker_lines(segments, names):
     """화자 구분 응답의 segments([{speaker, text}, …])를 '화자 N: 글' 줄들로. 같은 화자가 이어지면 한 줄로 잇는다.
 
-    names 는 {서버가 준 화자 표시: 번호} - 번호는 처음 나온 차례. 화자 구분이 없는 응답이면 None."""
+    names 는 {서버가 준 화자 표시: 번호} - 번호는 처음 나온 차례. 서버가 화자를 정하지 못한 "?" 는 '화자 ?'.
+    화자 구분이 없는 응답이면 None."""
     if not isinstance(segments, list):
         return None
     lines = []
@@ -183,88 +164,157 @@ def _speaker_lines(segments, names):
         if not isinstance(text, str) or not text.strip():
             continue
         label = str(seg["speaker"])[:40]
-        n = names.setdefault(label, len(names) + 1)
+        # "?" = 서버가 화자를 정하지 못한 짧은 소리 - 사람 수에 넣지 않는다
+        n = "?" if label == "?" else names.setdefault(label, len(names) + 1)
         if n == last:
             lines[-1] += " " + text.strip()
         else:
-            lines.append("화자 %d: %s" % (n, text.strip()))
+            lines.append("화자 %s: %s" % (n, text.strip()))
             last = n
     return lines or None
 
 
-def _transcribe_api(path, mime, env, opener) -> str:
-    url = env.get("VOXLOG_STT_URL")
+def _call(opener, req, timeout):
+    """한 번 부르고 JSON 을 돌려준다. (상태 코드, 객체) - 코드는 성공이면 200, HTTP 오류면 그 코드, 연결 실패면 0."""
+    try:
+        raw = opener(req, timeout)
+    except urllib.error.HTTPError as exc:
+        return exc.code, None
+    except (urllib.error.URLError, OSError):
+        return 0, None
+    try:
+        obj = json.loads(_decode(raw))
+    except ValueError:
+        obj = None
+    return 200, obj if isinstance(obj, dict) else None
+
+
+def _http_reason(code):
+    if code == 0:
+        return "음성인식 서버에 연결하지 못했습니다"
+    if code in (401, 403):
+        return "음성인식 서버 %d - 키(VOXLOG_STT_API_KEY)를 확인하십시오" % code
+    if code == 429:
+        return "음성인식 서버가 붐빕니다(429) - 잠시 뒤 다시 받아쓰십시오"
+    return "음성인식 서버 %d" % code
+
+
+def _transcribe_api(path, mime, env, opener, job=None) -> str:
+    """작업으로 맡기고 끝날 때까지 조회한다. `job` 은 맡긴 작업 id 를 적어 두는 곳(get()·set(id)) -
+    있으면 앱 서버가 다시 떠도 같은 작업을 이어서 기다린다."""
+    url = (env.get("VOXLOG_STT_URL") or "").rstrip("/")
     if not url:
         raise SttUnavailable(NO_BACKEND_MESSAGE)
     if not url.startswith(("https://", "http://")):
         raise SttError("VOXLOG_STT_URL 이 http(s) 주소가 아닙니다")
-    fields = {"language": env.get("VOXLOG_STT_LANG") or DEFAULT_LANG}
-    if env.get("VOXLOG_STT_MODEL"):
-        fields["model"] = env["VOXLOG_STT_MODEL"]
-    diarize = (env.get("VOXLOG_STT_DIARIZE") or "").strip().lower() in ("1", "true", "yes", "on")
-    if diarize:
-        fields["response_format"] = "diarized_json"   # 응답에 segments([{speaker, start, end, text}, …])가 실린다
+    path = pathlib.Path(path)
+    _input_format(path)                          # 모르는 확장자는 보내지 않는다
     headers = {}
     if env.get("VOXLOG_STT_API_KEY"):
         headers["Authorization"] = "Bearer " + env["VOXLOG_STT_API_KEY"]
     if opener is None:
         opener = _default_opener
-    path = pathlib.Path(path)
-    if diarize:
-        _input_format(path)                      # 모르는 확장자는 보내지 않는다
-        tmp, parts, timeout = None, [path], DIARIZE_TIMEOUT
-    else:
-        (tmp, parts), timeout = split_audio(path), 180
-    try:
-        texts = []
-        names = {}
-        by_speaker = False
-        for part in parts:
-            ext = part.suffix.lower().lstrip(".")
-            body, ctype = _multipart(fields, "audio." + ext if diarize else part.name, part.read_bytes(),
-                                     _UPLOAD_TYPES.get(ext, "application/octet-stream"))
-            req = urllib.request.Request(url, data=body, headers=dict(headers, **{"Content-Type": ctype}), method="POST")
-            try:
-                raw = opener(req, timeout)
-            except urllib.error.HTTPError as exc:
-                raise SttError("음성인식 서버 %d" % exc.code) from None
-            except (urllib.error.URLError, OSError):
-                raise SttError("음성인식 서버에 연결하지 못했습니다") from None
-            try:
-                obj = json.loads(_decode(raw))
-                text = obj["text"]
-            except (ValueError, KeyError, TypeError):
-                raise SttError("음성인식 서버 응답을 읽지 못했습니다") from None
-            lines = _speaker_lines(obj.get("segments"), names) if diarize else None
-            if lines:
-                by_speaker = True
-                texts.extend(lines)
-            elif isinstance(text, str) and text.strip():
-                texts.append(text.strip())
-        return ("\n" if by_speaker else " ").join(texts)
-    finally:
-        if tmp is not None:
-            shutil.rmtree(tmp, ignore_errors=True)
+
+    def submit():
+        fields = {"language": env.get("VOXLOG_STT_LANG") or DEFAULT_LANG}
+        if env.get("VOXLOG_STT_MODEL"):
+            fields["model"] = env["VOXLOG_STT_MODEL"]
+        ext = path.suffix.lower().lstrip(".")
+        body, ctype = _multipart(fields, "audio." + ext, path.read_bytes(), _UPLOAD_TYPES[ext])
+        req = urllib.request.Request(url, data=body, headers=dict(headers, **{"Content-Type": ctype}), method="POST")
+        code, obj = _call(opener, req, SUBMIT_TIMEOUT)
+        if code != 200:
+            raise SttError(_http_reason(code))
+        jid = obj.get("id") if obj else None
+        if not isinstance(jid, str) or not jid.isalnum() or len(jid) > 64:
+            raise SttError("음성인식 서버 응답을 읽지 못했습니다")
+        if job is not None:
+            job.set(jid)
+        return jid
+
+    jid = job.get() if job is not None else None
+    resumed = bool(jid)
+    if not jid:
+        jid = submit()
+    deadline = time.monotonic() + JOB_TIMEOUT
+    errors = 0
+    while True:
+        code, st = _call(opener, urllib.request.Request(url + "/" + jid, headers=headers, method="GET"), POLL_TIMEOUT)
+        if code == 404 and resumed:              # 이어받으려던 작업이 서버에 없다(보관 기한·삭제) - 새로 맡긴다
+            resumed = False
+            jid = submit()
+            continue
+        if code != 200 or st is None:
+            if code in (401, 403, 404):
+                if job is not None:
+                    job.set(None)
+                raise SttError(_http_reason(code) if code != 404 else "음성인식 서버에 맡긴 작업이 없어졌습니다")
+            errors += 1
+            if errors >= POLL_MAX_ERRORS:
+                raise SttError(_http_reason(code) if code != 200 else "음성인식 서버 응답을 읽지 못했습니다")
+        else:
+            errors = 0
+            status = st.get("status")
+            if status in ("done", "failed", "cancelled"):
+                break
+        if time.monotonic() > deadline:
+            raise SttError("음성인식이 너무 오래 걸립니다")
+        _sleep(POLL_SECONDS)
+    if job is not None:
+        job.set(None)
+    # 서버에 남은 결과(24시간 보관)는 바로 지운다 - 실패해도 받아쓰기 결과에는 영향 없음
+    _call(opener, urllib.request.Request(url + "/" + jid, headers=headers, method="DELETE"), POLL_TIMEOUT)
+    if status != "done":
+        reason = st.get("error")
+        reason = (" - " + " ".join(str(reason).split())[:120]) if reason else ""
+        raise SttError(("음성인식이 취소됐습니다" if status == "cancelled" else "음성인식 서버가 받아쓰지 못했습니다") + reason)
+    result = st.get("result")
+    if not isinstance(result, dict) or not isinstance(result.get("text"), str):
+        raise SttError("음성인식 서버 응답을 읽지 못했습니다")
+    lines = _speaker_lines(result.get("segments"), {})
+    return "\n".join(lines) if lines else result["text"].strip()
+
+
+def _sleep(seconds):
+    time.sleep(seconds)
 
 
 def _default_opener(req, timeout):
     return urllib.request.urlopen(req, timeout=timeout).read()
 
 
-def transcribe(path: pathlib.Path, mime: str, env=None, opener=None) -> str:
+def transcribe(path: pathlib.Path, mime: str, env=None, opener=None, job=None) -> str:
     if env is None:
         env = os.environ
     name = backend_name(env)
     if name == "command":
         return _transcribe_command(path, env)
     if name == "api":
-        return _transcribe_api(path, mime, env, opener)
+        return _transcribe_api(path, mime, env, opener, job)
     raise SttUnavailable(NO_BACKEND_MESSAGE)
 
 
 def _short(exc, n=200) -> str:
     text = str(exc).replace("\n", " ").strip()
     return text[:n] if text else type(exc).__name__
+
+
+class _JobRef:
+    """맡긴 작업 id 를 녹음 메타(stt_job)에 적어 둔다 - 앱 서버가 다시 떠도 같은 작업을 이어 기다리게."""
+
+    def __init__(self, store, rid):
+        self.store, self.rid = store, rid
+
+    def get(self):
+        meta = self.store.get(self.rid)
+        jid = meta.get("stt_job") if isinstance(meta, dict) else None
+        return jid if isinstance(jid, str) and jid else None
+
+    def set(self, jid):
+        try:
+            self.store.set_job(self.rid, jid)
+        except Exception:
+            pass                                  # 녹음이 그새 지워졌다 - 받아쓰기 쪽에서 드러난다
 
 
 class Transcriber:
@@ -356,7 +406,10 @@ class Transcriber:
         env = self.env if self.env is not None else os.environ
         mime = meta.get("mime", "")
         try:
-            text = self.transcribe_fn(path, mime, env)
+            if self.transcribe_fn is transcribe:
+                text = transcribe(path, mime, env, job=_JobRef(self.store, rid))
+            else:
+                text = self.transcribe_fn(path, mime, env)
         except SttUnavailable as exc:
             self.store.set_status(rid, "no-stt", _short(exc))
         except SttError as exc:

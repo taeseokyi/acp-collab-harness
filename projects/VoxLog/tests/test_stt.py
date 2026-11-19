@@ -92,6 +92,56 @@ class FakeOpener:
         return self.response
 
 
+class FakeJob:
+    """맡긴 작업 id 를 적어 두는 곳(stt._JobRef 흉내)."""
+
+    def __init__(self, jid=None):
+        self.jid = jid
+        self.history = []
+
+    def get(self):
+        return self.jid
+
+    def set(self, jid):
+        self.jid = jid
+        self.history.append(jid)
+
+
+class FakeJobServer:
+    """받아쓰기 서버의 작업 API 흉내(opener). states = 조회마다 차례로 돌려줄 것 -
+    상태 글자("queued"…), 0(연결 실패) 또는 HTTP 오류 코드. 다 쓰면 마지막 것을 되풀이."""
+
+    def __init__(self, url, states=("done",), result=None, error=None, known=None):
+        self.url, self.states, self.result, self.error = url, list(states), result, error
+        self.known = set(known or ())
+        self.calls, self.posts, self.auths, self.slept = [], [], [], []
+        self.i = 0
+
+    def __call__(self, req, timeout):
+        method = req.get_method()
+        self.calls.append((method, req.full_url))
+        self.auths.append(req.get_header("Authorization"))
+        if method == "POST":
+            self.posts.append(req)
+            self.known.add("job1")
+            return json.dumps({"id": "job1", "status": "queued", "status_url": "/x/job1"}).encode("utf-8")
+        jid = req.full_url.rsplit("/", 1)[1]
+        if jid not in self.known:
+            raise urllib.error.HTTPError(req.full_url, 404, "no such job", {}, None)
+        if method == "DELETE":
+            return json.dumps({"id": jid, "status": "deleted"}).encode("utf-8")
+        state = self.states[min(self.i, len(self.states) - 1)]
+        self.i += 1
+        if state == 0:
+            raise urllib.error.URLError("down")
+        if isinstance(state, int):
+            raise urllib.error.HTTPError(req.full_url, state, "boom", {}, None)
+        view = {"id": jid, "status": state, "stage": state, "error": self.error if state != "done" else None}
+        if state == "done":
+            view["result"] = self.result
+        return json.dumps(view).encode("utf-8")
+
+
 def wait_idle(transcriber, timeout=10.0):
     end = time.time() + timeout
     while time.time() < end:
@@ -244,7 +294,7 @@ class CommandBackendTest(unittest.TestCase):
 
 @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg 가 없습니다")
 class ApiBackendTest(unittest.TestCase):
-    URL = "https://stt.example/v1/audio/transcriptions"
+    URL = "https://stt.example/v1/audio/diarize/jobs"
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -263,101 +313,128 @@ class ApiBackendTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_api_posts_multipart_and_returns_text(self):
-        opener = FakeOpener(response=json.dumps({"text": "  안녕하세요  ", "usage": {}}).encode("utf-8"))
-        env = {"VOXLOG_STT_URL": self.URL, "VOXLOG_STT_MODEL": "my/model"}
-        text = stt.transcribe(self.src, "audio/webm", env=env, opener=opener)
-        self.assertEqual(text, "안녕하세요")
-        req = opener.last_req
-        self.assertEqual(req.full_url, self.URL)
-        self.assertTrue(req.get_header("Content-type").startswith("multipart/form-data; boundary="))
-        self.assertIsNone(req.get_header("Authorization"))
-        body = req.data
+    DONE = {"text": "A: 네 안녕하세요\nB: 저도요", "segments": [
+        {"speaker": "A", "start": 0.0, "end": 1.0, "text": "네 안녕하세요"},
+        {"speaker": "A", "start": 1.0, "end": 2.0, "text": " 반갑습니다 "},
+        {"speaker": "B", "start": 2.0, "end": 3.0, "text": "저도요"},
+        {"speaker": "B", "start": 3.0, "end": 3.1, "text": "  "},
+        {"start": 3.1, "end": 3.2, "text": "화자 없음"}]}
+
+    def run_api(self, server, env=None, job=None):
+        with mock.patch.object(stt, "_sleep", lambda s: server.slept.append(s)):
+            return stt.transcribe(self.src, "audio/webm", env=dict({"VOXLOG_STT_URL": self.URL}, **(env or {})),
+                                  opener=server, job=job)
+
+    def test_api_submits_a_job_polls_and_deletes_it(self):
+        server = FakeJobServer(self.URL, states=["queued", "running", "done"], result=self.DONE)
+        text = self.run_api(server, {"VOXLOG_STT_MODEL": "my/model"})
+        self.assertEqual(text, "화자 1: 네 안녕하세요 반갑습니다\n화자 2: 저도요")
+        self.assertEqual([m for m, _ in server.calls], ["POST", "GET", "GET", "GET", "DELETE"])
+        self.assertEqual({u for m, u in server.calls if m != "POST"}, {self.URL + "/job1"})
+        self.assertEqual(server.slept, [stt.POLL_SECONDS, stt.POLL_SECONDS])
+        body = server.posts[0].data                                  # 다시 압축하지 않고 받은 원본 그대로
         self.assertIn(b'name="model"\r\n\r\nmy/model\r\n', body)
         self.assertIn(b'name="language"\r\n\r\nko\r\n', body)
-        self.assertIn(b'name="file"; filename="part-0000.mp3"', body)
-        self.assertEqual(opener.calls, [180])
-
-    def test_api_key_and_language_are_optional_settings(self):
-        opener = FakeOpener(response=json.dumps({"text": "hi"}).encode("utf-8"))
-        env = {"VOXLOG_STT_URL": self.URL, "VOXLOG_STT_API_KEY": "test-key-abc", "VOXLOG_STT_LANG": "en"}
-        stt.transcribe(self.src, "audio/webm", env=env, opener=opener)
-        self.assertEqual(opener.last_req.get_header("Authorization"), "Bearer test-key-abc")
-        self.assertIn(b'name="language"\r\n\r\nen\r\n', opener.last_req.data)
-        self.assertNotIn(b'name="model"', opener.last_req.data)
-
-    def test_long_audio_is_sent_in_chunks_and_joined_in_order(self):
-        names = []
-
-        def opener(req, timeout):
-            name = req.data.split(b'filename="', 1)[1].split(b'"', 1)[0].decode("ascii")
-            names.append(name)
-            return json.dumps({"text": " <%s> " % name}).encode("utf-8")
-
-        with mock.patch.object(stt, "CHUNK_SECONDS", 1):
-            text = stt.transcribe(self.src, "audio/webm", env={"VOXLOG_STT_URL": self.URL}, opener=opener)
-        self.assertGreaterEqual(len(names), 3)                       # 3초를 1초씩
-        self.assertEqual(names, sorted(names))
-        self.assertEqual(names[0], "part-0000.mp3")
-        self.assertEqual(text, " ".join("<%s>" % n for n in names))
-
-    def test_diarize_asks_the_server_and_writes_speaker_lines(self):
-        payload = {"text": "네 안녕하세요 반갑습니다 저도요", "segments": [
-            {"speaker": "SPEAKER_01", "start": 0.0, "end": 1.0, "text": "네 안녕하세요"},
-            {"speaker": "SPEAKER_01", "start": 1.0, "end": 2.0, "text": " 반갑습니다 "},
-            {"speaker": "SPEAKER_00", "start": 2.0, "end": 3.0, "text": "저도요"},
-            {"speaker": "SPEAKER_00", "start": 3.0, "end": 3.1, "text": "  "},
-            {"start": 3.1, "end": 3.2, "text": "화자 없음"}]}
-        opener = FakeOpener(response=json.dumps(payload).encode("utf-8"))
-        env = {"VOXLOG_STT_URL": self.URL, "VOXLOG_STT_DIARIZE": "1"}
-        text = stt.transcribe(self.src, "audio/webm", env=env, opener=opener)
-        self.assertIn(b'name="response_format"\r\n\r\ndiarized_json\r\n', opener.last_req.data)
-        self.assertEqual(text, "화자 1: 네 안녕하세요 반갑습니다\n화자 2: 저도요")
-
-    def test_diarize_falls_back_to_plain_text_and_is_off_by_default(self):
-        opener = FakeOpener(response=json.dumps({"text": "그냥 글"}).encode("utf-8"))
-        env = {"VOXLOG_STT_URL": self.URL, "VOXLOG_STT_DIARIZE": "1"}
-        self.assertEqual(stt.transcribe(self.src, "audio/webm", env=env, opener=opener), "그냥 글")
-        payload = {"text": "글", "segments": [{"speaker": "A", "text": "글"}]}
-        opener = FakeOpener(response=json.dumps(payload).encode("utf-8"))
-        self.assertEqual(stt.transcribe(self.src, "audio/webm", env={"VOXLOG_STT_URL": self.URL}, opener=opener), "글")
-        self.assertNotIn(b'name="response_format"', opener.last_req.data)
-
-    def test_diarize_sends_the_whole_recording_in_one_request(self):
-        payload = json.dumps({"text": "A: 말", "segments": [{"speaker": "A", "text": "말"}]}).encode("utf-8")
-        opener = FakeOpener(response=payload)
-        with mock.patch.object(stt, "CHUNK_SECONDS", 1):
-            text = stt.transcribe(self.src, "audio/webm",
-                                  env={"VOXLOG_STT_URL": self.URL, "VOXLOG_STT_DIARIZE": "1"}, opener=opener)
-        self.assertEqual(text, "화자 1: 말")
-        self.assertEqual(opener.calls, [stt.DIARIZE_TIMEOUT])        # 자르지 않고 한 번, 오래 기다림
-        body = opener.last_req.data                                  # 다시 압축하지 않고 받은 원본 그대로
         self.assertIn(b'name="file"; filename="audio.webm"\r\nContent-Type: audio/webm\r\n\r\n', body)
         self.assertIn(self.src.read_bytes(), body)
-        self.assertTrue(self.src.exists())                           # 원본은 지우지 않는다
+        self.assertIsNone(server.posts[0].get_header("Authorization"))
+        self.assertTrue(self.src.exists())
 
-    def test_api_unreadable_response_is_stt_error(self):
-        opener = FakeOpener(response=json.dumps({"choices": []}).encode("utf-8"))
-        with self.assertRaises(stt.SttError):
-            stt.transcribe(self.src, "audio/webm", env={"VOXLOG_STT_URL": self.URL}, opener=opener)
+    def test_api_key_and_language_are_optional_settings(self):
+        server = FakeJobServer(self.URL, result={"text": "hi"})
+        text = self.run_api(server, {"VOXLOG_STT_API_KEY": "test-key-abc", "VOXLOG_STT_LANG": "en"})
+        self.assertEqual(text, "hi")                                 # segments 가 없으면 text 그대로
+        self.assertEqual({a for a in server.auths}, {"Bearer test-key-abc"})   # 맡기기·조회·지우기 모두 키를 싣는다
+        self.assertIn(b'name="language"\r\n\r\nen\r\n', server.posts[0].data)
+        self.assertNotIn(b'name="model"', server.posts[0].data)
 
-    def test_api_rejects_non_http_url(self):
+    def test_unknown_speaker_is_not_counted_as_a_person(self):
+        result = {"text": "x", "segments": [
+            {"speaker": "?", "text": "응."}, {"speaker": "A", "text": "안녕하세요"}, {"speaker": "?", "text": "아."},
+            {"speaker": "?", "text": "음."}, {"speaker": "B", "text": "네"}, {"speaker": "A", "text": "그래요"}]}
+        text = self.run_api(FakeJobServer(self.URL, result=result))
+        self.assertEqual(text, "화자 ?: 응.\n화자 1: 안녕하세요\n화자 ?: 아. 음.\n화자 2: 네\n화자 1: 그래요")
+
+    def test_failed_and_cancelled_jobs_are_stt_errors_and_are_deleted(self):
+        for state, word in (("failed", "받아쓰지 못했습니다"), ("cancelled", "취소")):
+            server = FakeJobServer(self.URL, states=[state], error="cannot decode\nthe audio")
+            job = FakeJob()
+            with self.assertRaises(stt.SttError) as cm:
+                self.run_api(server, job=job)
+            self.assertIn(word, str(cm.exception))
+            if state == "failed":
+                self.assertIn("cannot decode the audio", str(cm.exception))
+            self.assertEqual(server.calls[-1][0], "DELETE")
+            self.assertIsNone(job.jid)                               # 다음 받아쓰기는 새로 맡긴다
+
+    def test_job_id_is_kept_so_a_restart_resumes_the_same_job(self):
+        server = FakeJobServer(self.URL, states=["running", "done"], result=self.DONE)
+        job = FakeJob()
+        self.run_api(server, job=job)
+        self.assertEqual(job.history, ["job1", None])                # 맡긴 직후 적고, 끝나면 지운다
+        server = FakeJobServer(self.URL, states=["done"], result=self.DONE, known={"job1"})
+        text = self.run_api(server, job=FakeJob("job1"))             # 적어 둔 id 가 있으면 다시 맡기지 않는다
+        self.assertEqual([m for m, _ in server.calls], ["GET", "DELETE"])
+        self.assertTrue(text.startswith("화자 1:"))
+
+    def test_resumed_job_that_is_gone_is_submitted_again(self):
+        server = FakeJobServer(self.URL, states=["done"], result=self.DONE, known={"job1"})
+        job = FakeJob("oldjob")
+        self.run_api(server, job=job)
+        self.assertEqual([m for m, _ in server.calls], ["GET", "POST", "GET", "DELETE"])
+        self.assertEqual(server.calls[0][1], self.URL + "/oldjob")
+        self.assertEqual(job.history, ["job1", None])
+
+    def test_polling_survives_short_outages_and_gives_up_after_many(self):
+        server = FakeJobServer(self.URL, states=["running", 0, 502, "done"], result=self.DONE)
+        self.assertTrue(self.run_api(server).startswith("화자 1:"))
+        server = FakeJobServer(self.URL, states=[0] * (stt.POLL_MAX_ERRORS + 5))
+        job = FakeJob()
+        with self.assertRaises(stt.SttError) as cm:
+            self.run_api(server, job=job)
+        self.assertIn("연결하지 못했습니다", str(cm.exception))
+        self.assertEqual(len([c for c in server.calls if c[0] == "GET"]), stt.POLL_MAX_ERRORS)
+        self.assertEqual(job.jid, "job1")                            # 작업은 살아 있을 수 있다 - 다음에 이어받는다
+
+    def test_job_that_never_finishes_times_out(self):
+        server = FakeJobServer(self.URL, states=["running"] * 50)
+        clock = iter(range(0, 10 ** 9, 3600))
+        with mock.patch.object(stt.time, "monotonic", lambda: next(clock)), self.assertRaises(stt.SttError) as cm:
+            self.run_api(server)
+        self.assertIn("오래", str(cm.exception))
+
+    def test_api_unreadable_responses_are_stt_errors(self):
+        with self.assertRaises(stt.SttError):                        # 맡기기 답에 id 가 없음
+            self.run_api(FakeOpener(response=json.dumps({"choices": []}).encode("utf-8")))
+        with self.assertRaises(stt.SttError):                        # id 가 주소에 넣을 수 없는 꼴
+            self.run_api(FakeOpener(response=json.dumps({"id": "../x"}).encode("utf-8")))
+        with self.assertRaises(stt.SttError):                        # done 인데 결과가 없음
+            self.run_api(FakeJobServer(self.URL, states=["done"], result=None))
+
+    def test_api_rejects_non_http_url_and_unknown_extension(self):
         with self.assertRaises(stt.SttError):
             stt.transcribe(self.src, "audio/webm", env={"VOXLOG_STT_URL": "file:///etc/passwd"}, opener=FakeOpener())
+        odd = self.dir / "x.flac"
+        odd.write_bytes(b"x")
+        server = FakeJobServer(self.URL)
+        with self.assertRaises(stt.SttError):
+            stt.transcribe(odd, "audio/flac", env={"VOXLOG_STT_URL": self.URL}, opener=server)
+        self.assertEqual(server.calls, [])
 
     def test_api_http_error_hides_key_and_url(self):
         secret = "SUPER-SECRET-KEY-9999"
-        opener = FakeOpener(fail_code=401)
-        env = {"VOXLOG_STT_URL": self.URL, "VOXLOG_STT_API_KEY": secret}
-        try:
-            stt.transcribe(self.src, "audio/webm", env=env, opener=opener)
-        except stt.SttError as exc:
-            self.assertIn("401", str(exc))
+        for code, word in ((401, "키"), (429, "붐빕니다"), (500, "500")):
+            opener = FakeOpener(fail_code=code)
+            env = {"VOXLOG_STT_URL": self.URL, "VOXLOG_STT_API_KEY": secret}
+            with self.assertRaises(stt.SttError) as cm:
+                stt.transcribe(self.src, "audio/webm", env=env, opener=opener)
+            exc = cm.exception
+            self.assertIn(str(code), str(exc))
+            self.assertIn(word, str(exc))
             self.assertNotIn(secret, str(exc))
             self.assertNotIn(secret, repr(exc))
             self.assertNotIn("stt.example", str(exc))
-        else:
-            self.fail("SttError 가 나야 합니다")
+            self.assertEqual(len(opener.calls), 1)                   # 맡기기가 거절되면 조회하지 않는다
 
 
 class TranscriberTest(unittest.TestCase):

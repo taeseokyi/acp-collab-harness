@@ -64,6 +64,7 @@ class Store:
         # 항목은 메타 + "snippet"(q 가 있으면 맞은 곳 앞뒤 40자, 없으면 글 앞 80자)
     def audio_path(self, rid) -> pathlib.Path|None
     def set_status(self, rid, status, error=None) -> None
+    def set_job(self, rid, jid) -> None                  # 받아쓰기 서버에 맡긴 작업 id 를 메타 stt_job 에(None 이면 지움)
     def set_transcript(self, rid, text) -> None          # txt 쓰기, status "done", title·chars 갱신, error None
     def pending_ids(self) -> list[str]                   # status 가 pending 또는 transcribing 인 것 (재시작 때 다시 넣기)
     def delete(self, rid) -> bool                         # 오디오·메타·글 지움
@@ -82,16 +83,16 @@ class SttUnavailable(Exception)   # 백엔드가 없음 → 메타 status "no-st
 class SttError(Exception)         # 실패 → status "failed", error 에 짧은 까닭(키·주소 없이)
 def backend_name(env=None) -> str  # "command" | "api" | "none"
     # VOXLOG_STT 가 있으면 그것. 없으면 VOXLOG_STT_CMD 가 있으면 "command", VOXLOG_STT_URL 이 있으면 "api", 아니면 "none"
-def to_audio(src: pathlib.Path, fmt: str) -> pathlib.Path   # ffmpeg 로 16kHz 모노 wav/mp3 임시 파일 (ffmpeg 없으면 SttError)
-def transcribe(path: pathlib.Path, mime: str, env=None, opener=None) -> str
+def to_audio(src: pathlib.Path, fmt: str) -> pathlib.Path   # ffmpeg 로 16kHz 모노 wav 임시 파일 - command 백엔드용 (ffmpeg 없으면 SttError)
+def transcribe(path: pathlib.Path, mime: str, env=None, opener=None, job=None) -> str
     # command: VOXLOG_STT_CMD 를 shlex.split, "{wav}" 자리에 16k 모노 wav 경로, shell 없이 실행, stdout 이 글, 시간 상한 600초
-    # api: OpenAI 꼴 받아쓰기 엔드포인트. split_audio 로 16kHz 모노 mp3 를 CHUNK_SECONDS(600초)씩 잘라 차례로
-    #   POST VOXLOG_STT_URL (multipart: file, language=VOXLOG_STT_LANG(기본 "ko"), model=VOXLOG_STT_MODEL(있을 때)),
-    #   VOXLOG_STT_API_KEY 가 있으면 Bearer. 응답 {"text": …} 을 빈칸으로 이어 붙임. 조각마다 시간 상한 180초, opener 는 검사용 주입
-    #   VOXLOG_STT_DIARIZE=1 이면 자르지 않고 받은 원본 그대로(다시 압축하지 않음) 통째로 보내며 response_format=diarized_json 을 더 보냄
-    #   (시간 상한 DIARIZE_TIMEOUT 3600초). 응답에 segments([{speaker, text, …}])가 있으면 "화자 N: 글" 줄들로 적음
-    #   (같은 화자가 이어지면 한 줄, 번호는 처음 나온 차례). segments 가 없으면 text 그대로
-def split_audio(src: pathlib.Path, seconds=None) -> (pathlib.Path, list)   # (임시 폴더, 조각 경로들) - 폴더는 호출한 쪽이 지움
+    # api: 화자 구분 받아쓰기 서버의 작업 API. 받은 원본 그대로(다시 압축하지 않음)
+    #   POST VOXLOG_STT_URL (multipart: file, language=VOXLOG_STT_LANG(기본 "ko"), model=VOXLOG_STT_MODEL(있을 때)) → {"id"}
+    #   GET VOXLOG_STT_URL/<id> 를 POLL_SECONDS(10초)마다 → status done|failed|cancelled 까지 (상한 JOB_TIMEOUT 6시간,
+    #   조회가 POLL_MAX_ERRORS(30)번 잇달아 실패하면 SttError). 끝나면 DELETE VOXLOG_STT_URL/<id>.
+    #   키는 VOXLOG_STT_API_KEY(Authorization: Bearer). result.segments([{speaker, text, …}])를 "화자 N: 글" 줄들로 적음
+    #   (같은 화자가 이어지면 한 줄, 번호는 처음 나온 차례, 서버가 정하지 못한 "?" 는 "화자 ?"). segments 가 없으면 text 그대로
+    #   job(get()·set(id)) 을 주면 맡긴 id 를 적어 두고, 적힌 id 가 있으면 다시 맡기지 않고 이어 기다림(서버에 없으면 새로 맡김)
 class Transcriber:
     def __init__(self, store, env=None, transcribe_fn=transcribe)
     def start(self)            # 데몬 스레드 하나, store.pending_ids() 를 먼저 넣음

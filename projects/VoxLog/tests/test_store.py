@@ -101,6 +101,17 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(self.store.list()[0]["snippet"], "메모")
 
     # 7
+    def test_stt_job_id_is_kept_in_meta_until_cleared(self):
+        rid = self.add()["id"]
+        self.store.set_job(rid, "abc123")
+        self.assertEqual(self.store.get(rid)["stt_job"], "abc123")
+        self.store.set_status(rid, "transcribing")
+        self.assertEqual(self.store.get(rid)["stt_job"], "abc123")            # 상태가 바뀌어도 남는다
+        self.store.set_job(rid, None)
+        self.assertNotIn("stt_job", self.store.get(rid))
+        with self.assertRaises(ValueError):
+            self.store.set_job("r-20200101-000000-abcd", "x")
+
     def test_list_search_date_status_order(self):
         a = self.add(recorded_at="2026-01-01T10:00:00")
         b = self.add(recorded_at="2026-01-02T10:00:00")
