@@ -305,9 +305,9 @@
   function startRec() {
     if (!recSupported()) { toast(UNSUPPORTED); return Promise.resolve(); }
     state.busy = true;
-    // 통화용 처리(울림 제거·잡음 억제)는 끈다 - 떨어져 앉은 사람 목소리를 깎아 받아쓰기·화자 구분이 나빠진다.
-    // 자동 음량 조절은 둔다(먼 목소리가 너무 작아지지 않게). 모르는 브라우저는 이 값을 무시한다.
-    var audio = { echoCancellation: false, noiseSuppression: false, autoGainControl: true };
+    // 통화용 처리(울림 제거·잡음 억제·자동 음량 조절)는 끈다 - 떨어져 앉은 사람 목소리를 깎고 말 없는 구간의
+    // 소음을 키워 받아쓰기·화자 구분이 나빠진다. 음량은 받아쓰기 서버가 맞춘다. 모르는 브라우저는 이 값을 무시한다.
+    var audio = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
     return navigator.mediaDevices.getUserMedia({ audio: audio }).then(function (stream) {
       var mime = pickMime();
       var mr;
