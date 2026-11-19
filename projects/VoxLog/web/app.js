@@ -261,6 +261,8 @@
     }
   }
 
+  var REC_BITRATE = 64000; // 화자 구분에 목소리 특징이 남게 (30분 ≈ 14MB, 올리기 상한 50MB ≈ 1시간 40분)
+
   function applyRecSupport() {
     var ok = recSupported();
     $('rec-unsupported').hidden = ok;
@@ -303,12 +305,15 @@
   function startRec() {
     if (!recSupported()) { toast(UNSUPPORTED); return Promise.resolve(); }
     state.busy = true;
-    return navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+    // 통화용 처리(울림 제거·잡음 억제)는 끈다 - 떨어져 앉은 사람 목소리를 깎아 받아쓰기·화자 구분이 나빠진다.
+    // 자동 음량 조절은 둔다(먼 목소리가 너무 작아지지 않게). 모르는 브라우저는 이 값을 무시한다.
+    var audio = { echoCancellation: false, noiseSuppression: false, autoGainControl: true };
+    return navigator.mediaDevices.getUserMedia({ audio: audio }).then(function (stream) {
       var mime = pickMime();
       var mr;
       try {
-        mr = mime ? new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 32000 })
-          : new MediaRecorder(stream, { audioBitsPerSecond: 32000 });
+        mr = mime ? new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: REC_BITRATE })
+          : new MediaRecorder(stream, { audioBitsPerSecond: REC_BITRATE });
       } catch (e) {
         stream.getTracks().forEach(function (t) { t.stop(); });
         toast('이 브라우저는 녹음 형식을 지원하지 않습니다.');
