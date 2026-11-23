@@ -57,6 +57,9 @@ PROBE_TTL_SEC = 30.0
 #: 공급자가 응답하지 않아(`probe:<p>`) 이만큼 넘게 기다린 노드는 `blocked`+`infra` 로 넘긴다 - 그래프가 제 시간 한도까지
 #: 말없이 놀지 않고 관리자·사람이 `move`/`unblock` 으로 판단하게.
 PROBE_WAIT_MAX_SEC = 600
+#: 사람이 '보내기' 를 눌러야 일하는 슬롯의 노드를 기다려 주는 최소 시간. 이만큼 지났고 다른 노드가 모두 끝났는데도
+#: 아직 안 보냈으면 `blocked` 로 넘긴다 - 라운드가 사람 손을 기다리며 서 있지 않게.
+APPROVAL_GRACE_SEC = 600
 #: `run` 의 틱 간격(초). 노드 하나가 끝난 뒤 다음이 뜨기까지 평균 절반을 기다린다 (설계 5.7: 예전 15초).
 DEFAULT_POLL_SEC = 2.0
 
@@ -174,6 +177,15 @@ def validate_graph(g, spawnable_only=False):
         pr = n.get("project")
         if pr not in (None, "") and not (isinstance(pr, str) and re.match(fleet.PROJECT_NAME_RE, pr)):
             problems.append(f"{n['id']}: project {pr!r} 는 프로젝트 이름이 아님 (`projects/` 아래 폴더 이름 하나 - 한글·영문·숫자·`-`·`_`, 40자 이하)")
+    # 사람 승인 슬롯의 노드는 언제 시작할지 모른다 - 다른 노드가 거기에 걸리면 라운드가 사람 손을 기다린다
+    for n in g["nodes"]:
+        if n.get("status", "todo") in TERMINAL:
+            continue
+        for d in n.get("deps", []):
+            dn = nodes.get(d)
+            if dn is not None and dn.get("status") != "done" and _needs_approval(dn):
+                problems.append(f"{n['id']}: 의존 {d} 는 사람이 '보내기' 를 눌러야 시작하는 슬롯({dn.get('slot')})의 노드 - "
+                                f"그런 노드에는 다른 노드가 의존할 수 없음 (막히지 않는 일만 맡기십시오)")
     # 사이클 검사 (Kahn)
     indeg = {k: 0 for k in nodes}
     for n in g["nodes"]:
@@ -193,6 +205,16 @@ def validate_graph(g, spawnable_only=False):
     if seen != len(nodes):
         problems.append("의존 관계에 사이클이 있음 (DAG 아님)")
     return problems
+
+
+def _needs_approval(n):
+    """이 노드가 사람 승인 하네스로 뜨는가 (노드 덮어쓰기 > 명부)."""
+    try:
+        from fleet_rt import harness as rt_harness  # noqa: PLC0415
+        h, _m = fleet.spawn_harness_model(n.get("slot"), n.get("harness"), n.get("model"))
+        return bool(h) and rt_harness.needs_approval(h)
+    except Exception:  # noqa: BLE001 - 판정을 못 하면 보통 노드로 본다
+        return False
 
 
 # ---------------------------------------------------------------- 추정
@@ -881,7 +903,10 @@ def _board_sync_changes(g, before):
 def _check_timeout(g, n, att):
     """아직 running 인 시도가 노드 한도를 넘었으면 끊고 실패 처리합니다. 처리했으면 True.
     시작 시각이 깨져 있으면 판정을 건너뛴다 - 멀쩡한 작업자를 죽이는 쪽이 기다리는 쪽보다 나쁘다."""
-    elapsed = _elapsed_since(att.get("started"))
+    gate = fleet.run_gate(att["run_id"])
+    if gate and gate.get("phase") == "await":
+        return False          # 사람의 '보내기' 를 기다리는 시간은 한도로 세지 않는다 (`_cut_unsent` 가 따로 본다)
+    elapsed = _elapsed_since((gate or {}).get("sent_at") or att.get("started"))
     if elapsed is None:
         _log_once(g, ("started", n.get("id"), att.get("run_id"), repr(att.get("started"))),
                   f"warn {n.get('id')} - started={att.get('started')!r} 를 읽지 못해 타임아웃 판정을 건너뜁니다")
@@ -910,6 +935,35 @@ def _check_timeout(g, n, att):
     _log(g, f"timeout {n['id']} after {int(elapsed)}s (run {att['run_id']}, pid {pid if pid is not None else '?'}, {outcome})")
     _retry_or_fail(g, n, "rc=124 (timeout)")
     return True
+
+
+def _cut_unsent(g):
+    """다른 노드가 모두 끝났는데 사람이 아직 '보내기' 를 누르지 않은 노드를 끊고 `blocked` 로 넘긴다. 바꿨으면 True.
+
+    기다리는 것은 최소 `APPROVAL_GRACE_SEC` - 노드가 그것 하나뿐인 그래프도 사람이 볼 틈은 준다. 이미 보낸 노드는
+    일하는 중이므로 건드리지 않는다(보낸 뒤의 한도는 `_check_timeout`).
+    """
+    waiting = []
+    for n in g["nodes"]:
+        st = n.get("status", "todo")
+        if st in TERMINAL:
+            continue
+        gate = fleet.run_gate(n["attempts"][-1]["run_id"]) if st == "running" and n.get("attempts") else None
+        if not gate or gate.get("phase") != "await":
+            return False        # 아직 다른 일이 남았다
+        waited = _elapsed_since(gate.get("since"))
+        if waited is None or waited < APPROVAL_GRACE_SEC:
+            return False
+        waiting.append((n, int(waited)))
+    for n, waited in waiting:
+        att = n["attempts"][-1]
+        _pid, outcome = _kill_run(att["run_id"], with_outcome=True)
+        att.update({"ended": _now(), "state": "unsent", "kill_outcome": outcome, "fail_kind": "work",
+                    "report_status": "BLOCKED", "verify_rc": None,
+                    "verify_tail": f"검증 생략: 사람이 '보내기' 를 누르지 않음 ({waited}초 기다림)"})
+        n["status"] = "blocked"
+        _log(g, f"unsent {n['id']} ({att['run_id']}) - 다른 노드가 모두 끝났고 {waited}초 동안 보내지 않아 넘김")
+    return bool(waiting)
 
 
 def _fleet_mode():
@@ -1076,6 +1130,7 @@ def _step(g, concurrency=None, allow_spawn=None, hold_on_block=False):
             att["fail_kind"] = "timeout" if kind == "timeout" else "work"
             _retry_or_fail(g, n, f"rc={rc} verify_rc={vrc}")
         changed = True
+    changed |= _cut_unsent(g)
     # 2) 의존이 실패한 노드는 막힘으로
     nodes = {n["id"]: n for n in g["nodes"]}
     for n in g["nodes"]:

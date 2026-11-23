@@ -15,6 +15,7 @@ const STATUS_CLASS = {
 };
 
 const state = {
+  paneAuto: { on: false, runs: {} },   // '미리 고른 문구 전송' - 서버 상태(/api/pane/auto)
   data: null,
   fetchedAt: 0,
   error: null,
@@ -948,10 +949,228 @@ function renderDetail(detail) {
     body.appendChild(errBox);
   }
 
+  const row = state.data && Array.isArray(state.data.runs) ? state.data.runs.find((r) => r && r.id === detail.id) : null;
+  if (row && row.gate) renderPaneGate(body, detail.id);
+
   addDetailSection(body, '보고 본문', detail.report);
   addDetailSection(body, '지시 본문', detail.brief, false, true);
   addDetailSection(body, 'stderr', detail.stderr_tail, true, true);
   addDetailSection(body, '사건 (events.jsonl)', detail.events, true, true);
+}
+
+// 사람 승인 하네스의 '보내기' 칸: 팬 상태 · 팬에 던질 문구 · 단추. 문구는 사람이 그때그때 고르거나 쓴다 -
+// 기본으로 채워 두지 않는다. 팬에는 그 문구 + 지시문 파일 경로 한 줄이 들어간다. 지시문 파일은 고치지 않는다.
+const PANE_PHRASES_KEY = 'aimem.panePhrases2';
+// 상황별 선택지. `when` 은 화면이 '지금 상황' 표시를 붙일 때만 쓴다 - 고르는 것은 언제나 사람이다.
+// 어느 문구든 '할 일은 파일 안에 있다'가 먼저다 - 문구가 일을 따로 정하면 작업자가 지시문 대신 문구를 따른다(실전에서 겪음).
+const PANE_PHRASE_SEEDS = [
+  { key: 'plain', label: '보통', text: '이 파일 읽고 거기 적힌 대로 해 줘:' },
+  { key: 'read', label: '읽기만 (조사·점검)', text: '이 파일에 적힌 일을 해 줘. 살펴보고 결과만 알려 주면 돼. 아무 파일도 고치지 말고:' },
+  { key: 'edit', label: '코드 고치기', text: '이 파일에 고칠 내용이 적혀 있어. 읽고 그대로 해 줘. 거기 적힌 쓰기 범위 밖은 건드리지 마:' },
+  { key: 'new', label: '새로 만들기', text: '이 파일에 만들 것이 적혀 있어. 읽고 그대로 만들어 줘. 범위와 규칙도 거기 있어:' },
+  { key: 'test', label: '검사 쓰기·돌리기', text: '이 파일에 검사 관련 지시가 있어. 읽고 그대로 한 뒤 돌린 결과를 알려 줘:' },
+  { key: 'review', label: '검수 (지적만)', text: '이 파일에 검수 지시가 있어. 읽고 거기 적힌 대상을 검수해 줘. 고치지는 말고 지적만 적어:' },
+  { key: 'docs', label: '문서 다듬기', text: '이 파일에 문서 작업 지시가 있어. 읽고 그대로 해 줘. 코드는 건드리지 말고:' },
+  { key: 'small', label: '작은 일', text: '간단한 일이야. 이 파일 읽고 적힌 것만 바로 처리해 줘:' },
+  { key: 'retry', label: '다시 시도', when: 'retry', text: '아까 끝내지 못한 일이야. 이 파일을 다시 읽고 적힌 대로 처음부터 해 줘:' },
+  { key: 'short', label: '시간이 얼마 없을 때', when: 'short', text: '시간이 얼마 없어. 이 파일에 적힌 일을 되는 데까지 하고 어디까지 했는지 적어 줘:' },
+];
+// 기본 10가지는 늘 보이고 지워지지 않는다. 저장하는 것은 사람이 더한 '내 문구' 뿐이다.
+function paneOwnPhrases() {
+  const seeds = new Set(PANE_PHRASE_SEEDS.map((x) => x.text));
+  try {
+    const v = JSON.parse(localStorage.getItem(PANE_PHRASES_KEY) || 'null');
+    if (Array.isArray(v)) {
+      return v.filter((x) => x && typeof x.text === 'string' && x.text.trim() && !seeds.has(x.text))
+        .map((x) => ({ label: '내 문구', text: x.text, own: true })).slice(0, 20);
+    }
+  } catch (err) { /* 저장소를 못 쓰는 창 */ }
+  return [];
+}
+function panePhrases() {
+  return PANE_PHRASE_SEEDS.concat(paneOwnPhrases());
+}
+function savePanePhrases(list) {
+  try { localStorage.setItem(PANE_PHRASES_KEY, JSON.stringify(list.slice(0, 20))); } catch (err) { /* 무시 */ }
+}
+function renderPaneGate(parent, runId) {
+  const sec = document.createElement('section');
+  sec.className = 'detail-section pane-gate';
+  const h = document.createElement('h3');
+  h.textContent = 'freebuff 에 보내기';
+  const box = document.createElement('div');
+  box.className = 'pane-gate-body';
+  box.textContent = '가져오는 중...';
+  sec.append(h, box);
+  parent.appendChild(sec);
+  paneAutoHold(runId);       // 상세를 열었다 = 사람이 손댔다. 이 건은 자동으로 보내지 않는다
+  const seq = state.detailSeq;
+  const alive = () => seq === state.detailSeq && sec.isConnected;
+
+  const line = (cls, text) => {
+    const p = document.createElement('p');
+    p.className = cls;
+    p.textContent = text;
+    return p;
+  };
+  const draw = (info, note) => {
+    box.textContent = '';
+    const pane = info.pane || {};
+    const paneBits = [`팬 ${show(pane.name)}`];
+    if (pane.model) paneBits.push(pane.model);
+    paneBits.push(pane.left ? `세션 ${pane.left} 남음` : '열린 세션이 보이지 않음');
+    // 입력 칸 점검은 보내기 전에만 뜻이 있다 - 보낸 뒤 일하는 중에는 비어 있지 않은 것이 정상이다
+    const waiting = info.phase === 'await';
+    const paneBad = waiting && !pane.ok;
+    box.appendChild(line('pane-gate-pane' + (paneBad ? ' warn-text' : ''), paneBits.join(' · ') + (paneBad ? ` - ${show(pane.why, '')}` : '')));
+    if (Array.isArray(pane.lines) && pane.lines.length) {
+      const det = document.createElement('details');
+      det.className = 'fold-group pane-gate-screen';
+      const sum = document.createElement('summary');
+      sum.textContent = '팬 화면 (끝 몇 줄)';
+      const pre = document.createElement('pre');
+      pre.className = 'detail-pre';
+      pre.textContent = pane.lines.join('\n');
+      det.append(sum, pre);
+      box.appendChild(det);
+    }
+    if (info.phase !== 'await') {
+      const said = { sent: '보냈습니다 - freebuff 가 일하는 중입니다', done: '답을 받았습니다', ended: '끝난 실행입니다',
+        unsent: '보내지 않은 채 끝났습니다', timeout: '보낸 뒤 한도 안에 답이 끝나지 않았습니다', cut: '도중에 끊겼습니다' }[info.phase] || show(info.phase);
+      if (info.phase === 'sent' && info.held) box.appendChild(line('pane-gate-state warn-text', info.held));
+      box.appendChild(line('pane-gate-state', said + (info.sent_at ? ` (보낸 때 ${String(info.sent_at).replace('T', ' ')}${info.by ? ', ' + info.by : ''})` : '')));
+      return;
+    }
+    if (info.error) box.appendChild(line('pane-gate-state warn-text', `지난번에 보내지 못했습니다: ${info.error}`));
+    if (pane.ok && !pane.left) box.appendChild(line('pane-gate-state warn-text', 'freebuff 세션이 열려 있지 않습니다. 보내면 지금 모델로 새 세션이 열리며 사용 시간이 깎이기 시작합니다.'));
+    box.appendChild(line('pane-gate-hint', '지시의 상황에 맞는 문구를 미리 골라 두었습니다. 다른 것을 고르거나 직접 고쳐 쓰십시오. 지시문 파일은 위 \'지시 본문\' 그대로이고, 문구 뒤에 그 파일 경로가 붙습니다.'));
+    const picks = document.createElement('div');
+    picks.className = 'pane-gate-picks';
+    const ta = document.createElement('input');
+    ta.type = 'text';
+    ta.className = 'pane-gate-input';
+    ta.maxLength = info.text_max || 300;
+    ta.placeholder = '예: 이 파일 읽고 그대로 해 줘:';
+    ta.setAttribute('aria-label', '팬에 던질 문구');
+    // 지시의 상황(시도 횟수·쓰기 범위·라벨)에 맞는 문구를 미리 골라 둔다. 사람이 바꿀 수 있다.
+    const pre = PANE_PHRASE_SEEDS.find((x) => x.key === info.kind);
+    const hasDraft = state.paneDraft && state.paneDraft.id === runId;
+    ta.value = hasDraft ? state.paneDraft.text : (pre ? pre.text : '');
+    const preview = line('pane-gate-hint mono', '');
+    const showPreview = () => {
+      state.paneDraft = { id: runId, text: ta.value };
+      const t = ta.value.trim();
+      preview.textContent = t ? `팬에 들어갈 한 줄: ${t} ${show(info.ref, '')}` : `문구 뒤에 붙을 경로: ${show(info.ref, '')}`;
+    };
+    const drawPicks = () => {
+      picks.textContent = '';
+      const leftMin = /^(\d+)m$/.exec(String(pane.left || ''));
+      const now = { retry: !!info.error, short: !!leftMin && Number(leftMin[1]) <= 20 };
+      panePhrases().forEach((item) => {
+        const ph = item.text;
+        const wrap = document.createElement('span');
+        wrap.className = 'pane-gate-pick';
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn-link';
+        const tag = document.createElement('span');
+        tag.className = 'pane-gate-pick-label' + (item.when && now[item.when] ? ' warn-text' : '');
+        tag.textContent = item.label + (pre && item.key === pre.key ? ' · 미리 고름' : (item.when && now[item.when] ? ' · 지금 상황' : ''));
+        if (pre && item.key === pre.key) tag.classList.add('pane-gate-pick-pre');
+        b.textContent = ph;
+        b.addEventListener('click', () => { ta.value = ph; showPreview(); ta.focus(); });
+        wrap.append(tag, b);
+        if (item.own) {
+          const x = document.createElement('button');
+          x.type = 'button';
+          x.className = 'btn-link pane-gate-pick-x';
+          x.textContent = '×';
+          x.title = '내 문구를 목록에서 빼기';
+          x.setAttribute('aria-label', `문구 빼기: ${ph}`);
+          x.addEventListener('click', () => {
+            if (!window.confirm(`이 문구를 목록에서 뺄까요?\n\n${ph}`)) return;
+            savePanePhrases(paneOwnPhrases().filter((y) => y.text !== ph));
+            drawPicks();
+          });
+          wrap.appendChild(x);
+        }
+        picks.appendChild(wrap);
+      });
+    };
+    drawPicks();
+    ta.addEventListener('input', showPreview);
+    showPreview();
+    const keep = document.createElement('button');
+    keep.type = 'button';
+    keep.className = 'btn-link';
+    keep.textContent = '이 문구를 목록에 넣기';
+    keep.addEventListener('click', () => {
+      const t = ta.value.trim();
+      if (!t) return;
+      if (PANE_PHRASE_SEEDS.some((y) => y.text === t)) return;
+      savePanePhrases([{ label: '내 문구', text: t }].concat(paneOwnPhrases().filter((y) => y.text !== t)));
+      drawPicks();
+    });
+    box.append(picks, ta, preview);
+    const bar = document.createElement('div');
+    bar.className = 'inbox-bar';
+    const send = document.createElement('button');
+    send.type = 'button';
+    send.className = 'btn-primary pane-gate-send';
+    send.textContent = info.pending ? '보내는 중...' : 'freebuff 에 보내기';
+    send.disabled = !!info.pending;
+    const reload = document.createElement('button');
+    reload.type = 'button';
+    reload.className = 'btn-link';
+    reload.textContent = '팬 상태 다시 보기';
+    const msg = document.createElement('span');
+    msg.className = 'inbox-msg';
+    msg.textContent = note || (pane.ok ? '' : '팬이 준비되지 않았습니다 - 눌러도 보내지 않고 까닭을 알려 줍니다');
+    bar.append(send, keep, reload, msg);
+    box.appendChild(bar);
+    reload.addEventListener('click', () => load());
+    send.addEventListener('click', async () => {
+      if (!ta.value.trim()) { msg.textContent = '팬에 던질 문구를 고르거나 쓰십시오'; ta.focus(); return; }
+      send.disabled = true;
+      msg.textContent = '보내는 중...';
+      let out;
+      try {
+        out = await api('/api/pane/' + encodeURIComponent(runId), { action: 'send', text: ta.value });
+      } catch (err) {
+        out = { res: { ok: false }, body: { error: err && err.message ? err.message : String(err) } };
+      }
+      if (!alive()) return;
+      if (!out.res.ok || !out.body || !out.body.ok) {
+        send.disabled = false;
+        msg.textContent = '보내지 못했습니다: ' + ((out.body && out.body.error) || 'HTTP ' + out.res.status);
+        return;
+      }
+      // 운전기가 팬에 넣는 데 몇 초 걸린다 - 결과(보냄 / 못 보낸 까닭)를 다시 읽어 보인다
+      msg.textContent = '팬에 넣는 중...';
+      for (let i = 0; i < 12 && alive(); i += 1) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const again = await fetchInfo();
+        if (!alive()) return;
+        if (again && (again.phase !== 'await' || (!again.pending && again.error))) { draw(again); refresh(); return; }
+      }
+      if (alive()) load('아직 팬에 들어가지 않았습니다 - 잠시 뒤 다시 보십시오');
+    });
+  };
+  const fetchInfo = async () => {
+    try {
+      const { res, body } = await api('/api/pane/' + encodeURIComponent(runId));
+      return res.ok && body && body.ok ? body : { failed: (body && body.error) || 'HTTP ' + res.status };
+    } catch (err) {
+      return { failed: err && err.message ? err.message : String(err) };
+    }
+  };
+  const load = async (note) => {
+    const info = await fetchInfo();
+    if (!alive()) return;
+    if (!info || info.failed) { box.textContent = '가져오지 못했습니다: ' + ((info && info.failed) || ''); return; }
+    draw(info, note);
+  };
+  load();
 }
 
 async function openDetail(runId) {
@@ -1095,7 +1314,72 @@ function lastEventText(r) {
   return ago ? `마지막 사건 ${ago}` + (r.last_event ? ' · ' + r.last_event : '') : '';
 }
 // 실행 한 줄의 상태 - 세션 상태(session_state)를 먼저 본다. 옛 `state` 는 failed→done, killed→lost 로 접혀 있어 쓰지 않는다.
+// 사람 승인 하네스(freebuff)의 실행: 뜬 뒤 사람이 '보내기' 를 누를 때까지 일하지 않는다 (`run.gate` = await → sent)
+// -- 미리 고른 문구 전송 (선택) ------------------------------------------------
+// 켜져 있으면 모니터 **서버가** 기다리는 지시마다 알린 뒤 몇 초 지나 상황에 맞는 문구로 보낸다 - 이 화면이 닫혀 있어도 나간다.
+// 화면은 켜고 끄기, 남은 초 보여 주기, 한 건 붙잡기(hold)만 한다. 상태는 서버에 남는다.
+function paneAutoOn() {
+  return !!(state.paneAuto && state.paneAuto.on);
+}
+async function paneAutoLoad() {
+  try {
+    const { res, body } = await api('/api/pane/auto');
+    if (res.ok && body && body.ok) {
+      const at = Date.now();
+      Object.values(body.runs || {}).forEach((x) => { x.dueAt = at + Number(x.due_in || 0) * 1000; });
+      state.paneAuto = body;
+    }
+  } catch (err) { /* 다음 번에 */ }
+}
+async function setPaneAuto(on) {
+  try {
+    const { res, body } = await api('/api/pane/auto', { on });
+    if (res.ok && body && body.ok) { state.paneAuto = body; await paneAutoLoad(); }
+  } catch (err) { /* 체크 칸은 다음 그리기에서 서버 상태로 돌아간다 */ }
+}
+function paneAutoHold(id) {
+  if (!paneAutoOn()) return;
+  const a = (state.paneAuto.runs || {})[id];
+  if (a) a.held = true;
+  api('/api/pane/' + encodeURIComponent(id), { action: 'hold' }).catch(() => null);
+}
+function paneAutoText(a) {
+  if (!a) return '';
+  if (a.held) return '자동 전송 안 함 - 직접 보내십시오';
+  const left = Math.max(0, Math.ceil((a.dueAt - Date.now()) / 1000));
+  if (a.note) return a.note;
+  return left > 0 ? `${left}초 뒤 미리 고른 문구로 보냅니다` : '미리 고른 문구로 보내는 중...';
+}
+let paneAutoTicks = 0;
+setInterval(() => {
+  paneAutoTicks += 1;
+  const waiting = document.querySelector('.pane-wait, .pane-auto-opt');
+  if (paneAutoTicks % 3 === 0 && (waiting || paneAutoTicks % 15 === 0)) paneAutoLoad();
+  if (!paneAutoOn()) return;
+  document.querySelectorAll('[data-auto-run]').forEach((el) => {
+    el.textContent = paneAutoText((state.paneAuto.runs || {})[el.dataset.autoRun]);
+  });
+}, 1000);
+// 옛 방식(브라우저에 저장)으로 켜 둔 사람의 설정을 서버로 한 번 옮긴다
+paneAutoLoad().then(() => {
+  try {
+    if (localStorage.getItem('aimem.paneAutoSend') !== '1') return;
+    localStorage.removeItem('aimem.paneAutoSend');
+    if (!paneAutoOn()) setPaneAuto(true).then(() => refresh());
+  } catch (err) { /* 무시 */ }
+});
+
+function runAwaitsSend(r) {
+  return !!r && r.state === 'running' && r.gate === 'await';
+}
+
 function runStatusBadge(r) {
+  if (runAwaitsSend(r)) {
+    const b = badge('승인 대기', 'todo');
+    b.dataset.status = 'await';
+    b.title = "지시가 아직 나가지 않았습니다 - 줄을 눌러 지시문을 읽고 '보내기' 를 누르십시오";
+    return b;
+  }
   const ss = r && r.session_state;
   if (ss && SESSION_END_TEXT[ss]) {
     const b = badge(SESSION_END_TEXT[ss], 'blocked');
@@ -2636,6 +2920,52 @@ function renderRuns(data) {
   if (!all.length) {
     wrap.appendChild(emptyP('실행 기록 없음'));
     return;
+  }
+  const waiting = all.filter(runAwaitsSend);
+  if (waiting.length || paneAutoOn()) {
+    // '미리 고른 문구 전송': 켜 두면 기다리는 지시마다 알리고 10초 뒤 이 브라우저가 미리 고른 문구로 보낸다. 켜는 것도 끄는 것도 사람이다.
+    const opt = document.createElement('label');
+    opt.className = 'pane-auto-opt';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = paneAutoOn();
+    cb.addEventListener('change', () => { setPaneAuto(cb.checked).then(() => refresh()); });
+    const optText = document.createElement('span');
+    optText.textContent = `미리 고른 문구 전송 (알린 뒤 ${state.paneAuto.sec || 10}초 동안 손대지 않으면 보냄 · 이 화면을 닫아도 보냄)`;
+    opt.append(cb, optText);
+    wrap.appendChild(opt);
+  }
+  for (const r of waiting) {
+    // 사람 손을 기다리는 지시는 표 위에 따로 - 표의 한 줄로만 두면 지나친다
+    const box = document.createElement('div');
+    box.className = 'pane-wait';
+    const txt = document.createElement('span');
+    txt.className = 'pane-wait-text';
+    txt.textContent = `${show(r.slot)} 에 보낼 지시가 기다리고 있습니다 - ${show(r.label)}`;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-primary pane-wait-btn';
+    btn.textContent = '지시문 보기';
+    btn.addEventListener('click', () => { paneAutoHold(r.id); openDetail(r.id); });
+    box.append(txt, btn);
+    if (paneAutoOn()) {
+      const a = (state.paneAuto.runs || {})[r.id];
+      const note = document.createElement('span');
+      note.className = 'pane-auto-note';
+      note.setAttribute('role', 'status');
+      note.dataset.autoRun = r.id;
+      note.textContent = paneAutoText(a) || '곧 미리 고른 문구로 보냅니다';
+      box.appendChild(note);
+      if (!a || !a.held) {
+        const stop = document.createElement('button');
+        stop.type = 'button';
+        stop.className = 'btn-link';
+        stop.textContent = '이번 건은 내가 보냄';
+        stop.addEventListener('click', () => { paneAutoHold(r.id); refresh(); });
+        box.appendChild(stop);
+      }
+    }
+    wrap.appendChild(box);
   }
   const runs = state.runsShowAll ? all : all.slice(0, RUNS_PAGE);
   const rowClasses = runs.map((r) => {

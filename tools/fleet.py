@@ -325,6 +325,15 @@ def run_report(run_id):
     return (_rt_sessions().report(d) or "").strip() if d is not None else ""
 
 
+def run_gate(run_id):
+    """사람 승인 하네스 세션의 지금 단계(`gate.json`: `{"phase": "await"|"sent"|…, "since", "sent_at"}`). 그런 세션이 아니면 None."""
+    d = _session_dir(run_id)
+    if d is None:
+        return None
+    g = _read_json_capped(d / "gate.json")
+    return g if isinstance(g, dict) and g.get("phase") else None
+
+
 from fleet_rt.base import PROJECT_NAME_RE  # noqa: E402 - 정의는 한 곳
 
 
@@ -472,10 +481,15 @@ def spawn(slot, task_text, *, write=(), label="", task_id=None, attempt=1, harne
     except Exception as e:  # noqa: BLE001 - 설정이 깨져도 띄우기는 한다 (침묵 감지만 꺼진다)
         print(f"주의: fleet.toml 을 읽지 못했습니다 ({e}) - 침묵 감지 없이 띄웁니다", file=sys.stderr)
         provider, idle = None, None
+    wall = float(timeout or DEFAULT_NODE_TIMEOUT_SEC) + SPAWN_TIMEOUT_SLACK_SEC
+    from fleet_rt import harness as rt_harness  # noqa: PLC0415
+    if rt_harness.needs_approval(harness):
+        # 사람의 '보내기' 를 기다리는 시간은 한도로 세지 않는다 - 감독의 벽시계는 끄고, 보낸 뒤의 한도는 운전기와 그래프가 본다
+        extra["work_timeout"], wall = wall, 0.0
     spec = SessionSpec(id=run_id, role="worker", harness=harness, brief_path="", cwd=str(ROOT),
                        slot=slot, model=normalize_model(harness, model), provider=provider,
                        ident=f"[AIMEM 작업자 지시] 슬롯 {slot} · 확인토큰 {token} · AIMEM REV {rev}.",
-                       write_paths=write, timeout=float(timeout or DEFAULT_NODE_TIMEOUT_SEC) + SPAWN_TIMEOUT_SLACK_SEC,
+                       write_paths=write, timeout=wall,
                        idle_timeout=idle, round=round_n if isinstance(round_n, int) else None, task_id=task_id,
                        attempt=attempt, label=label, extra=extra)
     db = pathlib.Path(RUNS).parent / "aimem.db"

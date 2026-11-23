@@ -1497,6 +1497,211 @@ def archive_action(payload, by, root=ROOT):
     return 200, {"ok": True, "dry_run": False, "plan": summary, "moved": out,
                  "moved_counts": moved_counts}
 SLOT_HARNESSES = tuple(_fleet_rt("harness").REAL)   # 하네스 목록의 정본
+
+
+# -- 사람 승인 하네스: 지시문 보기·고치기·보내기 -------------------------------
+#
+# freebuff 같은 하네스는 지시를 사람이 해야 한다. 그 슬롯의 세션은 뜬 뒤 '보내기' 를 기다리고(`gate.json` phase await),
+# 사람이 여기서 지시문을 읽고 **팬에 던질 문구를 고르거나 써서** 누르면 `approve.json` 이 생겨 운전기가 그 한 줄을 팬에 넣는다.
+# **`approve.json` 을 쓰는 곳은 이 경로 하나다** - 인증이 켜진 모니터에서, 인증된 사람의 POST 로만.
+
+_REQ_PANE_RE = re.compile(r"\A/api/pane/([A-Za-z0-9][A-Za-z0-9._-]{0,63})\Z", re.ASCII)
+
+
+def _pane_session(run_id, root):
+    """`(세션 폴더, meta, gate, 오류응답)` - 사람 승인 하네스의 세션만. 아니면 앞 셋이 None."""
+    if not re.match(RUN_ID_RE, str(run_id)):
+        return None, None, None, (400, {"ok": False, "error": "잘못된 run id 입니다"})
+    sdir = pathlib.Path(root) / ".aimem" / "sessions" / str(run_id)
+    names = ("meta.json", "brief.md", "gate.json", "approve.json", "end.json")
+    if sdir.is_symlink() or not sdir.is_dir() or _reader().session_symlinks(sdir, names):
+        return None, None, None, (404, {"ok": False, "error": f"그런 세션이 없습니다: {run_id}"})
+    rt, fb = _fleet_rt("sessions"), _fleet_rt("harness.freebuff")
+    meta = rt.load_meta(sdir)
+    if not isinstance(meta, dict) or not _fleet_rt("harness").needs_approval(meta.get("harness")):
+        return None, None, None, (404, {"ok": False, "error": "사람의 '보내기' 를 받는 세션이 아닙니다"})
+    return sdir, meta, fb.read_gate(sdir) or {}, None
+
+
+def _pane_kind(meta, gate):
+    """지시의 상황 - 화면이 팬에 던질 문구를 **미리 골라 두는** 데 쓴다 (사람이 바꿀 수 있다).
+
+    지시문의 글이 아니라 엔진이 아는 사실만 본다: 몇 번째 시도인가, 쓰기 범위가 어디인가, 라벨에 '검수' 가 있는가.
+    """
+    try:
+        retry = int(meta.get("attempt") or 1) > 1
+    except (TypeError, ValueError):
+        retry = False
+    if retry or gate.get("error"):
+        return "retry"
+    if "검수" in str(meta.get("label") or ""):
+        return "review"
+    paths = [str(x) for x in (meta.get("write_paths") or []) if str(x).strip()]
+    if not paths:
+        return "read"
+    if all(x.lower().endswith((".md", ".txt")) for x in paths):
+        return "docs"
+    if all(x.split("/")[-1].startswith("test_") or "tests/" in x or x.startswith("tests") for x in paths):
+        return "test"
+    return "edit"
+
+
+def pane_info(run_id, root=ROOT):
+    """보내기 전의 모습: 단계, 팬 상태, 문구 뒤에 붙을 지시문 파일 경로. 문구 자체는 사람이 정한다 - 여기서 주지 않는다."""
+    sdir, meta, gate, err = _pane_session(run_id, root)
+    if err:
+        return err
+    fb = _fleet_rt("harness.freebuff")
+    mask = _detail_masker(root)
+    pane, _chats = fb.settings(root)
+    st = fb.pane_status(pane)
+    ended = (sdir / "end.json").exists()
+    return 200, {"ok": True, "id": str(run_id), "phase": "ended" if ended else gate.get("phase"),
+                 "since": gate.get("since"), "sent_at": gate.get("sent_at"), "by": gate.get("by"),
+                 "error": mask(gate.get("error")) if gate.get("error") else None,
+                 "pending": (sdir / "approve.json").exists(), "held": gate.get("held") or None,
+                 "ref": fb.brief_ref(sdir, root), "text_max": fb.LINE_TEXT_MAX, "kind": _pane_kind(meta, gate),
+                 "pane": {"name": pane, "ok": st["ok"], "why": st["why"], "left": st["left"], "model": st["model"],
+                          "lines": [mask(x) for x in st["lines"]]}}
+
+
+def pane_send(run_id, payload, by, root=ROOT):
+    """사람이 누른 '보내기'. `text` 는 그 사람이 고르거나 쓴 문구 - 뒤에 지시문 파일 경로를 붙여 승인에 적는다."""
+    sdir, _meta, gate, err = _pane_session(run_id, root)
+    if err:
+        return err
+    if isinstance(payload, dict) and payload.get("action") == "hold":
+        # 사람이 이 건을 붙잡았다 - '미리 고른 문구 전송' 이 이 건은 보내지 않는다
+        if gate.get("phase") == "await":
+            (sdir / PANE_HOLD_FILE).write_text(json.dumps({"by": str(by or "")[:80]}, ensure_ascii=False), encoding="utf-8")
+        return 200, {"ok": True, "id": str(run_id), "held": True}
+    if not isinstance(payload, dict) or payload.get("action") != "send":
+        return 400, {"ok": False, "error": "action 은 send 여야 합니다"}
+    if gate.get("phase") != "await" or (sdir / "end.json").exists():
+        return 409, {"ok": False, "error": "보내기를 기다리는 세션이 아닙니다 (이미 보냈거나 끝났습니다)"}
+    fb = _fleet_rt("harness.freebuff")
+    line, why = fb.compose_line(payload.get("text"), fb.brief_ref(sdir, root))
+    if line is None:
+        return 400, {"ok": False, "error": why}
+    ok, why = fb.approve(sdir, by, line)
+    if not ok:
+        return 409, {"ok": False, "error": why}
+    return 200, {"ok": True, "id": str(run_id), "line": line}
+
+
+# -- '미리 고른 문구 전송' 옵션 ------------------------------------------------
+#
+# 사람이 모니터에서 켜 두면, 기다리는 지시마다 PANE_AUTO_SEC 초 뒤 **이 서버가** 상황(`_pane_kind`)에 맞는 문구로 승인을 적는다.
+# 화면이 떠 있지 않아도 나간다(사람은 팬을 보고 있다 - 2026-11-23 지시). 켜고 끄는 것, 한 건을 붙잡는 것(hold)은 로그인한 사람만.
+# 모니터가 내려가 있으면 아무것도 나가지 않는다. 관리자·이어 달리기는 이 옵션을 건드리지 않는다.
+
+PANE_AUTO_FILE = ".aimem/pane_auto.json"
+PANE_AUTO_SEC = 10
+PANE_AUTO_RETRY_SEC = 30
+PANE_HOLD_FILE = "hold.json"
+# 화면(app.js PANE_PHRASE_SEEDS)의 같은 key 문구와 글자까지 같아야 한다 (검사가 맞춰 본다)
+PANE_AUTO_PHRASES = {
+    "read": "이 파일에 적힌 일을 해 줘. 살펴보고 결과만 알려 주면 돼. 아무 파일도 고치지 말고:",
+    "edit": "이 파일에 고칠 내용이 적혀 있어. 읽고 그대로 해 줘. 거기 적힌 쓰기 범위 밖은 건드리지 마:",
+    "test": "이 파일에 검사 관련 지시가 있어. 읽고 그대로 한 뒤 돌린 결과를 알려 줘:",
+    "review": "이 파일에 검수 지시가 있어. 읽고 거기 적힌 대상을 검수해 줘. 고치지는 말고 지적만 적어:",
+    "docs": "이 파일에 문서 작업 지시가 있어. 읽고 그대로 해 줘. 코드는 건드리지 말고:",
+    "retry": "아까 끝내지 못한 일이야. 이 파일을 다시 읽고 적힌 대로 처음부터 해 줘:",
+}
+_pane_auto_notes = {}      # run id → 마지막으로 못 보낸 까닭 (이 프로세스 안에서만)
+
+
+def _iso_ts(text):
+    try:
+        return datetime.datetime.fromisoformat(str(text)).timestamp()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def pane_auto_state(root=ROOT):
+    try:
+        d = json.loads((pathlib.Path(root) / PANE_AUTO_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        d = None
+    d = d if isinstance(d, dict) else {}
+    return {"on": d.get("on") is True, "at": d.get("at"), "by": d.get("by")}
+
+
+def pane_auto_set(on, by, root=ROOT):
+    p = pathlib.Path(root) / PANE_AUTO_FILE
+    tmp = pathlib.Path(str(p) + ".tmp")
+    tmp.write_text(json.dumps({"on": on is True, "at": datetime.datetime.now().isoformat(timespec="seconds"),
+                               "by": str(by or "")[:80]}, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, p)
+    return pane_auto_state(root)
+
+
+def _pane_auto_waiting(root, auto):
+    """보내기를 기다리는 세션들: `[(세션 폴더, meta, gate, 남은 초, 붙잡혔나)]`."""
+    fb, rt_h, rt = _fleet_rt("harness.freebuff"), _fleet_rt("harness"), _fleet_rt("sessions")
+    out, now = [], time.time()
+    for g in sorted((pathlib.Path(root) / ".aimem" / "sessions").glob("*/gate.json")):
+        sdir = g.parent
+        if sdir.is_symlink() or (sdir / "end.json").exists():
+            continue
+        gate = fb.read_gate(sdir) or {}
+        if gate.get("phase") != "await":
+            continue
+        meta = rt.load_meta(sdir)
+        if not isinstance(meta, dict) or not rt_h.needs_approval(meta.get("harness")):
+            continue
+        start = max(_iso_ts(gate.get("since")), _iso_ts(auto.get("at")))
+        if gate.get("error_at"):
+            start = max(start, _iso_ts(gate.get("error_at")) + PANE_AUTO_RETRY_SEC - PANE_AUTO_SEC)
+        out.append((sdir, meta, gate, start + PANE_AUTO_SEC - now, (sdir / PANE_HOLD_FILE).exists()))
+    return out
+
+
+def pane_auto_view(root=ROOT):
+    """화면용: 옵션 상태와, 기다리는 지시마다 몇 초 뒤 나가는지."""
+    auto = pane_auto_state(root)
+    runs = {}
+    if auto["on"]:
+        for sdir, _meta, _gate, left, held in _pane_auto_waiting(root, auto):
+            runs[sdir.name] = {"due_in": round(max(left, 0.0), 1), "held": held, "note": _pane_auto_notes.get(sdir.name)}
+    return 200, {"ok": True, "on": auto["on"], "by": auto["by"], "at": auto["at"], "sec": PANE_AUTO_SEC, "runs": runs}
+
+
+def pane_auto_tick(root=ROOT):
+    """옵션이 켜져 있으면, 때가 된 지시를 미리 고른 문구로 보낸다. 보낸 run id 목록."""
+    auto = pane_auto_state(root)
+    if not auto["on"]:
+        _pane_auto_notes.clear()
+        return []
+    fb, sent, st = _fleet_rt("harness.freebuff"), [], None
+    for sdir, meta, gate, left, held in _pane_auto_waiting(root, auto):
+        if held or left > 0 or gate.get("busy") or (sdir / "approve.json").exists():
+            continue
+        if st is None:
+            st = fb.pane_status(fb.settings(root)[0])
+        if not st["ok"]:
+            _pane_auto_notes[sdir.name] = f"팬이 준비되지 않아 기다립니다 ({st['why']})"
+            continue
+        line, why = fb.compose_line(PANE_AUTO_PHRASES.get(_pane_kind(meta, gate)), fb.brief_ref(sdir, root))
+        ok, why = fb.approve(sdir, f"미리 고른 문구 자동 전송 (옵션 켠 사람: {auto['by'] or '?'})"[:80], line) if line else (False, why)
+        if ok:
+            _pane_auto_notes.pop(sdir.name, None)
+            sent.append(sdir.name)
+            break                      # 팬은 하나다 - 한 번에 한 건
+        _pane_auto_notes[sdir.name] = f"보내지 못했습니다 ({why})"
+    return sent
+
+
+def _pane_auto_loop(root):
+    while True:
+        try:
+            for rid in pane_auto_tick(root):
+                print(f"pane-auto: 미리 고른 문구로 보냄 {rid}", file=sys.stderr)
+        except Exception as e:  # noqa: BLE001 - 이 고리가 죽으면 옵션이 조용히 멈춘다
+            print(f"pane-auto: {type(e).__name__}: {e}", file=sys.stderr)
+        time.sleep(2.0)
+
+
 def _aimem_db(root):
     tools_dir = str(pathlib.Path(root) / "tools")
     if tools_dir not in sys.path:
@@ -3145,6 +3350,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json(404, {"ok": False, "error": f"그런 실행 기록이 없습니다: {rid}",
                                         "detail": d})
             return self._json(200, d)
+        pn = _REQ_PANE_RE.match(path)
+        if pn:
+            # 가리지 않은 지시 본문이 나가므로 인증된 사람에게만 (인증을 끈 모니터에서는 쓰지 않는다)
+            if not self.require_auth or self._subject() is None:
+                return self._json(403, {"ok": False, "error": "인증이 켜진 모니터에서 로그인한 뒤에만 볼 수 있습니다"})
+            code, body = pane_auto_view(self.root) if pn.group(1) == "auto" else pane_info(pn.group(1), self.root)
+            return self._json(code, body)
         mm = _REQ_MGR_RE.match(path)
         if mm:
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -3260,8 +3472,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         archive_path = path == "/api/archive"
         proj_rm = _REQ_PROJECT_REMOVE_RE.match(path)
         proj_dep = _REQ_PROJECT_DEPLOY_RE.match(path)
+        pane_m = _REQ_PANE_RE.match(path)
         if (path != "/api/requests" and not edit and not fleet_act and not slot_m and not slot_add_path and not archive_path
-                and not proj_rm and not proj_dep):
+                and not proj_rm and not proj_dep and not pane_m):
             return self._json(404, {"ok": False, "error": f"없는 경로입니다: {path}"})
         # CSRF (S4 검수 4번). 세션 쿠키가 `SameSite=Strict` 라 1차 방어는 되지만,
         # 쿠키 정책 하나에만 기대지 않습니다. `<form enctype="text/plain">` 으로는
@@ -3279,6 +3492,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(403, json.dumps({"ok": False, "error": "Origin 이 Host 와 다릅니다"},
                                                   ensure_ascii=False),
                                   extra=[("Connection", "close")])
+        if pane_m:
+            # 사람의 최종 지시 - 인증이 켜진 모니터에서 인증된 사람만. 누가 눌렀는지 감사 로그에 남긴다 (본문은 적지 않는다)
+            who = self._subject()
+            if not self.require_auth or who is None:
+                self.close_connection = True
+                return self._send(403, json.dumps({"ok": False, "error": "인증이 켜진 모니터에서 로그인한 사람만 보낼 수 있습니다"},
+                                                  ensure_ascii=False), extra=[("Connection", "close")])
+            payload, sent = self._read_json_body()
+            if sent:
+                return None
+            by = f"웹({subject_label(who)})"
+            if pane_m.group(1) == "auto":       # '미리 고른 문구 전송' 옵션 켜기·끄기
+                if not isinstance(payload, dict) or not isinstance(payload.get("on"), bool):
+                    return self._json(400, {"ok": False, "error": "on 은 true/false 여야 합니다"})
+                pane_auto_set(payload["on"], by, self.root)
+                self._audit("pane-auto", f"200 on={payload['on']}")
+                return self._json(*pane_auto_view(self.root))
+            code, result = pane_send(pane_m.group(1), payload, by, self.root)
+            self._audit("pane-send", f"{code} {pane_m.group(1)} action={payload.get('action') if isinstance(payload, dict) else None}")
+            return self._json(code, result)
         if archive_path:
             payload, sent = self._read_json_body()
             if sent:
@@ -3643,6 +3876,7 @@ def serve(host=HOST, port=PORT, root=ROOT, once=False, tls=False, auth=None):
             except Exception:  # noqa: BLE001
                 pass
     threading.Thread(target=_reap_loop, name="app-server-reaper", daemon=True).start()
+    threading.Thread(target=_pane_auto_loop, args=(root,), name="pane-auto", daemon=True).start()
     log_line("  GET  /api/state  GET /api/health  POST /api/requests")
     if require_auth:
         log_line(f"  인증 켬 - /login 에서 토큰을 넣거나 `Authorization: Bearer <토큰>`")

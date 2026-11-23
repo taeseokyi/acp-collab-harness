@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-17T15:52:21 / REV 190
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-20T17:01:17 / REV 190
 
 ## 2. 세션 명부
 
@@ -11,6 +11,7 @@
 | S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R36 빠른 구현: VoxLog INTERFACE.md (무료) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
 | S4 | `6cd650` | claude | sonnet | R36 빠른 구현: VoxLog serve.py 진척 마감·mkdir 오류 | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
 | S5 | `61dfcc` | claude | sonnet | R36 빠른 구현: VoxLog 408 재시도·브라우저 24번 |  |
+| S6 | `47764b` | freebuff | (하네스 기본) | tmux 팬의 freebuff (무료) - 사람이 모니터에서 지시문을 읽고 '보내기' 를 눌러야 시작. 문서·초벌 검토처럼 막히지 않는 일만 |  |
 
 ## 3. 작업 보드
 

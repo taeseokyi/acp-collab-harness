@@ -342,6 +342,7 @@ def slot_roster_lines(rows=None, cfg=None):
             cfg = rt_config.load(fleet.ROOT)
         except rt_config.ConfigError:
             cfg = rt_config.Config(rt_config._copy(rt_config.DEFAULTS))
+    from fleet_rt import harness as rt_harness  # noqa: PLC0415
     out = []
     for r in rows:
         h = str(r.get("harness") or "?")
@@ -354,6 +355,8 @@ def slot_roster_lines(rows=None, cfg=None):
             parts.append(role[:80])
         if r.get("origin") == "manager":
             parts.append("관리자 추가")
+        if rt_harness.needs_approval(h):
+            parts.append("**사람이 '보내기' 를 눌러야 시작 - 막히지 않는 일만**")
         if r.get("paused"):
             why = " ".join(str(r.get("paused_note") or "").split())[:80]
             parts.append("**일시 사용 중지 - 쓰지 않음**" + (f"({why})" if why else ""))
@@ -849,7 +852,8 @@ def _runtime_checks():
             ok, detail = pr.ok, (pr.version or pr.binary or "") if pr.ok else pr.detail
         except (ValueError, ImportError) as e:
             ok, detail = False, str(e)
-        checks.append(_check(f"하네스 {h} ({', '.join(users)})", ok, detail))
+        # 사람 승인 하네스(사람이 연 팬)는 없어도 라운드를 막지 않는다 - 그 슬롯의 노드만 기다리다 넘어간다
+        checks.append(_check(f"하네스 {h} ({', '.join(users)})", ok, detail, required=not rt_harness.needs_approval(h)))
     problem = rt_env.env_problem(fleet.ROOT)
     checks.append(_check("키 파일 .env", problem is None, problem or "읽힘"))
     if cfg is not None:

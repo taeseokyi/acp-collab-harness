@@ -1775,3 +1775,24 @@ button:disabled { opacity: 0.6; }
 .fc-policy-item:hover:not(.is-on) { border-color: var(--st-accent-fill); }
 .fc-policy-item.is-on { border-color: var(--st-accent-fill); cursor: default; }
 @media (max-width: 480px) { .fc-policy-row { grid-template-columns: auto minmax(0, 1fr); } .fc-policy-desc, .fc-policy-menu { grid-column: 1 / -1; } .fc-policy-cur { justify-self: start; min-height: 36px; } .fc-policy-item { min-height: 44px; } }
+
+/* 사람 승인 하네스(freebuff): 보내기를 기다리는 지시 알림 + 실행 상세의 '보내기' 칸 */
+.pane-wait { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; padding: 10px 12px;
+  border: 1px solid var(--st-accent-fill); border-radius: 8px; background: color-mix(in srgb, var(--st-accent-fill) 8%, transparent); }
+.pane-wait-text { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
+.pane-wait-btn { padding: 6px 16px; }
+.pane-auto-opt { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: var(--st-fs-sm); }
+.pane-auto-opt input { width: auto; flex: 0 0 auto; margin: 0; }
+.pane-auto-opt span { flex: 1 1 auto; min-width: 0; }
+.pane-auto-note { flex: 1 1 100%; font-size: var(--st-fs-sm); color: var(--st-ink-muted); overflow-wrap: anywhere; }
+.pane-gate-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.pane-gate-body p { margin: 0; overflow-wrap: anywhere; }
+.pane-gate-hint { font-size: var(--st-fs-sm); color: var(--st-ink-muted); }
+.pane-gate-input { width: 100%; box-sizing: border-box; font: inherit; padding: 8px; resize: vertical; }
+.pane-gate-send { padding: 8px 20px; }
+.pane-gate-picks { display: flex; flex-direction: column; gap: 4px; }
+.pane-gate-pick { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 6px; }
+.pane-gate-pick-label { grid-column: 1 / -1; font-size: var(--st-fs-sm); color: var(--st-ink-muted); }
+.pane-gate-pick .btn-link { text-align: left; overflow-wrap: anywhere; }
+.pane-gate-pick-pre { color: var(--st-ink); font-weight: 600; }
+.pane-gate-pick-x { color: var(--st-ink-muted); padding: 2px 8px; }

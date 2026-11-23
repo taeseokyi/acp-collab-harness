@@ -32,6 +32,11 @@ max_concurrent = 1        # 동시에 띄울 세션 수
 idle_timeout_sec = 240
 models = ["deepseek-v4.1-flash-free"]
 
+[providers.freebuff]      # 사람이 연 tmux 팬의 freebuff - 한 사람 한 세션이라 동시에 하나. 침묵 감지 없음(보내기를 기다린다)
+tier = "free"
+max_concurrent = 1
+models = ["pane"]         # 모델은 팬에서 사람이 고른다 (`/model`)
+
 [providers.anthropic]     # claude CLI 가 자기 로그인으로 붙는다 - 키·주소 없음
 tier = "paid"
 max_concurrent = 3
@@ -49,6 +54,11 @@ default_model = "kisti/kistillm"
 [harness.opencode]        # ~/.config/opencode/opencode.jsonc 의 model 은 'kisti/kistillm'
 providers = ["kisti", "exaone", "openrouter", "opencode"]
 default_model = "kisti/kistillm"
+
+[harness.freebuff]        # 지시는 사람이 한다 - 세션은 모니터의 '보내기' 를 기다렸다가 팬에 한 줄을 넣는다
+providers = ["freebuff"]
+default_model = "freebuff/pane"
+pane = "freebuff:0.0"     # tmux 팬 (세션:창.팬)
 
 [time]
 zone = "Asia/Seoul"        # 엔진·작업자·로그·모니터 화면의 시간대

@@ -131,6 +131,19 @@ def _last_event_line(rt, d: pathlib.Path) -> str | None:
     return None
 
 
+def _gate_phase(d: pathlib.Path) -> str | None:
+    """사람 승인 하네스 세션의 단계(`gate.json` 의 `phase`: await·sent …). 그런 세션이 아니면 None."""
+    p = d / "gate.json"
+    try:
+        if p.is_symlink() or not p.is_file() or p.stat().st_size > 65536:
+            return None
+        g = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    ph = g.get("phase") if isinstance(g, dict) else None
+    return ph if isinstance(ph, str) and re.fullmatch(r"[a-z]{1,16}", ph) else None
+
+
 def _session_row(rt, d: pathlib.Path, now: datetime) -> dict | None:
     meta = rt.load_meta(d)
     if not isinstance(meta, dict):
@@ -170,6 +183,7 @@ def _session_row(rt, d: pathlib.Path, now: datetime) -> dict | None:
         "last_event_at": st.get("last_event_at") or None,
         "last_event": _last_event_line(rt, d),
         "provider": meta.get("provider"), "role": meta.get("role"),
+        "gate": _gate_phase(d) if state == "running" else None,
     }
 
 
