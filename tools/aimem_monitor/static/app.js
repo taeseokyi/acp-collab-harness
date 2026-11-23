@@ -1044,6 +1044,53 @@ function renderPaneGate(parent, runId) {
     }
     if (info.error) box.appendChild(line('pane-gate-state warn-text', `지난번에 보내지 못했습니다: ${info.error}`));
     if (pane.ok && !pane.left) box.appendChild(line('pane-gate-state warn-text', 'freebuff 세션이 열려 있지 않습니다. 보내면 지금 모델로 새 세션이 열리며 사용 시간이 깎이기 시작합니다.'));
+    // 1차 지시: 작업 지시보다 먼저 팬에 들어가는, 사람이 직접 쓴 글. 노드에 써 둔 것이 있으면 그것을 보인다
+    if (info.first_at) {
+      box.appendChild(line('pane-gate-state', `1차 지시를 팬에 넣었습니다 (${String(info.first_at).replace('T', ' ')}${info.first_by ? ', ' + info.first_by : ''}) - 답이 끝나면 아래 지시를 보내십시오. 그 대화에 이어집니다.`));
+    } else {
+      box.appendChild(line('pane-gate-hint', info.first
+        ? '1차 지시 - 이 노드에 써 둔 글입니다. 작업 지시보다 먼저 팬에 넣습니다 (고쳐도 됩니다).'
+        : '1차 지시 - 작업 지시보다 먼저 팬에 넣을 글을 직접 쓰십시오. 답이 끝난 뒤 아래 지시를 보내면 그 대화에 이어집니다.'));
+      const fi = document.createElement('input');
+      fi.type = 'text';
+      fi.className = 'pane-gate-input';
+      fi.maxLength = info.text_max || 300;
+      fi.placeholder = '예: 지금부터 일을 하나 줄게. 먼저 이 프로젝트 README 를 읽어 줘.';
+      fi.setAttribute('aria-label', '1차 지시');
+      const fd = state.paneFirstDraft && state.paneFirstDraft.id === runId;
+      fi.value = fd ? state.paneFirstDraft.text : (info.first || '');
+      fi.addEventListener('input', () => { state.paneFirstDraft = { id: runId, text: fi.value }; });
+      const fbar = document.createElement('div');
+      fbar.className = 'inbox-bar';
+      const fsend = document.createElement('button');
+      fsend.type = 'button';
+      fsend.className = 'btn-primary';
+      fsend.textContent = info.pending ? '보내는 중...' : '1차 지시 보내기';
+      fsend.disabled = !!info.pending;
+      const fmsg = document.createElement('span');
+      fmsg.className = 'inbox-msg';
+      fbar.append(fsend, fmsg);
+      box.append(fi, fbar);
+      fsend.addEventListener('click', async () => {
+        if (!fi.value.trim()) { fmsg.textContent = '직접 쓴 글이 있어야 합니다'; fi.focus(); return; }
+        fsend.disabled = true;
+        fmsg.textContent = '보내는 중...';
+        let out;
+        try {
+          out = await api('/api/pane/' + encodeURIComponent(runId), { action: 'first', text: fi.value });
+        } catch (err) {
+          out = { res: { ok: false }, body: { error: err && err.message ? err.message : String(err) } };
+        }
+        if (!alive()) return;
+        if (!out.res.ok || !out.body || !out.body.ok) {
+          fsend.disabled = false;
+          fmsg.textContent = '보내지 못했습니다: ' + ((out.body && out.body.error) || 'HTTP ' + out.res.status);
+          return;
+        }
+        fmsg.textContent = '팬에 넣는 중...';
+        setTimeout(() => { if (alive()) load(); }, 6000);      // 운전기가 팬에 넣는 데 몇 초 걸린다
+      });
+    }
     box.appendChild(line('pane-gate-hint', '지시의 상황에 맞는 문구를 미리 골라 두었습니다. 다른 것을 고르거나 직접 고쳐 쓰십시오. 지시문 파일은 위 \'지시 본문\' 그대로이고, 문구 뒤에 그 파일 경로가 붙습니다.'));
     const picks = document.createElement('div');
     picks.className = 'pane-gate-picks';
@@ -1061,7 +1108,9 @@ function renderPaneGate(parent, runId) {
     const showPreview = () => {
       state.paneDraft = { id: runId, text: ta.value };
       const t = ta.value.trim();
-      preview.textContent = t ? `팬에 들어갈 한 줄: ${t} ${show(info.ref, '')}` : `문구 뒤에 붙을 경로: ${show(info.ref, '')}`;
+      // 줄 = 작업 요지(앞) + 고른 문구 + 지시문 경로(맨 뒤). 요지는 서버가 지시문에서 뽑는다
+      const gist = info.gist ? info.gist + ' ' : '';
+      preview.textContent = t ? `팬에 들어갈 한 줄: ${gist}${t} ${show(info.ref, '')}` : `문구 앞에 붙을 작업 요지: ${show(info.gist, '(없음)')} · 뒤에 붙을 경로: ${show(info.ref, '')}`;
     };
     const drawPicks = () => {
       picks.textContent = '';
@@ -1322,6 +1371,10 @@ function lastEventText(r) {
 function paneAutoOn() {
   return !!(state.paneAuto && state.paneAuto.on);
 }
+// '내 지시 뒤에 이어 보냄': 사람이 팬에 직접 쓴 지시의 답이 끝나면 기다리는 지시 하나를 그 대화에 이어 보낸다
+function paneFollowOn() {
+  return !!(state.paneAuto && state.paneAuto.follow);
+}
 async function paneAutoLoad() {
   try {
     const { res, body } = await api('/api/pane/auto');
@@ -1332,14 +1385,14 @@ async function paneAutoLoad() {
     }
   } catch (err) { /* 다음 번에 */ }
 }
-async function setPaneAuto(on) {
+async function setPaneAuto(on, follow) {
   try {
-    const { res, body } = await api('/api/pane/auto', { on });
+    const { res, body } = await api('/api/pane/auto', { on: !!on, follow: !!follow });
     if (res.ok && body && body.ok) { state.paneAuto = body; await paneAutoLoad(); }
   } catch (err) { /* 체크 칸은 다음 그리기에서 서버 상태로 돌아간다 */ }
 }
 function paneAutoHold(id) {
-  if (!paneAutoOn()) return;
+  if (!paneAutoOn() && !paneFollowOn()) return;
   const a = (state.paneAuto.runs || {})[id];
   if (a) a.held = true;
   api('/api/pane/' + encodeURIComponent(id), { action: 'hold' }).catch(() => null);
@@ -1347,15 +1400,150 @@ function paneAutoHold(id) {
 function paneAutoText(a) {
   if (!a) return '';
   if (a.held) return '자동 전송 안 함 - 직접 보내십시오';
+  if (a.first_sent) return '1차 지시를 보냈습니다 - 답이 끝나면 이어서 보냅니다';
+  if (a.due_in === null || a.due_in === undefined) return '1차 지시(직접 쓰는 글)를 기다립니다 - 창에 쓰거나 팬에 직접 쓰십시오';
   const left = Math.max(0, Math.ceil((a.dueAt - Date.now()) / 1000));
   if (a.note) return a.note;
-  return left > 0 ? `${left}초 뒤 미리 고른 문구로 보냅니다` : '미리 고른 문구로 보내는 중...';
+  return left > 0 ? `${left}초 뒤 작업 지시를 이어 보냅니다` : '작업 지시를 이어 보내는 중...';
+}
+
+// '미리 고른 문구 전송' 도 사람의 1차 지시가 먼저다 (2026-11-23 태석님). 기다리는 지시가 생기면 창을 띄워 그 글을 받는다.
+// 받은 글이 팬에 먼저 들어가고, 그 답이 끝난 뒤 작업 지시(작업 요지 + 문구 + 지시문 경로)가 같은 대화에 이어진다.
+// 창을 닫으면 그 건은 다시 묻지 않는다 - 팬에 직접 쓰면 똑같이 이어진다.
+const paneFirstAsked = new Set();
+function paneFirstDialog() {
+  let dlg = document.getElementById('pane-first');
+  if (dlg) return dlg;
+  dlg = document.createElement('dialog');
+  dlg.id = 'pane-first';
+  dlg.className = 'pane-first';
+  const form = document.createElement('form');
+  form.method = 'dialog';
+  const h = document.createElement('h3');
+  h.textContent = '먼저 직접 한마디 쓰십시오 (1차 지시)';
+  const what = document.createElement('p');
+  what.className = 'pane-first-what';
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  hint.textContent = '이 글이 freebuff 팬에 먼저 들어갑니다. 답이 끝나면 작업 지시가 그 대화에 이어집니다. 팬에 직접 써도 됩니다.';
+  const ta = document.createElement('textarea');
+  ta.rows = 3;
+  ta.maxLength = 300;
+  ta.placeholder = '예: 지금부터 일을 하나 줄게. 먼저 이 저장소가 어떤 구조인지 짧게 말해 줘.';
+  const msg = document.createElement('p');
+  msg.className = 'form-msg';
+  const row = document.createElement('div');
+  row.className = 'slot-actions';
+  const send = document.createElement('button');
+  send.type = 'button'; send.className = 'btn-primary'; send.textContent = '팬에 보내기';
+  const later = document.createElement('button');
+  later.type = 'button'; later.className = 'btn-link'; later.textContent = '닫기 (팬에 직접 쓰겠음)';
+  row.append(send, later);
+  form.append(h, what, hint, ta, msg, row);
+  dlg.appendChild(form);
+  const clear = document.createElement('button');
+  clear.type = 'button'; clear.className = 'btn-link'; clear.textContent = '지우기';
+  row.insertBefore(clear, later);
+  clear.addEventListener('click', async () => {
+    try {
+      const { res, body } = await api('/api/pane/first', { task: dlg.dataset.task, text: '' });
+      if (!res.ok || !body.ok) throw new Error(body.error || `지우지 못했습니다 (${res.status})`);
+      ta.value = ''; dlg.close(); paneAutoLoad().then(() => refresh());
+    } catch (err) { msg.className = 'form-msg error'; msg.textContent = err && err.message ? err.message : String(err); }
+  });
+  later.addEventListener('click', () => dlg.close());
+  ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send.click(); } });
+  send.addEventListener('click', async () => {
+    const text = ta.value.trim();
+    if (!text) { msg.className = 'form-msg error'; msg.textContent = '직접 쓴 글이 있어야 합니다.'; ta.focus(); return; }
+    send.disabled = true;
+    msg.className = 'form-msg'; msg.textContent = '보내는 중...';
+    try {
+      // 노드에 미리 써 두는 것(task)과 기다리는 지시에 바로 보내는 것(run) - 창은 하나다
+      const { res, body } = dlg.dataset.task
+        ? await api('/api/pane/first', { task: dlg.dataset.task, text })
+        : await api('/api/pane/' + encodeURIComponent(dlg.dataset.run), { action: 'first', text });
+      if (!res.ok || !body.ok) throw new Error(body.error || `보내지 못했습니다 (${res.status})`);
+      ta.value = '';
+      dlg.close();
+      paneAutoLoad().then(() => refresh());
+    } catch (err) {
+      msg.className = 'form-msg error'; msg.textContent = err && err.message ? err.message : String(err);
+    } finally { send.disabled = false; }
+  });
+  dlg._what = what; dlg._msg = msg; dlg._ta = ta; dlg._h = h; dlg._hint = hint; dlg._send = send; dlg._later = later; dlg._clear = clear;
+  document.body.appendChild(dlg);
+  return dlg;
+}
+function paneFirstMode(d, task) {
+  // task 가 있으면 '노드에 미리 써 두기', 없으면 '기다리는 지시에 지금 보내기'
+  d.dataset.task = task || '';
+  d._h.textContent = task ? `${task} 의 1차 지시 (미리 써 두기)` : '먼저 직접 한마디 쓰십시오 (1차 지시)';
+  d._hint.textContent = task
+    ? '이 노드의 작업 지시가 나가기 전에 이 글이 freebuff 팬에 먼저 들어갑니다(보내기 옵션이 켜져 있을 때). 써 두면 창으로 다시 묻지 않습니다.'
+    : '이 글이 freebuff 팬에 먼저 들어갑니다. 답이 끝나면 작업 지시가 그 대화에 이어집니다. 팬에 직접 써도 됩니다.';
+  d._send.textContent = task ? '저장' : '팬에 보내기';
+  d._later.textContent = task ? '닫기' : '닫기 (팬에 직접 쓰겠음)';
+  d._clear.hidden = !task;
+  d._msg.textContent = '';
+}
+// 요청 트리의 태스크 그래프: freebuff 슬롯 노드에 1차 지시를 미리 써 둔다
+function paneFirstStored(task) {
+  const f = state.paneAuto && state.paneAuto.firsts;
+  return (f && f[task]) || null;
+}
+function openNodeFirst(n) {
+  if (typeof HTMLDialogElement === 'undefined') return;
+  const d = paneFirstDialog();
+  if (d.open) d.close();
+  paneFirstMode(d, String(n.id));
+  d.dataset.run = '';
+  d._what.textContent = `${show(n.slot)} · ${plainText(n.title) || ''}`;
+  const f = paneFirstStored(String(n.id));
+  d._ta.value = f ? f.text : '';
+  d._clear.hidden = !f;
+  d.showModal();
+  d._ta.focus();
+}
+function nodeSlotCell(n) {
+  const harness = ((state.data && state.data.slots) || []).find((x) => x && x.slot === n.slot);
+  const st = String(n.status || 'todo');
+  if (!harness || String(harness.harness) !== 'freebuff' || st === 'done' || st === 'failed' || !/^T-\d+$/.test(String(n.id))) return show(n.slot);
+  const wrap = document.createElement('span');
+  wrap.className = 'node-first';
+  const f = paneFirstStored(String(n.id));
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'btn-link node-first-btn' + (f ? ' is-set' : '');
+  b.textContent = f ? '1차 ✓' : '1차 지시';
+  b.title = f ? `써 둔 1차 지시: ${f.text}` : '이 노드의 작업 지시 전에 팬에 먼저 들어갈 글을 직접 써 둡니다';
+  b.addEventListener('click', (e) => { e.stopPropagation(); openNodeFirst(n); });
+  wrap.append(document.createTextNode(show(n.slot) + ' '), b);
+  return wrap;
+}
+function paneFirstAsk() {
+  const runs = (paneAutoOn() && state.paneAuto.runs) || {};
+  const id = Object.keys(runs).find((k) => runs[k].need_first);
+  const dlg = document.getElementById('pane-first');
+  if (dlg && dlg.open && dlg.dataset.task) return;                          // 노드에 써 두는 중이다
+  if (dlg && dlg.open && (!id || dlg.dataset.run !== id)) dlg.close();      // 팬에 직접 썼거나 그 건이 끝났다
+  if (!id || paneFirstAsked.has(id) || (dlg && dlg.open) || typeof HTMLDialogElement === 'undefined') return;
+  paneFirstAsked.add(id);
+  const d = paneFirstDialog();
+  const run = ((state.data && state.data.runs) || []).find((r) => r && r.id === id);
+  paneFirstMode(d, '');
+  d.dataset.run = id;
+  d._what.textContent = `${run ? show(run.slot) : 'freebuff'} 에 보낼 작업 지시가 기다리고 있습니다 - ${run ? show(run.label) : id}`;
+  d._msg.textContent = '';
+  d.showModal();
+  d._ta.focus();
 }
 let paneAutoTicks = 0;
 setInterval(() => {
   paneAutoTicks += 1;
   const waiting = document.querySelector('.pane-wait, .pane-auto-opt');
   if (paneAutoTicks % 3 === 0 && (waiting || paneAutoTicks % 15 === 0)) paneAutoLoad();
+  paneFirstAsk();
   if (!paneAutoOn()) return;
   document.querySelectorAll('[data-auto-run]').forEach((el) => {
     el.textContent = paneAutoText((state.paneAuto.runs || {})[el.dataset.autoRun]);
@@ -1526,8 +1714,9 @@ const FLEET_BUTTONS = [
 ];
 
 // 서버 호출 하나로: payload 가 있으면 POST(JSON), 없으면 GET. 본문이 JSON 이 아니면 {ok:false, error:'HTTP n'}.
-async function api(url, payload) {
+async function api(url, payload, timeoutMs) {
   const opt = { headers: { Accept: 'application/json' } };
+  if (timeoutMs && typeof AbortSignal !== 'undefined' && AbortSignal.timeout) opt.signal = AbortSignal.timeout(timeoutMs);
   if (payload !== undefined) {
     opt.method = 'POST';
     opt.headers['Content-Type'] = 'application/json';
@@ -2826,6 +3015,16 @@ function runningBySlot(data) {
   return map;
 }
 
+// freebuff 사용 세션: 오늘 몇 번 열었고 지금 것이 언제 끝나는지 (/api/pane/auto 의 sessions). 무료는 하루 12시간이다.
+function freebuffUsageText() {
+  const u = state.paneAuto && state.paneAuto.sessions;
+  if (!u) return '';
+  const n = Number(u.today) || 0;
+  const parts = [n ? `오늘 세션 ${n}번 (약 ${n}시간)` : '오늘 연 세션 없음'];
+  if (u.expires) parts.push(`지금 세션 ${fmtTime(Date.parse(u.expires), { date: false })} 까지`);
+  return parts.join(' · ');
+}
+
 function renderSlots(data) {
   const wrap = $('slots-table-wrap');
   wrap.textContent = '';
@@ -2851,6 +3050,16 @@ function renderSlots(data) {
       source.textContent = s.model_source;
       source.title = s.model_source;
       modelCell.appendChild(source);
+    }
+    if (String(s.harness || '') === 'freebuff') {
+      const use = freebuffUsageText();
+      if (use) {
+        const u = document.createElement('div');
+        u.className = 'model-source';
+        u.textContent = use;
+        u.title = '세션은 열리면 일을 안 해도 한 시간 뒤 끝납니다. 모니터가 떠 있는 동안 열린 세션만 셉니다.';
+        modelCell.appendChild(u);
+      }
     }
     const r = running.get(s.slot);
     const last = latest.get(s.slot);
@@ -2923,7 +3132,17 @@ function renderRuns(data) {
     return;
   }
   const waiting = all.filter(runAwaitsSend);
-  if (waiting.length || paneAutoOn()) {
+  if (state.paneAuto && state.paneAuto.refused && !paneAutoOn()) {
+    // freebuff 가 지시를 사용 정책(자동 사용)으로 거절해 운전기가 옵션을 껐다 - 다시 켜는 것은 사람이다
+    const warn = document.createElement('div');
+    warn.className = 'pane-auto-refused warn-text';
+    warn.setAttribute('role', 'alert');
+    warn.textContent = `freebuff 가 지시를 사용 정책으로 거절해 '미리 고른 문구 전송' 을 껐습니다`
+      + (state.paneAuto.at ? ` (${fmtTime(Date.parse(state.paneAuto.at), { date: false })})` : '')
+      + ' - 팬을 보고, 문구를 바꿔 직접 보내십시오. 그 지시는 다시 보내지 않고 멈춰 두었습니다.';
+    wrap.appendChild(warn);
+  }
+  if (waiting.length || paneAutoOn() || paneFollowOn() || (state.paneAuto && state.paneAuto.refused)) {
     // '미리 고른 문구 전송': 켜 두면 기다리는 지시마다 알리고 10초 뒤 이 브라우저가 미리 고른 문구로 보낸다. 켜는 것도 끄는 것도 사람이다.
     const opt = document.createElement('label');
     opt.className = 'pane-auto-opt';
@@ -2932,9 +3151,20 @@ function renderRuns(data) {
     cb.checked = paneAutoOn();
     cb.addEventListener('change', () => { setPaneAuto(cb.checked).then(() => refresh()); });
     const optText = document.createElement('span');
-    optText.textContent = `미리 고른 문구 전송 (알린 뒤 ${state.paneAuto.sec || 10}초 동안 손대지 않으면 보냄 · 이 화면을 닫아도 보냄)`;
+    optText.textContent = `미리 고른 문구 전송 (내 1차 지시를 창으로 먼저 받고, 그 답이 끝난 뒤 ${state.paneAuto.sec || 10}초 동안 손대지 않으면 작업 지시를 이어 보냄)`;
     opt.append(cb, optText);
     wrap.appendChild(opt);
+    // 둘 중 하나만 켜진다. 이쪽은 사람이 팬에 먼저 직접 쓴다 - 그 답이 끝나면 기다리는 지시 하나를 같은 대화에 잇는다
+    const opt2 = document.createElement('label');
+    opt2.className = 'pane-auto-opt';
+    const cb2 = document.createElement('input');
+    cb2.type = 'checkbox';
+    cb2.checked = paneFollowOn();
+    cb2.addEventListener('change', () => { setPaneAuto(false, cb2.checked).then(() => refresh()); });
+    const opt2Text = document.createElement('span');
+    opt2Text.textContent = '내 지시 뒤에 이어 보냄 (팬에 직접 쓴 지시의 답이 끝나면, 기다리는 지시 하나를 그 대화에 이어 보냄 · 내 지시 하나에 하나씩)';
+    opt2.append(cb2, opt2Text);
+    wrap.appendChild(opt2);
   }
   for (const r of waiting) {
     // 사람 손을 기다리는 지시는 표 위에 따로 - 표의 한 줄로만 두면 지나친다
@@ -2949,13 +3179,28 @@ function renderRuns(data) {
     btn.textContent = '지시문 보기';
     btn.addEventListener('click', () => { paneAutoHold(r.id); openDetail(r.id); });
     box.append(txt, btn);
+    if (paneFollowOn() && !paneAutoOn()) {
+      const note = document.createElement('span');
+      note.className = 'pane-auto-note';
+      note.setAttribute('role', 'status');
+      note.textContent = '팬에 직접 지시를 쓰면, 그 답이 끝난 뒤 이어서 보냅니다';
+      box.appendChild(note);
+    }
     if (paneAutoOn()) {
       const a = (state.paneAuto.runs || {})[r.id];
       const note = document.createElement('span');
       note.className = 'pane-auto-note';
       note.setAttribute('role', 'status');
       note.dataset.autoRun = r.id;
-      note.textContent = paneAutoText(a) || '곧 미리 고른 문구로 보냅니다';
+      note.textContent = paneAutoText(a) || '1차 지시를 기다립니다';
+      if (a && a.need_first && paneFirstAsked.has(r.id)) {
+        const again = document.createElement('button');
+        again.type = 'button';
+        again.className = 'btn-link';
+        again.textContent = '1차 지시 쓰기';
+        again.addEventListener('click', () => { paneFirstAsked.delete(r.id); paneFirstAsk(); });
+        box.appendChild(again);
+      }
       box.appendChild(note);
       if (!a || !a.held) {
         const stop = document.createElement('button');
@@ -3538,7 +3783,7 @@ function graphBlock(g) {
       const rows = nodes.map((n) => [
         mono(n.id),
         plainText(n.title) || '-',
-        show(n.slot),
+        nodeSlotCell(n),
         nodeStatusBadge(n),
         Array.isArray(n.deps) && n.deps.length ? n.deps.join(', ') : '-',
         show(n.attempts) + '/' + show(n.max_attempts),
@@ -3550,7 +3795,7 @@ function graphBlock(g) {
       const tw = document.createElement('div');
       tw.className = 'tablewrap';
       const table = newTable(['노드', '제목', '슬롯', '상태', '의존', '시도', '마지막 실행'], rows, null, {
-        widths: ['76px', null, '64px', '90px', '170px', '60px', '200px'],
+        widths: ['76px', null, '110px', '90px', '170px', '60px', '200px'],
         num: [5],
         center: [3],
         ellipsis: [1, 4, 6],
@@ -3562,6 +3807,23 @@ function graphBlock(g) {
       block.appendChild(tw);
       const notes = graphNotes(nodes);
       if (notes) block.appendChild(notes);
+      // 노드에 써 둔 1차 지시를 한눈에 - 폰에서는 단추에 마우스를 올려 볼 수 없다. 줄을 누르면 고치는 창이 열린다
+      const firsts = nodes.filter((n) => paneFirstStored(String(n.id)));
+      if (firsts.length) {
+        const fl = document.createElement('ul');
+        fl.className = 'node-first-list';
+        for (const n of firsts) {
+          const li = document.createElement('li');
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'btn-link';
+          b.textContent = `${show(n.id)} 1차 지시`;
+          b.addEventListener('click', () => openNodeFirst(n));
+          li.append(b, document.createTextNode(' ' + paneFirstStored(String(n.id)).text));
+          fl.appendChild(li);
+        }
+        block.appendChild(fl);
+      }
     }
   }
   return block;
@@ -4628,8 +4890,11 @@ function renderAll(data) {
   markScrollableTables();
 }
 
+// 응답이 안 오는 요청 하나가 갱신을 영영 막지 않게 한다 (폰이 잠들었다 깨거나 망이 바뀔 때 요청이 걸린 채 남는다)
+const STATE_TIMEOUT_MS = 15000;
+
 async function fetchState() {
-  const { res, body } = await api('/api/state');
+  const { res, body } = await api('/api/state', undefined, STATE_TIMEOUT_MS);
   if (res.status === 401) {
     // 세션 만료·토큰 교체 - 로그인 화면으로 (인증이 켜진 서버에서만 생긴다)
     location.href = '/login';
@@ -4700,12 +4965,33 @@ async function refresh() {
     state.error = null;
     renderAll(data);
   } catch (err) {
-    state.error = err && err.message ? err.message : String(err);
+    state.error = err && err.name === 'TimeoutError' ? `서버가 ${STATE_TIMEOUT_MS / 1000}초 안에 답하지 않았습니다`
+      : (err && err.message ? err.message : String(err));
   } finally {
     state.busy = false;
     updateLastRefresh();
     showLoadError();
   }
+}
+
+// '지금 갱신' 은 눌린 것이 보여야 한다 - 5초 자동 갱신에 묻혀 단추가 일했는지 알 수 없었다 (2026-11-23 태석님).
+// 누른 뒤 **새로 받은** 결과만 알린다: 자동 갱신이 돌던 중이면 그것이 끝나기를 기다렸다가 한 번 더 받는다.
+let refreshNowTimer = null;
+async function refreshNow() {
+  const btn = $('refresh-now');
+  if (!btn || btn.disabled) return;
+  clearTimeout(refreshNowTimer);
+  btn.disabled = true;
+  btn.classList.remove('is-ok', 'is-fail');
+  btn.textContent = '갱신 중…';
+  const until = Date.now() + STATE_TIMEOUT_MS + 2000;
+  while (state.busy && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+  await refresh();
+  const ok = !state.error;
+  btn.disabled = false;
+  btn.classList.add(ok ? 'is-ok' : 'is-fail');
+  btn.textContent = ok ? '갱신됨 ✓' : '갱신 실패';
+  refreshNowTimer = setTimeout(() => { btn.classList.remove('is-ok', 'is-fail'); btn.textContent = '지금 갱신'; }, 1500);
 }
 
 function schedule() {
@@ -4878,9 +5164,7 @@ function init() {
     updateLastRefresh();
   });
 
-  $('refresh-now').addEventListener('click', () => {
-    refresh();
-  });
+  $('refresh-now').addEventListener('click', refreshNow);
 
   const archBtn = $('archive-open');
   if (archBtn) archBtn.addEventListener('click', openArchivePanel);

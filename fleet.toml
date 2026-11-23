@@ -32,7 +32,10 @@ max_concurrent = 1        # 동시에 띄울 세션 수
 idle_timeout_sec = 240
 models = ["deepseek-v4.1-flash-free"]
 
-[providers.freebuff]      # 사람이 연 tmux 팬의 freebuff - 한 사람 한 세션이라 동시에 하나. 침묵 감지 없음(보내기를 기다린다)
+# 사람이 연 tmux 팬의 freebuff - 한 사람 한 세션이라 동시에 하나.
+# idle_timeout_sec 를 두지 않는다: 보내기를 기다리는 동안은 감독이 침묵으로 끊지 않는다. 보낸 뒤 멈춘 것은 하네스 운전기가
+# 본다 - 대화 파일도 안 자라고 freebuff 가 CPU 도 안 쓰는 채로 600초가 지나면 끊는다 (일하는 동안은 한도 없음).
+[providers.freebuff]
 tier = "free"
 max_concurrent = 1
 models = ["pane"]         # 모델은 팬에서 사람이 고른다 (`/model`)

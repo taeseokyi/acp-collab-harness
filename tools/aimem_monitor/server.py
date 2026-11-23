@@ -1549,7 +1549,8 @@ def _pane_kind(meta, gate):
 
 
 def pane_info(run_id, root=ROOT):
-    """보내기 전의 모습: 단계, 팬 상태, 문구 뒤에 붙을 지시문 파일 경로. 문구 자체는 사람이 정한다 - 여기서 주지 않는다."""
+    """보내기 전의 모습: 단계, 팬 상태, 문구 앞에 붙을 작업 요지와 뒤에 붙을 지시문 파일 경로, 이 노드에 써 둔 1차 지시.
+    문구 자체는 사람이 정한다 - 여기서 주지 않는다."""
     sdir, meta, gate, err = _pane_session(run_id, root)
     if err:
         return err
@@ -1563,13 +1564,17 @@ def pane_info(run_id, root=ROOT):
                  "error": mask(gate.get("error")) if gate.get("error") else None,
                  "pending": (sdir / "approve.json").exists(), "held": gate.get("held") or None,
                  "ref": fb.brief_ref(sdir, root), "text_max": fb.LINE_TEXT_MAX, "kind": _pane_kind(meta, gate),
+                 "gist": mask(fb.brief_gist(sdir, meta)),
+                 "first": (_pane_stored_first(root, meta, gate) or {}).get("text"),
+                 "first_at": gate.get("first_at"), "first_by": gate.get("first_by"),
                  "pane": {"name": pane, "ok": st["ok"], "why": st["why"], "left": st["left"], "model": st["model"],
                           "lines": [mask(x) for x in st["lines"]]}}
 
 
 def pane_send(run_id, payload, by, root=ROOT):
-    """사람이 누른 '보내기'. `text` 는 그 사람이 고르거나 쓴 문구 - 뒤에 지시문 파일 경로를 붙여 승인에 적는다."""
-    sdir, _meta, gate, err = _pane_session(run_id, root)
+    """사람이 누른 '보내기'. `text` 는 그 사람이 고르거나 쓴 문구 - 앞에 작업 요지, 뒤에 지시문 파일 경로를 붙여 승인에 적는다.
+    `action: first` 는 그 앞에 먼저 들어갈, 사람이 직접 쓴 1차 지시다."""
+    sdir, meta, gate, err = _pane_session(run_id, root)
     if err:
         return err
     if isinstance(payload, dict) and payload.get("action") == "hold":
@@ -1577,12 +1582,20 @@ def pane_send(run_id, payload, by, root=ROOT):
         if gate.get("phase") == "await":
             (sdir / PANE_HOLD_FILE).write_text(json.dumps({"by": str(by or "")[:80]}, ensure_ascii=False), encoding="utf-8")
         return 200, {"ok": True, "id": str(run_id), "held": True}
-    if not isinstance(payload, dict) or payload.get("action") != "send":
+    if not isinstance(payload, dict) or payload.get("action") not in ("send", "first"):
         return 400, {"ok": False, "error": "action 은 send 여야 합니다"}
     if gate.get("phase") != "await" or (sdir / "end.json").exists():
         return 409, {"ok": False, "error": "보내기를 기다리는 세션이 아닙니다 (이미 보냈거나 끝났습니다)"}
     fb = _fleet_rt("harness.freebuff")
-    line, why = fb.compose_line(payload.get("text"), fb.brief_ref(sdir, root))
+    if payload["action"] == "first":
+        # 사람이 '1차 지시' 창에 직접 쓴 글 - 팬에 먼저 들어가고, 작업 지시는 그 답이 끝난 뒤 같은 대화에 이어진다
+        text, why = fb._one_line(payload.get("text"))
+        if text is None:
+            return 400, {"ok": False, "error": why}
+        ok, why = fb.approve_first(sdir, by, text)
+        return (200, {"ok": True, "id": str(run_id), "first": text}) if ok else (409, {"ok": False, "error": why})
+    text, why = fb._one_line(payload.get("text"))
+    line, why = fb.follow_line(fb.brief_gist(sdir, meta), text, fb.brief_ref(sdir, root)) if text else (None, why)
     if line is None:
         return 400, {"ok": False, "error": why}
     ok, why = fb.approve(sdir, by, line)
@@ -1593,11 +1606,11 @@ def pane_send(run_id, payload, by, root=ROOT):
 
 # -- '미리 고른 문구 전송' 옵션 ------------------------------------------------
 #
-# 사람이 모니터에서 켜 두면, 기다리는 지시마다 PANE_AUTO_SEC 초 뒤 **이 서버가** 상황(`_pane_kind`)에 맞는 문구로 승인을 적는다.
+# 사람이 모니터에서 켜 두면, 기다리는 지시마다 **사람의 1차 지시**(모니터의 창에 쓰거나 팬에 직접 쓴 글)의 답이 끝난 뒤
+# PANE_AUTO_SEC 초가 지나면 **이 서버가** 그 대화에 이어서 작업 지시 한 줄(작업 요지 + 상황에 맞는 문구 + 지시문 경로)을 승인에 적는다.
 # 화면이 떠 있지 않아도 나간다(사람은 팬을 보고 있다 - 2026-11-23 지시). 켜고 끄는 것, 한 건을 붙잡는 것(hold)은 로그인한 사람만.
 # 모니터가 내려가 있으면 아무것도 나가지 않는다. 관리자·이어 달리기는 이 옵션을 건드리지 않는다.
 
-PANE_AUTO_FILE = ".aimem/pane_auto.json"
 PANE_AUTO_SEC = 10
 PANE_AUTO_RETRY_SEC = 30
 PANE_HOLD_FILE = "hold.json"
@@ -1622,21 +1635,89 @@ def _iso_ts(text):
 
 
 def pane_auto_state(root=ROOT):
+    """옵션 상태 `{"on","at","by","refused"}` - 파일은 하네스와 같이 쓴다(운전기는 freebuff 의 거절을 만나면 끈다)."""
+    return _fleet_rt("harness.freebuff").auto_state(root)
+
+
+def pane_auto_set(on, by, root=ROOT, follow=False):
+    return _fleet_rt("harness.freebuff").auto_set(root, on, by, follow=follow)
+
+
+def pane_sessions(root=ROOT):
+    """freebuff 사용 세션: 오늘 몇 번 열었고 지금 것이 언제 끝나는지. 못 읽으면 빈 값."""
+    fb = _fleet_rt("harness.freebuff")
     try:
-        d = json.loads((pathlib.Path(root) / PANE_AUTO_FILE).read_text(encoding="utf-8"))
+        return fb.session_usage(root, fb.settings(root)[1])
+    except Exception:  # noqa: BLE001 - 세션 수는 참고 값이다. 못 세도 화면은 뜬다
+        return {"today": 0, "expires": None}
+
+
+# -- 노드에 미리 써 두는 1차 지시 -------------------------------------------------
+#
+# 사람이 요청 트리의 태스크 그래프에서 freebuff 슬롯 노드에 1차 지시를 미리 써 둘 수 있다. 써 둔 노드는 창으로 묻지 않고,
+# 그 노드의 지시가 기다리기 시작하면(옵션이 켜져 있을 때) 써 둔 글이 팬에 먼저 들어간다. 쓰고 지우는 것은 로그인한 사람만.
+
+PANE_FIRST_FILE = ".aimem/pane_first.json"
+_TASK_ID_RE = re.compile(r"\AT-[0-9]{1,6}\Z")
+
+
+def pane_firsts(root=ROOT):
+    """`{태스크 id: {"text","by","at"}}` - 못 읽으면 빈 것."""
+    try:
+        d = json.loads((pathlib.Path(root) / PANE_FIRST_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        d = None
-    d = d if isinstance(d, dict) else {}
-    return {"on": d.get("on") is True, "at": d.get("at"), "by": d.get("by")}
+        return {}
+    return {k: v for k, v in d.items() if isinstance(v, dict) and isinstance(v.get("text"), str)} if isinstance(d, dict) else {}
 
 
-def pane_auto_set(on, by, root=ROOT):
-    p = pathlib.Path(root) / PANE_AUTO_FILE
+def pane_first_set(payload, by, root=ROOT):
+    """노드(태스크)의 1차 지시를 적거나(`text`) 지운다(빈 글). 글은 사람이 쓴 한 줄이어야 한다."""
+    task = payload.get("task") if isinstance(payload, dict) else None
+    if not isinstance(task, str) or not _TASK_ID_RE.match(task):
+        return 400, {"ok": False, "error": "task 는 T-<번호> 여야 합니다"}
+    fb = _fleet_rt("harness.freebuff")
+    firsts = pane_firsts(root)
+    raw = payload.get("text")
+    if isinstance(raw, str) and not raw.strip():
+        firsts.pop(task, None)
+    else:
+        text, why = fb._one_line(raw)
+        if text is None:
+            return 400, {"ok": False, "error": why}
+        if fb._FLEET_LINE_RE.search(text):
+            return 400, {"ok": False, "error": "1차 지시에는 지시문 파일 경로를 넣지 않습니다 (직접 쓰는 글입니다)"}
+        firsts[task] = {"text": text, "by": str(by or "")[:80], "at": datetime.datetime.now().isoformat(timespec="seconds")}
+    p = pathlib.Path(root) / PANE_FIRST_FILE
+    p.parent.mkdir(parents=True, exist_ok=True)
     tmp = pathlib.Path(str(p) + ".tmp")
-    tmp.write_text(json.dumps({"on": on is True, "at": datetime.datetime.now().isoformat(timespec="seconds"),
-                               "by": str(by or "")[:80]}, ensure_ascii=False), encoding="utf-8")
+    tmp.write_text(json.dumps(firsts, ensure_ascii=False, indent=1), encoding="utf-8")
     os.replace(tmp, p)
-    return pane_auto_state(root)
+    return 200, {"ok": True, "task": task, "first": firsts.get(task)}
+
+
+def _pane_stored_first(root, meta, gate, firsts=None):
+    """이 세션의 노드에 써 둔 1차 지시가 있고 **아직 안 보냈으면** 그것, 아니면 None."""
+    if gate.get("first_at"):
+        return None
+    f = (pane_firsts(root) if firsts is None else firsts).get(str(meta.get("task_id") or ""))
+    return f if f else None
+
+
+def _pane_send_stored_first(root, waiting, auto):
+    """먼저 기다린 지시의 노드에 써 둔 1차 지시가 있으면 팬에 넣게 한다. `(넣게 했나, 그 건을 기다려야 하나)`.
+
+    뒤의 것은 '이 건은 써 둔 1차 지시가 먼저다 - 아직 작업 지시를 내보내지 말라' 는 뜻이다.
+    """
+    fb = _fleet_rt("harness.freebuff")
+    for sdir, meta, gate, _left, held in waiting[:1]:
+        f = _pane_stored_first(root, meta, gate)
+        if not f:
+            return False, False
+        if held or gate.get("busy") or (sdir / "approve.json").exists() or not fb.pane_status(fb.settings(root)[0])["ok"]:
+            return False, True
+        ok, _why = fb.approve_first(sdir, f"{f.get('by') or '?'} (노드에 미리 써 둔 1차 지시)"[:80], f["text"])
+        return ok, True
+    return False, False
 
 
 def _pane_auto_waiting(root, auto):
@@ -1665,9 +1746,21 @@ def pane_auto_view(root=ROOT):
     auto = pane_auto_state(root)
     runs = {}
     if auto["on"]:
-        for sdir, _meta, _gate, left, held in _pane_auto_waiting(root, auto):
-            runs[sdir.name] = {"due_in": round(max(left, 0.0), 1), "held": held, "note": _pane_auto_notes.get(sdir.name)}
-    return 200, {"ok": True, "on": auto["on"], "by": auto["by"], "at": auto["at"], "sec": PANE_AUTO_SEC, "runs": runs}
+        waiting = _pane_auto_waiting(root, auto)
+        firsts = pane_firsts(root)
+        for i, (sdir, meta, gate, left, held) in enumerate(waiting):
+            # 사람의 1차 지시가 먼저다 - 그 답이 끝난 뒤에야 초를 센다. 팬은 하나라 먼저 기다린 한 건만 묻는다.
+            # 노드에 써 둔 1차 지시가 있으면 묻지 않는다(그 글이 먼저 들어간다)
+            stored = _pane_stored_first(root, meta, gate, firsts)
+            human = None if (i or stored) else _pane_human_turn(root, auto, gate)
+            left = None if human is None else max(left, human + PANE_AUTO_SEC - time.time())
+            runs[sdir.name] = {"due_in": None if left is None else round(max(left, 0.0), 1), "held": held,
+                               "note": _pane_auto_notes.get(sdir.name),
+                               "need_first": human is None and i == 0 and not held and not gate.get("first_at") and not stored,
+                               "first_sent": (bool(gate.get("first_at")) or bool(stored)) and human is None}
+    return 200, {"ok": True, "on": auto["on"], "follow": auto["follow"], "by": auto["by"], "at": auto["at"],
+                 "refused": auto["refused"],
+                 "sec": PANE_AUTO_SEC, "runs": runs, "sessions": pane_sessions(root), "firsts": pane_firsts(root)}
 
 
 def pane_auto_tick(root=ROOT):
@@ -1675,9 +1768,16 @@ def pane_auto_tick(root=ROOT):
     auto = pane_auto_state(root)
     if not auto["on"]:
         _pane_auto_notes.clear()
-        return []
+        return pane_follow_tick(root, auto) if auto["follow"] else []
     fb, sent, st = _fleet_rt("harness.freebuff"), [], None
-    for sdir, meta, gate, left, held in _pane_auto_waiting(root, auto):
+    waiting = _pane_auto_waiting(root, auto)
+    if not waiting or _pane_send_stored_first(root, waiting, auto)[1]:
+        return []                  # 노드에 써 둔 1차 지시가 먼저 들어간다
+    human = _pane_human_turn(root, auto, waiting[0][2])
+    if human is None:
+        return []                  # 사람의 1차 지시(써 둔 것·모니터의 창·팬에서 직접)와 그 답이 먼저다
+    for sdir, meta, gate, left, held in waiting[:1]:      # 팬은 하나다 - 먼저 기다린 한 건
+        left = max(left, human + PANE_AUTO_SEC - time.time())
         if held or left > 0 or gate.get("busy") or (sdir / "approve.json").exists():
             continue
         if st is None:
@@ -1685,8 +1785,9 @@ def pane_auto_tick(root=ROOT):
         if not st["ok"]:
             _pane_auto_notes[sdir.name] = f"팬이 준비되지 않아 기다립니다 ({st['why']})"
             continue
-        line, why = fb.compose_line(PANE_AUTO_PHRASES.get(_pane_kind(meta, gate)), fb.brief_ref(sdir, root))
-        ok, why = fb.approve(sdir, f"미리 고른 문구 자동 전송 (옵션 켠 사람: {auto['by'] or '?'})"[:80], line) if line else (False, why)
+        line, why = _pane_follow_line(sdir, meta, gate, root)
+        ok, why = fb.approve(sdir, f"미리 고른 문구 자동 전송 (옵션 켠 사람: {auto['by'] or '?'})"[:80], line,
+                             same_chat=True) if line else (False, why)
         if ok:
             _pane_auto_notes.pop(sdir.name, None)
             sent.append(sdir.name)
@@ -1695,8 +1796,55 @@ def pane_auto_tick(root=ROOT):
     return sent
 
 
+def _pane_human_turn(root, auto, gate=None):
+    """사람이 직접 쓴 지시의 답이 끝난 시각(epoch 초). 아직 없으면 None - 옵션을 켠 뒤의 것만 본다.
+    이 지시(`gate`)에 1차 지시를 넣었으면 그 뒤의 것만 본다."""
+    fb = _fleet_rt("harness.freebuff")
+    since = max(_iso_ts(auto.get("at")), _iso_ts((gate or {}).get("first_at")))
+    got = fb.human_turn_done(fb.settings(root)[1], root, since)
+    return got[1] if got else None
+
+
+def _pane_follow_line(sdir, meta, gate, root):
+    """사람의 지시 뒤에 이어 보내는 줄: 작업 요지(앞) + 상황에 맞는 문구 + 지시문 파일 경로(맨 뒤). `(줄, 까닭)`."""
+    fb = _fleet_rt("harness.freebuff")
+    phrase = PANE_AUTO_PHRASES.get(_pane_kind(meta, gate))
+    if not phrase:
+        return None, "고른 문구가 없습니다"
+    return fb.follow_line(fb.brief_gist(sdir, meta), phrase, fb.brief_ref(sdir, root))
+
+
+def pane_follow_tick(root, auto):
+    """'내 지시 뒤에 이어 보냄': 사람이 팬에 직접 쓴 지시의 답이 끝나 있으면, 기다리는 지시 하나를 그 대화에 이어 보낸다.
+
+    보낸 run id 목록. 사람의 지시 하나에 하나만 나간다 - 보내고 나면 그 대화의 마지막 사용자 메시지가 함대의 줄이 된다.
+    """
+    fb = _fleet_rt("harness.freebuff")
+    every = _pane_auto_waiting(root, auto)
+    if not every or _pane_send_stored_first(root, every, auto)[1]:
+        return []                  # 노드에 써 둔 1차 지시가 먼저 들어간다
+    waiting = [(sdir, meta, gate) for sdir, meta, gate, _left, held in every[:1]
+               if not held and not gate.get("busy") and not (sdir / "approve.json").exists()]
+    if not waiting:
+        return []
+    sdir, meta, gate = waiting[0]                 # 팬은 하나다 - 먼저 기다린 것부터 한 건
+    if _pane_human_turn(root, auto, gate) is None or not fb.pane_status(fb.settings(root)[0])["ok"]:
+        return []
+    line, why = _pane_follow_line(sdir, meta, gate, root)
+    ok, why = fb.approve(sdir, f"내 지시 뒤에 이어 보냄 (옵션 켠 사람: {auto['by'] or '?'})"[:80], line,
+                         same_chat=True) if line else (False, why)
+    return [sdir.name] if ok else []
+
+
 def _pane_auto_loop(root):
+    fb, n = _fleet_rt("harness.freebuff"), 0
     while True:
+        try:
+            if n % 15 == 0:        # 30초마다 - 사람이 팬에서 직접 연 세션도 센다 (모니터가 떠 있는 동안만)
+                fb.note_session(root, fb.settings(root)[1])
+        except Exception as e:  # noqa: BLE001
+            print(f"pane-sessions: {type(e).__name__}: {e}", file=sys.stderr)
+        n += 1
         try:
             for rid in pane_auto_tick(root):
                 print(f"pane-auto: 미리 고른 문구로 보냄 {rid}", file=sys.stderr)
@@ -3506,11 +3654,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if sent:
                 return None
             by = f"웹({subject_label(who)})"
+            if pane_m.group(1) == "first":      # 노드에 1차 지시를 미리 써 두기·지우기
+                code, result = pane_first_set(payload, by, self.root)
+                self._audit("pane-first", f"{code} {payload.get('task') if isinstance(payload, dict) else None}")
+                return self._json(code, result)
             if pane_m.group(1) == "auto":       # '미리 고른 문구 전송' 옵션 켜기·끄기
-                if not isinstance(payload, dict) or not isinstance(payload.get("on"), bool):
-                    return self._json(400, {"ok": False, "error": "on 은 true/false 여야 합니다"})
-                pane_auto_set(payload["on"], by, self.root)
-                self._audit("pane-auto", f"200 on={payload['on']}")
+                on, follow = (payload.get("on", False), payload.get("follow", False)) if isinstance(payload, dict) else (None, None)
+                if not isinstance(on, bool) or not isinstance(follow, bool) or not ({"on", "follow"} & set(payload)):
+                    return self._json(400, {"ok": False, "error": "on · follow 는 true/false 여야 합니다"})
+                pane_auto_set(on, by, self.root, follow=follow)
+                self._audit("pane-auto", f"200 on={on} follow={follow}")
                 return self._json(*pane_auto_view(self.root))
             code, result = pane_send(pane_m.group(1), payload, by, self.root)
             self._audit("pane-send", f"{code} {pane_m.group(1)} action={payload.get('action') if isinstance(payload, dict) else None}")

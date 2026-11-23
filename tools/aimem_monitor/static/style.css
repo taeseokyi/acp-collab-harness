@@ -1784,6 +1784,20 @@ button:disabled { opacity: 0.6; }
   border: 1px solid var(--st-accent-fill); border-radius: 8px; background: color-mix(in srgb, var(--st-accent-fill) 8%, transparent); }
 .pane-wait-text { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
 .pane-wait-btn { padding: 6px 16px; }
+.pane-first { width: min(560px, calc(100vw - 32px)); padding: 18px; border: 1px solid var(--st-line); border-radius: var(--st-r-md); background: var(--st-surface); color: var(--st-ink); }
+.pane-first::backdrop { background: rgba(0, 0, 0, 0.45); }
+.pane-first h3 { margin: 0 0 8px; }
+.pane-first textarea { width: 100%; box-sizing: border-box; margin: 6px 0; }
+.pane-first-what { margin: 0 0 6px; font-weight: var(--st-fw-medium); }
+.node-first { white-space: nowrap; }
+.node-first-list { margin: 8px 0 0; padding: 0; list-style: none; font-size: var(--st-fs-sm); color: var(--st-ink-soft); }
+.node-first-list li { margin: 2px 0; overflow-wrap: anywhere; }
+.node-first-btn { font-size: var(--st-fs-xs); padding: 0 2px; }
+.node-first-btn.is-set { color: var(--st-info-text); }
+.pane-auto-refused { margin: 0 0 8px; padding: 8px 10px; border-radius: var(--st-r-sm, 6px); background: var(--st-warn-tint); font-size: var(--st-fs-sm); }
+/* '지금 갱신' 을 누른 결과 - 잠깐 보였다 돌아간다 */
+#refresh-now.is-ok { background: var(--st-info-tint); color: var(--st-info-text); border-color: transparent; }
+#refresh-now.is-fail { background: var(--st-danger-tint); color: var(--st-danger-text); border-color: transparent; }
 .pane-auto-opt { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: var(--st-fs-sm); }
 .pane-auto-opt input { width: auto; flex: 0 0 auto; margin: 0; }
 .pane-auto-opt span { flex: 1 1 auto; min-width: 0; }

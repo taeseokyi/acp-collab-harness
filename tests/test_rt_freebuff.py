@@ -1,4 +1,5 @@
 import _fleet_env  # noqa: F401
+import datetime
 """freebuff 하네스 - 사람이 '보내기' 를 눌러야 팬에 지시가 나간다.
 
 진짜 tmux·freebuff 는 쓰지 않는다: PATH 앞에 가짜 `tmux` (받은 인자를 적고, `capture-pane` 에는 파일의 화면을 준다)를
@@ -281,6 +282,33 @@ class Driver(Base):
         self.assertEqual(json.loads(out.splitlines()[-1])["result"], "DONE\n이어서 끝냄")
         self.assertEqual(out.count('"read_files"'), 1, "앞 답의 조각을 두 번 내보냈다")
 
+    def test_policy_refusal_stops_and_turns_auto_send_off(self):
+        # freebuff 가 줄을 사용 정책(자동 사용)으로 거절하면 다시 보내지 않는다 - BLOCKED 로 끝내고 자동 전송 옵션을 끈다 (R39)
+        refused = {"variant": "ai", "content": "", "isComplete": True, "blocks": [],
+                   "userError": "Freebuff did not send this message to the model. It breaks the usage policy "
+                                "(Scripted or automated use): it is the same message sent over and over."}
+        fb.auto_set(self.root, True, "웹(검사)")
+        d = self.session()
+        p = self.drive(d)
+        self.approve_when_waiting(d)
+        line = self.sent_line(d)
+        self.chat([{"variant": "user", "content": line}, refused])
+        out, _ = p.communicate(timeout=30)
+        self.assertEqual(p.returncode, 0, out)
+        end = json.loads(out.splitlines()[-1])
+        self.assertFalse(end["ok"])
+        self.assertTrue(end["result"].startswith("BLOCKED\n"), end["result"])
+        self.assertIn("usage policy", end["result"])
+        self.assertEqual(fleet_graph.report_block_reason(end["result"]), "BLOCKED")     # 그래프는 다시 시도하지 않는다
+        g = fb.read_gate(d)
+        self.assertEqual((g["phase"], g.get("resume")), ("refused", None))
+        self.assertEqual(len([k for k in self.sent_keys() if len(k) == 3 and d.name in k[2]]), 1, "거절된 줄을 다시 보냈다")
+        auto = fb.auto_state(self.root)
+        self.assertEqual((auto["on"], auto["refused"]), (False, True))
+        self.assertIn(d.name, auto["by"])
+        # 사람이 다시 켜면 거절 표시는 사라진다
+        self.assertEqual(fb.auto_set(self.root, True, "웹")["refused"], False)
+
     def test_ending_again_without_progress_gives_up(self):
         ended = {"variant": "ai", "content": "", "isComplete": True, "userError": "Your free session ended.", "blocks": []}
 
@@ -360,6 +388,39 @@ class Pieces(Base):
         with mock.patch.object(fb, "HELD_CHECKS", 1):
             self.assertEqual(fb.send_line("fb:0.0", "해 줘: a/brief.md"), (True, ""))
         self.assertEqual([k for k in self.sent_keys() if k == ["Enter"]], [["Enter"], ["Enter"]])
+
+    def live(self, expires, name="freebuff-live-1.json"):
+        (self.tmp / name).write_text(json.dumps({"ownerPid": 1, "expiresAt": int(expires * 1000)}), encoding="utf-8")
+
+    def test_sessions_are_counted_once_each(self):
+        # 세션은 열리면 한 시간 뒤 끝난다 - 끝나는 시각이 반 세션 넘게 뒤로 가면 새 세션으로 센다
+        now = float(int(time.time()))
+        self.assertEqual(fb.note_session(self.root, self.chats, now=now), (None, False))      # 열린 세션이 없다
+        self.assertEqual(fb.session_usage(self.root, self.chats, now), {"today": 0, "expires": None})
+        self.live(now + 1800)
+        self.assertEqual(fb.note_session(self.root, self.chats, run="T-1", now=now), (now + 1800, True))
+        self.assertEqual(fb.note_session(self.root, self.chats, now=now + 60), (now + 1800, False))      # 같은 세션
+        self.live(now + 1900)
+        self.assertEqual(fb.note_session(self.root, self.chats, now=now + 70)[1], False)       # 조금 늘어난 것도 같은 세션
+        self.live(now + 1800 + 3700)
+        self.assertEqual(fb.note_session(self.root, self.chats, now=now + 3690)[1], True)
+        use = fb.session_usage(self.root, self.chats, now + 3690)
+        self.assertEqual(len(fb._session_rows(self.root)), 2)
+        self.assertIsNotNone(use["expires"])
+        self.live(now - 5)                                                                      # 끝난 세션은 열린 것이 아니다
+        self.assertIsNone(fb.live_session(self.chats, now))
+
+    def test_send_notes_the_session_and_the_extra_enter(self):
+        self.live(time.time() + 3000)
+        d = self.session()
+        p = self.drive(d)
+        self.approve_when_waiting(d)
+        self.answer(d, [{"type": "text", "textType": "text", "content": "DONE"}])
+        out, _ = p.communicate(timeout=30)
+        self.assertEqual(p.returncode, 0, out)
+        self.assertIn("freebuff 세션: 새로 열림", out)
+        self.assertNotIn("Enter 를 한 번 더", out)
+        self.assertEqual([r.get("run") for r in fb._session_rows(self.root)], [d.name])
 
     def test_no_phrase_no_send(self):
         d = self.session()
@@ -484,13 +545,21 @@ class MonitorSend(Base):
         self.assertNotIn("line", info)
         self.assertNotIn("body", info)
         self.assertTrue(info["pane"]["ok"])
+        self.assertEqual((info["gist"], info["first"], info["first_at"]), ("비밀 본문 rm -rf", None, None))
+        meta = json.loads((self.d / "meta.json").read_text(encoding="utf-8"))
+        meta["task_id"] = "T-900"
+        (self.d / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        self.server.pane_first_set({"task": "T-900", "text": "먼저 README 부터 읽어 줘"}, "웹", self.root)
+        self.assertEqual(self.server.pane_info(self.d.name, self.root)[1]["first"], "먼저 README 부터 읽어 줘")   # 옵션이 꺼져 있어도 보인다
 
     def test_send_carries_the_humans_phrase_and_leaves_brief(self):
         before = (self.d / "brief.md").read_text(encoding="utf-8")
         code, res = self.server.pane_send(self.d.name, {"action": "send", "text": "오늘은 이거 부탁해:"}, "웹(검사)", self.root)
         self.assertEqual(code, 200, res)
         ap = json.loads((self.d / fb.APPROVE_FILE).read_text(encoding="utf-8"))
-        self.assertEqual((ap["by"], ap["line"]), ("웹(검사)", f"오늘은 이거 부탁해: .aimem/sessions/{self.d.name}/brief.md"))
+        # 손으로 보내는 줄도 작업 요지(앞) + 사람이 고른 문구 + 지시문 경로(맨 뒤)
+        self.assertEqual((ap["by"], ap["line"]),
+                         ("웹(검사)", f"비밀 본문 rm -rf 오늘은 이거 부탁해: .aimem/sessions/{self.d.name}/brief.md"))
         self.assertEqual((self.d / "brief.md").read_text(encoding="utf-8"), before)
 
     def test_kind_comes_from_engine_facts(self):
@@ -510,9 +579,15 @@ class MonitorSend(Base):
         self.assertEqual(s.pane_auto_tick(self.root), [])                       # 꺼져 있다
         s.pane_auto_set(True, "웹(검사)", self.root)
         view = s.pane_auto_view(self.root)[1]
-        self.assertTrue(view["on"] and 0 < view["runs"][self.d.name]["due_in"] <= s.PANE_AUTO_SEC)
-        self.assertEqual(s.pane_auto_tick(self.root), [])                       # 아직 10초가 안 됐다
+        self.assertTrue(view["on"] and view["runs"][self.d.name]["need_first"])   # 사람의 1차 지시 전에는 초를 세지 않는다
+        self.assertEqual(s.pane_auto_tick(self.root), [])
         with mock.patch.object(s, "PANE_AUTO_SEC", 0):
+            # 사람의 1차 지시가 먼저다 - 그 답이 끝나기 전에는 나가지 않고, 화면은 그 글을 묻는다
+            self.assertEqual(s.pane_auto_tick(self.root), [])
+            run = s.pane_auto_view(self.root)[1]["runs"][self.d.name]
+            self.assertEqual((run["need_first"], run["due_in"]), (True, None))
+            self.human_turn()
+            self.assertFalse(s.pane_auto_view(self.root)[1]["runs"][self.d.name]["need_first"])
             self.screen(BUSY)
             self.assertEqual(s.pane_auto_tick(self.root), [])                   # 팬이 바쁘다
             self.screen(READY)
@@ -521,12 +596,137 @@ class MonitorSend(Base):
             (self.d / s.PANE_HOLD_FILE).unlink()
             self.assertEqual(s.pane_auto_tick(self.root), [self.d.name])
             ap = json.loads((self.d / fb.APPROVE_FILE).read_text(encoding="utf-8"))
-            self.assertEqual(ap["line"], s.PANE_AUTO_PHRASES["read"] + f" .aimem/sessions/{self.d.name}/brief.md")
+            # 줄 = 작업 요지(앞) + 미리 고른 문구 + 지시문 경로(맨 뒤). 사람의 대화에 잇는다(새 대화를 열지 않는다)
+            self.assertEqual(ap["line"], "비밀 본문 rm -rf " + s.PANE_AUTO_PHRASES["read"] + f" .aimem/sessions/{self.d.name}/brief.md")
+            self.assertIs(ap["same_chat"], True)
             self.assertIn("자동 전송", ap["by"])
             self.assertEqual(s.pane_auto_tick(self.root), [])                   # 이미 승인이 적혀 있다
             (self.d / fb.APPROVE_FILE).unlink()
             s.pane_auto_set(False, "웹(검사)", self.root)
             self.assertEqual(s.pane_auto_tick(self.root), [])
+        view = s.pane_auto_view(self.root)[1]
+        self.assertEqual((view["on"], view["refused"], view["sessions"]["today"]), (False, False, 0))
+        fb.auto_set(self.root, False, "freebuff 사용 정책 거절", refused=True)
+        self.assertTrue(s.pane_auto_view(self.root)[1]["refused"])
+
+    def human_turn(self):
+        """사람이 팬에 직접 쓴 지시와 끝난 답 - 옵션을 켠 뒤에, 조용해질 만큼 전에."""
+        self.chat([{"variant": "user", "content": "먼저 저장소 구조부터 봐 줘"},
+                   {"variant": "ai", "content": "", "isComplete": True, "completionTime": "8s", "blocks": []}])
+        f = self.chats / self.root.name / "chats" / "2026-11-20T00-00-00.000Z" / "chat-messages.json"
+        old = time.time() - 60
+        os.utime(f, (old, old))
+        auto = json.loads((self.root / fb.AUTO_FILE).read_text(encoding="utf-8"))
+        auto["at"] = datetime.datetime.fromtimestamp(old - 60).isoformat(timespec="seconds")
+        (self.root / fb.AUTO_FILE).write_text(json.dumps(auto), encoding="utf-8")
+
+    def test_first_instruction_goes_in_before_the_work_line(self):
+        # 모니터의 '1차 지시' 창: 사람이 쓴 글이 팬에 먼저 들어가고(새 대화), 작업 지시는 그 대화에 이어진다
+        s = self.server
+        self.assertEqual(s.pane_send(self.d.name, {"action": "first", "text": "/bash ls"}, "웹", self.root)[0], 400)
+        self.assertEqual(s.pane_send(self.d.name, {"action": "first", "text": f"해 줘 .aimem/sessions/{self.d.name}/brief.md"},
+                                     "웹", self.root)[0], 409)                  # 지시문 경로가 든 글은 사람의 1차 지시가 아니다
+        d = self.session("T-903-S6-a1-000000")
+        p = self.drive(d)
+        self.wait_for(lambda: (fb.read_gate(d) or {}).get("phase") == "await")
+        self.assertEqual(s.pane_send(d.name, {"action": "first", "text": "먼저 저장소 구조부터 봐 줘"}, "웹", self.root)[0], 200)
+        g = self.wait_for(lambda: (lambda g: g if g.get("first_at") else None)(fb.read_gate(d) or {}))
+        self.assertEqual(g["phase"], "await")                                   # 작업 지시는 아직 안 나갔다
+        self.assertIn(["-l", "--", "먼저 저장소 구조부터 봐 줘"], self.sent_keys())
+        fb.approve(d, "웹", self.line(d))                                       # same_chat 을 안 줘도 그 대화에 잇는다
+        self.answer(d, [{"type": "text", "textType": "text", "content": "DONE"}])
+        out, _ = p.communicate(timeout=30)
+        self.assertEqual(p.returncode, 0, out)
+        self.assertEqual([k for k in self.sent_keys() if k == ["-l", "--", "/new"]], [["-l", "--", "/new"]])
+        self.assertIn("1차 지시를 팬에 넣음", out)
+
+    def test_stored_first_instruction_is_used_without_asking(self):
+        # 노드에 미리 써 둔 1차 지시: 창으로 묻지 않고 그 글이 먼저 들어가며, 앞서 끝난 사람의 대화가 있어도 건너뛰지 않는다
+        s = self.server
+        meta = json.loads((self.d / "meta.json").read_text(encoding="utf-8"))
+        meta["task_id"] = "T-900"
+        (self.d / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        self.assertEqual(s.pane_first_set({"task": "../x", "text": "글"}, "웹", self.root)[0], 400)
+        self.assertEqual(s.pane_first_set({"task": "T-900", "text": "/bash ls"}, "웹", self.root)[0], 400)
+        self.assertEqual(s.pane_first_set({"task": "T-900", "text": "먼저 이 프로젝트 README 부터 읽어 줘"}, "웹(검사)", self.root)[0], 200)
+        with mock.patch.object(s, "PANE_AUTO_SEC", 0):
+            self.assertEqual(s.pane_auto_tick(self.root), [])                   # 옵션이 꺼져 있으면 아무것도 안 나간다
+            self.assertFalse((self.d / fb.APPROVE_FILE).exists())
+            s.pane_auto_set(True, "웹(검사)", self.root)
+            self.human_turn()                                                   # 앞서 끝난 사람의 대화가 있어도
+            view = s.pane_auto_view(self.root)[1]
+            self.assertEqual(view["firsts"]["T-900"]["text"], "먼저 이 프로젝트 README 부터 읽어 줘")
+            self.assertEqual((view["runs"][self.d.name]["need_first"], view["runs"][self.d.name]["first_sent"]), (False, True))
+            self.assertEqual(s.pane_auto_tick(self.root), [])                   # 작업 지시가 아니라 써 둔 1차 지시가 먼저다
+            ap = json.loads((self.d / fb.APPROVE_FILE).read_text(encoding="utf-8"))
+            self.assertEqual(ap.get("first"), "먼저 이 프로젝트 README 부터 읽어 줘")
+            self.assertIn("미리 써 둔", ap["by"])
+            (self.d / fb.APPROVE_FILE).unlink()
+            # 운전기가 그것을 넣은 뒤(first_at): 그 뒤에 끝난 답이 있어야 작업 지시가 나간다
+            gate = dict(fb.read_gate(self.d), first_at=datetime.datetime.now().isoformat(timespec="seconds"))
+            (self.d / fb.GATE_FILE).write_text(json.dumps(gate), encoding="utf-8")
+            self.assertEqual(s.pane_auto_tick(self.root), [])                   # 앞선 대화는 이 1차 지시의 답이 아니다
+            gate["first_at"] = "2026-11-20T10:00:01"
+            (self.d / fb.GATE_FILE).write_text(json.dumps(gate), encoding="utf-8")
+            self.assertEqual(s.pane_auto_tick(self.root), [self.d.name])
+        self.assertEqual(s.pane_first_set({"task": "T-900", "text": " "}, "웹", self.root)[1]["first"], None)
+        self.assertEqual(s.pane_firsts(self.root), {})
+
+    def test_gist_is_one_safe_line(self):
+        d = self.session("T-904-S6-a1-000000")
+        (d / "brief.md").write_text("SLOT=S6 T-904\n확인토큰: abc\n\n/bash 로 시작하는 본문!\n@file `코드` " + "가" * 400, encoding="utf-8")
+        g = fb.brief_gist(d, {"label": "T-904 [앱] 제목 (G-001)"})
+        self.assertTrue(g.startswith("[앱] 제목. "), g)
+        self.assertLessEqual(len(g), fb.GIST_MAX + 2)
+        self.assertFalse(set("@`!\n") & set(g))
+        line, why = fb.follow_line(g, "읽고 해 줘:", "a/brief.md")
+        self.assertTrue(line.startswith("[앱] 제목.") and line.endswith("읽고 해 줘: a/brief.md"), why)
+        self.assertEqual(fb.follow_line("", "/bash", "a/brief.md")[0], None)
+
+    def test_follow_sends_one_instruction_after_the_humans_own_turn(self):
+        # '내 지시 뒤에 이어 보냄': 사람이 팬에 직접 쓴 지시의 답이 끝나야 나가고, 새 대화를 열지 않으며, 지시 하나에 하나만 나간다
+        s = self.server
+        s.pane_auto_set(False, "웹(검사)", self.root, follow=True)
+        view = s.pane_auto_view(self.root)[1]
+        self.assertEqual((view["on"], view["follow"]), (False, True))
+        human = {"variant": "user", "content": "먼저 이 저장소 구조부터 훑어봐 줘"}
+        done = {"variant": "ai", "content": "", "isComplete": True, "completionTime": "8s", "blocks": []}
+        old = time.time() - 30
+        def chat(msgs):
+            self.chat(msgs)
+            f = self.chats / self.root.name / "chats" / "2026-11-20T00-00-00.000Z" / "chat-messages.json"
+            os.utime(f, (old + 20, old + 20))
+        with mock.patch.object(fb, "_now", lambda: datetime.datetime.fromtimestamp(old).isoformat(timespec="seconds")):
+            s.pane_auto_set(False, "웹(검사)", self.root, follow=True)
+        self.assertEqual(s.pane_auto_tick(self.root), [])                       # 사람이 아직 아무것도 안 썼다
+        chat([human, {"variant": "ai", "content": "", "isComplete": False, "blocks": []}])
+        self.assertEqual(s.pane_auto_tick(self.root), [])                       # 답이 아직 안 끝났다
+        chat([human, dict(done, completionTime=None, userError="Your free session ended.")])
+        self.assertEqual(s.pane_auto_tick(self.root), [])                       # 정상으로 끝난 답이 아니다
+        chat([human, done])
+        self.screen(BUSY)
+        self.assertEqual(s.pane_auto_tick(self.root), [])                       # 팬이 바쁘다
+        self.screen(READY)
+        self.assertEqual(s.pane_auto_tick(self.root), [self.d.name])
+        ap = json.loads((self.d / fb.APPROVE_FILE).read_text(encoding="utf-8"))
+        self.assertEqual((ap["same_chat"], ap["line"]),
+                         (True, "비밀 본문 rm -rf " + s.PANE_AUTO_PHRASES["read"] + f" .aimem/sessions/{self.d.name}/brief.md"))
+        self.assertIn("내 지시 뒤에", ap["by"])
+        (self.d / fb.APPROVE_FILE).unlink()
+        chat([human, done, {"variant": "user", "content": ap["line"]}, done])
+        self.assertEqual(s.pane_auto_tick(self.root), [])                       # 마지막 지시가 함대의 것이다 - 사람이 또 써야 한다
+        # 켜는 것은 하나만
+        self.assertEqual((lambda a: (a["on"], a["follow"]))(s.pane_auto_set(True, "웹", self.root, follow=True)), (True, False))
+
+    def test_same_chat_send_opens_no_new_chat(self):
+        d = self.session("T-902-S6-a1-000000")
+        p = self.drive(d)
+        self.wait_for(lambda: (fb.read_gate(d) or {}).get("phase") == "await")
+        fb.approve(d, "웹", self.line(d), same_chat=True)
+        self.answer(d, [{"type": "text", "textType": "text", "content": "DONE"}])
+        out, _ = p.communicate(timeout=30)
+        self.assertEqual(p.returncode, 0, out)
+        self.assertEqual([k for k in self.sent_keys() if k == ["-l", "--", "/new"]], [])
 
     def test_auto_phrases_match_the_screen(self):
         js = (pathlib.Path(self.server.__file__).parent / "static" / "app.js").read_text(encoding="utf-8")

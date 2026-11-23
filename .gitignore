@@ -26,6 +26,8 @@ USER.md
 # 함대 제어 운영 상태 (tools/fleet_ctl.py, 2026-11-10) - 모드·준비 점검·라운드 전달 기록. 재생성 가능
 .aimem/fleet-mode.json
 .aimem/pane_auto.json
+.aimem/pane_first.json
+.aimem/freebuff_sessions.jsonl
 .aimem/fleet-prepare.json
 .aimem/relay/
 .aimem/graph/*.runner.log
