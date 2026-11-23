@@ -1385,7 +1385,7 @@ function runStatusBadge(r) {
   if (ss && SESSION_END_TEXT[ss]) {
     const b = badge(SESSION_END_TEXT[ss], 'blocked');
     b.dataset.status = ss;
-    b.title = { stalled: '마지막 사건 뒤 침묵이 제한을 넘겨 감독이 끊음', timeout: '벽시계 제한을 넘겨 감독이 끊음 (관리자 세션만)',
+    b.title = { stalled: '마지막 사건 뒤 침묵이 제한을 넘겨 감독이 끊음', timeout: '벽시계 제한을 넘겨 감독이 끊음 (옛 기록 - 지금은 시간으로 끊지 않음)',
       failed: '작업자가 실패로 끝남', killed: '사람이 중단함' }[ss];
     return b;
   }

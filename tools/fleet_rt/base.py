@@ -32,7 +32,7 @@ ROLES = ("manager", "worker", "reviewer")
 #:   done     하네스가 rc 0 으로 끝남
 #:   failed   하네스가 rc != 0 으로 끝남
 #:   killed   사람·엔진이 끊음 (cancel)
-#:   timeout  벽시계 제한을 넘겨 감독이 끊음 (관리자 세션만 - 작업자에겐 벽시계 제한이 없다)
+#:   timeout  벽시계 제한을 넘겨 감독이 끊음 (지금은 작업자도 관리자도 벽시계 제한을 쓰지 않는다)
 #:   stalled  idle_timeout 동안 사건도 읽기(`/proc/<pid>/io`)도 없어 감독이 끊음
 END_STATES = ("done", "failed", "killed", "timeout", "stalled")
 STATES = ("running",) + END_STATES + ("lost",)
@@ -41,7 +41,7 @@ STATES = ("running",) + END_STATES + ("lost",)
 #: `work`(보고가 BLOCKED·검증 실패)는 그래프 실행기가 보고를 읽고 정한다.
 FAIL_KINDS = ("work", "infra", "limit", "timeout")
 
-#: 작업자에겐 벽시계 한도가 없다 - 일하는 동안은 끝까지 기다리고, 멈췄을 때만(침묵) 끊는다 (2026-11-23).
+#: 작업자에게도 관리자에게도 벽시계 한도가 없다 - 일하는 동안은 끝까지 기다리고, 멈췄을 때만(침묵) 끊는다 (2026-11-23).
 #: 공급자에 침묵 한도가 안 적혔을 때 쓰는 값(초).
 DEFAULT_IDLE_TIMEOUT_SEC = 600.0
 #: 프로세스들이 CPU 를 이만큼(코어 하나에 대한 비율) 쓰고 있으면 일하는 중으로 본다.
@@ -186,7 +186,7 @@ class SessionSpec:
     write_paths: list = dataclasses.field(default_factory=list)
     tools: Optional[str] = None              # 허용 도구 목록 (claude `--allowedTools`). None 이면 어댑터의 역할별 기본
     settings_path: Optional[str] = None      # 하네스 설정 파일 (claude `--settings`)
-    timeout: float = 0.0                     # 벽시계 제한(초). 0 = 없음 (작업자). 관리자 세션만 준다
+    timeout: float = 0.0                     # 벽시계 제한(초). 0 = 없음 - 작업자도 관리자도 주지 않는다
     idle_timeout: Optional[float] = None     # 침묵 제한(초). None 이면 침묵 감지를 안 한다
     round: Optional[int] = None
     task_id: Optional[str] = None

@@ -216,7 +216,8 @@ class LaunchAndStop(Base):
         self.assertEqual(self.started, [8])                        # 감시자를 띄운다
         meta = sessions.load_meta(self.sroot / sid)
         self.assertEqual((meta["role"], meta["round"], meta["model"], meta["tools"], meta["idle_timeout"]),
-                         ("manager", 8, "opus", rt_manager.MANAGER_TOOLS, None))
+                         ("manager", 8, "opus", rt_manager.MANAGER_TOOLS, 600.0))
+        self.assertFalse(meta["timeout"])                          # 관리자도 벽시계 한도가 없다
         self.assertEqual((meta["extra"]["by"], meta["extra"]["workspace"], meta["provider"]), ("test", "rounds/R8", "anthropic"))
         self.assertTrue(re.fullmatch(r"[0-9a-f-]{36}", meta["extra"]["harness_session_id"]))
         self.assertIn("관리자 R8 브리프", (self.sroot / sid / "brief.md").read_text(encoding="utf-8"))
@@ -767,24 +768,28 @@ class LeftoversWhenTheManagerEnds(Base):
 
 
 class WatchDeadline(unittest.TestCase):
-    def test_a_resumed_manager_restarts_the_wait_and_the_message_says_the_real_wait(self):
+    def test_no_deadline_while_the_manager_runs_and_a_short_one_after_it_ends(self):
+        # 관리자에겐 시간 한도가 없다 - 도는 동안은 시한(0.2초)을 몇 번 넘겨도 지켜본다. 끝난 뒤에도 라운드가 정리되지 않으면 그때 그만둔다.
         tmp = pathlib.Path(tempfile.mkdtemp(dir=BASE))
         t0 = time.time()
-
-        def record(n):                       # 0.25초 뒤 관리자를 이었다 (라운드 기록의 session 이 바뀜)
-            return {"session": "M-R5-000001" if time.time() - t0 < 0.25 else "M-R5-000002"}
         stops = []
         with mock.patch.object(fleet_ctl, "_aimem_dir", lambda: tmp), \
-                mock.patch.object(fleet_ctl, "_round_record", side_effect=record), \
-                mock.patch.object(fleet_ctl, "_round_manager_running", return_value=True), \
+                mock.patch.object(fleet_ctl, "_round_manager_running", side_effect=lambda n: time.time() - t0 < 0.8), \
+                mock.patch.object(fleet_ctl, "_try_resume_manager", return_value=False), \
+                mock.patch.object(fleet_ctl, "_try_wait_limit", return_value=False), \
+                mock.patch.object(fleet_ctl, "manager_sessions", return_value=[]), \
+                mock.patch.object(fleet_ctl, "halt_round_leftovers", return_value=[]), \
+                mock.patch.object(fleet_ctl, "close_if_unreported", return_value=""), \
+                mock.patch.object(fleet_ctl, "record_round_metrics"), \
+                mock.patch.object(fleet_ctl, "round_over", return_value=False), \
                 mock.patch.object(fleet_ctl, "mode", return_value="running"), \
                 mock.patch.object(fleet_ctl, "chain_state", return_value={"on": True}), \
                 mock.patch.object(fleet_ctl, "_chain_stop", side_effect=lambda st, kind, why, n=None: stops.append((kind, why))):
-            self.assertEqual(fleet_ctl._watch(5, poll=0.02, wait=0.4), 1)
-        self.assertGreaterEqual(time.time() - t0, 0.6)                     # 0.25 + 새 시한 0.4
+            self.assertEqual(fleet_ctl._watch(5, poll=0.02, wait=0.2), 1)
+        self.assertGreaterEqual(time.time() - t0, 0.95)                    # 관리자가 돈 0.8 + 끝난 뒤 시한 0.2
         self.assertEqual([k for k, _ in stops], ["wait"])
-        self.assertIn(fleet_ctl._dur(0.4), stops[0][1])
-        self.assertEqual(fleet_ctl.chain_wait_sec(), rt_manager.MANAGER_TIMEOUT_SEC + fleet_ctl.CHAIN_WAIT_SLACK_SEC)
+        self.assertIn(fleet_ctl._dur(0.2), stops[0][1])
+        self.assertEqual(fleet_ctl.chain_wait_sec(), fleet_ctl.CHAIN_WAIT_SEC)
         self.assertEqual(fleet_ctl._dur(6 * 3600 + 600), "6시간 10분")
 
 
@@ -830,8 +835,8 @@ class ResumeAfterTransientApiError(Base):
         self.assertEqual(meta["extra"]["resume_session"], f"fake-{sid}")       # 끊긴 세션의 대화 id (사건에서)
         self.assertEqual(meta["extra"]["harness_session_id"], f"fake-{sid}")
         self.assertTrue(meta["label"].endswith("(이어 감)"))
-        self.assertEqual((meta["model"], meta["tools"], meta["timeout"], meta["extra"]["disallowed_tools"]),
-                         ("opus", rt_manager.MANAGER_TOOLS, float(rt_manager.MANAGER_TIMEOUT_SEC), rt_manager.MANAGER_DENIED))
+        self.assertEqual((meta["model"], meta["tools"], meta["timeout"], meta["idle_timeout"], meta["extra"]["disallowed_tools"]),
+                         ("opus", rt_manager.MANAGER_TOOLS, 0.0, 600.0, rt_manager.MANAGER_DENIED))    # 벽시계 한도 없음, 침묵만
         self.assertIn("모델 API 오류", (self.sroot / new / "brief.md").read_text(encoding="utf-8"))
         # 작업자·노드는 그대로, 마감 없음, 감시자를 새로 띄우지 않음(이 감시자가 계속 본다)
         self.assertEqual(sessions.state(self.sroot / rid)["state"], "running")

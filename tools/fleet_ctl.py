@@ -1591,7 +1591,7 @@ def _try_wait_limit(n, poll=None, sleep=None, clock=None):
 CHAIN_MAX_ROUNDS = 10            # 사람이 고를 수 있는 연속 상한의 최대
 CHAIN_HARD_ROUNDS = 30           # 상한을 새로 이어 가며(`renew`) 돌 때의 안전 상한(모두 합친 라운드 수) - 여기 닿으면 사람이 다시 켠다
 CHAIN_DEFAULT_ROUNDS = 3
-CHAIN_WAIT_SLACK_SEC = 600      # 감시자의 기다리기 시한 = 관리자 벽시계 제한 + 이만큼 (`chain_wait_sec`)
+CHAIN_WAIT_SEC = 600            # 관리자가 끝난 뒤 라운드가 정리되기를 감시자가 기다리는 시한 (관리자가 도는 동안은 시한이 없다)
 CHAIN_POLL_SEC = 5               # 관리자 세션이 끝났는지는 세션 폴더 읽기라 싸다
 WATCH_LOCK_WAIT_SEC = 10         # 갈아 끼울 때 앞 감시자가 잠금을 놓기를 기다리는 시간
 _GOALS_HEAD = re.compile(r"^##[ \t]*(?:목표|goals)\b[^\n]*$", re.MULTILINE | re.IGNORECASE)   # aimem_monitor.server 와 같은 식
@@ -2075,9 +2075,8 @@ def _chain_wait_and_step(n, poll=None, wait=None, close_only=False):
 
 
 def chain_wait_sec():
-    """감시자가 관리자 세션 하나를 기다리는 시한 = 관리자 벽시계 제한 + 여유."""
-    from fleet_rt import manager as rt_manager  # noqa: PLC0415
-    return rt_manager.MANAGER_TIMEOUT_SEC + CHAIN_WAIT_SLACK_SEC
+    """감시자가 관리자가 끝난 뒤 라운드가 정리되기를 기다리는 시한. 관리자가 도는 동안은 시한 없이 지켜본다."""
+    return CHAIN_WAIT_SEC
 
 
 def _dur(sec):
@@ -2094,19 +2093,15 @@ def _watch(n, poll, wait, close_only=False):
     except (OSError, ValueError):
         pass
     deadline = time.time() + wait
-    session = _round_record(n).get("session")
     closed = None
     while time.time() < deadline:
         time.sleep(poll)
-        now_session = _round_record(n).get("session")
-        if now_session != session:
-            # 이은 관리자는 새 벽시계 제한으로 돌므로 기다리기 시한도 새로 잡는다
-            session, deadline = now_session, time.time() + wait
         on = False if close_only else chain_state().get("on")
         if on and mode() != "running":    # 사람이 멈췄다 - 이어 달리기도 내려놓는다
             _chain_stop(chain_state(), "off", f"함대가 '{MODE_LABEL.get(mode(), mode())}' 로 바뀌어 이어 달리기도 내려놓았습니다 (사람이 멈춤)", n)
             on = False
         if _round_manager_running(n):
+            deadline = time.time() + wait   # 관리자에겐 시간 한도가 없다 - 도는 동안은 끝까지 지켜본다
             continue
         if closed is None and _try_resume_manager(n):
             continue                      # 잠깐의 API 오류 - 같은 대화를 이었다. 작업자는 두고 새 세션을 계속 지켜본다
@@ -2129,7 +2124,7 @@ def _watch(n, poll, wait, close_only=False):
         print(f"{_now()} chain R{n}: {json.dumps({k: v for k, v in res.items() if k != 'open'}, ensure_ascii=False)}", flush=True)
         return 0
     if not close_only and chain_state().get("on"):
-        _chain_stop(chain_state(), "wait", f"R{n} 이 {_dur(wait)}이 지나도 끝나지 않아 기다리기를 그만두었습니다 - 관리자를 확인하십시오", n)
+        _chain_stop(chain_state(), "wait", f"R{n} 관리자가 끝난 뒤 {_dur(wait)}이 지나도 라운드가 정리되지 않아 기다리기를 그만두었습니다 - 남은 작업자를 확인하십시오", n)
     return 1
 
 

@@ -17,7 +17,7 @@ import datetime
 import re
 import uuid
 
-from .base import SessionSpec
+from .base import DEFAULT_IDLE_TIMEOUT_SEC, SessionSpec
 
 #: Claude Code 권한 문법 `Bash(<접두>:*)`. 접두 뒤가 무엇이든 허용한다 - 그래서 접두를 도구 파일 이름까지 적는다.
 MANAGER_TOOLS = ",".join([
@@ -44,8 +44,6 @@ MANAGER_TOOLS = ",".join([
 MANAGER_DENIED = ("Bash(git commit:*),Bash(git push:*),Bash(git reset:*),Bash(git checkout:*),Bash(rm:*),"
                   "Bash(pip:*),Bash(npm install:*),Bash(sudo:*)")
 
-#: 벽시계 제한 - 관리자 시간 제한의 한 곳. 관리자는 그래프가 도는 내내 `fleet_graph.py run` 에 묶여 있으므로 길다.
-MANAGER_TIMEOUT_SEC = 6 * 3600
 MANAGER_MODEL = "opus"
 MANAGER_HARNESS = "claude"
 #: 관리자 세션 id `M-R<N>-<HHMMSS>` (같은 초에 둘이면 `-2`). 린터·화면이 이 꼴로 관리자를 알아본다.
@@ -69,13 +67,14 @@ def label(n, at=None):
 
 
 def spec(sid, n, cwd, *, at=None, by="사람", brief="", workspace="", provider="anthropic"):
-    """관리자 세션 명세. 침묵 제한은 두지 않는다 - 그래프가 도는 동안 관리자는 정당하게 오래 말이 없다."""
+    """관리자 세션 명세. 작업자와 같은 기준이다 - 벽시계 한도는 없고 멈췄을 때만(침묵) 끊는다.
+    그래프가 도는 동안 관리자는 정당하게 오래 말이 없으므로, 감독은 도는 작업자가 있으면 침묵으로 치지 않는다(`run.py`)."""
     extra = {"harness_session_id": str(uuid.uuid4()), "by": str(by)[:60], "brief": brief,
              "workspace": workspace, "disallowed_tools": MANAGER_DENIED}
     return SessionSpec(
         id=sid, role="manager", harness=MANAGER_HARNESS, brief_path="", cwd=str(cwd),
         model=MANAGER_MODEL, provider=provider, round=int(n), label=label(n, at),
-        timeout=float(MANAGER_TIMEOUT_SEC), idle_timeout=None, tools=MANAGER_TOOLS,
+        idle_timeout=DEFAULT_IDLE_TIMEOUT_SEC, tools=MANAGER_TOOLS,
         settings_path=None, extra=extra)
 
 

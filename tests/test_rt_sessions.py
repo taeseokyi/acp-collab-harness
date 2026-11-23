@@ -90,8 +90,8 @@ class Base(unittest.TestCase):
     def spawn(self, directives, sid=None, root=None, **kw):
         _N[0] += 1
         sid = f"s{_N[0]}" if sid is None else sid
-        spec = SessionSpec(id=sid, role="worker", harness="fake", brief_path="", cwd=str(self.work),
-                           write_paths=["out.txt"], **kw)
+        spec = SessionSpec(**dict(dict(id=sid, role="worker", harness="fake", brief_path="", cwd=str(self.work),
+                                       write_paths=["out.txt"]), **kw))
         brief = "SLOT=S9 검사\n" + "".join(f"FAKE: {d}\n" for d in directives)
         return sessions.spawn(spec, brief, root or self.root, db_path=self.db)
 
@@ -209,6 +209,17 @@ class TestRun(Base):
         st = self.wait_end(d, 30)
         self.assertEqual(st["state"], "done", st)
         self.assertTrue(_wait(lambda: not self.group_of(d), 5))
+
+    def test_a_silent_manager_is_not_cut_while_a_worker_runs(self):
+        """관리자도 같은 기준이다 - 벽시계 한도가 없고, 도는 작업자가 있는 동안은 조용해도 침묵이 아니다. 작업자가 끝나면 침묵으로 끊는다."""
+        worker = self.spawn(["sleep 5", "emit 끝"])
+        mgr = self.spawn(["hang"], role="manager", write_paths=[], idle_timeout=1.0)
+        time.sleep(3.5)                                   # 침묵 한도(1초)의 몇 배
+        self.assertEqual(sessions.state(mgr)["state"], "running")
+        self.wait_end(worker, 15)
+        st = self.wait_end(mgr, 15)
+        self.assertEqual((st["state"], st["fail_kind"]), ("stalled", "infra"), st)
+        self.assertTrue(_wait(lambda: not self.group_of(mgr), 5))
 
     def test_reading_by_a_detached_child_is_not_silence(self):
         """하네스가 그룹을 벗어난(setsid) 백그라운드 명령을 기다리는 동안도, 그 명령이 읽고 있으면 침묵이 아니다."""

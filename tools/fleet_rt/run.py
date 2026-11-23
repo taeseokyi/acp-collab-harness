@@ -8,7 +8,7 @@
    검사한 것이 도는 것이다. 어댑터는 `harness_effective` 로 다시 찾아 env_set 값·사건 해석·보고에만 쓴다
 3. stdout 을 한 줄씩 `<받은 시각>\\t<원문>` 으로 events.jsonl 에 (줄마다 flush, 한 줄 최대 1MB)
 4. 침묵(idle_timeout - 사건도, CPU 사용도, 읽기도 없음)을 1초 안 간격으로 본다. 넘으면 하네스와 그룹의 나머지를 끝낸다.
-   벽시계(timeout)는 관리자 세션에만 있다 - 작업자는 일하는 동안 끝까지 기다린다
+   벽시계(timeout)는 작업자도 관리자도 쓰지 않는다 - 일하는 동안은 끝까지 기다린다. 관리자는 도는 작업자가 있으면 침묵이 아니다
 5. SIGTERM/SIGINT/SIGHUP 를 받으면 하네스를 끝내고 killed 로 마감한다 (까닭은 cancel.json)
 6. 하네스가 끝나면 그룹에 남은 손자도 끝낸다. 그룹을 빠져나간(setsid)
    손자도 이 세션 환경 표식으로 찾아 pid 하나씩 끝낸다 → report.md → end.json → DB 색인. 그리고 0 으로 나간다.
@@ -193,6 +193,16 @@ class Supervisor:
             pass
         return "failed", ("infra" if infra else None), why
 
+    def _workers_running(self):
+        """관리자 세션만: 이 저장소에 도는 다른 세션(작업자)이 있는가 - 그동안은 관리자가 조용한 것이 정상이다."""
+        if self.meta.get("role") != "manager":
+            return False
+        try:
+            return any(d != self.d and (d / "meta.json").exists() and not (d / "end.json").exists()
+                       and sessions.state(d)["state"] == "running" for d in self.d.parent.iterdir())
+        except OSError:
+            return False
+
     def _all_events(self):
         for _at, raw in read_event_lines(self.d):
             ev = self.adapter.parse_event(raw)
@@ -302,6 +312,9 @@ class Supervisor:
                     elif rchar - io_last >= IO_PROGRESS_BYTES:
                         self.last_activity = now
                     io_at, io_last, cpu_last = now, rchar, cpu
+                if idle and (now - self.last_activity > idle or now - self.last_event > idle * READ_ONLY_IDLES) \
+                        and self._workers_running():
+                    self.last_activity = self.last_event = now
                 if idle and now - self.last_activity > idle:
                     verdict = {"state": "stalled", "fail_kind": "infra", "why": f"침묵 {idle:g}초 넘김 (사건도 읽기도 없음)"}
                     break
