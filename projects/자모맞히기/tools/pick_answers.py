@@ -62,15 +62,34 @@ def main(argv=None, *, pick=None, trend_path=None, meta_path=None, rebuild=None)
     if not picks:
         print("고른 낱말이 없습니다.", file=sys.stderr)
         return 1
-    rows = [f"{item['date']} {item['word']}" for item in picks]
-    for row in rows:
-        print(row)
-    print(f"(뉴스 제목 {result.get('titles', 0)}건, 후보 {result.get('candidates', 0)}개)")
     if args.dry_run:
+        for item in picks:
+            print(f"{item['date']} {item['word']}")
+        print(f"(뉴스 제목 {result.get('titles', 0)}건, 후보 {result.get('candidates', 0)}개)")
         print("(dry-run: data/trend.txt 에 쓰지 않았습니다)")
         return 0
 
-    print(f"{trend_file} 에 {len(result.get('added') or [])}줄 덧붙였습니다.")
+    # 실제로 덧붙인 줄만 '저장', 이미 있어 건너뛴 날짜는 저장된 낱말로 '이미 있음' (R37-N4)
+    added = [a for a in (result.get("added") or []) if isinstance(a, dict)]
+    added_keys = {(a.get("date"), a.get("word")) for a in added}
+    have = trend_store.read_trend(trend_file)
+    skipped = 0
+    for item in picks:
+        day, word = item.get("date"), item.get("word")
+        if (day, word) in added_keys:
+            print(f"{day} {word}  저장")
+        elif day in have:
+            skipped += 1
+            print(f"{day} {have[day]}  이미 있음")
+        else:
+            print(f"{day} {word}  저장 안 함")
+    print(f"(뉴스 제목 {result.get('titles', 0)}건, 후보 {result.get('candidates', 0)}개)")
+    if added:
+        print(f"{trend_file} 에 {len(added)}줄 덧붙였습니다.")
+    else:
+        print("새로 저장한 정답 없음")
+    if skipped:
+        print(f"이미 있던 날짜 {skipped}개는 건너뛰었습니다.")
     return (rebuild or rebuild_words)()
 
 

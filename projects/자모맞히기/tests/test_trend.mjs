@@ -66,6 +66,22 @@ test("mergeTrend: 꼴이 틀린 날짜·낱말은 거름", () => {
   assert.deepEqual(out, { "2026-11-15": "지원" });
 });
 
+test("mergeTrend: 자모 6칸이 아닌 서버 정답은 버리고 그 날짜는 정적 것도 없으면 빠짐", () => {
+  const out = mergeTrend({}, {
+    "2026-11-15": "지원",
+    "2026-11-23": "사과",
+    "2026-11-24": "한국",
+    "2026-11-25": "가나다라마바",
+    "2026-11-26": "강당",
+  });
+  assert.deepEqual(out, { "2026-11-15": "지원", "2026-11-24": "한국", "2026-11-26": "강당" });
+});
+
+test("mergeTrend: 6칸이 아닌 서버 정답이 정적 정답을 덮지 않음", () => {
+  const out = mergeTrend({ "2026-11-15": "지원" }, { "2026-11-15": "사과" });
+  assert.deepEqual(out, { "2026-11-15": "지원" });
+});
+
 test("mergeTrend: 객체가 아니면 빈 결과", () => {
   assert.deepEqual(mergeTrend(null, undefined), {});
   assert.deepEqual(mergeTrend(["지원"], "문자열"), {});

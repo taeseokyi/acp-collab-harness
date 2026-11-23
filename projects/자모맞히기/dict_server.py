@@ -24,6 +24,7 @@
 import json
 import os
 import re
+import threading
 import tomllib
 import urllib.error
 import urllib.parse
@@ -38,6 +39,7 @@ FLEET_TOML = ROOT / "fleet.toml"
 WORD_RE = re.compile(r"[가-힣]{1,10}")
 CACHE_MAX = 2000
 _CACHE: dict = {}
+_CACHE_LOCK = threading.Lock()  # 여러 스레드가 동시에 축출(evict)해도 깨지지 않게
 
 SYSTEM_PROMPT = (
     "너는 한국어 사전 편찬자다. 낱말이 표준 한국어 사전에 표제어로 실린 낱말(명사, 또는 동사·형용사의 기본형)이면 "
@@ -301,7 +303,9 @@ def lookup(word, source_id, *, env=None, opener=None, timeout=None, custom=None)
     except Exception:  # 어떤 경우도 던지지 않고 꼴로 (메시지는 키가 섞일 수 있어 싣지 않음)
         return _err(sid, "server", "조회 중 알 수 없는 오류")
     if res.get("ok"):
-        if len(_CACHE) >= CACHE_MAX:
-            _CACHE.pop(next(iter(_CACHE)))
-        _CACHE[cache_key] = dict(res)
+        with _CACHE_LOCK:
+            if len(_CACHE) >= CACHE_MAX:
+                # 다른 스레드가 그 사이 비웠을 수 있어 next(iter(...)) 대신 안전한 pop(k, None)
+                _CACHE.pop(next(iter(_CACHE), None), None)
+            _CACHE[cache_key] = dict(res)
     return res

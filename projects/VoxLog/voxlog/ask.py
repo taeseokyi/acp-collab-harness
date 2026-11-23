@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 import threading
 
+from .store import _sort_key
+
 KINDS = {"summary": "요약", "keywords": "핵심어·주제", "todo": "할 일·약속 뽑기", "custom": "직접 묻기"}
 MAX_PROMPT_CHARS = 200_000
 MAX_USER_PROMPT = 2000
@@ -42,7 +44,9 @@ def build_prompt(kind, user_prompt, items):
         if user_prompt:
             head += "\n추가 요청: " + user_prompt[:MAX_USER_PROMPT]
 
-    ordered = sorted(items, key=lambda it: it.get("recorded_at") or "")
+    # 문자열이 아니라 실제 시각(시간대 포함) 기준 - 시간대가 섞여도 순서가 맞고,
+    # 길이 초과로 앞을 뺄 때(blocks.pop(0)) 빠지는 것이 가장 오래된 녹취가 된다.
+    ordered = sorted(items, key=_sort_key)
 
     blocks = []
     for it in ordered:

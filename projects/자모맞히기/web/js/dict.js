@@ -68,7 +68,7 @@ export function llmRequest(baseUrl, model, key, word) {
 export function parseLlmAnswer(text) {
   if (typeof text !== "string") return null;
   const t = text.trim().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "").toLowerCase();
-  if (t.startsWith("예") || t.startsWith("yes")) return true;
+  if (t.startsWith("네") || t.startsWith("예") || t.startsWith("yes")) return true;
   if (t.startsWith("아니") || t.startsWith("no")) return false;
   return null;
 }

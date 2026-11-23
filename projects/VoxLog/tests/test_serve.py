@@ -1,4 +1,5 @@
 """serve.py 검사 - 임시 폴더·임시 포트·가짜 함수. 표준 라이브러리만."""
+import datetime
 import errno
 import http.client
 import json
@@ -31,6 +32,7 @@ def fake_llm(prompt, env=None):
 class Base(unittest.TestCase):
     token = None
     max_uploads = 2
+    env = None
 
     def make_stt(self):
         return fake_stt
@@ -38,7 +40,7 @@ class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.server = serve.make_server("127.0.0.1", 0, self.tmp.name, token=self.token,
-                                        env={}, stt_fn=self.make_stt(), llm_run=fake_llm,
+                                        env=dict(self.env or {}), stt_fn=self.make_stt(), llm_run=fake_llm,
                                         max_uploads=self.max_uploads)
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -140,6 +142,35 @@ class TestServe(Base):
         self.assertEqual(status, 201)
         self.assertIsNone(meta["duration_ms"])
 
+    def test_bad_recorded_at_uses_server_time(self):
+        # R38-N4: 못 쓰는 X-Recorded-At(먼 미래·형식 깨짐·시간대 없음)은 거절하지 않고
+        # 서버가 받은 시각으로 기록한다 - 날짜 폴더도 메타도 서버 시각 기준.
+        bads = ("9999-12-31T23:59:59+00:00", "not-a-date", "2026-11-23T09:00:00")
+        for i, bad in enumerate(bads):
+            today = datetime.datetime.now().astimezone().strftime("%Y-%m-%d")
+            status, meta = self.req_upload(bytes([i]) + b"rec", {"X-Recorded-At": bad})
+            self.assertEqual(status, 201, bad)
+            self.assertEqual(meta["recorded_at"], meta["created"], bad)
+            self.assertEqual(meta["recorded_at"][:10], today, bad)
+            self.wait_done(meta["id"])
+            path = Path(self.tmp.name) / "transcripts" / today / (meta["id"] + ".txt")
+            self.assertTrue(path.is_file(), bad)
+        _, lst = self.jreq("GET", "/api/recordings")
+        self.assertNotIn("9999", json.dumps(lst["stats"]["by_date"]))
+
+    def test_past_recorded_at_with_offset_kept(self):
+        status, meta = self.req_upload(b"ok", {"X-Recorded-At": "2026-11-16T09:00:00+09:00"})
+        self.assertEqual(status, 201)
+        self.assertEqual(meta["recorded_at"], "2026-11-16T09:00:00+09:00")
+
+    def test_bad_date_filter_is_400(self):
+        for q in ("from=2026-13-40", "to=2026-13-40", "from=2026-02-30", "from=2026-1-1"):
+            status, body = self.jreq("GET", "/api/recordings?" + q)
+            self.assertEqual(status, 400, q)
+            self.assertIn("error", body)
+        status, _ = self.jreq("GET", "/api/recordings?from=2026-01-01&to=2026-12-31")
+        self.assertEqual(status, 200)
+
     def test_duplicate_client_id(self):
         s1, m1 = self.upload(client_id="c-1")
         s2, m2 = self.upload(client_id="c-1")
@@ -200,6 +231,50 @@ class TestServe(Base):
         self.assertEqual(self.jreq("DELETE", "/api/recordings/" + meta["id"])[0], 404)
         self.assertEqual(self.req("GET", "/api/recordings/%s/audio" % meta["id"])[0], 404)
 
+    def test_head_detail_does_not_delete(self):
+        data = b"RIFFfakeaudio"
+        _, meta = self.upload(data)
+        self.wait_done(meta["id"])
+        status, hdr, raw = self.req("HEAD", "/api/recordings/" + meta["id"])
+        self.assertEqual(status, 200)
+        self.assertEqual(raw, b"")
+        self.assertGreater(int(hdr["Content-Length"]), 0)  # GET 과 같은 머리(길이는 본문 기준)
+        status, detail = self.jreq("GET", "/api/recordings/" + meta["id"])
+        self.assertEqual(status, 200)
+        self.assertEqual(detail["id"], meta["id"])
+        status, _, audio = self.req("GET", "/api/recordings/%s/audio" % meta["id"])
+        self.assertEqual((status, audio), (200, data))
+
+    def test_head_list_same_as_get_not_upload(self):
+        _, meta = self.upload()
+        self.wait_done(meta["id"])
+        get_status, get_hdr, get_raw = self.req("GET", "/api/recordings")
+        head_status, head_hdr, head_raw = self.req("HEAD", "/api/recordings")
+        self.assertEqual((get_status, head_status), (200, 200))
+        self.assertEqual(head_raw, b"")
+        self.assertEqual(head_hdr["Content-Length"], get_hdr["Content-Length"])
+        self.assertEqual(head_hdr["Content-Type"], get_hdr["Content-Type"])
+        self.assertEqual(json.loads(get_raw.decode("utf-8"))["items"][0]["id"], meta["id"])
+        self.assertEqual(self.jreq("GET", "/api/recordings/" + meta["id"])[0], 200)
+
+    def test_head_foreign_origin_does_not_delete(self):
+        _, meta = self.upload()
+        self.wait_done(meta["id"])
+        status, _, raw = self.req("HEAD", "/api/recordings/" + meta["id"],
+                                  headers={"Origin": "https://evil.example"})
+        self.assertEqual((status, raw), (200, b""))
+        self.assertEqual(self.jreq("GET", "/api/recordings/" + meta["id"])[0], 200)
+        _, lst = self.jreq("GET", "/api/recordings")
+        self.assertEqual([r["id"] for r in lst["items"]], [meta["id"]])
+        self.assertEqual(self.req("GET", "/api/recordings/%s/audio" % meta["id"])[0], 200)
+
+    def test_delete_still_deletes(self):
+        _, meta = self.upload()
+        self.wait_done(meta["id"])
+        self.assertEqual(self.jreq("DELETE", "/api/recordings/" + meta["id"])[0], 200)
+        self.assertEqual(self.jreq("GET", "/api/recordings/" + meta["id"])[0], 404)
+        self.assertEqual(self.req("HEAD", "/api/recordings/" + meta["id"])[0], 404)
+
     def test_ask_and_answers(self):
         _, meta = self.upload()
         self.wait_done(meta["id"])
@@ -230,6 +305,18 @@ class TestServe(Base):
         self.assertEqual(status, 400)
         self.assertIn("error", body)
 
+    def test_ask_nonstring_kind_400_json_then_ok(self):
+        _, meta = self.upload()
+        self.wait_done(meta["id"])
+        for kind in ([], {}):
+            status, body = self.jreq("POST", "/api/ask", {"kind": kind, "prompt": "", "ids": [meta["id"]]})
+            self.assertEqual(status, 400, kind)
+            self.assertIn("error", body)
+        # 거절한 뒤에도 같은 연결 규약으로 정상 요청이 된다
+        status, ans = self.jreq("POST", "/api/ask", {"kind": "summary", "prompt": "", "ids": [meta["id"]]})
+        self.assertEqual(status, 202)
+        self.assertIn("id", ans)
+
     def test_unknown_api_404_and_method_405(self):
         self.assertEqual(self.jreq("GET", "/api/nothing")[0], 404)
         status, hdr, _ = self.req("PUT", "/api/recordings", b"x")
@@ -244,6 +331,11 @@ class TestServe(Base):
             self.assertEqual(status, 403, origin)
         _, lst = self.jreq("GET", "/api/recordings")
         self.assertEqual(lst["items"], [])
+        # 바꾸는 메서드는 하나도 빠짐없이 출처 검사를 받는다 (405 보다 403 이 먼저)
+        for method in ("PUT", "PATCH"):
+            status, _, _ = self.req(method, "/api/recordings", b"abc",
+                                    {"Content-Type": "audio/webm", "Origin": "https://evil.example"})
+            self.assertEqual(status, 403, method)
         same = "http://127.0.0.1:%d" % self.port
         status, _, _ = self.req("POST", "/api/recordings", b"abc", {"Content-Type": "audio/webm", "Origin": same})
         self.assertEqual(status, 201)
@@ -297,6 +389,30 @@ class TestServe(Base):
                      "localhost", "::1"):
             self.assertEqual(self.raw_host("GET", "/api/recordings", host)[0], 200, host)
             self.assertEqual(self.raw_host("GET", "/", host)[0], 200, host)
+
+
+class TestHealthWhitespaceLlmCmd(Base):
+    """VOXLOG_LLM_CMD 가 공백뿐이면 llm_command 가 빈 목록 -> health 가 IndexError 로 끊기지 않아야 한다."""
+    env = {"VOXLOG_LLM_CMD": "   "}
+
+    def test_health_200_llm_false(self):
+        status, body = self.jreq("GET", "/api/health")
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertFalse(body["llm"])
+        self.assertIn("llm_error", body)
+
+
+class TestHealthBadQuoteLlmCmd(Base):
+    """따옴표가 안 맞는 VOXLOG_LLM_CMD 는 llm_command 가 ValueError -> health 는 200."""
+    env = {"VOXLOG_LLM_CMD": 'claude -p "'}
+
+    def test_health_200_llm_false(self):
+        status, body = self.jreq("GET", "/api/health")
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertFalse(body["llm"])
+        self.assertIn("llm_error", body)
 
 
 class TestRetryUpload(Base):
@@ -359,6 +475,17 @@ class TestRetryUpload(Base):
         with mock.patch.object(self.server.transcriber, "resubmit", return_value=False):
             status, _ = self.jreq("POST", "/api/recordings/%s/retry" % meta["id"])
         self.assertEqual(status, 409)
+
+    def test_retry_resubmit_valueerror_404_json(self):
+        _, meta = self.upload()
+        self.wait_done(meta["id"])
+        self.drain()
+        # get 으로 404 를 거른 뒤 resubmit 사이에 지워진 경우
+        with mock.patch.object(self.server.transcriber, "resubmit",
+                               side_effect=ValueError("없는 녹음입니다")):
+            status, body = self.jreq("POST", "/api/recordings/%s/retry" % meta["id"])
+        self.assertEqual(status, 404)
+        self.assertIn("error", body)
 
     def test_retry_finished_runs_again(self):
         _, meta = self.upload()

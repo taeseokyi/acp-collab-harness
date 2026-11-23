@@ -1,4 +1,6 @@
 // localStorage 래퍼. import 시점에는 localStorage 를 건드리지 않습니다.
+import { dayKey as todayKey } from './game.js';
+
 const PREFIX = 'jamo.';
 const memory = new Map();
 let backend; // undefined = 아직 안 알아봄, null = 못 씀
@@ -69,11 +71,6 @@ function remove(key) {
     if (s) s.removeItem(k);
   } catch { /* 무시 */ }
   sendToParent('put', key, null);
-}
-
-function todayKey() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 // 예전에 브라우저에 두던 뉴스 정답(jamo.trend)은 이제 서버가 정본이라 한 번 지운다

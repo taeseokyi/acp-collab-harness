@@ -8,6 +8,7 @@
 API 표는 docs/INTERFACE.md 의 'serve.py' 절.
 """
 import argparse
+import datetime
 import errno
 import hmac
 import ipaddress
@@ -43,7 +44,6 @@ CHUNK = 64 * 1024  # 업로드를 디스크로 흘려 쓰는 단위
 DISK_MARGIN = 100 * 1024 * 1024  # 업로드 크기에 더해 남겨야 하는 디스크 여유
 UPLOAD_GRACE_S = 30  # 업로드 마감 = 이 여유 + 지금까지 받은 바이트 / UPLOAD_MIN_RATE(선언한 길이가 아님)
 UPLOAD_MIN_RATE = 16 * 1024  # 바이트/초: 이보다 느린 업로드는 자리를 오래 잡지 못하게 408
-DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 EXTRA_MIME = {".webmanifest": "application/manifest+json", ".js": "text/javascript"}
 TEXTUAL = ("text/", "application/json", "application/manifest+json")
 
@@ -63,6 +63,38 @@ def _guess_mime(path):
     if mime.startswith(TEXTUAL) or mime == "text/javascript":
         mime += "; charset=utf-8"
     return mime
+
+
+def _valid_recorded_at(raw):
+    """클라이언트 X-Recorded-At -> 기록할 값 또는 None(서버 시각으로 대신).
+
+    실제 ISO 날짜·시각으로 읽히고, 시간대가 붙어 있고, 서버 시계보다 하루 넘게
+    미래가 아닐 때만 그 값을 쓴다. 못 쓰는 값이어도 업로드를 거절하지 않는다
+    (대기열의 녹음이 영구 실패로 가면 안 됨) - None 을 주면 store 가 created 를 쓴다.
+    """
+    text = (raw or "").strip()
+    if not text or len(text) > 64:
+        return None
+    probe = text[:-1] + "+00:00" if text[-1] in ("Z", "z") else text
+    try:
+        dt = datetime.datetime.fromisoformat(probe)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return None
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if dt.astimezone(datetime.timezone.utc) > now + datetime.timedelta(days=1):
+        return None
+    return text
+
+
+def _valid_date(raw):
+    """YYYY-MM-DD 이고 달력에 실제로 있는 날짜인지 (2026-13-40 은 거짓)."""
+    try:
+        datetime.date.fromisoformat(raw)
+    except ValueError:
+        return False
+    return True
 
 
 def _parse_location(raw):
@@ -220,11 +252,15 @@ class Handler(BaseHTTPRequestHandler):
     # ---- API ----
     def _api(self, u):
         path = u.path
-        method = self.command
+        # HEAD 는 처리 함수를 고르기 *전에* GET 으로 바꾼다. 그러면 HEAD 는 GET 과 같은 경로·같은
+        # 처리 함수·같은 상태 코드를 타고, 본문만 _send 가 빼므로, HEAD 가 지우거나 만드는 경로가 없다.
+        method = "GET" if self.command == "HEAD" else self.command
         if path != "/api/health":
             if not self._authorized():
                 return self._err(401, "인증이 필요합니다", extra={"WWW-Authenticate": "Bearer"})
-            if not self.server.token and method in ("POST", "DELETE") and self._foreign_origin():
+            # 바꾸지 않는 메서드(GET·HEAD·OPTIONS)만 출처 검사에서 뺀다. 나머지는 모두 검사한다.
+            if (not self.server.token and self.command not in ("GET", "HEAD", "OPTIONS")
+                    and self._foreign_origin()):
                 return self._err(403, "허용되지 않은 출처입니다")
 
         parts = [p for p in path.split("/") if p]  # ["api", ...]
@@ -249,17 +285,29 @@ class Handler(BaseHTTPRequestHandler):
         if route is None:
             return self._err(404, "없는 API 경로입니다")
         allowed, fn, args = route
-        if method == "HEAD" and "GET" in allowed:
-            method = "GET"
         if method not in allowed:
             return self._err(405, "허용되지 않는 메서드입니다", extra={"Allow": ", ".join(allowed)})
         return fn(*args)
 
     def _health(self):
         env = self.server.env
-        llm = shutil.which(ask_mod.llm_command(env)[0]) is not None
-        self._json(200, {"ok": True, "auth": bool(self.server.token),
-                         "stt": stt_mod.backend_name(env), "llm": llm, "version": VERSION})
+        # 설정이 틀려도(llm_command 가 ValueError·빈 목록) health 는 200 으로 답하고 llm 칸만 false + 까닭을 준다
+        llm = False
+        llm_error = None
+        try:
+            cmd = ask_mod.llm_command(env)
+        except ValueError as exc:
+            llm_error = "LLM 명령 설정 오류: %s" % exc
+        else:
+            if not cmd:
+                llm_error = "LLM 명령 설정 오류: VOXLOG_LLM_CMD 가 비어 있습니다"
+            else:
+                llm = shutil.which(cmd[0]) is not None
+        body = {"ok": True, "auth": bool(self.server.token),
+                "stt": stt_mod.backend_name(env), "llm": llm, "version": VERSION}
+        if llm_error:
+            body["llm_error"] = llm_error
+        self._json(200, body)
 
     def _content_length(self, limit):
         """Content-Length 검사. 정수 길이, 아니면 이미 오류 응답을 보낸 뒤 None."""
@@ -326,7 +374,7 @@ class Handler(BaseHTTPRequestHandler):
         if free is not None and free < length + DISK_MARGIN:
             return self._upload_err(507, "서버 디스크 여유가 부족합니다")
         mime = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
-        recorded_at = (self.headers.get("X-Recorded-At") or "").strip()[:64] or None
+        recorded_at = _valid_recorded_at(self.headers.get("X-Recorded-At"))
         try:
             duration = int(self.headers.get("X-Duration-Ms", "").strip())
             if duration < 0:
@@ -407,8 +455,8 @@ class Handler(BaseHTTPRequestHandler):
 
         date_from, date_to = one("from"), one("to")
         for d in (date_from, date_to):
-            if d is not None and not DATE_RE.match(d):
-                return self._err(400, "날짜는 YYYY-MM-DD 꼴이어야 합니다")
+            if d is not None and not _valid_date(d):
+                return self._err(400, "날짜는 실제 날짜(YYYY-MM-DD)여야 합니다")
         limit = 200
         if one("limit") is not None:
             try:
@@ -452,7 +500,11 @@ class Handler(BaseHTTPRequestHandler):
         if store.get(rid) is None:
             return self._err(404, "없는 녹음입니다")
         tr = self.server.transcriber
-        if not tr.resubmit(rid):
+        try:
+            ok = tr.resubmit(rid)
+        except ValueError:  # 위 get 과 resubmit 사이에 녹음이 지워짐
+            return self._err(404, "없는 녹음입니다")
+        if not ok:
             return self._err(409, "받아쓰는 중입니다")
         self._json(200, store.get(rid))
 
@@ -471,8 +523,12 @@ class Handler(BaseHTTPRequestHandler):
             prompt = ""
         if not isinstance(prompt, str):
             return self._err(400, "prompt 는 문자열이어야 합니다")
+        kind = body.get("kind")
+        if not isinstance(kind, str):
+            # ask.py 가 `kind not in KINDS` 로 TypeError 를 내 연결이 끊기기 전에 여기서 거른다
+            return self._err(400, "kind 는 문자열이어야 합니다")
         try:
-            meta = self.server.asker.submit(body.get("kind"), prompt, body.get("ids"))
+            meta = self.server.asker.submit(kind, prompt, body.get("ids"))
         except ValueError as exc:
             return self._err(400, str(exc))
         self._json(202, meta)

@@ -292,6 +292,31 @@ class TestCacheEnv(Base):
         finally:
             ds.CACHE_MAX = old
 
+    def test_cache_eviction_from_many_threads_raises_nothing(self):
+        """R37-N3 덧: 축출과 삽입이 동시에 일어나도 KeyError·RuntimeError 가 없어야 합니다."""
+        o = Opener(json.dumps({"query": {"pages": [{"title": "한국"}]}}))
+        old = ds.CACHE_MAX
+        ds.CACHE_MAX = 1  # 매번 축출이 일어나게
+        errors = []
+
+        def work(n):
+            try:
+                for i in range(150):
+                    ds.lookup(f"가나{i % 9}{n}", "wiktionary", env={}, opener=o)
+            except Exception as e:  # noqa: BLE001 - 어떤 예외든 모아 실패로
+                errors.append(e)
+
+        threads = [threading.Thread(target=work, args=(n,)) for n in range(8)]
+        try:
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(30)
+        finally:
+            ds.CACHE_MAX = old
+        self.assertEqual(errors, [])
+        self.assertLessEqual(len(ds._CACHE), 2)
+
     def test_available_sources_no_key_values(self):
         env = {"STDICT_API_KEY": KEY, "GEMINI_API_KEY": KEY}
         lst = ds.available_sources(env)
@@ -411,6 +436,24 @@ class TestServe(Base):
         port = self.httpd.server_address[1]
         r = self.req("/api/sources", {"Host": f"localhost:{port}", "Origin": f"http://localhost:{port}"})
         self.assertEqual(r.status, 200)
+
+    def test_cross_site_without_origin_403(self):
+        # R37-N5: Origin 없는 GET 이라도 브라우저가 붙이는 Sec-Fetch-Site 로 교차 출처면 막는다.
+        r = self.req("/api/lookup?word=%ED%95%9C%EA%B5%AD&source=stdict", {"Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(r.code, 403)
+        self.assertFalse(json.load(r)["ok"])
+        self.assertEqual(self.calls, [])
+        r = self.req("/api/sources", {"Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(r.code, 403)
+        r = self.req("/api/lookup?word=%ED%95%9C%EA%B5%AD&source=stdict", {"Sec-Fetch-Site": "same-origin"})
+        self.assertEqual(r.status, 200)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_no_origin_and_no_sec_fetch_site_passes(self):
+        # curl·검사 도구처럼 그 머리가 없는 요청은 기존대로 통과
+        r = self.req("/api/lookup?word=%ED%95%9C%EA%B5%AD&source=stdict")
+        self.assertEqual(r.status, 200)
+        self.assertEqual(len(self.calls), 1)
 
     def test_unknown_api_404_json(self):
         r = self.get("/api/%EC%97%86%EB%8A%94%EA%B2%83")
@@ -538,6 +581,53 @@ class TestServe(Base):
         self.assertFalse(body["ok"])
         self.assertFalse(self.trend_file.exists())
         self.assertFalse(self.meta_file.exists())
+
+    def test_unhandled_exception_is_json_500_and_server_keeps_working(self):
+        """R37-N3(하): 저장 실패 같은 예상 밖 예외도 연결을 끊지 않고 500 JSON 으로."""
+        blocker = Path(self.tmp.name) / "blocker"
+        blocker.write_text("파일", encoding="utf-8")
+        self.httpd.RequestHandlerClass.func.trend_path = blocker / "trend.txt"  # 폴더 자리에 파일 -> 쓰기 실패
+        self.fake_pick(lambda days, source, start, **kw: {
+            "ok": True, "picks": [{"date": "2026-11-15", "word": "협력"}], "titles": 1,
+            "candidates": 1, "checked": 1, "source": source})
+        r = self.pick_post({"days": 1})
+        self.assertEqual(r.code, 500)
+        self.assertEqual(r.headers["Content-Type"], "application/json; charset=utf-8")
+        body = json.load(r)
+        self.assertFalse(body["ok"])
+        self.assertTrue(body["error"].startswith("서버 오류: "), body)
+        self.assertFalse(body.keys() - {"ok", "error"}, body)  # 키·경로 없이
+        self.assertNotIn(str(blocker), body["error"])
+        self.assertNotIn(str(self.tmp.name), body["error"])
+        # 이어지는 GET 은 정상 - 서버가 살아 있음
+        self.assertEqual(json.load(self.get("/api/trend")), {"ok": True, "trend": {}, "last_run": None})
+        self.assertEqual(self.get("/api/sources").status, 200)
+
+    def test_exception_after_response_is_not_answered_twice(self):
+        """이미 응답을 내보낸 뒤의 예외는 다시 보내지 않고 서버 쪽에만 남깁니다."""
+        state = {"exploded": []}
+
+        def boom(handler, status, obj):
+            if status == 200 and not state["exploded"]:
+                state["exploded"].append(1)
+                serve.Handler._json(handler, status, obj)
+                raise RuntimeError("응답 뒤 실패")
+            return serve.Handler._json(handler, status, obj)
+
+        orig = self.httpd.RequestHandlerClass.func._json
+        self.httpd.RequestHandlerClass.func._json = boom
+        try:
+            r = self.get("/api/sources")
+            self.assertEqual(r.status, 200)
+            data = json.load(r)
+            self.assertIn("sources", data)
+            self.assertNotIn("error", data)
+            # 뒷요청도 홀로 200 - 이중 응답이 남기지 않음
+            again = json.load(self.get("/api/sources"))
+            self.assertEqual(again, data)
+        finally:
+            self.httpd.RequestHandlerClass.func._json = orig
+        self.assertEqual(state["exploded"], [1])
 
     def test_handler_timeout_is_30(self):
         self.assertEqual(serve.Handler.timeout, 30)

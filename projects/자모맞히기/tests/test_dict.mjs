@@ -60,9 +60,11 @@ test("parseMediawiki: missing·있음·빈 꼴", () => {
   assert.equal(parseMediawiki({ query: { pages: [] } }), false);
 });
 
-test("parseLlmAnswer: 예/아니오/엉뚱한 답", () => {
-  for (const t of ["예", "예.", " Yes", "YES!", "'예'"]) assert.equal(parseLlmAnswer(t), true, t);
-  for (const t of ["아니오", "아니요.", "no", "No."]) assert.equal(parseLlmAnswer(t), false, t);
+test("parseLlmAnswer: 네/예/아니오/엉뚱한 답", () => {
+  for (const t of ["예", "예.", " Yes", "YES!", "'예'", "네", " 네.", "네!", "\n네\n"]) {
+    assert.equal(parseLlmAnswer(t), true, t);
+  }
+  for (const t of ["아니오", "아니요.", "아니", "no", "No."]) assert.equal(parseLlmAnswer(t), false, t);
   for (const t of ["글쎄요", "", "...", null, undefined]) assert.equal(parseLlmAnswer(t), null, String(t));
 });
 

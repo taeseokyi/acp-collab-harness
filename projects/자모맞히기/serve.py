@@ -14,8 +14,12 @@
         (trend_store.pick_and_store - tools/pick_answers.py 와 같은 함수). 응답에 added·trend·last_run 이 붙습니다.
 
 그 밖의 POST /api/* 는 405 입니다(custom 사용자 LLM 은 화면이 브라우저에서 직접 부르므로 서버 중계 길이 없음).
+`/api/*` 처리 중 생긴 예상 밖 예외는 응답 없이 연결을 끊지 않고 500 `{"ok": false, "error": "서버 오류: <예외 이름>"}`
+으로 답하며(자세한 traceback 은 서버 쪽에만), 이미 응답을 내보낸 뒤면 다시 보내지 않습니다.
 `/api/*` 는 교차 출처 호출을 막습니다 - `Host` 머리가 127.0.0.1·localhost·[::1]·`--host` 값이 아니면 403(DNS 되돌림 방어),
 `Origin` 머리가 있고 `http://<Host 머리>` 와 다르면 403(남의 페이지가 내 서버의 키 쓰는 길을 부르는 것 방어).
+`Origin` 이 없어도 `Sec-Fetch-Site: cross-site` 면 403 입니다 - 남의 페이지의 `<img>` 가 키 쓰는 길을 부르는 것을
+막되, 이 머리를 보내지 않는 curl·검사 도구는 그대로 통과합니다.
 
 외부 사전 키는 저장소 루트 `.env`(`KEY=값` 줄) 또는 환경변수로 넣습니다. 서버만 알고 브라우저에는 나가지 않습니다.
   STDICT_API_KEY(표준국어대사전) OPENDICT_API_KEY(우리말샘) KRDICT_API_KEY(한국어기초사전)
@@ -31,6 +35,7 @@ import re
 import socketserver
 import sys
 import threading
+import traceback
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -76,6 +81,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     trend_path = trend_store.TREND_PATH
     meta_path = trend_store.META_PATH
     timeout = 30  # 느리게 붙은 연결이 스레드를 오래 붙들지 않게
+    _responded = False  # 이 요청의 응답 머리를 이미 내보냈나 (예외 500 을 겹쳐 보내지 않으려고)
 
     def _json(self, status, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -84,6 +90,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+        self._responded = True
 
     def _host_name(self):
         """Host 머리에서 포트를 뺀 호스트 (없으면 빈 문자열)."""
@@ -98,9 +105,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if self._host_name() not in LOCAL_HOSTS | {bound, f"[{bound}]"}:
             return False
         origin = self.headers.get("Origin")
-        return origin is None or origin == f"http://{host_header}"
+        if origin is not None:
+            return origin == f"http://{host_header}"
+        # Origin 이 없는 GET 은 남의 페이지의 <img src="http://127.0.0.1:…/api/lookup…"> 로도 옵니다.
+        # 브라우저가 스스로 붙이는 Sec-Fetch-Site 로 교차 출처임을 알면 막습니다. curl·검사 도구는 이 머리가 없어 그대로 통과합니다.
+        return (self.headers.get("Sec-Fetch-Site") or "").strip().lower() != "cross-site"
 
     def _api(self, method):
+        """`/api/*` 한 요청. 처리 함수가 낸 예외는 응답 없이 끊지 않고 JSON 500 으로 답합니다.
+
+        클라이언트에는 짧은 까닭만(예외 종류 이름) 보내고, 경로·키·본문 같은 값은 서버 쪽 traceback 에만 남깁니다
+        (예: `data/trend.txt` 에 못 쓰면 RemoteDisconnected 대신 `{"ok": false, "error": "서버 오류: FileExistsError"}`).
+        이미 응답을 내보낸 뒤면 다시 보내지 않습니다.
+        """
+        self._responded = False
+        try:
+            return self._api_handle(method)
+        except Exception as exc:  # noqa: BLE001 - 어떤 예외도 연결을 끊지 않게
+            traceback.print_exc()
+            if not self._responded:
+                self._json(500, {"ok": False, "error": f"서버 오류: {type(exc).__name__}"})
+            return None
+
+    def _api_handle(self, method):
         if not self._same_origin_ok():
             return self._json(403, {"ok": False, "error": "허용되지 않은 출처입니다"})
         if method == "POST" and urlsplit(self.path).path == "/api/trend/pick":

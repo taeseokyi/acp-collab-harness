@@ -54,6 +54,18 @@ class FeedOpener:
         return Resp(item)
 
 
+class AnyOpener:
+    """어떤 URL 이든 같은 본문을 돌려줍니다(키가 붙은 사전 API 처럼 URL 이 매번 달라질 때)."""
+
+    def __init__(self, body):
+        self.body = body.encode("utf-8") if isinstance(body, str) else body
+        self.urls = []
+
+    def __call__(self, req, timeout=None):
+        self.urls.append(req.full_url)
+        return Resp(self.body)
+
+
 class Sleeper:
     def __init__(self):
         self.calls = []
@@ -309,6 +321,15 @@ class TestVerifyLookup(unittest.TestCase):
     def test_not_ok_is_not_found(self):
         tn.dict_server.lookup = lambda w, s, **kw: {"ok": False, "error": "키 없음"}
         self.assertEqual(tn.verify(["가나"], "stdict", sleep=Sleeper(), env={}), [])
+
+    def test_opener_is_passed_to_lookup_sources(self):
+        """R37-N6: 위키가 아닌 출처도 verify 가 넘겨받은 opener 를 써야 합니다(전역 monkeypatch 없이)."""
+        tn.dict_server._CACHE.clear()
+        o = AnyOpener(json.dumps({"channel": {"total": 1}}))
+        got = tn.verify(["가나", "다라"], "stdict", opener=o, sleep=Sleeper(), env={"STDICT_API_KEY": "K"})
+        self.assertEqual(got, ["가나", "다라"])
+        self.assertEqual(len(o.urls), 2)
+        self.assertIn("key=K", o.urls[0])
 
     def test_429_retry_then_stop(self):
         calls = []

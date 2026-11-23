@@ -579,6 +579,23 @@ def scenario_n8(checks, page, base):
               row_all_correct(page, 1, "지원"), str(row_states(page, 1)))
 
 
+def scenario_bad_server_answer(checks, page, base):
+    """서버 정답이 `사과`(자모 5칸)처럼 6칸이 아니어도 화면이 죽지 않고 목록 정답으로 돌아간다(R37-N2)."""
+    tiles = page.locator("#board .tile").count()
+    rows = page.locator("#board .row").count()
+    checks.ok("6칸 아닌 서버 정답: 보드가 6×6 으로 보임",
+              tiles == 36 and rows == 6 and page.locator("#board").is_visible(),
+              f"tiles {tiles}, rows {rows}")
+    checks.ok("6칸 아닌 서버 정답: 시작 실패 안내 토스트가 없음",
+              page.locator("#toasts .toast").count() == 0)
+    fallback = page.evaluate(
+        "async () => { const w = await import('./js/words.js'); const g = await import('./js/game.js');"
+        " return g.answerForDate(new Date(), w.ANSWERS, w.TREND); }"
+    )
+    checks.ok("6칸 아닌 서버 정답: 그날은 목록(정적) 정답으로 돌아감", won_with(page, fallback),
+              f"{fallback} -> {row_states(page, 0)}")
+
+
 def scenario_legacy_key(checks, page, base):
     checks.ok("남아 있던 localStorage jamo.trend 는 시작 때 지워짐", stored(page, "jamo.trend") is None,
               str(stored(page, "jamo.trend")))
@@ -615,6 +632,8 @@ def main():
                 run("창을 다시 열면", checks, scenario_reopen, browser, base,
                     get={"ok": True, "trend": {}, "last_run": "2026-11-15T11:00:00+09:00"})
                 run("고르는 중에 줄을 냄(R31-N8)", checks, scenario_n8, browser, base)
+                run("6칸 아닌 서버 정답(R37-N2)", checks, scenario_bad_server_answer, browser, base,
+                    get={"ok": True, "trend": {TODAY: "사과"}, "last_run": FIXED.isoformat()})
                 run("남은 jamo.trend 키", checks, scenario_legacy_key, browser, base,
                     init_script="localStorage.setItem('jamo.trend', JSON.stringify({'2026-11-20': '지원'}));")
             finally:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import importlib.util
 import json
 import multiprocessing
 import sys
@@ -56,6 +57,30 @@ class TestTrendStore(unittest.TestCase):
     def test_read_skips_comments_blank_and_broken_lines(self):
         self.write("# 머리\n\n2026-11-15 지원\n깨진 줄\n2026-13-40 가나다\n2026-11-16\n  2026-11-17   협력  \n")
         self.assertEqual(ts.read_trend(self.path), {"2026-11-15": "지원", "2026-11-17": "협력"})
+
+    def test_read_drops_answers_that_are_not_six_units(self):
+        # 2026-11-23 사과 = 자모 5칸, 2026-11-24 한국 = 6칸, 2026-11-25 abc 는 한글 아님
+        self.write("# 머리\n2026-11-22 강당\n2026-11-23 사과\n2026-11-24 한국\n2026-11-25 abc\n")
+        self.assertEqual(ts.read_trend(self.path),
+                         {"2026-11-22": "강당", "2026-11-24": "한국"})
+
+    def test_append_rejects_answers_that_are_not_six_units(self):
+        added = ts.append_picks([{"date": "2026-11-23", "word": "사과"},
+                                 {"date": "2026-11-24", "word": "한국"}], self.path)
+        self.assertEqual(added, [{"date": "2026-11-24", "word": "한국"}])
+        self.assertEqual(self.path.read_text(encoding="utf-8").splitlines(),
+                         [ts.HEADER.rstrip("\n"), "2026-11-24 한국"])
+
+    def test_units_match_build_words(self):
+        spec = importlib.util.spec_from_file_location("build_words", ROOT / "tools" / "build_words.py")
+        build_words = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(build_words)
+        words = ["지원", "사과", "가나다", "닭", "한국", "까닭", "뷁", "", "abc", "사 과"]
+        for word in words:
+            with self.subTest(word=word):
+                self.assertEqual(ts._units(word), build_words.units(word))
+                built = build_words.units(word)
+                self.assertEqual(ts._is_word(word), bool(built) and len(built) == build_words.WORD_UNITS)
 
     def test_append_creates_file_with_header(self):
         added = ts.append_picks([{"date": "2026-11-15", "word": "지원"}], self.path)

@@ -203,7 +203,7 @@ def _is_429(result) -> bool:
     return isinstance(result, dict) and result.get("ok") is False and "429" in str(result.get("error", ""))
 
 
-def _verify_lookup(words, source, sleep, env, *, until=None, clock=time.monotonic, state=None):
+def _verify_lookup(words, source, opener, sleep, env, *, until=None, clock=time.monotonic, state=None):
     found: set[str] = set()
     checked = list(words)[:40]
     asked = 0
@@ -214,13 +214,13 @@ def _verify_lookup(words, source, sleep, env, *, until=None, clock=time.monotoni
         if index:
             sleep(1)
         asked += 1
-        result = dict_server.lookup(word, source, env=env)
+        result = dict_server.lookup(word, source, env=env, opener=opener)
         if _is_429(result):
             sleep(10)
             if until is not None and clock() >= until:
                 _mark(state, checked=asked, stopped="deadline")
                 return [w for w in checked if w in found]
-            result = dict_server.lookup(word, source, env=env)
+            result = dict_server.lookup(word, source, env=env, opener=opener)
             if _is_429(result):
                 break
         if isinstance(result, dict) and result.get("ok") and result.get("found"):
@@ -238,7 +238,7 @@ def verify(words, source="wiktionary", *, opener=urlopen, sleep=time.sleep, env=
     """
     if source in ("wiktionary", "wikipedia"):
         return _verify_wiki(words, source, opener, sleep, limit, until=until, clock=clock, state=state)
-    return _verify_lookup(words, source, sleep, env, until=until, clock=clock, state=state)
+    return _verify_lookup(words, source, opener, sleep, env, until=until, clock=clock, state=state)
 
 
 def _read_words(path, column) -> set[str]:

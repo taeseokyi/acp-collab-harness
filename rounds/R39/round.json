@@ -1,0 +1,36 @@
+{
+ "round": 39,
+ "at": "2026-11-23T17:42:03",
+ "brief": "manager-round-standard.md",
+ "requests": [
+  "Q-261123-6bf6"
+ ],
+ "projects": [
+  "VoxLog",
+  "자모맞히기"
+ ],
+ "session": "M-R39-174203",
+ "policy": "cost",
+ "metrics": {
+  "workers": 8,
+  "peak_parallel": 1,
+  "minutes": {
+   "free": 53.92,
+   "paid": 11.0
+  },
+  "by_slot": {
+   "S1": {
+    "runs": 1,
+    "minutes": 11.0,
+    "tier": "paid"
+   },
+   "S6": {
+    "runs": 7,
+    "minutes": 53.92,
+    "tier": "free"
+   }
+  },
+  "moves": 0,
+  "manager_slots": []
+ }
+}

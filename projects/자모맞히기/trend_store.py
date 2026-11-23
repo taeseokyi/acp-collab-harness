@@ -27,6 +27,19 @@ HEADER = "# 트렌드 정답 - tools/pick_answers.py 와 앱 서버가 날짜와
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _LOCK = threading.Lock()
 
+# `tools/build_words.py` 와 같은 자모 분해 - 서버가 6칸이 아닌 정답을 내보내지 않도록(R37-N2).
+WORD_UNITS = 6
+_CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
+_JUNG = (
+    "ㅏ", "ㅐ", "ㅑ", "ㅒ", "ㅓ", "ㅔ", "ㅕ", "ㅖ", "ㅗ", "ㅗㅏ", "ㅗㅐ", "ㅗㅣ",
+    "ㅛ", "ㅜ", "ㅜㅓ", "ㅜㅔ", "ㅜㅣ", "ㅠ", "ㅡ", "ㅡㅣ", "ㅣ",
+)
+_JONG = (
+    "", "ㄱ", "ㄲ", "ㄱㅅ", "ㄴ", "ㄴㅈ", "ㄴㅎ", "ㄷ", "ㄹ", "ㄹㄱ", "ㄹㅁ", "ㄹㅂ",
+    "ㄹㅅ", "ㄹㅌ", "ㄹㅍ", "ㄹㅎ", "ㅁ", "ㅂ", "ㅂㅅ", "ㅅ", "ㅆ", "ㅇ", "ㅈ", "ㅊ",
+    "ㅋ", "ㅌ", "ㅍ", "ㅎ",
+)
+
 
 def _is_date(text) -> bool:
     if not (isinstance(text, str) and _DATE_RE.fullmatch(text)):
@@ -38,8 +51,28 @@ def _is_date(text) -> bool:
     return True
 
 
+def _units(word) -> str | None:
+    """완성형 한글 음절만으로 된 낱말 → 자모 칸 문자열. 아니면 None.
+
+    `tools/build_words.py` 의 `units` 와 같은 판정입니다(검사가 둘을 대조합니다).
+    """
+    if not isinstance(word, str) or not word:
+        return None
+    out: list[str] = []
+    for ch in word:
+        code = ord(ch) - 0xAC00
+        if not 0 <= code < 11172:
+            return None
+        out.append(_CHO[code // 588] + _JUNG[(code % 588) // 28] + _JONG[code % 28])
+    return "".join(out)
+
+
 def _is_word(text) -> bool:
-    return isinstance(text, str) and bool(text) and not any(c.isspace() for c in text)
+    """정답으로 내보내도 되는 낱말: 공백 없이 자모 6칸인 완성형 한글."""
+    if not (isinstance(text, str) and text) or any(c.isspace() for c in text):
+        return False
+    units = _units(text)
+    return units is not None and len(units) == WORD_UNITS
 
 
 @contextlib.contextmanager
@@ -73,7 +106,8 @@ def _read_unlocked(path: Path) -> dict[str, str]:
         return found
     for line in text.splitlines():
         parts = line.split()
-        if len(parts) >= 2 and not parts[0].startswith("#") and _is_date(parts[0]):
+        if (len(parts) >= 2 and not parts[0].startswith("#") and _is_date(parts[0])
+                and _is_word(parts[1])):
             found.setdefault(parts[0], parts[1])
     return found
 

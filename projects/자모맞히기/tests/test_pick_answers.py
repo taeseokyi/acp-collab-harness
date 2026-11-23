@@ -74,6 +74,28 @@ class TestPickAnswers(unittest.TestCase):
         self.assertEqual(self.trend.read_text(encoding="utf-8").splitlines(),
                          ["# 머리", "2026-11-16 가나다", "2026-11-15 지원", "2026-11-17 협력"])
 
+    def test_already_there_dates_print_with_their_stored_word(self):
+        """R37-N4: 이미 있어 건너뛴 날짜는 '이미 있음', 덧붙인 줄만 '저장'."""
+        self.trend.write_text("# 머리\n2026-11-15 협력\n", encoding="utf-8")
+        rc, out, _ = run(["--days", "2"], pick=good, trend_path=self.trend, rebuild=lambda: 0)
+        self.assertEqual(rc, 0)
+        self.assertIn("2026-11-15 협력  이미 있음", out)
+        self.assertIn("2026-11-17 협력  저장", out)
+        self.assertIn("1줄 덧붙였습니다", out)
+        self.assertIn("이미 있던 날짜 1개는 건너뛰었습니다", out)
+        # 저장 안 된 날짜(2026-11-15 의 뉴스 낱말 지원)를 저장한 것처럼 찍지 않음
+        self.assertNotIn("2026-11-15 지원", out)
+
+    def test_zero_added_says_nothing_new_saved(self):
+        self.trend.write_text("# 머리\n2026-11-15 협력\n2026-11-17 협력\n", encoding="utf-8")
+        rc, out, _ = run(["--days", "2"], pick=good, trend_path=self.trend, rebuild=lambda: 0)
+        self.assertEqual(rc, 0)
+        self.assertIn("새로 저장한 정답 없음", out)
+        self.assertIn("이미 있던 날짜 2개는 건너뛰었습니다", out)
+        self.assertNotIn("덧붙였습니다", out)
+        self.assertNotIn("  저장\n", out)
+        self.assertEqual(self.trend.read_text(encoding="utf-8"), "# 머리\n2026-11-15 협력\n2026-11-17 협력\n")
+
     def test_args_passed_to_pick(self):
         run(["--days", "3", "--source", "wikipedia", "--start", "2026-12-01", "--dry-run"],
             pick=good, trend_path=self.trend)

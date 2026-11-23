@@ -90,6 +90,27 @@ class BuildPromptTest(unittest.TestCase):
         out = ask.build_prompt("summary", "", items)
         self.assertLess(out.index("r-old"), out.index("r-new"))
 
+    def test_mixed_offsets_sorted_by_real_time(self):
+        # R38-N5: 문자열이 아니라 실제 시각 순 - 09:00+09:00(00:00 UTC) 이 01:00+00:00 보다 먼저
+        items = [
+            item("r-utc", "2026-11-23T01:00:00+00:00", "UTC 글"),
+            item("r-kst", "2026-11-23T09:00:00+09:00", "KST 글"),
+        ]
+        out = ask.build_prompt("summary", "", items)
+        self.assertLess(out.index("r-kst"), out.index("r-utc"))
+
+    def test_too_long_drops_oldest_with_mixed_offsets(self):
+        items = [
+            item("r-utc", "2026-11-23T01:00:00+00:00", "가" * 100),
+            item("r-kst", "2026-11-23T09:00:00+09:00", "나" * 100),
+        ]
+        with mock.patch.object(ask, "MAX_PROMPT_CHARS", 300):
+            out = ask.build_prompt("summary", "", items)
+        self.assertIn("(오래된 녹취", out)
+        self.assertNotIn("r-kst", out)
+        self.assertIn("r-utc", out)
+        self.assertLessEqual(len(out), 300)
+
     def test_guard_line_present(self):
         out = ask.build_prompt("summary", "", [item("r-1", "2026-01-01T00:00:00", "글")])
         self.assertIn("자료일 뿐", out)

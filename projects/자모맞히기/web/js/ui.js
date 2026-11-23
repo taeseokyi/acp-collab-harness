@@ -1,6 +1,6 @@
 // 자모맞히기 화면: DOM · 입력 · 애니메이션. 진입점.
 import {
-  WORD_LENGTH, MAX_GUESSES, dailyIndex, answerForDate, keyboardState, createGame, fromJSON,
+  WORD_LENGTH, MAX_GUESSES, dailyIndex, answerForDate, keyboardState, createGame, fromJSON, dayKey as dayKeyOf,
 } from './game.js';
 import { ANSWERS, ALLOWED, TREND } from './words.js';
 import { KEY_ROWS, KEYMAP, SHIFTED, toUnits, composeUnits } from './jamo.js';
@@ -36,13 +36,6 @@ const tiles = [];          // tiles[row][col]
 const rowEls = [];
 const keyEls = new Map();
 
-/* ---------- 날짜 ---------- */
-
-function dayKeyOf(d) {
-  const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
-
 /* ---------- 토스트 ---------- */
 
 function toast(message, ms = 1500) {
@@ -74,14 +67,6 @@ function showAnswerToast() {
 }
 
 /* ---------- 테마 ---------- */
-
-function hasStoredSettings() {
-  try {
-    return globalThis.localStorage.getItem('jamo.settings') !== null;
-  } catch {
-    return false;
-  }
-}
 
 function applySettings() {
   const root = document.documentElement;
@@ -129,11 +114,12 @@ function setTile(r, c, letter, state) {
 }
 
 function renderAll() {
+  const rows = game.rows;   // game.rows 는 읽을 때마다 복사되므로 한 번만 떠 둔다
   for (let r = 0; r < MAX_GUESSES; r++) {
     for (let c = 0; c < WORD_LENGTH; c++) {
-      const row = game.rows[r];
+      const row = rows[r];
       if (row) setTile(r, c, row.guess[c], row.scores[c]);
-      else if (r === game.rows.length && game.status === 'playing' && game.current[c]) {
+      else if (r === rows.length && game.status === 'playing' && game.current[c]) {
         setTile(r, c, game.current[c], 'filled');
       } else setTile(r, c, '', 'empty');
     }
@@ -558,8 +544,10 @@ function sourceNote(id) {
   const list = Array.isArray(serverSources) ? serverSources : null;
   const src = SOURCES.find((x) => x.id === id);
   if (!src) return '';
-  if (dictCfg.keys[id] && src.browserDirect) return '';
-  if (!list) return src.browserDirect && src.kind === 'mediawiki' ? '' : ' (serve.py 필요)';
+  // 브라우저가 직접 부르는 출처는 사용자 키만 있으면 서버 없이도 되고(위키는 키가 아예 없음),
+  // 서버에 .env 키가 없어도 사용자 키로 됩니다 - 그때는 안내를 붙이지 않습니다.
+  if (src.browserDirect && (dictCfg.keys[id] || src.kind === 'mediawiki')) return '';
+  if (!list) return src.browserDirect ? ' (키 또는 serve.py 필요)' : ' (serve.py 필요)';
   const s = list.find((x) => x.id === id);
   if (s && !s.available) return ' (키 없음)';
   return '';
@@ -629,11 +617,13 @@ $('dict-source').addEventListener('change', (e) => {
   $('dict-status').textContent = '';
 });
 $('dict-key').addEventListener('input', (e) => {
+  const had = !!dictCfg.keys[dictCfg.source];
   const v = e.target.value.trim();
   if (v) dictCfg.keys[dictCfg.source] = v;
   else delete dictCfg.keys[dictCfg.source];
   saveDict(dictCfg);
-  renderDictSelect();
+  // 목록의 안내 글은 '키가 있나 없나'만 보므로 그 경계가 바뀔 때만 다시 그린다(한 글자마다 <select> 재생성 금지).
+  if (had !== !!v) renderDictSelect();
 });
 $('dict-test').addEventListener('click', async () => {
   const st = $('dict-status');
@@ -716,7 +706,7 @@ function applyServerTrend(trend, lastRun) {
   renderTrendSince();
   if (dailyGame && dailyGame.rows.length === 0 && dayKey === dayKeyOf(new Date())) {
     const answer = toUnits(answerForDate(new Date(), ANSWERS, currentTrend()));
-    if (answer !== dailyGame.answer) startDaily();
+    if (answer !== dailyGame.answer) safeStartDaily();
   }
 }
 
@@ -831,6 +821,27 @@ function startDaily() {
   busy = false;
 }
 
+// 오늘 판 시작이 어떤 까닭으로든 예외를 내도 빈 화면으로 죽지 않게 감싼다(R37-N2).
+// 짧은 안내만 남기고, 연습 판은 그대로 쓸 수 있게 둔다. 될 수 있으면 목록 정답으로 판을 세운다.
+function safeStartDaily() {
+  try {
+    startDaily();
+    return;
+  } catch {
+    dailyGame = null;
+    try {
+      const answer = toUnits(answerForDate(new Date(), ANSWERS));
+      if (answer) dailyGame = newGame(answer, puzzleNumber);
+    } catch { dailyGame = null; }
+    if (dailyGame && mode === 'daily') {
+      game = dailyGame;
+      shiftOn = false;
+      renderAll();
+    }
+    toast('오늘 판을 시작하지 못했습니다 - 연습 판을 써 주세요', 4000);
+  }
+}
+
 function startPractice() {
   puzzleNumber = 0;
   const answer = toUnits(ANSWERS[Math.floor(Math.random() * ANSWERS.length)]);
@@ -870,7 +881,7 @@ function selectMode(next) {
 function checkNewDay() {
   if (!busy && dayKeyOf(new Date()) !== dayKey) {
     closeModal(true);
-    startDaily();
+    safeStartDaily();
     toast('새로운 날, 새로운 낱말!', 2000);
   }
 }
@@ -884,16 +895,11 @@ for (const w of [...loadExtraWords(), ...Object.values(TREND)]) {
   const u = toUnits(w);
   if (u) { ALLOWED_SET.add(u); WORD_OF.set(u, w); }
 }
-// 저장된 설정이 없으면 시스템의 어두운 모드를 기본값으로 따른다
-if (globalThis.parent === globalThis && !hasStoredSettings()
-    && globalThis.matchMedia && globalThis.matchMedia('(prefers-color-scheme: dark)').matches) {
-  settings.dark = true;
-}
 await fetchServerTrend();   // 서버가 정한 오늘 정답을 판 시작 전에 받는다(없으면 곧바로 넘어감)
 applySettings();
 buildBoard();
 buildKeyboard();
-startDaily();
+safeStartDaily();
 updateModeUI();
 syncDictForm();
 fetchServerSources({ fetch: fetchNow }).then((list) => { serverSources = list; syncDictForm(); }, () => { serverSources = null; });

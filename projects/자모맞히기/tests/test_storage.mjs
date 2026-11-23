@@ -36,6 +36,7 @@ function fakeParent() {
 
 function sendToParentForTests() {
   const source = readFileSync(new URL("../web/js/storage.js", import.meta.url), "utf8")
+    .replace(/^import[^\n]*\n/gm, "")
     .replace(/^export\s+/gm, "")
     .replace("let parentMode = false;", "let parentMode = true;");
   return new Function(`${source}\nreturn sendToParent;`)();

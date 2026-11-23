@@ -1,17 +1,17 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-23T17:42:03 / REV 193
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-23T19:06:36 / REV 194
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | `a41f0c` | claude | opus | R38 대기 (이번 라운드는 S6 시험만) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S1 | `a41f0c` | claude | opus | R39 끝 적대적 검수 (S6 수정분) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
 | S2 | `d27e93` | codex | kisti/kistillm | R38 대기 (이번 라운드는 S6 시험만) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
 | S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R38 대기 (이번 라운드는 S6 시험만) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
 | S4 | `6cd650` | claude | sonnet | R38 대기 (이번 라운드는 S6 시험만) | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
 | S5 | `61dfcc` | claude | sonnet | R38 대기 (이번 라운드는 S6 시험만) |  |
-| S6 | `47764b` | freebuff | (하네스 기본) | R38 VoxLog 읽기 전용 코드 검수 (freebuff 이어 가기 시험) |  |
+| S6 | `47764b` | freebuff | (하네스 기본) | R39 대기 큐 7건 수정 (VoxLog 3 → 자모맞히기 4, freebuff 쓰기·이어 가기 시험) |  |
 
 ## 3. 작업 보드
 
@@ -293,18 +293,22 @@
 | T-369 | Q-261123-f11a | [자모맞히기] 코드 검수: 서버 쪽 파이썬 (S6 freebuff 시험) | S6 | DONE |  |
 | T-370 | Q-261123-f11a | [자모맞히기] 코드 검수: 화면 쪽 web (S6 freebuff 시험) | S6 | DONE |  |
 | T-371 | Q-261123-018e | [VoxLog] 코드 검수: 서버 쪽 파이썬 (S6 freebuff 이어 가기 시험) | S6 | DONE | rounds/R38/REVIEW-r38-s6.md |
+| T-372 | Q-261123-6bf6 | [VoxLog] R38-N1(상) HEAD 요청이 녹음을 지움 | S6 | DONE |  |
+| T-373 | Q-261123-6bf6 | [VoxLog] R38-N2·N3·N6 오류를 연결 끊김 대신 JSON 으로 | S6 | DONE |  |
+| T-374 | Q-261123-6bf6 | [VoxLog] R38-N4·N5 녹음 시각·날짜 검사, 프롬프트 시각 정렬 | S6 | DONE |  |
+| T-375 | Q-261123-6bf6 | [자모맞히기] R37-N1 words.js 를 trend.txt 에 맞춰 다시 만들기 | S6 | DONE |  |
+| T-376 | Q-261123-6bf6 | [자모맞히기] R37-N2 6칸 아닌 트렌드 정답 거르기 + 시작 실패 안내 | S6 | DONE |  |
+| T-377 | Q-261123-6bf6 | [자모맞히기] R37-N3·N4 serve.py 예외를 JSON 500 으로, 0줄 덧붙임 안내 | S6 | DONE |  |
+| T-378 | Q-261123-6bf6 | [자모맞히기] R37-N5~N9 Origin 없는 GET·verify opener·출처 안내·'네'·화면 복잡도 | S6 | DONE |  |
+| T-379 | Q-261123-6bf6 | [VoxLog·자모맞히기] R39 적대적 검수 (S6 수정 7건) | S1 | DONE |  |
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
-| 1 | [자모맞히기] R37-N1(중) web/js/words.js 가 data/trend.txt 보다 낡음 - test_words 빨강, 11-22~12-05 정적/서버 정답 갈림. build_words.py 로 다시 만들고 11-22~ 줄의 출처 확인. rounds/R37/REVIEW-r37-s6.md | S3 | R37 S6 검수 |
-| 2 | [자모맞히기] R37-N2(중) 6칸 아닌 트렌드 정답을 trend_store._is_word·trend.js WORD_RE 가 안 거름 → checkAnswer 예외, startDaily 가 try 밖이라 화면이 빈 채. 서버·화면 둘 다 6칸 검사 + 시작 실패 안내. rounds/R37/REVIEW-r37-s6.md | S3 | R37 S6 검수 |
-| 3 | [자모맞히기] R37-N3(하) serve.py _api 예외가 응답 없이 연결을 끊음(trend/pick 저장 실패, dict_server 캐시 축출 KeyError 추정) → JSON 500 으로. R37-N4(하) 덧붙인 줄 0개여도 last_run 갱신·CLI 가 저장 안 된 줄 출력 - 의도인지 정할 것. rounds/R37/REVIEW-r37-s6.md | S3 | R37 S6 검수 |
-| 4 | [자모맞히기] R37-N5·N6·N7·N8·N9(하) Origin 없는 GET 통과(키 한도 소모), trend_news.verify opener 무시, sourceNote 안내 틀림, parseLlmAnswer 가 '네' 못 읽음, 화면 복잡도 4곳. rounds/R37/REVIEW-r37-s6.md | S3 | R37 S6 검수 |
-| 5 | [VoxLog] R38-N1(상) HEAD /api/recordings/<id> 가 녹음을 지움 - serve.py _api 가 처리 함수를 원래 메서드로 고른 뒤(238행) HEAD→GET 을 바꿈(252행), 출처 검사도 POST·DELETE 만 봐서 토큰 없는 서버면 남의 사이트가 지울 수 있음. HEAD→GET 을 먼저 하고 HEAD 단위 검사 추가. rounds/R38/REVIEW-r38-s6.md | S3 |  |
-| 6 | [VoxLog] R38-N2(중) POST /api/ask 의 kind 가 리스트·딕트면 TypeError → JSON 400 대신 연결 끊김(serve.py:474-477, ask.py:152). R38-N3(하) VOXLOG_LLM_CMD 공백·따옴표 오류면 /api/health 가 끊김(serve.py:260). R38-N6(하·추정) retry 도중 삭제면 _rec_retry 가 끊김. 셋 다 오류를 JSON 으로. rounds/R38/REVIEW-r38-s6.md | S3 |  |
-| 7 | [VoxLog] R38-N4·N5(하) X-Recorded-At 형식 검사 없음(9999년 날짜 폴더, ?from=2026-13-40 도 200 - serve.py:329, store.py:161-168), build_prompt 가 recorded_at 을 문자열로 정렬해 시간대가 섞이면 순서·빼는 것이 틀림(ask.py:45, store._sort_key 를 쓸 것). rounds/R38/REVIEW-r38-s6.md | S3 |  |
+| 1 | [함대] R39-P1(중) freebuff 가 자동 전송한 지시를 '사용 정책 위반(Scripted or automated use - 같은 메시지 반복·자동 사용)' 으로 막았는데(T-377 18:22:54) 하네스가 이를 '멈춤 → 같은 대화에 이어 보내기' 로 다뤄 16초 뒤 자동으로 다시 보냄. 정책 거절은 BLOCKED 로 멈추고 사람에게 알리게(자동 재전송 금지). 자동 전송 옵션을 계속 쓸지는 태석님 결정. rounds/R39/REPORT.md (3) |  |  |
+| 2 | [VoxLog] R39-N1·N2(하) T-374 회귀: from/to 가 date.fromisoformat 만 봐서 20261123·2026-W48-1 이 400 대신 200(DATE_RE 와 둘 다 검사), X-Recorded-At 0001-01-01T00:00:00+14:00 이면 OverflowError 로 업로드가 끊김(OverflowError 도 잡아 서버 시각). R39-N4(하) INTERFACE.md health 행에 llm_error 빠짐. serve.py 몇 줄+검사. rounds/R39/REVIEW-r39.md |  |  |
+| 3 | [자모맞히기] R39-N3(하) tests/README.md 기대 검사 수가 낡음(107·132·81 → 109·144·85). 덧: trend.txt 2026-11-29~12-05 일곱 줄은 정답 고르기 경로를 거치지 않고 들어옴 - 출처를 태석님께 확인. rounds/R39/REVIEW-r39.md |  |  |
 
 ## 6. 파일 소유권
 
@@ -328,12 +332,15 @@
 | `CLAUDE.md` | 관리자 | 부트스트랩. 자동 주입되는 유일한 파일 |
 | `README.md` | 관리자 | 저장소 소개 |
 | `projects/**` | 관리자 | 프로젝트 결과물 projects/<이름>/ - 여러 라운드에 걸쳐 쌓임 (REV 142). 관리자가 하위 경로를 슬롯에 배정 |
+| `projects/VoxLog/docs/**` | S6 | R39 |
 | `projects/VoxLog/docs/INTERFACE.md` | S3 | R36 |
-| `projects/VoxLog/serve.py` | S4 | R36 |
+| `projects/VoxLog/serve.py` | S6 | R39 |
+| `projects/VoxLog/tests/**` | S6 | R39 |
 | `projects/VoxLog/tests/browser_voxlog.py` | S5 | R36 |
 | `projects/VoxLog/tests/test_serve.py` | S4 | R36 |
 | `projects/VoxLog/tests/test_store.py` | S4 | R34 |
 | `projects/VoxLog/tests/test_stt.py` | S5 | R34 |
+| `projects/VoxLog/voxlog/**` | S6 | R39 |
 | `projects/VoxLog/voxlog/__init__.py` | S3 | R33 |
 | `projects/VoxLog/voxlog/store.py` | S4 | R34 |
 | `projects/VoxLog/voxlog/stt.py` | S5 | R34 |
@@ -381,8 +388,9 @@
 | `projects/자모맞히기/data/words/사회.txt` | S4 | G-060 T-295 S3→S4 |
 | `projects/자모맞히기/data/words/자연마음.txt` | S4 | G-060 T-296 S3→S4 |
 | `projects/자모맞히기/data/words/풀이씨.txt` | S4 | R30 T-308 S3→S4 |
-| `projects/자모맞히기/dict_server.py` | S5 | R31 |
-| `projects/자모맞히기/serve.py` | S5 | R32 |
+| `projects/자모맞히기/dict_server.py` | S6 | R39 |
+| `projects/자모맞히기/serve.py` | S6 | R39 |
+| `projects/자모맞히기/tests/**` | S6 | R39 |
 | `projects/자모맞히기/tests/README.md` | S3 | R32 |
 | `projects/자모맞히기/tests/browser_dict.py` | S5 | R31 |
 | `projects/자모맞히기/tests/browser_game.py` | S5 | R31 |
@@ -399,13 +407,14 @@
 | `projects/자모맞히기/tests/test_trend.mjs` | S5 | R32 |
 | `projects/자모맞히기/tests/test_trend_news.py` | S3 | R32 |
 | `projects/자모맞히기/tests/test_trend_store.py` | S5 | R32 후속 |
-| `projects/자모맞히기/tools/**` | S2 | R24 T-284 |
+| `projects/자모맞히기/tools/**` | S6 | R39 |
 | `projects/자모맞히기/tools/pick_answers.py` | S5 | R32 |
-| `projects/자모맞히기/trend_news.py` | S3 | R32 |
-| `projects/자모맞히기/trend_store.py` | S5 | R32 후속 |
+| `projects/자모맞히기/trend_news.py` | S6 | R39 |
+| `projects/자모맞히기/trend_store.py` | S6 | R39 |
 | `projects/자모맞히기/web/css/**` | S3 | R24 T-280 |
 | `projects/자모맞히기/web/css/style.css` | S5 | R32 |
 | `projects/자모맞히기/web/index.html` | S5 | R32 |
+| `projects/자모맞히기/web/js/**` | S6 | R39 |
 | `projects/자모맞히기/web/js/app.js` | S2 | R23 |
 | `projects/자모맞히기/web/js/dict.js` | S4 | R31 |
 | `projects/자모맞히기/web/js/game.js` | S4 | R31 |
@@ -456,6 +465,7 @@
 | `rounds/R34/REVIEW-r34.md` | S1 | R34 |
 | `rounds/R35/REVIEW-r35.md` | S1 | R35 |
 | `rounds/R36/REVIEW-r36.md` | S1 | R36 |
+| `rounds/R39/REVIEW-r39.md` | S1 | R39 |
 | `skills/**` | 관리자 | **현재 비어 있음** (REV 101 에서 `acp-slot-lifecycle` 제거). 되살아나면 이 행이 그대로 적용된다 |
 | `tests/browser_monitor_app.py` | S3 | R10 T-131 |
 | `tests/browser_monitor_app_server.py` | S5 | R32 |
@@ -551,4 +561,4 @@
 | Q-261117-r36q | [VoxLog] 대기 큐 1건 처리: R35-N1·N2·N3 (하) | 관리자 M-R36 (대기 큐) | DONE | 2026-11-17T11:12:21 |
 | Q-261123-f11a | [자모맞히기] 시험 라운드: freebuff 슬롯(S6)으로 코드 검수 | 태석 (클로드 코드 전달) | DONE | 2026-11-23T14:11:00 |
 | Q-261123-018e | [VoxLog] 시험 라운드: freebuff 세션이 도중에 끝날 때 이어 가기(S6) | 태석 (클로드 코드 전달) | DONE | 2026-11-23T16:50:49 |
-| Q-261123-6bf6 | 대기 큐 7건 처리 - S6(freebuff)에 맡기는 시험 라운드 (세션 도중 끊김 보기) | 태석 (클로드 코드 전달) | NEW | 2026-11-23T17:42:01 |
+| Q-261123-6bf6 | 대기 큐 7건 처리 - S6(freebuff)에 맡기는 시험 라운드 (세션 도중 끊김 보기) | 태석 (클로드 코드 전달) | DONE | 2026-11-23T17:42:01 |
