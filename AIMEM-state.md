@@ -1,17 +1,17 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-23T15:50:11 / REV 192
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-23T17:42:03 / REV 193
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | `a41f0c` | claude | opus | R37 대기 (이번 라운드는 S6 시험만) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
-| S2 | `d27e93` | codex | kisti/kistillm | R37 대기 (이번 라운드는 S6 시험만) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
-| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R37 대기 (이번 라운드는 S6 시험만) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
-| S4 | `6cd650` | claude | sonnet | R37 대기 (이번 라운드는 S6 시험만) | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
-| S5 | `61dfcc` | claude | sonnet | R37 대기 (이번 라운드는 S6 시험만) |  |
-| S6 | `47764b` | freebuff | (하네스 기본) | R37 자모맞히기 읽기 전용 코드 검수 (freebuff 시험) |  |
+| S1 | `a41f0c` | claude | opus | R38 대기 (이번 라운드는 S6 시험만) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S2 | `d27e93` | codex | kisti/kistillm | R38 대기 (이번 라운드는 S6 시험만) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
+| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R38 대기 (이번 라운드는 S6 시험만) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
+| S4 | `6cd650` | claude | sonnet | R38 대기 (이번 라운드는 S6 시험만) | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
+| S5 | `61dfcc` | claude | sonnet | R38 대기 (이번 라운드는 S6 시험만) |  |
+| S6 | `47764b` | freebuff | (하네스 기본) | R38 VoxLog 읽기 전용 코드 검수 (freebuff 이어 가기 시험) |  |
 
 ## 3. 작업 보드
 
@@ -292,6 +292,7 @@
 | T-368 | Q-261117-r36q | [VoxLog] R36 적대적 검수 | S1 | DONE | rounds/R36/REVIEW-r36.md |
 | T-369 | Q-261123-f11a | [자모맞히기] 코드 검수: 서버 쪽 파이썬 (S6 freebuff 시험) | S6 | DONE |  |
 | T-370 | Q-261123-f11a | [자모맞히기] 코드 검수: 화면 쪽 web (S6 freebuff 시험) | S6 | DONE |  |
+| T-371 | Q-261123-018e | [VoxLog] 코드 검수: 서버 쪽 파이썬 (S6 freebuff 이어 가기 시험) | S6 | DONE | rounds/R38/REVIEW-r38-s6.md |
 
 ## 4.5 대기 큐
 
@@ -301,7 +302,9 @@
 | 2 | [자모맞히기] R37-N2(중) 6칸 아닌 트렌드 정답을 trend_store._is_word·trend.js WORD_RE 가 안 거름 → checkAnswer 예외, startDaily 가 try 밖이라 화면이 빈 채. 서버·화면 둘 다 6칸 검사 + 시작 실패 안내. rounds/R37/REVIEW-r37-s6.md | S3 | R37 S6 검수 |
 | 3 | [자모맞히기] R37-N3(하) serve.py _api 예외가 응답 없이 연결을 끊음(trend/pick 저장 실패, dict_server 캐시 축출 KeyError 추정) → JSON 500 으로. R37-N4(하) 덧붙인 줄 0개여도 last_run 갱신·CLI 가 저장 안 된 줄 출력 - 의도인지 정할 것. rounds/R37/REVIEW-r37-s6.md | S3 | R37 S6 검수 |
 | 4 | [자모맞히기] R37-N5·N6·N7·N8·N9(하) Origin 없는 GET 통과(키 한도 소모), trend_news.verify opener 무시, sourceNote 안내 틀림, parseLlmAnswer 가 '네' 못 읽음, 화면 복잡도 4곳. rounds/R37/REVIEW-r37-s6.md | S3 | R37 S6 검수 |
-| 5 | [함대] R37-N10(중) freebuff 하네스가 글 없이 끝난 턴을 빈 보고 rc 0 으로 내고 엔진이 write 없는 노드를 done 으로 받음(T-370 시도 2, report.md 0바이트). freebuff.py _work 와 fleet_graph 의 done 판정. rounds/R37/REVIEW-r37-s6.md | S3 | R37 S6 시험 |
+| 5 | [VoxLog] R38-N1(상) HEAD /api/recordings/<id> 가 녹음을 지움 - serve.py _api 가 처리 함수를 원래 메서드로 고른 뒤(238행) HEAD→GET 을 바꿈(252행), 출처 검사도 POST·DELETE 만 봐서 토큰 없는 서버면 남의 사이트가 지울 수 있음. HEAD→GET 을 먼저 하고 HEAD 단위 검사 추가. rounds/R38/REVIEW-r38-s6.md | S3 |  |
+| 6 | [VoxLog] R38-N2(중) POST /api/ask 의 kind 가 리스트·딕트면 TypeError → JSON 400 대신 연결 끊김(serve.py:474-477, ask.py:152). R38-N3(하) VOXLOG_LLM_CMD 공백·따옴표 오류면 /api/health 가 끊김(serve.py:260). R38-N6(하·추정) retry 도중 삭제면 _rec_retry 가 끊김. 셋 다 오류를 JSON 으로. rounds/R38/REVIEW-r38-s6.md | S3 |  |
+| 7 | [VoxLog] R38-N4·N5(하) X-Recorded-At 형식 검사 없음(9999년 날짜 폴더, ?from=2026-13-40 도 200 - serve.py:329, store.py:161-168), build_prompt 가 recorded_at 을 문자열로 정렬해 시간대가 섞이면 순서·빼는 것이 틀림(ask.py:45, store._sort_key 를 쓸 것). rounds/R38/REVIEW-r38-s6.md | S3 |  |
 
 ## 6. 파일 소유권
 
@@ -547,3 +550,5 @@
 | Q-261117-r35q | [VoxLog] 대기 큐 1건 처리: R34-N4·N6 (하) + OSError 응답 | 관리자 M-R35 (대기 큐) | DONE | 2026-11-17T08:28:01 |
 | Q-261117-r36q | [VoxLog] 대기 큐 1건 처리: R35-N1·N2·N3 (하) | 관리자 M-R36 (대기 큐) | DONE | 2026-11-17T11:12:21 |
 | Q-261123-f11a | [자모맞히기] 시험 라운드: freebuff 슬롯(S6)으로 코드 검수 | 태석 (클로드 코드 전달) | DONE | 2026-11-23T14:11:00 |
+| Q-261123-018e | [VoxLog] 시험 라운드: freebuff 세션이 도중에 끝날 때 이어 가기(S6) | 태석 (클로드 코드 전달) | DONE | 2026-11-23T16:50:49 |
+| Q-261123-6bf6 | 대기 큐 7건 처리 - S6(freebuff)에 맡기는 시험 라운드 (세션 도중 끊김 보기) | 태석 (클로드 코드 전달) | NEW | 2026-11-23T17:42:01 |
