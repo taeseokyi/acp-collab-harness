@@ -139,6 +139,8 @@ class Harness(Protocol):
 1. **띄우기** — `subprocess.Popen(…, start_new_session=True)` 로 새 프로세스 그룹을 만든다. stdout 은 `.aimem/sessions/<id>/events.jsonl`, stderr 는 `stderr.log` 로 보낸다. `meta.json` 에 pid·pgid·명령·시작 시각을 적는다
 2. **지켜보기** — 프로세스 종료는 `os.waitpid`(자식일 때)나 pidfd 로 즉시 안다. 사건 파일은 이어 읽어 `last_event_at` 을 갱신한다
 3. **시간 제한 두 가지** — `timeout`(전체 벽시계)과 `idle_timeout`(마지막 사건 뒤 침묵). 침묵이 길면 공급자가 멈춘 것이다(4.2)
+   - **2026-11-23 바뀜:** 작업자의 벽시계 한도를 없앴다(R37 에서 보고를 쓰던 작업자가 30분에 잘렸다). 사건이 오거나 CPU 를 쓰는 동안은
+     상한 없이 기다리고, 멈췄을 때만(침묵) 끊는다. 노드의 `timeout_sec` 는 더 읽지 않는다. 벽시계는 관리자 세션에만 남았다
 4. **끝내기** — 그룹 전체에 SIGTERM, 5초 뒤 SIGKILL(`os.killpg`). 지금 `_kill_run` 이 하는 일을 감독기 한 곳으로 모은다
 5. **거두기** — 종료코드, `final_report`, `limit_signal`, 쓴 파일 목록을 DB 에 적는다
 6. **고아 청소** — 감독기가 뜰 때와 `stop`·`prepare` 때, `sessions` 표에 살아 있다고 적힌 pgid 와 실제 프로세스를 맞춰 본다. 표에는 없는데 `AIFLEET_SESSION` 환경변수를 가진 프로세스가 있으면 끝낸다(모든 세션에 이 변수를 넣어 띄운다)

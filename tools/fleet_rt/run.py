@@ -7,7 +7,8 @@
 2. 하네스를 **같은 프로세스 그룹**의 자식으로 띄운다. argv 는 meta.json 에 적힌 것 그대로 - spawn 이
    검사한 것이 도는 것이다. 어댑터는 `harness_effective` 로 다시 찾아 env_set 값·사건 해석·보고에만 쓴다
 3. stdout 을 한 줄씩 `<받은 시각>\\t<원문>` 으로 events.jsonl 에 (줄마다 flush, 한 줄 최대 1MB)
-4. 벽시계(timeout)·침묵(idle_timeout)을 1초 안 간격으로 본다. 넘으면 하네스와 그룹의 나머지를 끝낸다
+4. 침묵(idle_timeout - 사건도, CPU 사용도, 읽기도 없음)을 1초 안 간격으로 본다. 넘으면 하네스와 그룹의 나머지를 끝낸다.
+   벽시계(timeout)는 관리자 세션에만 있다 - 작업자는 일하는 동안 끝까지 기다린다
 5. SIGTERM/SIGINT/SIGHUP 를 받으면 하네스를 끝내고 killed 로 마감한다 (까닭은 cancel.json)
 6. 하네스가 끝나면 그룹에 남은 손자도 끝낸다. 그룹을 빠져나간(setsid)
    손자도 이 세션 환경 표식으로 찾아 pid 하나씩 끝낸다 → report.md → end.json → DB 색인. 그리고 0 으로 나간다.
@@ -28,7 +29,8 @@ import threading
 import time
 
 from . import harness, sessions
-from .base import ENV_ROLE, ENV_ROOT, ENV_SESSION, TERM_GRACE_SEC, SessionSpec, read_event_lines
+from .base import (CPU_ACTIVE, ENV_ROLE, ENV_ROOT, ENV_SESSION, TERM_GRACE_SEC, SessionSpec, cpu_seconds,
+                   read_event_lines)
 from .env import load_env, session_key_name
 
 #: spawn 이 meta.json 에 pid 를 채우기를 기다리는 시간.
@@ -37,7 +39,8 @@ META_WAIT_SEC = 10.0
 DRAIN_SEC = 1.0
 LINE_CAP = 1 << 20
 TICK = 0.1
-#: 침묵 판정에서 사건 말고도 살아 있음으로 치는 것: 세션 프로세스가 데이터를 읽고 있는가(`/proc/<pid>/io` rchar) -
+#: 침묵 판정에서 사건 말고도 살아 있음으로 치는 것 둘. (1) 세션 프로세스들이 CPU 를 쓰고 있는가(`base.CPU_ACTIVE`) -
+#: 긴 검사를 돌리는 작업자다. 사건과 똑같이 치고 상한이 없다. (2) 데이터를 읽고 있는가(`/proc/<pid>/io` rchar) -
 #: 긴 생성 중인 하네스는 사건 없이 토큰만 받는다. 연결 유지 신호(수십 바이트)는 문턱보다 훨씬 작다.
 IO_CHECK_SEC = 10.0
 IO_PROGRESS_BYTES = 4096
@@ -196,8 +199,8 @@ class Supervisor:
             if ev is not None:
                 yield ev
 
-    def _group_rchar(self):
-        """이 세션 프로세스들(나 말고 - 그룹 + 그룹을 벗어난 표식 단 백그라운드 명령)이 읽은 바이트 합. 못 읽으면 0."""
+    def _group_use(self):
+        """이 세션 프로세스들(나 말고 - 그룹 + 그룹을 벗어난 표식 단 백그라운드 명령)이 `(읽은 바이트 합, 쓴 CPU 초)`. 못 읽으면 0."""
         me, total = os.getpid(), 0
         pids = set()
         try:
@@ -217,7 +220,7 @@ class Supervisor:
                         break
             except (OSError, ValueError):
                 continue
-        return total
+        return total, cpu_seconds(pids)
 
     def run(self):
         for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
@@ -279,7 +282,7 @@ class Supervisor:
             idle = m.get("idle_timeout")
             idle = float(idle) if idle else None
             verdict = None
-            io_at, io_last = time.monotonic(), self._group_rchar()
+            io_at, (io_last, cpu_last) = time.monotonic(), self._group_use()
             while True:
                 if self.stop_sig is not None:
                     verdict = {"state": "killed", "fail_kind": None,
@@ -293,11 +296,12 @@ class Supervisor:
                     verdict = {"state": "timeout", "fail_kind": "timeout", "why": f"벽시계 {timeout:g}초 넘김"}
                     break
                 if idle and now - io_at >= min(IO_CHECK_SEC, idle / 3):   # 침묵 한도 안에 세 번은 본다
-                    io_at = now
-                    rchar = self._group_rchar()
-                    if rchar - io_last >= IO_PROGRESS_BYTES:
+                    rchar, cpu = self._group_use()
+                    if cpu - cpu_last >= CPU_ACTIVE * (now - io_at):
+                        self.last_activity = self.last_event = now       # CPU 를 쓰고 있다 - 사건처럼 상한 없이 기다린다
+                    elif rchar - io_last >= IO_PROGRESS_BYTES:
                         self.last_activity = now
-                    io_last = rchar
+                    io_at, io_last, cpu_last = now, rchar, cpu
                 if idle and now - self.last_activity > idle:
                     verdict = {"state": "stalled", "fail_kind": "infra", "why": f"침묵 {idle:g}초 넘김 (사건도 읽기도 없음)"}
                     break

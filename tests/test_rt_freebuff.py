@@ -4,6 +4,8 @@ import _fleet_env  # noqa: F401
 진짜 tmux·freebuff 는 쓰지 않는다: PATH 앞에 가짜 `tmux` (받은 인자를 적고, `capture-pane` 에는 파일의 화면을 준다)를
 두고, 대화 파일은 검사가 써 준다.
 """
+import contextlib
+import io
 import json
 import os
 import pathlib
@@ -11,6 +13,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -83,14 +86,13 @@ class Base(unittest.TestCase):
             return []
         return [r[3:] for r in rows if r and r[0] == "send-keys"]
 
-    def session(self, sid="T-900-S6-a1-000000", work_timeout=30):
+    def session(self, sid="T-900-S6-a1-000000"):
         d = self.root / ".aimem" / "sessions" / sid
         d.mkdir(parents=True)
         (d / "brief.md").write_text("SLOT=S6 T-900\n확인토큰: abc123\n\n비밀 본문 rm -rf\n", encoding="utf-8")
         (d / "meta.json").write_text(json.dumps({
             "id": sid, "cwd": str(self.root), "harness": "freebuff", "brief_path": str(d / "brief.md"),
-            "ident": "[AIMEM 작업자 지시] 슬롯 S6 · 확인토큰 abc123 · AIMEM REV 1.",
-            "extra": {"work_timeout": work_timeout}}), encoding="utf-8")
+            "ident": "[AIMEM 작업자 지시] 슬롯 S6 · 확인토큰 abc123 · AIMEM REV 1."}), encoding="utf-8")
         return d
 
     def line(self, d, text="이 파일 읽고 해 줘:"):
@@ -111,15 +113,47 @@ class Base(unittest.TestCase):
             time.sleep(0.05)
         self.fail("기다리던 일이 일어나지 않음")
 
-    def answer(self, d, blocks, complete=True):
+    def sent_line(self, d, nth=1):
+        """팬에 들어간 지시 줄 (nth 번째)."""
+        return self.wait_for(lambda: (lambda ls: ls[nth - 1] if len(ls) >= nth else None)(
+            [k[2] for k in self.sent_keys() if len(k) == 3 and d.name in k[2]]))
+
+    def chat(self, msgs):
         """freebuff 가 대화를 디스크에 적은 것처럼."""
-        line = self.wait_for(lambda: next((k[2] for k in self.sent_keys() if len(k) == 3 and d.name in k[2]), None))
         c = self.chats / self.root.name / "chats" / "2026-11-20T00-00-00.000Z"
         c.mkdir(parents=True, exist_ok=True)
-        (c / "chat-messages.json").write_text(json.dumps([
-            {"variant": "user", "content": line},
-            {"variant": "ai", "content": "", "blocks": blocks, "isComplete": complete}]), encoding="utf-8")
+        (c / "chat-messages.json").write_text(json.dumps(msgs), encoding="utf-8")
+
+    def answer(self, d, blocks, complete=True, **more):
+        """지시 한 줄과 그 답 하나. 정상으로 끝난 답에는 freebuff 가 `completionTime` 을 적는다."""
+        line = self.sent_line(d)
+        ai = dict({"variant": "ai", "content": "", "blocks": blocks, "isComplete": complete},
+                  **({"completionTime": "1s"} if complete and not more else {}), **more)
+        self.chat([{"variant": "user", "content": line}, ai])
         return line
+
+    def inproc(self, d, script, quiet=1.0, cpu=None):
+        """운전기를 이 프로세스에서 돌린다(멈춤 한도를 줄이려고). `script(d)` 는 옆 스레드에서 돈다. `(rc, 출력)`."""
+        old = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+        out = io.StringIO()
+        t = threading.Thread(target=script, args=(d,), daemon=True)
+        try:
+            with mock.patch.object(fb, "QUIET_SEC", quiet), mock.patch.object(fb, "CPU_CHECK_SEC", 0.2), \
+                    mock.patch.object(fb, "POLL_SEC", 0.1), mock.patch.object(fb, "SETTLE_SEC", 0.2), \
+                    mock.patch.object(fb.Driver, "_pane_cpu", cpu or (lambda self: 0.0)), \
+                    contextlib.redirect_stdout(out):
+                drv = fb.Driver(d)
+                t.start()
+                rc = drv.run()
+        finally:
+            for sig, h in old.items():
+                signal.signal(sig, h)
+        t.join(5)
+        return rc, out.getvalue()
+
+    def approve_when_waiting(self, d):
+        self.wait_for(lambda: (fb.read_gate(d) or {}).get("phase") == "await")
+        fb.approve(d, "웹", self.line(d))
 
 
 class Driver(Base):
@@ -181,24 +215,101 @@ class Driver(Base):
         (d / "events.jsonl").write_text("".join(f"t\t{ln}\n" for ln in out.splitlines()), encoding="utf-8")
         self.assertTrue(fb.ADAPTER.final_report(d).startswith("BLOCKED"))
 
-    def test_work_timeout_after_send(self):
-        d = self.session(work_timeout=1)
-        p = self.drive(d)
-        self.wait_for(lambda: (fb.read_gate(d) or {}).get("phase") == "await")
-        fb.approve(d, "웹", self.line(d))
-        out, _ = p.communicate(timeout=30)
-        self.assertEqual(p.returncode, fb.RC_TIMEOUT, out)
+    def test_quiet_after_send_is_cut_and_keeps_what_was_written(self):
+        # 시간 한도는 없다 - 답이 자라지도, freebuff 가 CPU 를 쓰지도 않을 때만 멈춘 것으로 보고 끊는다. 쓰던 글은 보고로 넘긴다.
+        def script(d):
+            self.approve_when_waiting(d)
+            self.answer(d, [{"type": "text", "textType": "text", "content": "쓰는 중"}], complete=False)
+        d = self.session()
+        rc, out = self.inproc(d, script)
+        self.assertEqual(rc, fb.RC_TIMEOUT, out)
         self.assertEqual(self.sent_keys()[-1], ["Escape"])
         self.assertEqual(fb.read_gate(d)["phase"], "timeout")
+        self.assertIn("쓰는 중", json.loads(out.splitlines()[-1])["result"])
 
-    def test_unfinished_answer_is_not_collected(self):
-        d = self.session(work_timeout=6)
+    def test_cpu_use_or_a_growing_answer_waits_without_a_cap(self):
+        # 멈춤 한도(1초)를 몇 배 넘겨도, freebuff 가 CPU 를 쓰고 있으면 끊지 않는다
+        t0 = time.monotonic()
+
+        def script(d):
+            self.approve_when_waiting(d)
+            time.sleep(4)
+            self.answer(d, [{"type": "text", "textType": "text", "content": "DONE\n오래 걸림"}])
+        d = self.session()
+        rc, out = self.inproc(d, script, cpu=lambda self: time.monotonic())      # 늘 코어 하나를 다 쓰는 중
+        self.assertEqual(rc, 0, out)
+        self.assertGreater(time.monotonic() - t0, 4)
+        self.assertEqual(json.loads(out.splitlines()[-1])["result"], "DONE\n오래 걸림")
+
+    def test_interrupted_answer_is_not_a_success(self):
+        # freebuff 는 끊긴 답에도 isComplete 를 붙인다 - 정상으로 끝난 답에만 completionTime 이 있다 (R37 실물)
+        def script(d):
+            self.approve_when_waiting(d)
+            self.answer(d, [{"type": "text", "textType": "text", "content": "보고 쓰던 중\n\n[response interrupted]"}],
+                        completionTime=None)
+        d = self.session()
+        rc, out = self.inproc(d, script, quiet=30)
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(fb.read_gate(d)["phase"], "failed")
+        end = json.loads(out.splitlines()[-1])
+        self.assertEqual(end["ok"], False)
+        self.assertIn("보고 쓰던 중", end["result"])
+
+    def test_ended_session_continues_in_the_same_chat(self):
+        # 세션이 끝나 멈춘 답은 성공이 아니다. 한 일이 있으면 다시 보내기를 기다렸다가 **같은 대화에** 이어 보낸다 (새 대화를 열지 않는다)
+        ended = {"variant": "ai", "content": "", "isComplete": True, "userError": "Your free session ended, so the agent stopped here.",
+                 "blocks": [{"type": "tool", "toolName": "read_files", "input": {"paths": ["a.py"]}}]}
+        d = self.session()
         p = self.drive(d)
-        self.wait_for(lambda: (fb.read_gate(d) or {}).get("phase") == "await")
-        fb.approve(d, "웹", self.line(d))
-        self.answer(d, [{"type": "text", "textType": "text", "content": "쓰는 중"}], complete=False)
+        self.approve_when_waiting(d)
+        line = self.sent_line(d)
+        self.chat([{"variant": "user", "content": line}, ended])
+        g = self.wait_for(lambda: (lambda g: g if g.get("resume") and g.get("phase") == "await" else None)(fb.read_gate(d) or {}))
+        self.assertIsNone(g.get("error"))
+        self.assertIsNone(p.poll(), "세션이 끝난 답을 끝으로 봤다")
+        again = self.line(d, "하던 데서 이어서 해 줘:")
+        self.assertEqual(fb.approve(d, "웹", again), (True, ""))
+        self.assertEqual(self.sent_line(d, 2), again)
+        time.sleep(1.0)
+        self.assertIsNone(p.poll(), "이어 보낸 뒤 옛 답을 새 답으로 봤다")
+        self.chat([{"variant": "user", "content": line}, ended, {"variant": "user", "content": again},
+                   {"variant": "ai", "content": "", "isComplete": True, "completionTime": "3s",
+                    "blocks": [{"type": "text", "textType": "text", "content": "DONE\n이어서 끝냄"}]}])
         out, _ = p.communicate(timeout=30)
-        self.assertEqual(p.returncode, fb.RC_TIMEOUT, out)
+        self.assertEqual(p.returncode, 0, out)
+        self.assertEqual([k for k in self.sent_keys() if k == ["-l", "--", "/new"]], [["-l", "--", "/new"]])
+        self.assertEqual(json.loads(out.splitlines()[-1])["result"], "DONE\n이어서 끝냄")
+        self.assertEqual(out.count('"read_files"'), 1, "앞 답의 조각을 두 번 내보냈다")
+
+    def test_ending_again_without_progress_gives_up(self):
+        ended = {"variant": "ai", "content": "", "isComplete": True, "userError": "Your free session ended.", "blocks": []}
+
+        def script(d):
+            self.approve_when_waiting(d)
+            line = self.sent_line(d)
+            self.chat([{"variant": "user", "content": line}, ended])
+            self.wait_for(lambda: (fb.read_gate(d) or {}).get("resume"))
+            self.approve_when_waiting(d)
+            again = self.sent_line(d, 2)
+            self.chat([{"variant": "user", "content": line}, ended, {"variant": "user", "content": again}, ended])
+        d = self.session()
+        rc, out = self.inproc(d, script, quiet=30)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("free session ended", out)
+
+    def test_cut_while_working_hands_over_what_was_written(self):
+        d = self.session()
+        p = self.drive(d)
+        self.approve_when_waiting(d)
+        self.answer(d, [{"type": "tool", "toolName": "read_files", "input": {}},
+                        {"type": "text", "textType": "text", "content": "지적 1 ...\n지적 2 (쓰는 중"}], complete=False)
+        self.wait_for(lambda: (fb.read_gate(d) or {}).get("phase") == "sent")
+        time.sleep(3)                    # 운전기가 대화 파일을 읽을 틈
+        p.send_signal(signal.SIGTERM)
+        out, _ = p.communicate(timeout=10)
+        self.assertEqual(p.returncode, 143, out)
+        self.assertEqual(fb.read_gate(d)["phase"], "cut")
+        self.assertIn("지적 1", json.loads(out.splitlines()[-1])["result"])
 
 
 class Pieces(Base):
@@ -317,19 +428,6 @@ class GraphRules(unittest.TestCase):
         g["nodes"][1]["deps"] = []
         self.assertEqual(fleet_graph.validate_graph(g), [])
 
-    def test_waiting_is_not_counted_and_sent_counts_from_send(self):
-        g = self._g()
-        n = g["nodes"][1]
-        with mock.patch.object(fleet, "run_gate", return_value={"phase": "await", "since": "2020-01-01T00:00:00"}), \
-                mock.patch.object(fleet_graph, "_kill_run") as kill:
-            self.assertFalse(fleet_graph._check_timeout(g, n, n["attempts"][-1]))
-            kill.assert_not_called()
-        now = fleet_graph._now()
-        with mock.patch.object(fleet, "run_gate", return_value={"phase": "sent", "sent_at": now}), \
-                mock.patch.object(fleet_graph, "_kill_run") as kill:
-            self.assertFalse(fleet_graph._check_timeout(g, n, n["attempts"][-1]))
-            kill.assert_not_called()
-
     def test_unsent_node_is_handed_over_when_everything_else_ended(self):
         g = self._g()
         old = {"phase": "await", "since": "2020-01-01T00:00:00"}
@@ -400,6 +498,7 @@ class MonitorSend(Base):
         self.assertEqual(k({"write_paths": []}, {}), "read")
         self.assertEqual(k({"write_paths": ["tools/a.py"], "attempt": 2}, {}), "retry")
         self.assertEqual(k({"write_paths": []}, {"error": "못 보냄"}), "retry")
+        self.assertEqual(k({"write_paths": [], "attempt": 2}, {"resume": True}), "resume")   # 세션이 끝난 뒤 이어 보내기
         self.assertEqual(k({"write_paths": ["tools/a.py"], "label": "T-1 적대적 검수"}, {}), "review")
         self.assertEqual(k({"write_paths": ["docs/A.md"]}, {}), "docs")
         self.assertEqual(k({"write_paths": ["tests/test_a.py"]}, {}), "test")

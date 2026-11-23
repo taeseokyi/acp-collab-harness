@@ -45,18 +45,20 @@ GATE_FILE = "gate.json"
 APPROVE_FILE = "approve.json"
 #: 보내기를 이만큼 기다리다 스스로 끝난다 - 그래프 밖에서 띄운 세션이 영영 남지 않게 (그래프는 제 규칙으로 먼저 끊는다).
 AWAIT_MAX_SEC = 12 * 3600.0
-#: 보낸 뒤 답을 기다리는 한도 기본 (`meta.extra.work_timeout` 이 있으면 그것).
-WORK_TIMEOUT_SEC = base.DEFAULT_NODE_TIMEOUT_SEC
+#: 보낸 뒤 이만큼 대화 파일도 안 자라고 freebuff 가 CPU 도 안 쓰면 멈춘 것으로 본다. 일하는 동안은 한도가 없다.
+QUIET_SEC = base.DEFAULT_IDLE_TIMEOUT_SEC
+CPU_CHECK_SEC = 10.0
 POLL_SEC = 2.0
 #: 대화 파일이 이만큼 안 바뀌어야 끝난 답으로 본다.
 SETTLE_SEC = 3.0
 RC_UNSENT, RC_TIMEOUT = 3, 124
+RESUME = "resume"        # `_work` 의 답: 세션이 끝나 멈췄다 - 같은 대화에 이어 보낸다
 UNSENT_REPORT = "BLOCKED\n사람이 '보내기' 를 누르지 않아 freebuff 에 지시가 나가지 않았다. 한 일이 없다."
 
 _PLACEHOLDER_RE = re.compile(r"enter a coding task", re.I)
 _HELD_RE = re.compile(r"session was released|choose a model to start", re.I)     # 세션이 끝나 지시가 창에 걸려 있다
 HELD_TEXT = ("freebuff 세션이 끝나 있어 지시가 팬에 걸려 있습니다 - 팬에서 Enter 를 누르면 이어집니다 "
-             "(한도 안에 열지 않으면 시간 초과로 끝납니다)")
+             "(오래 열지 않으면 멈춘 것으로 보고 끊습니다)")
 _LEFT_RE = re.compile(r"(\d+\s*[hm](?:\s*\d+\s*m)?)\s+left\b")
 _MODEL_RE = re.compile(r"^\s*(.+?)\s+·\s+.*?/model to change")
 _PANE_RE = re.compile(r"\A[A-Za-z0-9_.:@%$-]{1,80}\Z")
@@ -159,11 +161,29 @@ def compose_line(text, ref):
     return (text if ref in text else f"{text} {ref}"), ""
 
 
-def send_line(pane, line):
-    """새 대화를 열고 `line` 과 엔터를 넣는다. `(됐나, 까닭)`. 넣기 직전마다 입력 칸이 비었는지 다시 본다."""
+def pane_pids(pane):
+    """팬 안에서 도는 프로세스들(팬의 셸과 같은 세션). 못 찾으면 빈 목록."""
+    rc, out, _err = _tmux("display-message", "-p", "-t", pane, "#{pane_pid}")
+    try:
+        sid = os.getsid(int(out.strip())) if rc == 0 else None
+    except (OSError, ValueError):
+        sid = None
+    pids = []
+    for p in (os.listdir("/proc") if sid is not None else ()):
+        try:
+            if p.isdigit() and os.getsid(int(p)) == sid:
+                pids.append(int(p))
+        except OSError:
+            continue
+    return pids
+
+
+def send_line(pane, line, new=True):
+    """새 대화를 열고(`new` - 이어 보낼 때는 열지 않는다) `line` 과 엔터를 넣는다. `(됐나, 까닭)`.
+    넣기 직전마다 입력 칸이 비었는지 다시 본다."""
     if "\n" in line or "\r" in line or not line.strip() or line.startswith("/"):
         return False, "보낼 줄이 올바르지 않습니다"
-    for keys, wait in ((("-l", "--", "/new"), 0.6), (("Enter",), 2.0)):
+    for keys, wait in ((("-l", "--", "/new"), 0.6), (("Enter",), 2.0)) if new else ():
         rc, _o, err = _tmux("send-keys", "-t", pane, *keys)
         if rc != 0:
             return False, f"팬에 넣지 못했습니다 ({one_line(err, 80)})"
@@ -280,6 +300,23 @@ def chat_blocks(msgs, marker):
     return out, done
 
 
+def chat_tail(msgs, marker):
+    """`(우리 지시 뒤에 온 답의 수, 마지막 답)` - 답이 정상으로 끝났는지 볼 때 쓴다. 답이 없으면 `(0, {})`.
+
+    freebuff 는 끊긴 답·세션이 끝나 멈춘 답에도 `isComplete` 를 붙인다. 정상으로 끝난 답에만 `completionTime` 이 있고,
+    세션이 끝나 멈춘 답에는 `userError` 가 있다 (2026-11-23 R37 실물).
+    """
+    seen, n, last = False, 0, {}
+    for m in msgs:
+        if not isinstance(m, dict):
+            continue
+        if m.get("variant") == "user":
+            seen = seen or marker in str(m.get("content") or "")
+        elif seen and m.get("variant") == "ai":
+            n, last = n + 1, m
+    return n, last
+
+
 def final_text(blocks):
     """마지막 도구 호출 뒤의 글(보고 본문). 없으면 글 전부."""
     tail = []
@@ -378,6 +415,10 @@ class Driver:
         self.gate = {"phase": "await", "since": _now(), "pane": self.pane}
         self.sent = False
         self.stop = False
+        # 일하는 고리의 상태 - 세션이 끝나 같은 대화에 이어 보낼 때도 그대로 이어진다
+        self.chat, self.blocks, self.emitted = None, [], 0
+        self.answers = 0          # 이미 끝난 것으로 본 답의 수 (이어 보낸 뒤에는 그다음 답을 기다린다)
+        self.progress = -1        # 마지막으로 보낼 때의 조각 수 - 그 뒤 하나도 안 늘고 또 멈추면 그만둔다
 
     def _save(self, **kw):
         self.gate.update(kw)
@@ -414,7 +455,7 @@ class Driver:
             if not isinstance(line, str) or self.d.name not in line:
                 ok, why = False, "사람이 고른 문구가 없습니다"       # 문구 없이는 보내지 않는다 - 기본 문구는 없다
             else:
-                ok, why = (False, st["why"]) if not st["ok"] else send_line(self.pane, line)
+                ok, why = (False, st["why"]) if not st["ok"] else send_line(self.pane, line, new=not self.sent)
             if ok:
                 self.sent = True
                 self._save(phase="sent", sent_at=_now(), by=str(who)[:80], error=None, busy=False)
@@ -424,61 +465,97 @@ class Driver:
             _out({"type": "error", "text": f"보내지 못함: {why}"})
         return False
 
+    def _pane_cpu(self):
+        return base.cpu_seconds(pane_pids(self.pane))
+
     def _work(self):
+        """답이 끝나기를 기다린다. `(rc, 보고)` - rc 0 정상 종료, `RESUME` 세션이 끝나 멈춤(이어 보낸다), None 끊김.
+
+        시간 한도는 없다. 대화 파일이 자라거나 freebuff 가 CPU 를 쓰는 동안은 기다리고, 둘 다 `QUIET_SEC` 동안 없으면
+        멈춘 것으로 본다 (화면은 보지 않는다 - 쉬는 동안에도 광고가 바뀐다).
+        """
         marker = self.d.name
-        extra = self.meta.get("extra") if isinstance(self.meta.get("extra"), dict) else {}
-        try:
-            limit = float(extra.get("work_timeout") or 0) or WORK_TIMEOUT_SEC
-        except (TypeError, ValueError):
-            limit = WORK_TIMEOUT_SEC
-        t0, wall0 = time.monotonic(), time.time()
-        emitted, chat = 0, None
+        wall0 = time.time()
+        active = cpu_at = time.monotonic()
+        cpu_last, mtime = self._pane_cpu(), None
         while not self.stop:
-            if time.monotonic() - t0 > limit:
-                st = pane_status(self.pane)
-                _out({"type": "error", "timeout": True,
-                      "text": f"보낸 뒤 {limit:g}초 안에 답이 끝나지 않음. 팬: " + " / ".join(st["lines"][-3:])})
-                return RC_TIMEOUT, ""
-            if chat is None:
-                chat = find_chat(self.chats, self.cwd, marker, wall0)
+            now = time.monotonic()
+            if now - cpu_at >= CPU_CHECK_SEC:
+                cpu = self._pane_cpu()
+                if cpu - cpu_last >= base.CPU_ACTIVE * (now - cpu_at):
+                    active = now
+                cpu_at, cpu_last = now, cpu
+            if self.chat is None:
+                self.chat = find_chat(self.chats, self.cwd, marker, wall0)
                 # 대화가 아직 안 생겼다 - 세션이 끝나 지시가 창에 걸렸는지 본다(읽기만). 푸는 것은 사람이 팬에서 한다
-                held = chat is None and pane_status(self.pane)["held"]
+                held = self.chat is None and pane_status(self.pane)["held"]
                 if held != bool(self.gate.get("held")):
                     self._save(held=HELD_TEXT if held else None)
                     if held:
                         _out({"type": "error", "text": HELD_TEXT})
-            msgs = _load_chat(chat) if chat is not None else None
+            try:
+                m = self.chat.stat().st_mtime if self.chat is not None else None
+            except OSError:
+                m = None
+            if m != mtime:
+                mtime, active = m, now
+            if now - active > QUIET_SEC:
+                st = pane_status(self.pane)
+                _out({"type": "error", "timeout": True,
+                      "text": f"{QUIET_SEC:g}초 동안 답이 자라지도, freebuff 가 CPU 를 쓰지도 않음 - 멈춘 것으로 봄. 팬: "
+                              + " / ".join(st["lines"][-3:])})
+                return RC_TIMEOUT, self._partial("멈춤")
+            msgs = _load_chat(self.chat) if self.chat is not None else None
             if msgs:
-                blocks, done = chat_blocks(msgs, marker)
-                try:
-                    settled = time.time() - chat.stat().st_mtime >= SETTLE_SEC
-                except OSError:
-                    settled = False
-                done = done and settled and bool(blocks)
-                upto = len(blocks) if done else max(len(blocks) - 1, 0)    # 쓰는 중인 마지막 조각은 다 쓴 뒤에
-                for b in blocks[emitted:upto]:
+                self.blocks, done = chat_blocks(msgs, marker)
+                n, last = chat_tail(msgs, marker)
+                done = done and n > self.answers and m is not None and time.time() - m >= SETTLE_SEC
+                upto = len(self.blocks) if done else max(len(self.blocks) - 1, 0)    # 쓰는 중인 마지막 조각은 다 쓴 뒤에
+                for b in self.blocks[self.emitted:upto]:
                     _out({"type": "text", "text": b[1]} if b[0] == "text" else {"type": "tool", "name": b[1], "summary": b[2]})
-                emitted = max(emitted, upto)
+                self.emitted = max(self.emitted, upto)
                 if done:
-                    return 0, final_text(blocks)
+                    err = one_line(str(last.get("userError") or ""), 200)
+                    if err and len(self.blocks) > self.progress:
+                        # 세션이 끝나 멈췄다 - 한 일이 있으니 같은 대화에 이어 보낸다 (보내는 것은 다시 사람·옵션의 몫)
+                        self.answers, self.progress = n, len(self.blocks)
+                        self._note(f"freebuff 가 멈춤: {err} - 같은 대화에 이어 보내기를 기다림")
+                        return RESUME, ""
+                    if err or not last.get("completionTime"):
+                        _out({"type": "error", "text": "freebuff 답이 정상으로 끝나지 않음: " + (err or "도중에 멈춤(완료 시간이 없음)")})
+                        return 1, self._partial(err or "도중에 멈춤")
+                    return 0, final_text(self.blocks)
             time.sleep(POLL_SEC)
-        return None, ""
+        return None, self._partial("끊김")
+
+    def _partial(self, why):
+        """끝까지 못 간 답에서 건진 글 - 대화 파일에 쓰던 데까지."""
+        text = final_text(self.blocks)
+        return f"({why} - 아래는 그때까지 쓴 글)\n\n{text}" if text else ""
 
     def run(self):
         for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             signal.signal(s, self._on_term)
-        if not self._await():
-            self._save(phase="unsent")
-            _out({"type": "end", "ok": False, "result": UNSENT_REPORT})
-            return RC_UNSENT
-        rc, report = self._work()
+        while True:
+            if not self._await():
+                if not self.sent:
+                    self._save(phase="unsent")
+                    _out({"type": "end", "ok": False, "result": UNSENT_REPORT})
+                    return RC_UNSENT
+                rc, report = None, self._partial("이어 보내지 않음")
+                break
+            rc, report = self._work()
+            if rc != RESUME:
+                break
+            self._save(phase="await", since=_now(), resume=True, error=None)
         if rc is None:
-            # 끊겼다(완전 중지·그래프 한도) - 팬에서 하던 일을 멈춘다. 지시가 아니라 멈춤 키 하나다.
+            # 끊겼다(완전 중지·사람) - 팬에서 하던 일을 멈춘다. 지시가 아니라 멈춤 키 하나다.
             _tmux("send-keys", "-t", self.pane, "Escape")
             self._save(phase="cut")
+            _out({"type": "end", "ok": False, "result": report})
             return 143
-        self._save(phase="done" if rc == 0 else "timeout")
-        if rc != 0:
+        self._save(phase="done" if rc == 0 else "timeout" if rc == RC_TIMEOUT else "failed")
+        if rc == RC_TIMEOUT:
             _tmux("send-keys", "-t", self.pane, "Escape")
         _out({"type": "end", "ok": rc == 0, "result": report})
         return rc

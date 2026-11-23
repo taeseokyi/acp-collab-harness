@@ -437,71 +437,21 @@ class FleetGraphContractTests(unittest.TestCase):
         self.assertEqual(dependent["status"], "blocked")
 
     # ---------------------------------------------------------------- (D) 노드 타임아웃
-    def test_node_timeout_selection_order(self):
-        cases = [
-            ({"timeout_sec": 7}, {"node_timeout_sec": 20}, 7.0),
-            ({}, {"node_timeout_sec": 20}, 20.0),
-            ({}, {}, float(fleet_graph.DEFAULT_NODE_TIMEOUT_SEC)),
-        ]
-        for node_extra, graph_extra, expected in cases:
-            with self.subTest(node=node_extra, graph=graph_extra, expected=expected):
-                node = self._node(**node_extra)
-                graph = self._graph([node], **graph_extra)
-                self.assertEqual(fleet_graph._node_timeout(graph, node), expected)
-
-    def test_node_timeout_discards_invalid_values_and_spares_fresh_worker(self):
-        invalid = [float("nan"), 0, -1, True, "abc"]
-        for value in invalid:
-            with self.subTest(value=repr(value)):
-                node = self._node(timeout_sec=value)
-                graph = self._graph([node], node_timeout_sec=60)
-                self.assertEqual(fleet_graph._node_timeout(graph, node), 60.0)
-
-                attempt = self._attempt(
-                    started=(dt.datetime.now() - dt.timedelta(seconds=1)).isoformat(timespec="seconds")
-                )
-                fresh = self._node(attempts=[attempt], timeout_sec=value)
-                fresh_graph = self._graph([fresh], node_timeout_sec=60)
-                with mock.patch.object(fleet_graph, "_kill_run") as kill_mock:
-                    handled = fleet_graph._check_timeout(fresh_graph, fresh, attempt)
-                self.assertFalse(handled)
-                kill_mock.assert_not_called()
-
-                default_node = self._node(timeout_sec=value)
-                default_graph = self._graph([default_node])
-                self.assertEqual(
-                    fleet_graph._node_timeout(default_graph, default_node),
-                    float(fleet_graph.DEFAULT_NODE_TIMEOUT_SEC),
-                )
-
-    def test_timeout_marks_attempt_and_retries_within_limit(self):
+    def test_running_worker_is_never_cut_by_the_clock(self):
+        # 벽시계 한도는 없다 (2026-11-23). 일하는 작업자는 끝까지 기다리고, 멈춘 작업자는 감독(침묵 한도)이 끊는다 -
+        # 노드에 옛 `timeout_sec` 가 적혀 있어도 그래프 실행기는 끊지 않는다.
         attempt = self._attempt(
-            started=(dt.datetime.now() - dt.timedelta(seconds=1000)).isoformat(timespec="seconds")
+            started=(dt.datetime.now() - dt.timedelta(days=3)).isoformat(timespec="seconds")
         )
         node = self._node(attempts=[attempt], timeout_sec=10, max_attempts=2)
-        graph = self._graph([node])
+        graph = self._graph([node], node_timeout_sec=10)
         with mock.patch.object(fleet_graph, "_run_info", return_value=("running", None, None)), \
-             mock.patch.object(fleet_graph, "_kill_run", return_value=(4242, "killed")) as kill_mock, \
+             mock.patch.object(fleet_graph, "_kill_run") as kill_mock, \
              mock.patch.object(fleet_graph, "_spawn_node"):
             fleet_graph.step(graph)
-        kill_mock.assert_called_once_with(attempt["run_id"], with_outcome=True)
-        self.assertEqual(attempt["rc"], 124)
-        self.assertEqual(attempt["state"], "timeout")
-        self.assertIs(attempt["timeout"], True)
-        self.assertEqual(node["status"], "todo")
-
-    def test_timeout_marks_failed_past_attempt_limit(self):
-        attempt = self._attempt(
-            started=(dt.datetime.now() - dt.timedelta(seconds=1000)).isoformat(timespec="seconds")
-        )
-        node = self._node(attempts=[attempt], timeout_sec=10, max_attempts=1)
-        graph = self._graph([node])
-        with mock.patch.object(fleet_graph, "_run_info", return_value=("running", None, None)), \
-             mock.patch.object(fleet_graph, "_kill_run", return_value=(4242, "killed")), \
-             mock.patch.object(fleet_graph, "_spawn_node"):
-            fleet_graph.step(graph)
-        self.assertEqual(attempt["rc"], 124)
-        self.assertEqual(node["status"], "failed")
+        kill_mock.assert_not_called()
+        self.assertEqual(node["status"], "running")
+        self.assertNotIn("ended", attempt)
 
     def test_broken_started_does_not_raise_or_kill(self):
         for started in ("garbage", None, "", "2026-11-10T09:00:00+09:00"):
@@ -587,31 +537,16 @@ class FleetGraphContractTests(unittest.TestCase):
         self.assertEqual(fleet_graph._LAST_REFUSAL["R-S"], "세션 리더 아님")
 
     # ---------------------------------------------------------------- (G) refused -> blocked (결함 7) / unblock (결함 11)
-    def _timed_out_graph(self, **node_extra):
-        attempt = self._attempt(started=(dt.datetime.now() - dt.timedelta(seconds=1000)).isoformat(timespec="seconds"))
-        node = self._node(attempts=[attempt], timeout_sec=10, **node_extra)
-        after = self._node("T-2", status="todo", deps=["T-1"])
+    def _refused_graph(self, **node_extra):
+        """끊으려 했으나 거부돼(`refused`) 막힌 노드와 그것에 기댄 노드."""
+        attempt = dict(self._attempt(), kill_outcome="refused", kill_reason="안전 검사 거부")
+        node = self._node(status="blocked", attempts=[attempt], **node_extra)
+        after = self._node("T-2", status="blocked", deps=["T-1"])
         return attempt, node, after, self._graph([node, after])
 
-    def test_refused_kill_blocks_node_without_lost_marker_or_respawn(self):
-        attempt, node, after, graph = self._timed_out_graph()
-        with mock.patch.object(fleet_graph, "_run_info", return_value=("running", None, None)), \
-             mock.patch.object(fleet_graph, "_kill_run", return_value=(4242, "refused")), \
-             mock.patch.object(fleet_graph, "_spawn_node") as spawn:
-            fleet_graph.step(graph, allow_spawn=True)
-            fleet_graph.step(graph, allow_spawn=True)
-        self.assertEqual(node["status"], "blocked")
-        self.assertEqual(attempt["kill_outcome"], "refused")
-        self.assertNotIn("rc", attempt)
-        self.assertEqual(after["status"], "blocked")
-        spawn.assert_not_called()
-
     def test_unblock_refuses_while_worker_alive_then_reaps_finished_run(self):
-        attempt, node, after, graph = self._timed_out_graph()
-        with mock.patch.object(fleet_graph, "_run_info", return_value=("running", None, None)), \
-             mock.patch.object(fleet, "_run_state", return_value=("running", None)), \
-             mock.patch.object(fleet_graph, "_kill_run", return_value=(4242, "refused")):
-            fleet_graph.step(graph, allow_spawn=False)
+        attempt, node, after, graph = self._refused_graph()
+        with mock.patch.object(fleet, "_run_state", return_value=("running", None)):
             ok, msg = fleet_graph.unblock(graph, "T-1")
         self.assertFalse(ok)
         self.assertIn("살아", msg)
@@ -809,13 +744,13 @@ class EngineV2Stage3(unittest.TestCase):
         self.assertIn("fail_kind", n["attempts"][0])
         self.assertIsNone(n["attempts"][0]["fail_kind"])
 
-    def test_wall_clock_timeout_marks_fail_kind(self):
-        n = self.node(max_attempts=2, timeout_sec=1)
-        n["attempts"][0]["started"] = (dt.datetime.now() - dt.timedelta(seconds=60)).isoformat(timespec="seconds")
-        with mock.patch.object(fleet_graph, "_run_info", return_value=("running", None, None)), \
-             mock.patch.object(fleet_graph, "_kill_run", return_value=(4242, "killed")):
-            fleet_graph.step(self.graph([n]), allow_spawn=False)
-        self.assertEqual((n["status"], n["attempts"][0]["fail_kind"]), ("todo", "timeout"))
+    def test_empty_report_is_not_done(self):
+        # 보고가 곧 결과물이다 - rc 0 이어도 보고가 비면 완료가 아니다 (R37: 세션이 끝나 멈춘 freebuff 답이 done 이 됐다)
+        n = self.node(max_attempts=2)
+        self.reap(self.graph([n]), {"state": "done", "fail_kind": None}, ("done", 0), " \n")
+        att = n["attempts"][0]
+        self.assertEqual((n["status"], att["verify_rc"], att["fail_kind"]), ("todo", -5, "work"))
+        self.assertIn("no-report T-1", (self.graphs / "G-900.log").read_text(encoding="utf-8"))
 
     # ---- 5.4 공급자 문지기
     def _spawn_tick(self, g, by_prov, cap=1, busy=()):
@@ -831,8 +766,7 @@ class EngineV2Stage3(unittest.TestCase):
              mock.patch.object(fleet_graph, "_rt_cfg", return_value=cfg), \
              mock.patch.object(fleet_graph, "_node_provider", side_effect=lambda c, n: n.get("prov", "kisti")), \
              mock.patch.object(fleet_graph, "_spawn_node", side_effect=fake_spawn), \
-             mock.patch.object(fleet_graph, "_run_info", return_value=("running", None, {"state": "running"})), \
-             mock.patch.object(fleet_graph, "_check_timeout", return_value=False):
+             mock.patch.object(fleet_graph, "_run_info", return_value=("running", None, {"state": "running"})):
             fleet_graph.step(g, allow_spawn=True)     # 띄운 노드는 계속 도는 것으로 둔다
         return spawned
 

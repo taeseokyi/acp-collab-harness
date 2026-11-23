@@ -13,6 +13,7 @@
     FAKE: sleep <초>               잠깐 쉰다
     FAKE: detached-busy <초>      setsid 로 떨어진 손자가 그만큼 데이터를 읽는 동안 사건 없이 기다린다 (백그라운드 작업)
     FAKE: busy-read <초>          사건 없이 그만큼 데이터를 계속 읽는다 (긴 생성 중인 하네스 - 침묵으로 치면 안 된다)
+    FAKE: busy-cpu <초>           사건 없이 그만큼 CPU 를 쓴다 (긴 검사를 돌리는 작업자 - 상한 없이 기다려야 한다)
     FAKE: hang                     사건 하나({"type":"text","text":"hang"}) 내고 영원히 잔다 (침묵 감지·끊기 검사)
     FAKE: ignore-term              SIGTERM 을 무시한다 (SIGKILL 길 검사)
     FAKE: child <초>               같은 프로세스 그룹에 `sleep <초>` 손자를 띄운다. 사건 {"type":"tool","name":"child","pid":..}
@@ -184,6 +185,10 @@ def _run(brief_path):
                 while time.time() < end:
                     fh.read(65536)
                     time.sleep(0.05)
+        elif word == "busy-cpu":
+            end = time.time() + float(rest or "3")
+            while time.time() < end:
+                sum(range(20000))
         elif word == "hang":
             _out({"type": "text", "text": "hang"})
             while True:

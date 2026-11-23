@@ -202,6 +202,14 @@ class TestRun(Base):
         self.assertLess(time.time() - t0, rt_run.READ_ONLY_IDLES * 1.0 + 6)
         self.assertTrue(_wait(lambda: not self.group_of(d), 5))
 
+    def test_cpu_use_without_events_is_work_with_no_cap(self):
+        """사건이 없어도 CPU 를 쓰는 동안은 일하는 중이다 - 읽기만 하는 경우와 달리 상한 없이 기다린다 (벽시계 한도도 없다)."""
+        from fleet_rt import run as rt_run  # noqa: PLC0415
+        d = self.spawn([f"busy-cpu {rt_run.READ_ONLY_IDLES * 1.0 + 3}", "emit 끝"], idle_timeout=1.0)
+        st = self.wait_end(d, 30)
+        self.assertEqual(st["state"], "done", st)
+        self.assertTrue(_wait(lambda: not self.group_of(d), 5))
+
     def test_reading_by_a_detached_child_is_not_silence(self):
         """하네스가 그룹을 벗어난(setsid) 백그라운드 명령을 기다리는 동안도, 그 명령이 읽고 있으면 침묵이 아니다."""
         d = self.spawn(["detached-busy 2", "emit 끝"], idle_timeout=1.0)

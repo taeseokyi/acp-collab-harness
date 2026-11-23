@@ -973,9 +973,10 @@ const PANE_PHRASE_SEEDS = [
   { key: 'docs', label: '문서 다듬기', text: '이 파일에 문서 작업 지시가 있어. 읽고 그대로 해 줘. 코드는 건드리지 말고:' },
   { key: 'small', label: '작은 일', text: '간단한 일이야. 이 파일 읽고 적힌 것만 바로 처리해 줘:' },
   { key: 'retry', label: '다시 시도', when: 'retry', text: '아까 끝내지 못한 일이야. 이 파일을 다시 읽고 적힌 대로 처음부터 해 줘:' },
+  { key: 'resume', label: '이어 하기 (세션이 끊긴 뒤)', when: 'resume', text: '이 파일의 일을 하던 중에 끊겼어. 처음부터 다시 하지 말고 하던 데서 이어서 끝까지 해 줘:' },
   { key: 'short', label: '시간이 얼마 없을 때', when: 'short', text: '시간이 얼마 없어. 이 파일에 적힌 일을 되는 데까지 하고 어디까지 했는지 적어 줘:' },
 ];
-// 기본 10가지는 늘 보이고 지워지지 않는다. 저장하는 것은 사람이 더한 '내 문구' 뿐이다.
+// 기본 문구는 늘 보이고 지워지지 않는다. 저장하는 것은 사람이 더한 '내 문구' 뿐이다.
 function paneOwnPhrases() {
   const seeds = new Set(PANE_PHRASE_SEEDS.map((x) => x.text));
   try {
@@ -1036,7 +1037,7 @@ function renderPaneGate(parent, runId) {
     }
     if (info.phase !== 'await') {
       const said = { sent: '보냈습니다 - freebuff 가 일하는 중입니다', done: '답을 받았습니다', ended: '끝난 실행입니다',
-        unsent: '보내지 않은 채 끝났습니다', timeout: '보낸 뒤 한도 안에 답이 끝나지 않았습니다', cut: '도중에 끊겼습니다' }[info.phase] || show(info.phase);
+        unsent: '보내지 않은 채 끝났습니다', timeout: '보낸 뒤 freebuff 가 멈춰 끊었습니다', failed: '답이 정상으로 끝나지 않았습니다', cut: '도중에 끊겼습니다' }[info.phase] || show(info.phase);
       if (info.phase === 'sent' && info.held) box.appendChild(line('pane-gate-state warn-text', info.held));
       box.appendChild(line('pane-gate-state', said + (info.sent_at ? ` (보낸 때 ${String(info.sent_at).replace('T', ' ')}${info.by ? ', ' + info.by : ''})` : '')));
       return;
@@ -1384,7 +1385,7 @@ function runStatusBadge(r) {
   if (ss && SESSION_END_TEXT[ss]) {
     const b = badge(SESSION_END_TEXT[ss], 'blocked');
     b.dataset.status = ss;
-    b.title = { stalled: '마지막 사건 뒤 침묵이 제한을 넘겨 감독이 끊음', timeout: '벽시계 제한을 넘겨 감독이 끊음',
+    b.title = { stalled: '마지막 사건 뒤 침묵이 제한을 넘겨 감독이 끊음', timeout: '벽시계 제한을 넘겨 감독이 끊음 (관리자 세션만)',
       failed: '작업자가 실패로 끝남', killed: '사람이 중단함' }[ss];
     return b;
   }

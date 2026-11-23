@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 import pathlib
 import re
 from typing import Optional, Protocol
@@ -31,7 +32,7 @@ ROLES = ("manager", "worker", "reviewer")
 #:   done     하네스가 rc 0 으로 끝남
 #:   failed   하네스가 rc != 0 으로 끝남
 #:   killed   사람·엔진이 끊음 (cancel)
-#:   timeout  벽시계 제한을 넘겨 감독이 끊음
+#:   timeout  벽시계 제한을 넘겨 감독이 끊음 (관리자 세션만 - 작업자에겐 벽시계 제한이 없다)
 #:   stalled  idle_timeout 동안 사건도 읽기(`/proc/<pid>/io`)도 없어 감독이 끊음
 END_STATES = ("done", "failed", "killed", "timeout", "stalled")
 STATES = ("running",) + END_STATES + ("lost",)
@@ -40,8 +41,25 @@ STATES = ("running",) + END_STATES + ("lost",)
 #: `work`(보고가 BLOCKED·검증 실패)는 그래프 실행기가 보고를 읽고 정한다.
 FAIL_KINDS = ("work", "infra", "limit", "timeout")
 
-#: 노드 한 시도의 벽시계 한도 기본(초) - 그래프 실행기·spawn·SessionSpec 이 같은 값을 쓴다.
-DEFAULT_NODE_TIMEOUT_SEC = 1800.0
+#: 작업자에겐 벽시계 한도가 없다 - 일하는 동안은 끝까지 기다리고, 멈췄을 때만(침묵) 끊는다 (2026-11-23).
+#: 공급자에 침묵 한도가 안 적혔을 때 쓰는 값(초).
+DEFAULT_IDLE_TIMEOUT_SEC = 600.0
+#: 프로세스들이 CPU 를 이만큼(코어 하나에 대한 비율) 쓰고 있으면 일하는 중으로 본다.
+#: 쉬는 freebuff(광고·남은 시간 표시만 바뀜)는 1~9%, 일할 때는 30% 안팎이었다 (2026-11-23 실측).
+CPU_ACTIVE = 0.15
+_CLK_TCK = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+
+
+def cpu_seconds(pids):
+    """프로세스들이 지금까지 쓴 CPU 시간(초)의 합. 못 읽는 것은 0 으로 친다."""
+    total = 0
+    for p in pids:
+        try:
+            f = open(f"/proc/{p}/stat", encoding="ascii", errors="replace").read().rsplit(")", 1)[1].split()
+            total += int(f[11]) + int(f[12])          # utime + stime (이름 뒤부터 세어 12·13번째)
+        except (OSError, ValueError, IndexError):
+            continue
+    return total / _CLK_TCK
 #: TERM 뒤 KILL 까지 기다리는 시간 - 감독이 하네스에, cancel·고아 청소가 pid 에 같은 유예를 준다.
 TERM_GRACE_SEC = 3.0
 
@@ -168,7 +186,7 @@ class SessionSpec:
     write_paths: list = dataclasses.field(default_factory=list)
     tools: Optional[str] = None              # 허용 도구 목록 (claude `--allowedTools`). None 이면 어댑터의 역할별 기본
     settings_path: Optional[str] = None      # 하네스 설정 파일 (claude `--settings`)
-    timeout: float = DEFAULT_NODE_TIMEOUT_SEC   # 벽시계 제한(초)
+    timeout: float = 0.0                     # 벽시계 제한(초). 0 = 없음 (작업자). 관리자 세션만 준다
     idle_timeout: Optional[float] = None     # 침묵 제한(초). None 이면 침묵 감지를 안 한다
     round: Optional[int] = None
     task_id: Optional[str] = None

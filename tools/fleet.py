@@ -24,7 +24,7 @@ if str(HERE) not in sys.path:        # `python3 -m tools.fleet_graph`·`PYTHONPA
     sys.path.insert(0, str(HERE))
 ROOT = HERE.parent
 
-from fleet_rt.base import DEFAULT_NODE_TIMEOUT_SEC  # noqa: E402
+from fleet_rt.base import DEFAULT_IDLE_TIMEOUT_SEC  # noqa: E402
 from fleet_rt.harness import REAL as HARNESSES  # noqa: E402
 
 try:    # 시각은 설정 시간대 하나로 (`fleet.toml` `[time] zone`) - 엔진 도구는 모두 이 모듈을 들인다
@@ -374,10 +374,6 @@ def spawn_task_id(task_id, label):
     return tid
 
 
-#: 감독의 벽시계 제한은 그래프 한도보다 이만큼 길다 - 그래프 실행기가 먼저 끊고, 감독은 실행기가 죽었을 때의 뒷문이다.
-SPAWN_TIMEOUT_SLACK_SEC = 120
-
-
 def _slot_model(slot):
     """슬롯에 적힌 모델(DB `slots.model`). 없으면 None."""
     for row in (db_state() or {}).get("slots") or []:
@@ -421,8 +417,10 @@ def _brief_text(slot, token, rev, label, write, harness, task):
 
 
 def spawn(slot, task_text, *, write=(), label="", task_id=None, attempt=1, harness=None, model=None,
-          project=None, round=None, timeout=None):
+          project=None, round=None):
     """작업자 1명을 세션으로 띄우고 run id 를 돌려준다. 즉시 돌아온다. 거절은 `SystemExit(까닭)`.
+
+    작업자에겐 벽시계 한도가 없다 - 일하는 동안은 끝까지 기다리고, 멈췄을 때만(침묵 한도) 감독이 끊는다.
 
     함대 모드·명부·하네스·소유권을 여기서 한 번 대조한다. 띄우는 일은 `fleet_rt.sessions.spawn` (감독 프로세스 하나).
     """
@@ -478,18 +476,18 @@ def spawn(slot, task_text, *, write=(), label="", task_id=None, attempt=1, harne
         cfg = rt_config.load(ROOT)
         provider = cfg.provider_of(harness, model)
         idle = cfg.idle_timeout(provider) if provider else None
-    except Exception as e:  # noqa: BLE001 - 설정이 깨져도 띄우기는 한다 (침묵 감지만 꺼진다)
-        print(f"주의: fleet.toml 을 읽지 못했습니다 ({e}) - 침묵 감지 없이 띄웁니다", file=sys.stderr)
+    except Exception as e:  # noqa: BLE001 - 설정이 깨져도 띄우기는 한다 (침묵 한도는 기본값)
+        print(f"주의: fleet.toml 을 읽지 못했습니다 ({e}) - 침묵 한도 기본값으로 띄웁니다", file=sys.stderr)
         provider, idle = None, None
-    wall = float(timeout or DEFAULT_NODE_TIMEOUT_SEC) + SPAWN_TIMEOUT_SLACK_SEC
     from fleet_rt import harness as rt_harness  # noqa: PLC0415
     if rt_harness.needs_approval(harness):
-        # 사람의 '보내기' 를 기다리는 시간은 한도로 세지 않는다 - 감독의 벽시계는 끄고, 보낸 뒤의 한도는 운전기와 그래프가 본다
-        extra["work_timeout"], wall = wall, 0.0
+        idle = None     # 사람의 '보내기' 를 기다리는 동안은 조용한 것이 정상이다 - 보낸 뒤의 멈춤은 운전기가 본다
+    else:
+        idle = idle or DEFAULT_IDLE_TIMEOUT_SEC      # 벽시계 한도가 없으니 침묵 한도는 꼭 있어야 한다
     spec = SessionSpec(id=run_id, role="worker", harness=harness, brief_path="", cwd=str(ROOT),
                        slot=slot, model=normalize_model(harness, model), provider=provider,
                        ident=f"[AIMEM 작업자 지시] 슬롯 {slot} · 확인토큰 {token} · AIMEM REV {rev}.",
-                       write_paths=write, timeout=wall,
+                       write_paths=write,
                        idle_timeout=idle, round=round_n if isinstance(round_n, int) else None, task_id=task_id,
                        attempt=attempt, label=label, extra=extra)
     db = pathlib.Path(RUNS).parent / "aimem.db"
@@ -507,7 +505,7 @@ def cmd_spawn(args):
     task = pathlib.Path(task_file).read_text(encoding="utf-8") if task_file else (a.get("task") or "")
     print(spawn(a["slot"], task, write=a.get("write") or (), label=a.get("label") or "", task_id=a.get("task_id"),
                 attempt=a.get("attempt") or 1, harness=a.get("harness"), model=a.get("model"),
-                project=a.get("project"), round=a.get("round"), timeout=a.get("timeout")))
+                project=a.get("project"), round=a.get("round")))
     return 0
 
 

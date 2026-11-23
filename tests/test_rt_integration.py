@@ -46,9 +46,13 @@ max_concurrent = 3
 idle_timeout_sec = 600
 models = ["x"]
 
+[providers.nolimit]
+max_concurrent = 3
+models = ["x"]
+
 [harness.codex]
 binary = "codex"
-providers = ["fk", "ok"]
+providers = ["fk", "ok", "nolimit"]
 default_model = "ok/x"
 """
 
@@ -193,7 +197,7 @@ class Base(unittest.TestCase):
         return json.loads((self.graphs / f"{gid}.json").read_text(encoding="utf-8"))
 
     def spawn(self, task, slot="S1", **kw):
-        kw = dict({"model": "ok/x", "label": "adhoc", "timeout": 60}, **kw)
+        kw = dict({"model": "ok/x", "label": "adhoc"}, **kw)
         with contextlib.redirect_stderr(io.StringIO()):
             return fleet.spawn(slot, task, **kw)
 
@@ -305,38 +309,14 @@ class IntegrationTests(Base):
         self.assertEqual((n["status"], len(n["attempts"])), ("done", 1))
 
     # 5
-    def test_node_timeout_kills_via_cancel(self):
-        g = self.graph([self.node("T-1", "FAKE: child 60\nFAKE: sleep 60", timeout_sec=1.5, max_attempts=1)])
-        self.assertTrue(self.drive(g, lambda g: g["nodes"][0]["status"] in ("done", "failed", "blocked"), timeout=30))
-        n, att = g["nodes"][0], g["nodes"][0]["attempts"][0]
-        self.assertEqual(n["status"], "failed")
-        self.assertEqual(att["state"], "timeout")
-        self.assertEqual(att["rc"], 124)
-        self.assertEqual(att["kill_outcome"], "killed")
-        d = self.sdir(att["run_id"])
-        self.assertEqual(sessions.state(d)["state"], "killed")
-        self.assertIn("그래프 실행기", sessions.load_end(d)["why"])
-        child = _event_pids(d, "child")
-        self.assertEqual(len(child), 1)
-        self.assertTrue(_wait(lambda: _gone(child[0]), 5))
-        self.assertTrue(_wait(lambda: not _ours(self.root), 5))
-
-    def test_node_timeout_requeues_when_attempts_remain(self):
-        g = self.graph([self.node("T-1", "FAKE: sleep 60", timeout_sec=1, max_attempts=2)])
-        n = g["nodes"][0]
-        fleet_graph.step(g)
-        rid = n["attempts"][0]["run_id"]
-        time.sleep(1.5)
-        fleet_graph.step(g, allow_spawn=False)       # 한도 넘김 -> cancel -> 재시도 대기(todo)
-        self.assertEqual(n["status"], "todo")
-        self.assertEqual(len(n["attempts"]), 1)
-        self.assertEqual((n["attempts"][0]["state"], n["attempts"][0]["rc"]), ("timeout", 124))
-        self.assertEqual(sessions.state(self.sdir(rid))["state"], "killed")
-        self.assertTrue(_wait(lambda: not _ours(self.root), 5))
-        self.assertEqual(len(self.run_dirs()), 1)
-        fleet_graph.step(g)                           # 이제 재시도가 뜬다
-        self.assertEqual(n["status"], "running")
-        self.assertEqual(len(n["attempts"]), 2)
+    def test_worker_has_no_wall_clock_and_gets_a_default_idle_limit(self):
+        # 작업자에겐 벽시계 한도가 없다 - 감독 meta 의 timeout 은 0 이고, 공급자에 침묵 한도가 없으면 기본값이 들어간다
+        from fleet_rt import base as rt_base  # noqa: PLC0415
+        rid = self.spawn("FAKE: report DONE\\nok", model="nolimit/x")
+        m = sessions.load_meta(self.sdir(rid))
+        self.assertFalse(m.get("timeout"))
+        self.assertEqual(m["idle_timeout"], rt_base.DEFAULT_IDLE_TIMEOUT_SEC)
+        self.assertTrue(_wait(lambda: sessions.state(self.sdir(rid))["state"] == "done", 10))
 
     # 6
     def test_stop_kills_worker_and_grandchild_and_requeues(self):

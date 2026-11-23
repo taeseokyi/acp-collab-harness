@@ -30,7 +30,6 @@ import contextlib
 import datetime as dt
 import fcntl
 import json
-import math
 import os
 import pathlib
 import re
@@ -45,7 +44,7 @@ import time
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import fleet  # noqa: E402
-from fleet_rt.base import DEFAULT_NODE_TIMEOUT_SEC, parse_status  # noqa: E402
+from fleet_rt.base import parse_status  # noqa: E402
 
 ROOT = fleet.ROOT
 GRAPHS = ROOT / ".aimem" / "graph"
@@ -437,8 +436,7 @@ def _spawn_node(g, n, attempt_no):
     run_id = fleet.spawn(n["slot"], task_file.read_text(encoding="utf-8"), write=list(n.get("write", [])),
                          label=f"{n.get('title','')} ({g['id']})".strip(), task_id=tid, attempt=attempt_no,
                          harness=n.get("harness"), model=n.get("model"),
-                         project=n.get("project") or g.get("project") or None, round=g.get("round"),
-                         timeout=_node_timeout(g, n))
+                         project=n.get("project") or g.get("project") or None, round=g.get("round"))
     n.setdefault("attempts", []).append({"run_id": run_id, "started": _now()})
     n["status"] = "running"
     _log(g, f"spawn {n['id']} attempt {attempt_no} -> {run_id} ({n['slot']})")
@@ -558,25 +556,6 @@ def _log_once(g, key, msg):
         _log(g, msg)
     except (OSError, KeyError):
         pass
-
-
-def _node_timeout(g, n):
-    """`n.timeout_sec` -> `g.node_timeout_sec` -> 기본. 유한한 양수만 받고(`nan`·0·True 가 갓 띄운 작업자를 죽였다),
-    못 쓰는 값은 로그에 한 줄 남긴다."""
-    for src, v in (("timeout_sec", n.get("timeout_sec")), ("node_timeout_sec", g.get("node_timeout_sec"))):
-        if v is None:
-            continue
-        x = None
-        if not isinstance(v, bool):
-            try:
-                x = float(v)
-            except (TypeError, ValueError, OverflowError):
-                x = None
-        if x is not None and math.isfinite(x) and x > 0:
-            return x
-        _log_once(g, ("timeout", n.get("id"), src, repr(v)),
-                  f"warn {n.get('id')} - {src}={v!r} 는 유한한 양수가 아니라 무시합니다")
-    return float(DEFAULT_NODE_TIMEOUT_SEC)
 
 
 def _parse_started(s):
@@ -900,48 +879,11 @@ def _board_sync_changes(g, before):
         _board_sync(nid, BOARD_STATUS[st], n.get("slot"), g)
 
 
-def _check_timeout(g, n, att):
-    """아직 running 인 시도가 노드 한도를 넘었으면 끊고 실패 처리합니다. 처리했으면 True.
-    시작 시각이 깨져 있으면 판정을 건너뛴다 - 멀쩡한 작업자를 죽이는 쪽이 기다리는 쪽보다 나쁘다."""
-    gate = fleet.run_gate(att["run_id"])
-    if gate and gate.get("phase") == "await":
-        return False          # 사람의 '보내기' 를 기다리는 시간은 한도로 세지 않는다 (`_cut_unsent` 가 따로 본다)
-    elapsed = _elapsed_since((gate or {}).get("sent_at") or att.get("started"))
-    if elapsed is None:
-        _log_once(g, ("started", n.get("id"), att.get("run_id"), repr(att.get("started"))),
-                  f"warn {n.get('id')} - started={att.get('started')!r} 를 읽지 못해 타임아웃 판정을 건너뜁니다")
-        return False
-    limit = _node_timeout(g, n)
-    if elapsed <= limit:
-        return False
-    pid, outcome = _kill_run(att["run_id"], with_outcome=True)
-    if outcome == "refused":
-        # 못 끊었다 - 재시도하면 살아 있는 작업자 옆에 둘째가 뜬다. 재시도 없는 blocked 로 사람에게 넘긴다.
-        reason = _LAST_REFUSAL.get(att["run_id"]) or "안전 검사 거부"
-        att.update({"timeout": True, "kill_outcome": "refused", "kill_reason": reason, "fail_kind": "timeout",
-                    "timeout_at": _now(), "timeout_elapsed_s": int(elapsed)})
-        n["status"] = "blocked"
-        _log(g, f"timeout {n['id']} - 죽이지 못했습니다 (pid {pid if pid is not None else '?'}, {reason}). "
-                f"사람이 확인해야 합니다")
-        return True
-    att["kill_outcome"] = outcome
-    att.update({"ended": _now(), "rc": 124, "state": "timeout", "timeout": True, "fail_kind": "timeout"})
-    try:    # 끊긴 작업자가 그때까지 적은 말 - 재시도 브리프가 "직전 보고" 로 넘긴다
-        _store_report(att, fleet.run_report(att["run_id"]))
-    except Exception:  # noqa: BLE001 - 보고를 못 읽어도 재시도는 가야 한다
-        pass
-    if outcome == "foreign":
-        _log(g, f"timeout {n['id']} - pid {pid} 가 그 실행의 것이 아닙니다 (죽이지 않음)")
-    _log(g, f"timeout {n['id']} after {int(elapsed)}s (run {att['run_id']}, pid {pid if pid is not None else '?'}, {outcome})")
-    _retry_or_fail(g, n, "rc=124 (timeout)")
-    return True
-
-
 def _cut_unsent(g):
     """다른 노드가 모두 끝났는데 사람이 아직 '보내기' 를 누르지 않은 노드를 끊고 `blocked` 로 넘긴다. 바꿨으면 True.
 
     기다리는 것은 최소 `APPROVAL_GRACE_SEC` - 노드가 그것 하나뿐인 그래프도 사람이 볼 틈은 준다. 이미 보낸 노드는
-    일하는 중이므로 건드리지 않는다(보낸 뒤의 한도는 `_check_timeout`).
+    일하는 중이므로 건드리지 않는다(보낸 뒤 멈춘 것은 하네스 운전기가 본다).
     """
     waiting = []
     for n in g["nodes"]:
@@ -1062,16 +1004,14 @@ def _step(g, concurrency=None, allow_spawn=None, hold_on_block=False):
             continue
         cut_orphan = False
         if state == "running" and (sinfo or {}).get("orphaned"):
-            # 감독 없이 하네스만 남았다 - 노드 한도까지 기다리지 않고 끊고 기반 장애로 다시 넣는다. 거부되면 running 인 채 둔다.
+            # 감독 없이 하네스만 남았다 - 끊어 줄 감독이 없으니 여기서 끊고 기반 장애로 다시 넣는다. 거부되면 running 인 채 둔다.
             _pid, outcome = _kill_run(att["run_id"], with_outcome=True)
             _log(g, f"orphaned {n['id']} ({att['run_id']}) - 감독 없이 남은 작업자를 끊음 ({outcome})")
             if outcome != "refused":
                 state, rc, sinfo = _run_info(att["run_id"])
                 cut_orphan = True
         if state == "running":
-            if _check_timeout(g, n, att):
-                changed = True
-            continue
+            continue        # 벽시계 한도는 없다 - 일하는 동안은 기다리고, 멈춘 작업자는 감독(침묵 한도)이 끊는다
         att["ended"], att["rc"], att["state"] = _now(), rc, state
         report = fleet.run_report(att["run_id"]) or ""
         _store_report(att, report)
@@ -1110,6 +1050,10 @@ def _step(g, concurrency=None, allow_spawn=None, hold_on_block=False):
             # 도구 호출을 글자로 찍고 끝난 시도 - 한 일이 없다. verify 가 느슨해도 done 이 되지 않게
             vrc, vtail = -2, "작업자가 도구 호출을 본문에 글자로 찍고 끝났다 - 한 일이 없다. 처음부터 다시 하라"
             _log(g, f"aborted {n['id']} ({att['run_id']}) - 보고가 도구 호출 글자로 끝남")
+        elif rc == 0 and not report.strip():
+            # 보고가 곧 결과물이다 - 읽기 전용 노드는 이것 말고 걸러 줄 장치가 없다 (R37: 세션이 끝나 멈춘 답이 done 이 됐다)
+            vrc, vtail = -5, "작업자가 보고 없이 끝났다 - 한 일을 알 수 없다. 끝에 보고를 적어라"
+            _log(g, f"no-report {n['id']} ({att['run_id']}) - 보고가 비어 있음")
         elif rc == 0 and wrote_nothing(n, att):
             vrc, vtail = -3, ("작업자가 쓰라고 받은 경로(" + ", ".join(n.get("write") or [])[:300] + ")를 하나도 고치지 않고 끝났다. "
                               "고칠 것이 정말 없다면 보고 첫 줄에 그 이유를 적어라")

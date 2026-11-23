@@ -1532,6 +1532,8 @@ def _pane_kind(meta, gate):
         retry = int(meta.get("attempt") or 1) > 1
     except (TypeError, ValueError):
         retry = False
+    if gate.get("resume"):
+        return "resume"      # 세션이 끝나 멈춘 답 - 같은 대화에 이어 보낸다
     if retry or gate.get("error"):
         return "retry"
     if "검수" in str(meta.get("label") or ""):
@@ -1607,6 +1609,7 @@ PANE_AUTO_PHRASES = {
     "review": "이 파일에 검수 지시가 있어. 읽고 거기 적힌 대상을 검수해 줘. 고치지는 말고 지적만 적어:",
     "docs": "이 파일에 문서 작업 지시가 있어. 읽고 그대로 해 줘. 코드는 건드리지 말고:",
     "retry": "아까 끝내지 못한 일이야. 이 파일을 다시 읽고 적힌 대로 처음부터 해 줘:",
+    "resume": "이 파일의 일을 하던 중에 끊겼어. 처음부터 다시 하지 말고 하던 데서 이어서 끝까지 해 줘:",
 }
 _pane_auto_notes = {}      # run id → 마지막으로 못 보낸 까닭 (이 프로세스 안에서만)
 
