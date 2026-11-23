@@ -10,6 +10,9 @@ import json
 import os
 import pathlib
 import re
+import shutil
+import ssl
+import subprocess
 import sys
 import tempfile
 import threading
@@ -675,10 +678,19 @@ class TlsContextTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 server.build_ssl_context(root)
 
+    @unittest.skipUnless(shutil.which("openssl"), "openssl 이 없습니다")
     def test_good_cert_builds_context(self):
-        # 브리프 지시: 자체서명 인증서를 tests/ 안에서 만들지 않는다(`openssl` 호출 금지,
-        # 저장소 `.aimem/tls/` 실물 복사도 금지). 정상 컨텍스트 생성은 건너뛰고 보고에 적는다.
-        self.skipTest("정상 인증서 픽스처를 만들지 않기로 함 (T-067 브리프). 보고서 '못 덮은 것' 참조")
+        # 인증서는 임시 root 안에서만 만든다 - 저장소 `.aimem/tls/` 실물은 읽지도 복사하지도 않는다.
+        with tempfile.TemporaryDirectory() as root:
+            crt, key = pathlib.Path(root) / CERT_FILE, pathlib.Path(root) / KEY_FILE
+            crt.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                            "-nodes", "-days", "1", "-keyout", str(key), "-out", str(crt), "-subj", "/CN=localhost"],
+                           check=True, capture_output=True)
+            os.chmod(key, 0o600)
+            ctx = server.build_ssl_context(root)
+            self.assertIsInstance(ctx, ssl.SSLContext)
+            self.assertEqual(ctx.minimum_version, ssl.TLSVersion.TLSv1_2)
 
 
 if __name__ == "__main__":
