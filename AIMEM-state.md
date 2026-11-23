@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-23T19:06:36 / REV 194
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-24T00:20:12 / REV 195
 
 ## 2. 세션 명부
 
@@ -11,7 +11,7 @@
 | S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R38 대기 (이번 라운드는 S6 시험만) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
 | S4 | `6cd650` | claude | sonnet | R38 대기 (이번 라운드는 S6 시험만) | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
 | S5 | `61dfcc` | claude | sonnet | R38 대기 (이번 라운드는 S6 시험만) |  |
-| S6 | `47764b` | freebuff | (하네스 기본) | R39 대기 큐 7건 수정 (VoxLog 3 → 자모맞히기 4, freebuff 쓰기·이어 가기 시험) |  |
+| S6 | `47764b` | freebuff | (하네스 기본) | R40 VoxLog 읽기 전용 검수 2건 (세션 끝 넘겨 이어 가기 시험) |  |
 
 ## 3. 작업 보드
 
@@ -301,6 +301,8 @@
 | T-377 | Q-261123-6bf6 | [자모맞히기] R37-N3·N4 serve.py 예외를 JSON 500 으로, 0줄 덧붙임 안내 | S6 | DONE |  |
 | T-378 | Q-261123-6bf6 | [자모맞히기] R37-N5~N9 Origin 없는 GET·verify opener·출처 안내·'네'·화면 복잡도 | S6 | DONE |  |
 | T-379 | Q-261123-6bf6 | [VoxLog·자모맞히기] R39 적대적 검수 (S6 수정 7건) | S1 | DONE |  |
+| T-380 | Q-261123-7d3e | [VoxLog] 화면 쪽 검수: web/ 6파일 (S6 세션 이어 가기 시험 1/2) | S6 | DONE |  |
+| T-381 | Q-261123-7d3e | [VoxLog] 검사·문서 대조 검수: INTERFACE.md ↔ serve.py·voxlog/·tests/ (S6 세션 이어 가기 시험 2/2) | S6 | BLOCKED |  |
 
 ## 4.5 대기 큐
 
@@ -309,6 +311,9 @@
 | 1 | [함대] R39-P1(중) freebuff 가 자동 전송한 지시를 '사용 정책 위반(Scripted or automated use - 같은 메시지 반복·자동 사용)' 으로 막았는데(T-377 18:22:54) 하네스가 이를 '멈춤 → 같은 대화에 이어 보내기' 로 다뤄 16초 뒤 자동으로 다시 보냄. 정책 거절은 BLOCKED 로 멈추고 사람에게 알리게(자동 재전송 금지). 자동 전송 옵션을 계속 쓸지는 태석님 결정. rounds/R39/REPORT.md (3) |  |  |
 | 2 | [VoxLog] R39-N1·N2(하) T-374 회귀: from/to 가 date.fromisoformat 만 봐서 20261123·2026-W48-1 이 400 대신 200(DATE_RE 와 둘 다 검사), X-Recorded-At 0001-01-01T00:00:00+14:00 이면 OverflowError 로 업로드가 끊김(OverflowError 도 잡아 서버 시각). R39-N4(하) INTERFACE.md health 행에 llm_error 빠짐. serve.py 몇 줄+검사. rounds/R39/REVIEW-r39.md |  |  |
 | 3 | [자모맞히기] R39-N3(하) tests/README.md 기대 검사 수가 낡음(107·132·81 → 109·144·85). 덧: trend.txt 2026-11-29~12-05 일곱 줄은 정답 고르기 경로를 거치지 않고 들어옴 - 출처를 태석님께 확인. rounds/R39/REVIEW-r39.md |  |  |
+| 4 | [VoxLog] R40-N1(중) 두 번째 탭이 녹음 중인 초안을 살리면서 그 녹음을 잃고 '저장됨' 표시(app.js:1060 draftRecover 인자 없음, queue.js:376-405 draftFinish 조용히 끝남·고아 조각). 고칠 방향과 재현은 rounds/R40/REVIEW-r40-s6.md, 브라우저 검사 시나리오 추가 |  |  |
+| 5 | [VoxLog] R40-N2·N3(하) 올리는 중 끝난 녹음이 다시 안 올라감(queue.js:180·278 flush 진행 중 promise 반환), 200 인데 JSON 아닌 응답을 빈 성공으로 받아 '연결됨 0건'(api.js:67). rounds/R40/REVIEW-r40-s6.md |  |  |
+| 6 | [VoxLog] R40 노드 2(T-381) 못 한 일: docs/INTERFACE.md 약속을 serve.py·voxlog/·tests/ 와 하나씩 대조(문서와 다른 코드·검사 없는 동작·느슨한 검사, 가능하면 /tmp 변이 시험). 읽기 전용 검수. 지시문은 .aimem/graph/G-082.json T-381. 엔진이 1차 지시 답 도중 끊어 blocked(엔진은 고침) |  |  |
 
 ## 6. 파일 소유권
 
@@ -562,3 +567,4 @@
 | Q-261123-f11a | [자모맞히기] 시험 라운드: freebuff 슬롯(S6)으로 코드 검수 | 태석 (클로드 코드 전달) | DONE | 2026-11-23T14:11:00 |
 | Q-261123-018e | [VoxLog] 시험 라운드: freebuff 세션이 도중에 끝날 때 이어 가기(S6) | 태석 (클로드 코드 전달) | DONE | 2026-11-23T16:50:49 |
 | Q-261123-6bf6 | 대기 큐 7건 처리 - S6(freebuff)에 맡기는 시험 라운드 (세션 도중 끊김 보기) | 태석 (클로드 코드 전달) | DONE | 2026-11-23T17:42:01 |
+| Q-261123-7d3e | [VoxLog] 시험 라운드: freebuff 세션이 일하는 도중 풀릴 때 이어 가기 (S6 노드 둘) | 태석 (클로드 코드 전달) | DONE | 2026-11-23T22:33:35 |

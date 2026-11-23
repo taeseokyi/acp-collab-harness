@@ -1,0 +1,30 @@
+{
+ "round": 40,
+ "at": "2026-11-23T22:33:38",
+ "brief": "manager-round-standard.md",
+ "requests": [
+  "Q-261123-7d3e"
+ ],
+ "projects": [
+  "VoxLog"
+ ],
+ "session": "M-R40-223338",
+ "policy": "cost",
+ "metrics": {
+  "workers": 2,
+  "peak_parallel": 1,
+  "minutes": {
+   "free": 39.75,
+   "paid": 0.0
+  },
+  "by_slot": {
+   "S6": {
+    "runs": 2,
+    "minutes": 39.75,
+    "tier": "free"
+   }
+  },
+  "moves": 0,
+  "manager_slots": []
+ }
+}

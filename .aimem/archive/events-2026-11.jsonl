@@ -1,0 +1,48 @@
+{"seq": 14, "at": "2026-11-09T21:18:03", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-069 ASSIGNED S1 reader.collect() 를 DB 정본으로 (운영 상태 마크다운 파싱 폐기)"}
+{"seq": 15, "at": "2026-11-09T21:18:03", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-070 REVIEW 관리자 fleet.py roster/owned_paths/read_rev/board_rows 를 DB 우선·마크다운 폴백으로"}
+{"seq": 16, "at": "2026-11-09T21:18:03", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-071 ASSIGNED S1 aimem_board.py 를 aimem_db.py 위임으로 (마크다운 쓰기 폐기)"}
+{"seq": 17, "at": "2026-11-09T21:18:03", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-072 ASSIGNED 관리자 AIMEM.md 2·3·4·4.5·6절 표 제거 + 아카이브 + 포인터 (린터 STATE_TABLE_IN_AIMEM 0건)"}
+{"seq": 18, "at": "2026-11-09T21:18:03", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-073 ASSIGNED S4 2단계 계약 테스트 (reader 가 DB 를 읽는다 / 표 없는 AIMEM.md 에서도 돈다)"}
+{"seq": 19, "at": "2026-11-09T21:18:04", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-074 ASSIGNED S3 공개면 2차 프런트 (토큰 열 제거·root/kisti.url 비의존)"}
+{"seq": 20, "at": "2026-11-09T21:18:04", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-075 ASSIGNED 관리자 /api/state 에서 slots[].token·root·kisti.url 제거 + 요청 생성 분당 제한"}
+{"seq": 21, "at": "2026-11-09T21:18:04", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-076 ASSIGNED S4 공개면 2차 계약 테스트 (token/root/kisti.url 부재 · 분당 제한 · S4 검수 5·6번 재검수)"}
+{"seq": 22, "at": "2026-11-09T21:29:27", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-077 ASSIGNED S1 reader 의 log 를 when 내림차순으로 (events.seq 순서가 시간순이 아닐 수 있다)"}
+{"seq": 23, "at": "2026-11-09T21:33:02", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue +19 스모크(곧 지움)"}
+{"seq": 24, "at": "2026-11-09T21:33:02", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue -19 스모크(곧 지움)"}
+{"seq": 25, "at": "2026-11-09T21:35:30", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-069 REVIEW"}
+{"seq": 26, "at": "2026-11-09T21:35:31", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-070 REVIEW"}
+{"seq": 27, "at": "2026-11-09T21:35:31", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-071 REVIEW"}
+{"seq": 28, "at": "2026-11-09T21:35:31", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-072 REVIEW"}
+{"seq": 29, "at": "2026-11-09T21:35:31", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-073 REVIEW"}
+{"seq": 30, "at": "2026-11-09T21:35:31", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-074 REVIEW"}
+{"seq": 31, "at": "2026-11-09T21:35:32", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-075 REVIEW"}
+{"seq": 32, "at": "2026-11-09T21:35:32", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-076 REVIEW"}
+{"seq": 33, "at": "2026-11-09T21:35:32", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-077 REVIEW"}
+{"seq": 34, "at": "2026-11-09T21:35:32", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue -6 요청 생성 속도 제한 + `/api/state` 의 `detail` 잘라 보내기"}
+{"seq": 35, "at": "2026-11-09T21:35:32", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue -5 공개면에서 `root`·`paths`·`slots[].token`·`kisti.url` 빼기"}
+{"seq": 36, "at": "2026-11-09T21:35:32", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue -4 `AIMEM.md` 2·3·4·4.5·6절 본문 제거 -> 포인터만"}
+{"seq": 37, "at": "2026-11-09T21:35:32", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue -3 `aimem_board.py` 를 `aimem_db.py task set` 으로 위임하거나 폐기"}
+{"seq": 38, "at": "2026-11-09T21:35:33", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue -2 `fleet.py` 가 명부·소유권·REV 를 **DB 에서** 읽게"}
+{"seq": 39, "at": "2026-11-09T21:35:33", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue -1 `reader.py` 가 운영 상태를 **DB 에서** 읽게 (`AIMEM.md` 파싱 폐기)"}
+{"seq": 40, "at": "2026-11-09T21:35:48", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue +13 `/api/state` 의 `requests[].detail` 잘라 보내기"}
+{"seq": 41, "at": "2026-11-09T21:35:48", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue +14 `serve()` 가 `Handler.rate` 를 묶는지 보는 테스트"}
+{"seq": 42, "at": "2026-11-09T21:35:48", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue +15 `fleet.py` 의 DB 우선·마크다운 폴백 테스트"}
+{"seq": 43, "at": "2026-11-09T21:35:48", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue +16 S2 복구 시 테스트 소유권을 S4 -> S2 로 되돌리기"}
+{"seq": 44, "at": "2026-11-09T21:35:48", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue +17 `aimem_board.py` 의 `--file` 마크다운 경로 폐기 여부 결정"}
+{"seq": 46, "at": "2026-11-09T21:37:51", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-078 ASSIGNED S4 R5 관리자 수정분 적대적 검수 (scrub_public·속도제한·queue CLI·fleet DB) 읽기전용"}
+{"seq": 47, "at": "2026-11-09T21:37:51", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-054 ASSIGNED S1 상세 조회 UI 교차검수 (읽기 전용). S4 가 바빠 S1 에 배정"}
+{"seq": 48, "at": "2026-11-09T21:38:10", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-048 DONE S4 Strata 교차검수 - 대비비 재측정 + 하드코딩 hex + DOM id 보존 (S4 가 T-047 검수로 이미 수행)"}
+{"seq": 49, "at": "2026-11-09T21:46:26", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-079 ASSIGNED S4 속도 제한 계약 변경(allow 가 센다 · refund · 실패 버킷) 테스트 정합"}
+{"seq": 50, "at": "2026-11-09T21:47:41", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue +18 보드 행·요청 서브태스크 클릭으로 상세 패널 열기"}
+{"seq": 51, "at": "2026-11-09T21:47:41", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue +19 상세 패널이 404·400 본문의 이유를 화면에 쓰게"}
+{"seq": 52, "at": "2026-11-09T21:47:41", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue +20 KISTI 카드가 `pending`/`stale` 을 구분해 표시하게"}
+{"seq": 53, "at": "2026-11-09T21:47:41", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue +21 app.js 의 DEMO_STATE 에서 `root`·`kisti.url` 두 줄 제거"}
+{"seq": 54, "at": "2026-11-09T21:47:41", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue +22 상세 다이얼로그 포커스 이동·가둠·복귀"}
+{"seq": 55, "at": "2026-11-09T21:47:41", "actor": "관리자", "rev": 113, "kind": "queue", "body": "queue +23 `db_state()` 캐시 TTL 과 실패 비캐시의 테스트"}
+{"seq": 56, "at": "2026-11-09T21:48:18", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-054 DONE"}
+{"seq": 57, "at": "2026-11-09T21:48:18", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-078 DONE"}
+{"seq": 58, "at": "2026-11-09T21:48:18", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-079 REVIEW"}
+{"seq": 59, "at": "2026-11-09T21:48:19", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-075 REVIEW"}
+{"seq": 60, "at": "2026-11-09T21:48:19", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-070 REVIEW"}
+{"seq": 63, "at": "2026-11-09T21:49:41", "actor": "관리자(R5)", "rev": 114, "kind": "note", "body": "migrate 가 AIMEM.md 서문에서 REV 를 매번 덮어써 114->113 으로 되돌렸다. 서문은 DB 에 REV 가 없을 때만 씨앗으로 읽도록 고쳤다 (정본은 DB, 서문 동기는 render 가 한다)."}
+{"seq": 64, "at": "2026-11-09T21:51:20", "actor": "관리자", "rev": 114, "kind": "queue", "body": "queue +24 `state_dict()` 이벤트 합집합 질의와 `migrate` 의 REV 씨앗 규칙 테스트"}
