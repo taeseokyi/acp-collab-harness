@@ -4,21 +4,20 @@ freebuff 는 화면으로만 쓰고, 한 사람이 세션 하나만 열 수 있�
 세션은 뜨자마자 일하지 않는다:
 
     await   팬에 넣어도 된다는 승인(`approve.json`)을 기다린다. 승인은 **사람의 행위에서만** 나온다: 모니터의 '보내기',
-            사람이 켜 둔 보내기 옵션, 사람이 쓴 1차 지시. 엔진·관리자·작업자는 쓰지 않는다
-    (1차)   작업 지시보다 먼저, **사람이 직접 쓴 글**(1차 지시)이 팬에 들어간다 - 모니터의 창·보내기 칸에 쓴 것,
-            또는 노드에 미리 써 둔 것. 단계는 그대로 await 이고 `first_at` 이 적힌다
-    sent    그 대화에 이어서 **작업 지시 한 줄**을 넣었다: 작업 요지 + 사람이 고르거나 미리 고른 문구 + 지시문 파일 경로(맨 뒤).
+            또는 사람이 켜 둔 보내기 옵션. 엔진·관리자·작업자는 쓰지 않는다
+    sent    새 대화에 **작업 지시 한 줄**을 넣었다: 사람이 직접 쓴 글(1차 지시 - 모니터의 창·보내기 칸에 쓴 것, 또는 노드에
+            미리 써 둔 것) + 작업 요지 + 사람이 고르거나 미리 고른 문구 + 지시문 파일 경로(맨 뒤). 한 번에 보낸다 -
+            1차 지시를 먼저 보내고 답을 기다리지 않는다 (2026-11-24 태석님).
             지시문 본문은 팬에 치지 않는다 - 팬에 치는 글이 자유로우면 freebuff 의 `/bash` 로 명령을 치는 통로가 된다
     done    freebuff 가 디스크에 적는 대화(`<chats>/<작업 폴더 이름>/chats/<시각>/chat-messages.json`)에서 답이 끝났다
     refused freebuff 가 줄을 사용 정책(자동 사용)으로 거절했다 - 다시 보내지 않고 BLOCKED 로 끝내며,
             보내기 옵션을 끈다 (다시 켜는 것은 사람)
 
 세션이 일하는 도중 끝나면 await 로 돌아가고(`resume`), 같은 대화에 이어 가라는 줄을 넣는다 - 1차 지시는 이미 그 대화에
-있으므로 다시 받지 않는다(옵션이 켜져 있으면 사람 손 없이 이어진다). 사람이 팬에 직접 친 글은 1차 지시로 치지 않는다 -
-1차 지시는 모니터를 거친 것만이다.
+있으므로 다시 붙이지 않는다(옵션이 켜져 있으면 사람 손 없이 이어진다).
 
-지금 단계는 세션 폴더의 `gate.json` 에 적는다(`phase`·`since`·`sent_at`·`by`·`error`·`error_at`·`pane`·`busy`·`first_at`·
-`first_by`·`resume`·`held`) - 그래프 실행기와 모니터가 읽는다. 사람 승인 뒤에야 일하는 하네스라는 표시는
+지금 단계는 세션 폴더의 `gate.json` 에 적는다(`phase`·`since`·`sent_at`·`by`·`error`·`error_at`·`pane`·`busy`·`resume`·
+`held`) - 그래프 실행기와 모니터가 읽는다. 사람 승인 뒤에야 일하는 하네스라는 표시는
 `ADAPTER.approval = True` 하나이고, 엔진은 하네스 이름이 아니라 이 표시와 `gate.json` 만 본다.
 
 설정은 `fleet.toml [harness.freebuff]`: `pane`(tmux 팬, 기본 `freebuff:0.0`), `chats`(대화 저장 폴더, 기본
@@ -76,8 +75,6 @@ AUTO_FILE = ".aimem/pane_auto.json"
 SESSION_LOG = ".aimem/freebuff_sessions.jsonl"
 SESSION_SEC = 3600
 UNSENT_REPORT = "BLOCKED\n사람이 '보내기' 를 누르지 않아 freebuff 에 지시가 나가지 않았다. 한 일이 없다."
-UNSENT_REPORT_FIRST = ("BLOCKED\n사람의 1차 지시는 팬에 들어갔지만 그 뒤 작업 지시가 나가지 않았다. "
-                       "맡긴 일은 한 것이 없다.")
 
 _PLACEHOLDER_RE = re.compile(r"enter a coding task", re.I)
 _HELD_RE = re.compile(r"session was released|choose a model to start", re.I)     # 세션이 끝나 지시가 창에 걸려 있다
@@ -147,41 +144,6 @@ def auto_set(root, on, by, refused=False):
 
 #: 함대가 팬에 넣는 줄에는 늘 지시문 파일 경로가 들어 있다 - 이것이 없는 사용자 메시지는 사람이 직접 쓴 것이다.
 _FLEET_LINE_RE = re.compile(r"\.aimem/sessions/[^/\s]+/brief\.md")
-
-
-def human_turn_done(chats_root, cwd, since=0.0, now=None):
-    """사람의 1차 지시(모니터가 팬에 넣은 것)의 답이 정상으로 끝나 있으면 `(대화 파일, 바뀐 시각)`, 아니면 None.
-    부르는 쪽은 1차 지시를 넣은 시각을 `since` 로 준다 - 그 전의 대화는 치지 않는다.
-
-    가장 최근에 바뀐 대화만 본다. 마지막 사용자 메시지가 사람의 것이고(함대의 줄이 아님), 그 뒤 답이 `completionTime` 으로
-    끝났고, 파일이 `since` 뒤에 바뀌어 `SETTLE_SEC` 동안 조용해야 한다. 함대가 이어 보내면 마지막 사용자 메시지가
-    함대의 줄이 되므로, 사람의 지시 하나는 기다리는 지시 하나만 내보낸다.
-    """
-    now = time.time() if now is None else now
-    base_dir = pathlib.Path(chats_root) / pathlib.Path(cwd).name / "chats"
-    best, best_m = None, 0.0
-    try:
-        for c in base_dir.iterdir():
-            try:
-                m = (c / "chat-messages.json").stat().st_mtime
-            except OSError:
-                continue
-            if m > best_m:
-                best, best_m = c / "chat-messages.json", m
-    except OSError:
-        return None
-    if best is None or best_m < since or now - best_m < SETTLE_SEC:
-        return None
-    msgs = [m for m in (_load_chat(best) or []) if isinstance(m, dict)]
-    users = [i for i, m in enumerate(msgs) if m.get("variant") == "user"]
-    if not users or users[-1] == len(msgs) - 1:
-        return None
-    if _FLEET_LINE_RE.search(str(msgs[users[-1]].get("content") or "")):
-        return None
-    last = msgs[-1]
-    if last.get("variant") != "ai" or not last.get("completionTime") or last.get("userError"):
-        return None
-    return best, best_m
 
 
 #: 관리자가 지시문에 적는 요지 줄 - `요지: <무엇을 어떻게, 끝난 기준>` (한 줄)
@@ -348,12 +310,24 @@ def _one_line(text, limit=LINE_TEXT_MAX):
     return text, ""
 
 
-def follow_line(gist, phrase, ref):
-    """작업 지시 한 줄 = 작업 요지(앞) + 사람이 고르거나 미리 고른 문구 + 지시문 파일 경로(맨 뒤). `(줄, 까닭)`.
+def follow_line(gist, phrase, ref, first=None):
+    """작업 지시 한 줄 = 사람이 직접 쓴 1차 지시(맨 앞, 있으면) + 작업 요지 + 사람이 고르거나 미리 고른 문구
+    + 지시문 파일 경로(맨 뒤). `(줄, 까닭)`.
 
     문구는 기계가 정하지 않는다 - 기본값도 없다. 여기서는 한 줄인지, 명령(`/…`)으로 읽히지 않는지만 본다.
+    1차 지시는 사람의 글이어야 한다 - 지시문 파일 경로가 들어 있으면 안 된다.
     """
-    text, why = _one_line(f"{gist} {phrase}" if gist else phrase, GIST_MAX + LINE_TEXT_MAX + 10)
+    head = ""
+    if first is not None and str(first).strip():
+        head, why = _one_line(first)
+        if head is None:
+            return None, "1차 지시: " + why
+        if _FLEET_LINE_RE.search(head):
+            return None, "1차 지시에는 지시문 파일 경로를 넣지 않습니다 (직접 쓰는 글입니다)"
+    phrase, why = _one_line(phrase)
+    if phrase is None:
+        return None, why
+    text, why = _one_line(" ".join(x for x in (head, gist, phrase) if x), GIST_MAX + 2 * LINE_TEXT_MAX + 10)
     if text is None:
         return None, why
     return f"{text} {_CTRL_RE.sub('', str(ref))}", ""
@@ -422,28 +396,10 @@ def _write_json(p, obj):
     os.replace(tmp, p)
 
 
-def approve_first(session_dir, by, text):
-    """사람이 모니터의 '1차 지시' 창에 쓴 글을 적는다 - 운전기가 그것을 팬에 먼저 넣는다(작업 지시는 그 답이 끝난 뒤).
-    글은 사람의 것이어야 한다: 한 줄이고, 지시문 파일 경로가 들어 있으면 안 된다. `(됐나, 까닭)`."""
-    d = pathlib.Path(session_dir)
-    g = read_gate(d)
-    if not g or g.get("phase") != "await" or (d / "end.json").exists():
-        return False, "보내기를 기다리는 세션이 아닙니다"
-    if g.get("busy") or (d / APPROVE_FILE).exists():
-        return False, "지금 팬에 넣는 중입니다"
-    text, why = _one_line(text)
-    if text is None:
-        return False, why
-    if _FLEET_LINE_RE.search(text):
-        return False, "1차 지시에는 지시문 파일 경로를 넣지 않습니다 (직접 쓰는 글입니다)"
-    _write_json(d / APPROVE_FILE, {"at": _now(), "by": str(by or "")[:80], "first": text})
-    return True, ""
-
-
 def approve(session_dir, by, line, same_chat=False):
     """작업 지시 한 줄을 팬에 넣어도 된다고 적는다 - **모니터만 부른다**(사람의 '보내기', 또는 사람이 켠 옵션).
     기다리는 세션이 아니면 `(False, 까닭)`.
-    `same_chat` 이면 새 대화를 열지 않고 지금 대화에 이어 넣는다 (사람이 직접 쓴 지시 뒤에 잇는 경우)."""
+    `same_chat` 이면 새 대화를 열지 않고 지금 대화에 이어 넣는다 (세션이 끝나 멈춘 일을 잇는 경우)."""
     d = pathlib.Path(session_dir)
     g = read_gate(d)
     if not g or g.get("phase") != "await":
@@ -636,9 +592,6 @@ class Driver:
         self.pane, self.chats = settings(self.cwd)
         self.gate = {"phase": "await", "since": _now(), "pane": self.pane}
         self.sent = False
-        self.first = False        # 사람의 1차 지시를 팬에 넣었다 - 작업 지시는 그 대화에 잇는다
-        self.first_text, self.first_wall = None, 0.0     # 답을 지켜볼 1차 지시 (거절·세션 끝남을 알아채려고)
-        self.refusal = None       # freebuff 가 1차 지시를 사용 정책으로 거절한 글
         self.stop = False
         # 일하는 고리의 상태 - 세션이 끝나 같은 대화에 이어 보낼 때도 그대로 이어진다
         self.chat, self.blocks, self.emitted = None, [], 0
@@ -663,8 +616,6 @@ class Driver:
         ap = self.d / APPROVE_FILE
         while not self.stop and time.monotonic() < deadline:
             if not ap.exists():
-                if self.first_text and self._first_trouble():
-                    return False
                 time.sleep(0.5)
                 continue
             try:
@@ -679,52 +630,20 @@ class Driver:
                 pass
             self._save(busy=True)        # 팬에 넣는 몇 초 동안은 승인을 또 받지 않는다 (같은 지시가 두 번 적히지 않게)
             st = pane_status(self.pane)
-            if isinstance(said.get("first"), str):
-                # 사람이 쓴 1차 지시 - 팬에 넣고 계속 기다린다. 작업 지시는 그 답이 끝난 뒤 같은 대화에 온다
-                info, t0, wall0 = {}, _now(), time.time()      # 넣기 **전** 시각 - 답이 몇 초 만에 끝나도 그 뒤의 것으로 친다
-                ok, why = (False, st["why"]) if not st["ok"] else send_line(
-                    self.pane, said["first"], new=not self.sent and not self.first, info=info)
-                if ok:
-                    self.first, self.first_text, self.first_wall = True, said["first"], wall0
-                    # since 도 옮긴다: 그래프의 '보내지 않음' 판정과 모니터가 이 1차 지시부터 다시 센다
-                    self._save(first_at=t0, since=t0, first_by=str(who)[:80], error=None, busy=False)
-                    self._note(f"사람이 쓴 1차 지시를 팬에 넣음 (쓴 사람: {who or '?'}) - 답이 끝나면 작업 지시를 잇는다")
-                    self._note(self._session_note(info.get("held")))
-                else:
-                    self._save(error=why, error_at=_now(), busy=False)
-                    _out({"type": "error", "text": f"1차 지시를 보내지 못함: {why}"})
-                continue
             if not isinstance(line, str) or self.d.name not in line:
                 ok, why = False, "사람이 고른 문구가 없습니다"       # 문구 없이는 보내지 않는다 - 기본 문구는 없다
             else:
                 info = {}
                 ok, why = (False, st["why"]) if not st["ok"] else send_line(
-                    self.pane, line, new=not self.sent and not self.first and said.get("same_chat") is not True, info=info)
+                    self.pane, line, new=not self.sent and said.get("same_chat") is not True, info=info)
             if ok:
-                self.sent, self.first_text = True, None
+                self.sent = True
                 self._save(phase="sent", sent_at=_now(), by=str(who)[:80], error=None, busy=False)
                 self._note(f"팬에 지시 한 줄을 넣음 (누른 사람: {who or '?'})")
                 self._note(self._session_note(info.get("held")))
                 return True
             self._save(error=why, error_at=_now(), busy=False)
             _out({"type": "error", "text": f"보내지 못함: {why}"})
-        return False
-
-    def _first_trouble(self):
-        """넣은 1차 지시의 답이 오류로 끝났는지 본다. 사용 정책 거절이면 True(끝낸다) - 그 밖의 오류는 적고 다시 받는다."""
-        chat = find_chat(self.chats, self.cwd, self.first_text, self.first_wall)
-        msgs = _load_chat(chat) if chat is not None else None
-        n, last = chat_tail(msgs, self.first_text) if msgs else (0, {})
-        err = one_line(str(last.get("userError") or ""), 200) if n else ""
-        if not err:
-            return False
-        self.first_text = None
-        if _REFUSED_RE.search(err):
-            self.refusal = err
-            return True
-        # 세션이 끝났거나 다른 오류 - 이 1차 지시는 없던 것으로 하고 사람의 글을 다시 받는다 (같은 대화에 잇는다)
-        self._save(first_at=None, since=_now(), error=f"1차 지시의 답이 정상으로 끝나지 않았습니다: {err}", error_at=_now())
-        _out({"type": "error", "text": f"1차 지시의 답이 정상으로 끝나지 않음: {err}"})
         return False
 
     def _session_note(self, held):
@@ -839,20 +758,16 @@ class Driver:
             signal.signal(s, self._on_term)
         while True:
             if not self._await():
-                if self.refusal:
-                    return self._refused(self.refusal)
                 if not self.sent:
-                    if self.first:
-                        _tmux("send-keys", "-t", self.pane, "Escape")      # 1차 지시의 답이 돌고 있을 수 있다 - 멈춤 키 하나
                     self._save(phase="unsent")
-                    _out({"type": "end", "ok": False, "result": UNSENT_REPORT_FIRST if self.first else UNSENT_REPORT})
+                    _out({"type": "end", "ok": False, "result": UNSENT_REPORT})
                     return RC_UNSENT
                 rc, report = None, self._partial("이어 보내지 않음")
                 break
             rc, report = self._work()
             if rc != RESUME:
                 break
-            # 이어 가기는 사람의 글을 다시 받지 않는다 - 1차 지시는 이미 이 대화에 있다. 승인(사람의 누름이나 켜 둔 옵션)만 기다린다
+            # 이어 가기는 사람의 글을 다시 붙이지 않는다 - 1차 지시는 이미 이 대화에 있다. 승인(사람의 누름이나 켜 둔 옵션)만 기다린다
             self._save(phase="await", since=_now(), resume=True, error=None)
         if rc == REFUSED:
             return self._refused(report)

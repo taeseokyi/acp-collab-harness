@@ -884,7 +884,7 @@ def _cut_unsent(g):
 
     기다리는 것은 최소 `APPROVAL_GRACE_SEC` - 노드가 그것 하나뿐인 그래프도 사람이 볼 틈은 준다. 이미 보낸 노드는
     일하는 중이므로 건드리지 않는다(보낸 뒤 멈춘 것은 하네스 운전기가 본다). 시간은 `gate.since` 부터 센다 - 운전기가
-    사람의 1차 지시를 넣을 때와 세션이 끝나 이어 보내기를 기다릴 때 그 시각을 옮기므로, 답을 기다리는 동안은 끊기지 않는다.
+    세션이 끝나 이어 보내기를 기다리기 시작할 때 그 시각을 옮기므로, 이어 보낼 틈도 같은 만큼 준다.
     """
     waiting = []
     for n in g["nodes"]:
@@ -897,9 +897,9 @@ def _cut_unsent(g):
         waited = _elapsed_since(gate.get("since"))
         if waited is None or waited < APPROVAL_GRACE_SEC:
             return False
-        # 무엇을 기다리다 넘기는지 - 한 번도 안 보낸 것, 1차 지시만 들어간 것, 세션이 끝나 이어 보내기를 기다리던 것
+        # 무엇을 기다리다 넘기는지 - 한 번도 안 보낸 것, 세션이 끝나 이어 보내기를 기다리던 것
         what = ("세션이 끝나 멈춘 뒤 이어 보내지 않음" if gate.get("resume")
-                else "1차 지시 뒤 작업 지시를 보내지 않음" if gate.get("first_at") else "사람이 '보내기' 를 누르지 않음")
+                else "사람이 '보내기' 를 누르지 않음")
         waiting.append((n, int(waited), what))
     for n, waited, what in waiting:
         att = n["attempts"][-1]

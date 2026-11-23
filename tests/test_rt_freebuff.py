@@ -309,38 +309,6 @@ class Driver(Base):
         # 사람이 다시 켜면 거절 표시는 사라진다
         self.assertEqual(fb.auto_set(self.root, True, "웹")["refused"], False)
 
-    def test_refusal_of_the_first_instruction_is_caught_too(self):
-        # 사람의 1차 지시 자체가 거절돼도 알아챈다 - 작업 지시는 나가지 않고 BLOCKED, 옵션은 꺼진다
-        fb.auto_set(self.root, True, "웹(검사)")
-        d = self.session()
-        p = self.drive(d)
-        self.wait_for(lambda: (fb.read_gate(d) or {}).get("phase") == "await")
-        self.assertEqual(fb.approve_first(d, "웹", "먼저 구조부터 봐 줘"), (True, ""))
-        self.wait_for(lambda: (fb.read_gate(d) or {}).get("first_at"))
-        self.chat([{"variant": "user", "content": "먼저 구조부터 봐 줘"},
-                   {"variant": "ai", "content": "", "isComplete": True, "blocks": [],
-                    "userError": "Freebuff did not send this message to the model. It breaks the usage policy."}])
-        out, _ = p.communicate(timeout=30)
-        self.assertEqual(p.returncode, 0, out)
-        self.assertTrue(json.loads(out.splitlines()[-1])["result"].startswith("BLOCKED\n"))
-        self.assertEqual(fb.read_gate(d)["phase"], "refused")
-        self.assertEqual((lambda a: (a["on"], a["refused"]))(fb.auto_state(self.root)), (False, True))
-        self.assertEqual([k for k in self.sent_keys() if len(k) == 3 and d.name in k[2]], [], "작업 지시가 나갔다")
-
-    def test_first_instruction_cut_by_session_end_is_asked_again(self):
-        # 1차 지시의 답이 세션 끝남으로 멈추면 그 1차 지시는 없던 것으로 하고 다시 받는다 (끝내지 않는다)
-        d = self.session()
-        p = self.drive(d)
-        self.wait_for(lambda: (fb.read_gate(d) or {}).get("phase") == "await")
-        fb.approve_first(d, "웹", "먼저 구조부터 봐 줘")
-        g = self.wait_for(lambda: (lambda g: g if g.get("first_at") else None)(fb.read_gate(d) or {}))
-        self.assertEqual(g["since"], g["first_at"])                             # 그래프의 '보내지 않음' 판정도 여기서부터 센다
-        self.chat([{"variant": "user", "content": "먼저 구조부터 봐 줘"},
-                   {"variant": "ai", "content": "", "isComplete": True, "blocks": [], "userError": "Your free session ended."}])
-        g = self.wait_for(lambda: (lambda g: g if g.get("error") else None)(fb.read_gate(d) or {}))
-        self.assertEqual((g["phase"], g["first_at"]), ("await", None))
-        self.assertIsNone(p.poll())
-
     def test_other_errors_are_failures_not_resumes(self):
         # 세션 끝남이 아닌 오류는 이어 보내지 않는다 - 실패로 끝난다
         d = self.session()
@@ -546,9 +514,8 @@ class GraphRules(unittest.TestCase):
         self.assertIn("'보내기' 를 누르지 않음", n["attempts"][-1]["verify_tail"])
 
     def test_handover_says_what_the_node_was_waiting_for(self):
-        # 1차 지시만 들어간 노드, 세션이 끝나 이어 보내기를 기다리던 노드는 '안 보냄' 이 아니다 - 까닭을 그대로 적는다
-        for extra, want in (({"first_at": "2020-01-01T00:00:00"}, "1차 지시 뒤 작업 지시를 보내지 않음"),
-                            ({"resume": True}, "세션이 끝나 멈춘 뒤 이어 보내지 않음")):
+        # 세션이 끝나 이어 보내기를 기다리던 노드는 '안 보냄' 이 아니다 - 까닭을 그대로 적는다
+        for extra, want in (({"resume": True}, "세션이 끝나 멈춘 뒤 이어 보내지 않음"),):
             g = self._g()
             gate = dict({"phase": "await", "since": "2020-01-01T00:00:00"}, **extra)
             with mock.patch.object(fleet, "run_gate", return_value=gate), \
@@ -605,7 +572,8 @@ class MonitorSend(Base):
         self.assertNotIn("line", info)
         self.assertNotIn("body", info)
         self.assertTrue(info["pane"]["ok"])
-        self.assertEqual((info["gist"], info["first"], info["first_at"]), ("비밀 본문 rm -rf", None, None))
+        self.assertEqual((info["gist"], info["first"], info["resume"]), ("비밀 본문 rm -rf", None, False))
+        self.assertNotIn("first_at", info)
         meta = json.loads((self.d / "meta.json").read_text(encoding="utf-8"))
         meta["task_id"] = "T-900"
         (self.d / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
@@ -616,11 +584,33 @@ class MonitorSend(Base):
         before = (self.d / "brief.md").read_text(encoding="utf-8")
         code, res = self.server.pane_send(self.d.name, {"action": "send", "text": "오늘은 이거 부탁해:"}, "웹(검사)", self.root)
         self.assertEqual(code, 200, res)
-        ap = json.loads((self.d / fb.APPROVE_FILE).read_text(encoding="utf-8"))
+        ap = self.approved()
         # 손으로 보내는 줄도 작업 요지(앞) + 사람이 고른 문구 + 지시문 경로(맨 뒤)
         self.assertEqual((ap["by"], ap["line"]),
                          ("웹(검사)", f"비밀 본문 rm -rf 오늘은 이거 부탁해: .aimem/sessions/{self.d.name}/brief.md"))
+        self.assertNotIn("same_chat", ap)
         self.assertEqual((self.d / "brief.md").read_text(encoding="utf-8"), before)
+
+    def test_manual_send_puts_the_first_instruction_in_front_of_the_same_line(self):
+        # 1차 지시는 먼저 따로 보내지 않는다 - 작업 지시 줄 맨 앞에 붙어 한 번에 나간다 (2026-11-24 태석님)
+        s, tail = self.server, f"비밀 본문 rm -rf 부탁해: .aimem/sessions/{self.d.name}/brief.md"
+        send = lambda **kw: s.pane_send(self.d.name, dict({"action": "send", "text": "부탁해:"}, **kw), "웹", self.root)  # noqa: E731
+        self.assertEqual(s.pane_send(self.d.name, {"action": "first", "text": "글"}, "웹", self.root)[0], 400)   # 따로 보내는 길은 없다
+        self.assertEqual(send(first="/bash ls")[0], 400)
+        self.assertEqual(send(first=f"해 줘 .aimem/sessions/{self.d.name}/brief.md")[0], 400)   # 지시문 경로가 든 글은 사람의 글이 아니다
+        self.assertFalse((self.d / fb.APPROVE_FILE).exists())
+        self.assertEqual(send(first="지금부터 일을  하나 줄게.")[0], 200)                # 칸에 직접 쓴 글
+        self.assertEqual(self.approved()["line"], "지금부터 일을 하나 줄게. " + tail)
+        s.pane_first_set({"task": "T-900", "text": "써 둔 글이야."}, "웹", self.root)
+        self.assertEqual(send()[0], 200)                                          # 안 주면 노드에 써 둔 것
+        self.assertEqual(self.approved()["line"], "써 둔 글이야. " + tail)
+        self.assertEqual(send(first="")[0], 200)                                  # 비우면 붙지 않는다
+        self.assertEqual(self.approved()["line"], tail)
+        self.gate(resume=True)                                                    # 이어 가기에는 붙지 않고, 하던 대화에 잇는다
+        self.assertIsNone(s.pane_info(self.d.name, self.root)[1]["first"])
+        self.assertEqual(send(first="또 붙이려는 글")[0], 200)
+        ap = self.approved()
+        self.assertEqual((ap["line"], ap["same_chat"]), (tail, True))
 
     def test_kind_comes_from_engine_facts(self):
         k = self.server._pane_kind
@@ -634,20 +624,17 @@ class MonitorSend(Base):
         self.assertEqual(k({"write_paths": ["tools/a.py", "tests/test_a.py"]}, {}), "edit")
         self.assertEqual(self.server.pane_info(self.d.name, self.root)[1]["kind"], "read")
 
-    # ---- '미리 고른 문구 전송' 의 절차: 사람의 1차 지시(창·써 둔 것) → 그 답 → 작업 지시를 같은 대화에
+    # ---- '미리 고른 문구 전송' 의 절차: 사람의 1차 지시(창·써 둔 것)가 있으면 그것을 앞에 붙인 작업 지시 한 줄
 
-    def answered(self, ago=60, text="먼저 저장소 구조부터 봐 줘", done=True, **more):
-        """모니터가 넣은 1차 지시와 그 답 - `ago` 초 전에 끝났다. gate 에도 넣은 시각을 적는다."""
-        c = self.chats / self.root.name / "chats" / "2026-11-20T00-00-00.000Z"
-        c.mkdir(parents=True, exist_ok=True)
-        f = c / "chat-messages.json"
-        ai = dict({"variant": "ai", "content": "", "isComplete": done, "blocks": []}, **({"completionTime": "8s"} if done and not more else {}), **more)
-        f.write_text(json.dumps([{"variant": "user", "content": text}, ai]), encoding="utf-8")
-        t = time.time() - ago
-        os.utime(f, (t, t))
-        at = datetime.datetime.fromtimestamp(t - 30).isoformat(timespec="seconds")
-        self.gate(first_at=at, since=at)
-        return f
+    FIRST = "지금부터 일을 하나 줄게."
+
+    def stored(self, ago=60, text=None):
+        """노드에 1차 지시를 써 둔다 - `ago` 초 전에 쓴 것으로."""
+        self.assertEqual(self.server.pane_first_set({"task": "T-900", "text": text or self.FIRST}, "웹(검사)", self.root)[0], 200)
+        f = self.root / self.server.PANE_FIRST_FILE
+        d = json.loads(f.read_text(encoding="utf-8"))
+        d["T-900"]["at"] = datetime.datetime.fromtimestamp(time.time() - ago).isoformat(timespec="seconds")
+        f.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
 
     def gate(self, d=None, **kw):
         d = d or self.d
@@ -658,9 +645,9 @@ class MonitorSend(Base):
     def run_view(self, d=None):
         return self.server.pane_auto_view(self.root)[1]["runs"][(d or self.d).name]
 
-    def work_line(self, d=None, kind="read"):
+    def work_line(self, d=None, kind="read", first=""):
         d = d or self.d
-        return "비밀 본문 rm -rf " + self.server.PANE_AUTO_PHRASES[kind] + f" .aimem/sessions/{d.name}/brief.md"
+        return (first + " " if first else "") + "비밀 본문 rm -rf " + self.server.PANE_AUTO_PHRASES[kind] + f" .aimem/sessions/{d.name}/brief.md"
 
     def approved(self, d=None):
         d = d or self.d
@@ -670,28 +657,26 @@ class MonitorSend(Base):
 
     def test_nothing_goes_while_the_option_is_off(self):
         s = self.server
-        self.answered()
-        s.pane_first_set({"task": "T-900", "text": "먼저 README 부터 읽어 줘"}, "웹", self.root)
+        self.stored()
+        self.gate(since=datetime.datetime.fromtimestamp(time.time() - 300).isoformat(timespec="seconds"))
         self.assertEqual(s.pane_auto_tick(self.root), [])
         self.assertFalse((self.d / fb.APPROVE_FILE).exists())
         self.assertEqual(s.pane_auto_view(self.root)[1]["runs"], {})
 
-    def test_asks_for_a_first_instruction_then_counts_then_sends(self):
+    def test_asks_for_a_first_instruction_then_counts_then_sends_one_line(self):
         s = self.server
         s.pane_auto_set(True, "웹(검사)", self.root)
-        # 사람의 1차 지시가 먼저다 - 그 전에는 초를 세지 않고, 화면은 그 글을 묻는다
+        self.gate(since=datetime.datetime.fromtimestamp(time.time() - 300).isoformat(timespec="seconds"))
+        # 사람의 1차 지시가 있어야 나간다 - 그 전에는 초를 세지 않고, 화면은 그 글을 묻는다(받아서 이 노드에 적는다)
         self.assertEqual(s.pane_auto_tick(self.root), [])
-        self.assertEqual((self.run_view()["step"], self.run_view()["need_first"], self.run_view()["due_in"]), ("ask", True, None))
-        self.answered(ago=1, done=False)
-        self.assertEqual((self.run_view()["step"], self.run_view()["need_first"]), ("wait", False))   # 답이 아직 안 끝났다
-        self.answered(ago=30, userError="Your free session ended.")
-        self.assertEqual(s.pane_auto_tick(self.root), [])                       # 정상으로 끝난 답이 아니다
-        self.answered(ago=5)
+        v = self.run_view()
+        self.assertEqual((v["step"], v["need_first"], v["due_in"], v["task"]), ("ask", True, None, "T-900"))
+        self.stored(ago=3)
         v = self.run_view()
         self.assertEqual((v["step"], v["need_first"]), ("work", False))
         self.assertTrue(0 < v["due_in"] <= s.PANE_AUTO_SEC)
-        self.assertEqual(s.pane_auto_tick(self.root), [])                       # 답이 끝난 뒤 10초가 아직 안 됐다
-        self.answered(ago=60)
+        self.assertEqual(s.pane_auto_tick(self.root), [])                       # 쓴 뒤 10초가 아직 안 됐다 - 붙잡을 틈
+        self.stored(ago=60)
         self.screen(BUSY)
         self.assertEqual(s.pane_auto_tick(self.root), [])                       # 팬이 바쁘다
         self.assertIn("팬이 준비되지", self.run_view()["note"])
@@ -703,8 +688,10 @@ class MonitorSend(Base):
         self.assertEqual(s.pane_auto_tick(self.root), [self.d.name])
         self.assertEqual(s.pane_auto_tick(self.root), [])                       # 이미 승인이 적혀 있다
         ap = self.approved()
-        # 줄 = 작업 요지(앞) + 미리 고른 문구 + 지시문 경로(맨 뒤). 1차 지시의 대화에 잇는다(새 대화를 열지 않는다)
-        self.assertEqual((ap["line"], ap["same_chat"]), (self.work_line(), True))
+        # 한 줄 = 1차 지시(맨 앞) + 작업 요지 + 미리 고른 문구 + 지시문 경로(맨 뒤). 한 번에, 새 대화에 넣는다
+        self.assertEqual(ap["line"], self.work_line(first=self.FIRST))
+        self.assertNotIn("same_chat", ap)
+        self.assertNotIn("first", ap)
         self.assertIn("자동 전송", ap["by"])
         s.pane_auto_set(False, "웹(검사)", self.root)
         self.assertEqual(s.pane_auto_tick(self.root), [])
@@ -714,48 +701,31 @@ class MonitorSend(Base):
         fb.auto_set(self.root, False, "freebuff 사용 정책 거절", refused=True)
         self.assertTrue(s.pane_auto_view(self.root)[1]["refused"])
 
-    def test_text_typed_straight_into_the_pane_is_not_a_first_instruction(self):
-        # 1차 지시는 모니터를 거친 것만이다 - 사람이 팬에 직접 쳐서 끝난 대화가 있어도 창으로 묻는다
-        s = self.server
-        s.pane_auto_set(True, "웹(검사)", self.root)
-        self.answered(ago=60)
-        self.gate(first_at=None, since=datetime.datetime.fromtimestamp(time.time() - 300).isoformat(timespec="seconds"))
-        with mock.patch.object(s, "PANE_AUTO_SEC", 0):
-            self.assertEqual(s.pane_auto_tick(self.root), [])
-        self.assertEqual((self.run_view()["step"], self.run_view()["need_first"]), ("ask", True))
-        self.assertFalse((self.d / fb.APPROVE_FILE).exists())
-
-    def test_stored_first_instruction_goes_first_and_a_retry_says_so(self):
-        # 노드에 미리 써 둔 1차 지시: 창으로 묻지 않고 그 글이 먼저 들어간다. 다시 시도하는 노드면 끝에 '재시도합니다.' 가 붙는다
+    def test_stored_first_instruction_is_validated_and_a_retry_says_so(self):
+        # 노드에 미리 써 둔 1차 지시: 창으로 묻지 않고 줄 맨 앞에 붙는다. 다시 시도하는 노드면 그 끝에 '재시도합니다.' 가 붙는다
         s = self.server
         self.assertEqual(s.pane_first_set({"task": "../x", "text": "글"}, "웹", self.root)[0], 400)
         self.assertEqual(s.pane_first_set({"task": "T-900", "text": "/bash ls"}, "웹", self.root)[0], 400)
-        self.assertEqual(s.pane_first_set({"task": "T-900", "text": "먼저 이 프로젝트 README 부터 읽어 줘"}, "웹(검사)", self.root)[0], 200)
+        self.assertEqual(s.pane_first_set({"task": "T-900", "text": f"해 줘 .aimem/sessions/{self.d.name}/brief.md"}, "웹", self.root)[0], 400)
+        self.stored()
+        self.gate(since=datetime.datetime.fromtimestamp(time.time() - 300).isoformat(timespec="seconds"))
         s.pane_auto_set(True, "웹(검사)", self.root)
-        for attempt, want in ((1, "먼저 이 프로젝트 README 부터 읽어 줘"), (2, "먼저 이 프로젝트 README 부터 읽어 줘 재시도합니다.")):
+        for attempt, want in ((1, self.FIRST), (2, self.FIRST + " 재시도합니다.")):
             meta = json.loads((self.d / "meta.json").read_text(encoding="utf-8"))
             meta["attempt"] = attempt
             (self.d / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
-            self.gate(first_at=None)
-            v = self.run_view()
-            self.assertEqual((v["step"], v["need_first"]), ("first", False))
-            self.assertEqual(s.pane_auto_tick(self.root), [])                   # 작업 지시가 아니라 써 둔 1차 지시가 먼저다
-            ap = self.approved()
-            self.assertEqual(ap.get("first"), want)
-            self.assertIn("미리 써 둔", ap["by"])
-            self.answered(ago=1, text=want, done=False)                         # 운전기가 넣었다 - 답을 기다린다
-            self.assertEqual(s.pane_auto_tick(self.root), [])
-            self.assertEqual(self.run_view()["step"], "wait")
-            self.answered(ago=60, text=want)
+            self.assertEqual(self.run_view()["step"], "work")
+            self.assertEqual(s.pane_info(self.d.name, self.root)[1]["first"], want)
             self.assertEqual(s.pane_auto_tick(self.root), [self.d.name])
-            self.assertEqual(self.approved()["line"], self.work_line(kind="retry" if attempt > 1 else "read"))
+            self.assertEqual(self.approved()["line"], self.work_line(kind="retry" if attempt > 1 else "read", first=want))
         self.assertEqual(s.pane_first_set({"task": "T-900", "text": " "}, "웹", self.root)[1]["first"], None)
         self.assertEqual(s.pane_firsts(self.root), {})
+        self.assertEqual(self.run_view()["step"], "ask")                        # 지우면 다시 묻는다
 
     def test_resume_continues_without_asking_the_person_again(self):
-        # 세션이 끝나 멈춘 일은 사람의 글을 다시 받지 않는다 - 1차 지시는 이미 그 대화에 있다. 써 둔 1차 지시도 다시 넣지 않는다
+        # 세션이 끝나 멈춘 일은 사람의 글을 다시 받지 않는다 - 1차 지시는 이미 그 대화에 있다. 써 둔 1차 지시도 다시 붙이지 않는다
         s = self.server
-        s.pane_first_set({"task": "T-900", "text": "먼저 README 부터 읽어 줘"}, "웹", self.root)
+        self.stored(ago=0)
         s.pane_auto_set(True, "웹(검사)", self.root)
         self.gate(resume=True, since=datetime.datetime.fromtimestamp(time.time() - 3).isoformat(timespec="seconds"))
         v = self.run_view()
@@ -786,32 +756,29 @@ class MonitorSend(Base):
     def test_a_failed_send_waits_a_while_and_is_not_a_retry(self):
         s = self.server
         s.pane_auto_set(True, "웹(검사)", self.root)
-        self.answered(ago=60)
-        self.gate(error="팬이 바빴다", error_at=datetime.datetime.now().isoformat(timespec="seconds"))
+        self.stored()
+        self.gate(error="팬이 바빴다", error_at=datetime.datetime.now().isoformat(timespec="seconds"),
+                  since=datetime.datetime.fromtimestamp(time.time() - 300).isoformat(timespec="seconds"))
         self.assertEqual(s.pane_auto_tick(self.root), [])                        # 방금 못 보냈다 - 잠깐 쉰다
         self.gate(error_at=datetime.datetime.fromtimestamp(time.time() - 120).isoformat(timespec="seconds"))
         self.assertEqual(s.pane_auto_tick(self.root), [self.d.name])
-        self.assertEqual(self.approved()["line"], self.work_line(kind="read"))
+        self.assertEqual(self.approved()["line"], self.work_line(kind="read", first=self.FIRST))
 
-    def test_first_instruction_goes_in_before_the_work_line(self):
-        # 모니터의 '1차 지시' 창: 사람이 쓴 글이 팬에 먼저 들어가고(새 대화), 작업 지시는 그 대화에 이어진다
+    def test_the_one_line_goes_into_a_new_chat_through_the_driver(self):
+        # 1차 지시가 붙은 줄도 운전기에게는 작업 지시 한 줄이다 - 새 대화를 한 번 열고 그 줄을 넣는다
         s = self.server
-        self.assertEqual(s.pane_send(self.d.name, {"action": "first", "text": "/bash ls"}, "웹", self.root)[0], 400)
-        self.assertEqual(s.pane_send(self.d.name, {"action": "first", "text": f"해 줘 .aimem/sessions/{self.d.name}/brief.md"},
-                                     "웹", self.root)[0], 409)                  # 지시문 경로가 든 글은 사람의 1차 지시가 아니다
         d = self.session("T-903-S6-a1-000000")
         p = self.drive(d)
         self.wait_for(lambda: (fb.read_gate(d) or {}).get("phase") == "await")
-        self.assertEqual(s.pane_send(d.name, {"action": "first", "text": "먼저 저장소 구조부터 봐 줘"}, "웹", self.root)[0], 200)
-        g = self.wait_for(lambda: (lambda g: g if g.get("first_at") else None)(fb.read_gate(d) or {}))
-        self.assertEqual(g["phase"], "await")                                   # 작업 지시는 아직 안 나갔다
-        self.assertIn(["-l", "--", "먼저 저장소 구조부터 봐 줘"], self.sent_keys())
-        fb.approve(d, "웹", self.line(d))                                       # same_chat 을 안 줘도 그 대화에 잇는다
+        code, res = s.pane_send(d.name, {"action": "send", "text": "부탁해:", "first": "지금부터 일을 하나 줄게."}, "웹", self.root)
+        self.assertEqual(code, 200, res)
+        self.assertTrue(res["line"].startswith("지금부터 일을 하나 줄게. "))
+        self.wait_for(lambda: (fb.read_gate(d) or {}).get("phase") == "sent")
+        self.assertIn(["-l", "--", res["line"]], self.sent_keys())
         self.answer(d, [{"type": "text", "textType": "text", "content": "DONE"}])
         out, _ = p.communicate(timeout=30)
         self.assertEqual(p.returncode, 0, out)
         self.assertEqual([k for k in self.sent_keys() if k == ["-l", "--", "/new"]], [["-l", "--", "/new"]])
-        self.assertIn("1차 지시를 팬에 넣음", out)
 
     def test_gist_is_the_managers_line_when_there_is_one(self):
         # 관리자가 지시문에 적은 `요지:` 줄을 그대로 쓴다 - 길이를 채우지 않고(짧아도 된다) 200자에서만 자른다
