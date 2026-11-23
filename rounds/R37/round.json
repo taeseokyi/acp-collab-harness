@@ -1,0 +1,30 @@
+{
+ "round": 37,
+ "at": "2026-11-23T14:11:10",
+ "brief": "manager-round-standard.md",
+ "requests": [
+  "Q-261123-f11a"
+ ],
+ "projects": [
+  "자모맞히기"
+ ],
+ "session": "M-R37-141110",
+ "policy": "cost",
+ "metrics": {
+  "workers": 3,
+  "peak_parallel": 1,
+  "minutes": {
+   "free": 90.63,
+   "paid": 0.0
+  },
+  "by_slot": {
+   "S6": {
+    "runs": 3,
+    "minutes": 90.63,
+    "tier": "free"
+   }
+  },
+  "moves": 0,
+  "manager_slots": []
+ }
+}

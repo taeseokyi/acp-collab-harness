@@ -1,17 +1,17 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-20T17:01:17 / REV 190
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-23T15:50:11 / REV 192
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | `a41f0c` | claude | opus | R36 적대적 검수(마지막) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
-| S2 | `d27e93` | codex | kisti/kistillm | R36 대기 (막힌 노드 받기) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
-| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R36 빠른 구현: VoxLog INTERFACE.md (무료) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
-| S4 | `6cd650` | claude | sonnet | R36 빠른 구현: VoxLog serve.py 진척 마감·mkdir 오류 | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
-| S5 | `61dfcc` | claude | sonnet | R36 빠른 구현: VoxLog 408 재시도·브라우저 24번 |  |
-| S6 | `47764b` | freebuff | (하네스 기본) | tmux 팬의 freebuff (무료) - 사람이 모니터에서 지시문을 읽고 '보내기' 를 눌러야 시작. 문서·초벌 검토처럼 막히지 않는 일만 |  |
+| S1 | `a41f0c` | claude | opus | R37 대기 (이번 라운드는 S6 시험만) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S2 | `d27e93` | codex | kisti/kistillm | R37 대기 (이번 라운드는 S6 시험만) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
+| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R37 대기 (이번 라운드는 S6 시험만) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
+| S4 | `6cd650` | claude | sonnet | R37 대기 (이번 라운드는 S6 시험만) | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
+| S5 | `61dfcc` | claude | sonnet | R37 대기 (이번 라운드는 S6 시험만) |  |
+| S6 | `47764b` | freebuff | (하네스 기본) | R37 자모맞히기 읽기 전용 코드 검수 (freebuff 시험) |  |
 
 ## 3. 작업 보드
 
@@ -290,11 +290,18 @@
 | T-366 | Q-261117-r36q | [VoxLog] R35-N2 408 도 Retry-After 뒤 재시도 + 브라우저 검사 24번 | S5 | DONE | projects/VoxLog/web/queue.js,projects/VoxLog/web/sw.js,projects/VoxLog/tests/browser_voxlog.py |
 | T-367 | Q-261117-r36q | [VoxLog] INTERFACE.md 진척 마감·408 재시도·mkdir 오류 | S3 | DONE | projects/VoxLog/docs/INTERFACE.md |
 | T-368 | Q-261117-r36q | [VoxLog] R36 적대적 검수 | S1 | DONE | rounds/R36/REVIEW-r36.md |
+| T-369 | Q-261123-f11a | [자모맞히기] 코드 검수: 서버 쪽 파이썬 (S6 freebuff 시험) | S6 | DONE |  |
+| T-370 | Q-261123-f11a | [자모맞히기] 코드 검수: 화면 쪽 web (S6 freebuff 시험) | S6 | DONE |  |
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
+| 1 | [자모맞히기] R37-N1(중) web/js/words.js 가 data/trend.txt 보다 낡음 - test_words 빨강, 11-22~12-05 정적/서버 정답 갈림. build_words.py 로 다시 만들고 11-22~ 줄의 출처 확인. rounds/R37/REVIEW-r37-s6.md | S3 | R37 S6 검수 |
+| 2 | [자모맞히기] R37-N2(중) 6칸 아닌 트렌드 정답을 trend_store._is_word·trend.js WORD_RE 가 안 거름 → checkAnswer 예외, startDaily 가 try 밖이라 화면이 빈 채. 서버·화면 둘 다 6칸 검사 + 시작 실패 안내. rounds/R37/REVIEW-r37-s6.md | S3 | R37 S6 검수 |
+| 3 | [자모맞히기] R37-N3(하) serve.py _api 예외가 응답 없이 연결을 끊음(trend/pick 저장 실패, dict_server 캐시 축출 KeyError 추정) → JSON 500 으로. R37-N4(하) 덧붙인 줄 0개여도 last_run 갱신·CLI 가 저장 안 된 줄 출력 - 의도인지 정할 것. rounds/R37/REVIEW-r37-s6.md | S3 | R37 S6 검수 |
+| 4 | [자모맞히기] R37-N5·N6·N7·N8·N9(하) Origin 없는 GET 통과(키 한도 소모), trend_news.verify opener 무시, sourceNote 안내 틀림, parseLlmAnswer 가 '네' 못 읽음, 화면 복잡도 4곳. rounds/R37/REVIEW-r37-s6.md | S3 | R37 S6 검수 |
+| 5 | [함대] R37-N10(중) freebuff 하네스가 글 없이 끝난 턴을 빈 보고 rc 0 으로 내고 엔진이 write 없는 노드를 done 으로 받음(T-370 시도 2, report.md 0바이트). freebuff.py _work 와 fleet_graph 의 done 판정. rounds/R37/REVIEW-r37-s6.md | S3 | R37 S6 시험 |
 
 ## 6. 파일 소유권
 
@@ -539,3 +546,4 @@
 | Q-261116-r34q | [VoxLog] 대기 큐 1건 처리: R33-N13·N14·N15·N16 (하) | 관리자 M-R34 (대기 큐) | DONE | 2026-11-16T15:13:18 |
 | Q-261117-r35q | [VoxLog] 대기 큐 1건 처리: R34-N4·N6 (하) + OSError 응답 | 관리자 M-R35 (대기 큐) | DONE | 2026-11-17T08:28:01 |
 | Q-261117-r36q | [VoxLog] 대기 큐 1건 처리: R35-N1·N2·N3 (하) | 관리자 M-R36 (대기 큐) | DONE | 2026-11-17T11:12:21 |
+| Q-261123-f11a | [자모맞히기] 시험 라운드: freebuff 슬롯(S6)으로 코드 검수 | 태석 (클로드 코드 전달) | DONE | 2026-11-23T14:11:00 |
