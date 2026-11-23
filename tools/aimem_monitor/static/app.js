@@ -4056,13 +4056,15 @@ function renderTabCounts(data) {
   setTabCount('tab-count-fleet', running, true);
   const projects = Array.isArray(data.projects) ? data.projects : [];
   const unfinished = projects.filter((p) => !projectDone(p)).length;
-  // 네 탭 모두 같은 규칙: 숫자 = 그 탭에서 지금 살아 있는 것(도는 작업자 / 진행 중 프로젝트 / 미완료 태스크+큐 / 열린 요청), 0 이면 숨김.
+  // 네 탭 모두 같은 규칙: 숫자 = 그 탭에서 지금 살아 있는 것(도는 작업자 / 진행 중 프로젝트 / 미완료 태스크 · 대기 큐 / 열린 요청), 0 이면 숨김.
   // 전에는 프로젝트만 전체 수라 다 끝나도 늘 1 이 떠 있었다 (2026-11-12 저녁 태석님: 직접 처리)
   setTabCount('tab-count-projects', unfinished, true);
-  // 보드·큐 탭의 숫자 = 미완료 태스크만 (대기 큐 건수는 큐 머리글에 따로)
+  // 보드·큐 탭은 숫자 둘을 따로: '보드' 옆 = 미완료 태스크, '큐' 옆 = 대기 큐 건수 (큐 머리글에도 같은 수).
+  // 큐는 기다리는 일이라 강조색을 안 쓴다 (2026-11-23 태석님: 보드와 큐의 갯수를 분리해서 표시)
   const queue = Array.isArray(data.queue) ? data.queue.length : 0;
   const openTasks = (Array.isArray(data.board) ? data.board : []).filter((t) => !boardClosed(t)).length;
   setTabCount('tab-count-board', openTasks, true);
+  setTabCount('tab-count-queue', queue, false);
   const qc = $('queue-count');
   if (qc) qc.textContent = queue ? String(queue) : '';
   const reqs = Array.isArray(data.requests) ? data.requests : [];
@@ -4074,6 +4076,8 @@ function renderTabCounts(data) {
   if (pj) pj.title = `진행 중인 프로젝트 ${unfinished}개 (전체 ${projects.length}개)`;
   const b = $('tab-count-board');
   if (b) b.title = `미완료 태스크 ${openTasks}건`;
+  const bq = $('tab-count-queue');
+  if (bq) bq.title = `대기 큐 ${queue}건`;
   const q = $('tab-count-requests');
   if (q) q.title = '끝나지 않은 요청';
   const { requests: closedRequests, graphs: closedGraphs } = closedItems(data);

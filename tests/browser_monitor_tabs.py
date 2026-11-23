@@ -87,7 +87,7 @@ def write_fixed_repo(root):
 def tab_texts(page):
     return page.eval_on_selector_all(
         ".tabs [role=tab]",
-        "els => els.map((el) => { const n = el.firstChild; return n && n.nodeType === 3 ? n.textContent.trim() : ''; })",
+        "els => els.map((el) => Array.from(el.childNodes).filter((n) => !(n.classList && n.classList.contains('tab-count'))).map((n) => n.textContent.trim()).join(''))",
     )
 
 
@@ -283,7 +283,7 @@ def edit_picker_scenario(browser, base, checks):
 
 
 def tab_counts_scenario(browser, base, checks):
-    """탭 숫자의 규칙: 함대 = 실행 중 작업자(관리자 제외), 보드·큐 = 미완료 태스크만(큐는 큐 머리글에), 정리 단추 = 끝난 요청+그래프."""
+    """탭 숫자의 규칙: 함대 = 실행 중 작업자(관리자 제외), 보드·큐 = 미완료 태스크와 대기 큐 건수를 따로, 정리 단추 = 끝난 요청+그래프."""
     ctx = browser.new_context(viewport={"width": 1280, "height": 900})
     page = ctx.new_page()
 
@@ -305,8 +305,9 @@ def tab_counts_scenario(browser, base, checks):
         page.wait_for_function("() => document.getElementById('tab-count-fleet').textContent.trim() !== ''", timeout=15000)
         txt = lambda i: page.locator(i).inner_text().strip()  # noqa: E731
         checks.ok("탭 숫자: 함대는 실행 중 작업자만 (관리자 제외)", txt("#tab-count-fleet") == "1", txt("#tab-count-fleet"))
-        checks.ok("탭 숫자: 보드·큐는 미완료 태스크만 (3), 큐 건수는 큐 머리글에 (3)",
-                  txt("#tab-count-board") == "3" and txt("#queue-count") == "3", f"{txt('#tab-count-board')} / {txt('#queue-count')}")
+        checks.ok("탭 숫자: 보드 옆은 미완료 태스크 (3), 큐 옆은 대기 큐 건수 (3) - 큐 머리글도 같은 수",
+                  txt("#tab-count-board") == "3" and txt("#tab-count-queue") == "3" and txt("#queue-count") == "3",
+                  f"{txt('#tab-count-board')} / {txt('#tab-count-queue')} / {txt('#queue-count')}")
         sec = page.locator("#runs-table-wrap").locator("xpath=ancestor::section[1]//h2").first.inner_text()
         checks.ok("실행 표 머리글은 '실행 상태'", sec.strip().startswith("실행 상태"), sec)
     finally:

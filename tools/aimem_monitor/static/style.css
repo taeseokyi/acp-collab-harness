@@ -988,6 +988,8 @@ body { font-size: 15px; -webkit-font-smoothing: antialiased; }
   font-size: var(--st-fs-xs); font-weight: var(--st-fw-medium); line-height: 18px; text-align: center;
   color: var(--st-ink-soft); font-variant-numeric: tabular-nums;
 }
+/* 보드·큐 탭: 숫자가 둘이라 가운뎃점 양옆을 띄운다 (숫자가 없으면 '보드·큐' 로 붙는다) */
+.tabs .tab-count:not(:empty) + .tab-sep { margin-left: 3px; }
 .tab-count.is-hot { background: var(--st-info-tint); border-color: transparent; color: var(--st-info-text); }
 
 /* 카드 제목: 번호 대신 불릿 */
@@ -1470,7 +1472,8 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
   .auth-who { font-size: 12px; }
 
   /* 탭 넷을 한 줄에 */
-  .tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); flex-wrap: nowrap; padding-bottom: 0; }
+  /* 칸 폭은 내용에 맞춘다(남는 폭은 고르게 나눔) - 보드·큐 탭은 숫자가 둘이라 똑같이 넷으로 나누면 넘친다 */
+  .tabs { display: grid; grid-template-columns: repeat(4, auto); flex-wrap: nowrap; padding-bottom: 0; }
   .tabs [role="tab"] { padding: 10px 2px; font-size: 14px; white-space: nowrap; min-width: 0; text-align: center; }
   .tabs .tab-count { margin-left: 2px; padding: 0 5px; min-width: 16px; font-size: 11px; }
 
