@@ -883,7 +883,8 @@ def _cut_unsent(g):
     """다른 노드가 모두 끝났는데 사람이 아직 '보내기' 를 누르지 않은 노드를 끊고 `blocked` 로 넘긴다. 바꿨으면 True.
 
     기다리는 것은 최소 `APPROVAL_GRACE_SEC` - 노드가 그것 하나뿐인 그래프도 사람이 볼 틈은 준다. 이미 보낸 노드는
-    일하는 중이므로 건드리지 않는다(보낸 뒤 멈춘 것은 하네스 운전기가 본다).
+    일하는 중이므로 건드리지 않는다(보낸 뒤 멈춘 것은 하네스 운전기가 본다). 시간은 `gate.since` 부터 센다 - 운전기가
+    사람의 1차 지시를 넣을 때와 세션이 끝나 이어 보내기를 기다릴 때 그 시각을 옮기므로, 답을 기다리는 동안은 끊기지 않는다.
     """
     waiting = []
     for n in g["nodes"]:
@@ -896,15 +897,18 @@ def _cut_unsent(g):
         waited = _elapsed_since(gate.get("since"))
         if waited is None or waited < APPROVAL_GRACE_SEC:
             return False
-        waiting.append((n, int(waited)))
-    for n, waited in waiting:
+        # 무엇을 기다리다 넘기는지 - 한 번도 안 보낸 것, 1차 지시만 들어간 것, 세션이 끝나 이어 보내기를 기다리던 것
+        what = ("세션이 끝나 멈춘 뒤 이어 보내지 않음" if gate.get("resume")
+                else "1차 지시 뒤 작업 지시를 보내지 않음" if gate.get("first_at") else "사람이 '보내기' 를 누르지 않음")
+        waiting.append((n, int(waited), what))
+    for n, waited, what in waiting:
         att = n["attempts"][-1]
         _pid, outcome = _kill_run(att["run_id"], with_outcome=True)
         att.update({"ended": _now(), "state": "unsent", "kill_outcome": outcome, "fail_kind": "work",
                     "report_status": "BLOCKED", "verify_rc": None,
-                    "verify_tail": f"검증 생략: 사람이 '보내기' 를 누르지 않음 ({waited}초 기다림)"})
+                    "verify_tail": f"검증 생략: {what} ({waited}초 기다림)"})
         n["status"] = "blocked"
-        _log(g, f"unsent {n['id']} ({att['run_id']}) - 다른 노드가 모두 끝났고 {waited}초 동안 보내지 않아 넘김")
+        _log(g, f"unsent {n['id']} ({att['run_id']}) - 다른 노드가 모두 끝났고 {waited}초 동안 {what}")
     return bool(waiting)
 
 
