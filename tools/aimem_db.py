@@ -1685,6 +1685,13 @@ def _slot_running(slot):
     return None
 
 
+def _no_approval_slot_by_manager(mgr, harness):
+    """사람 승인 하네스(freebuff)의 슬롯은 사람만 둔다 (AIMEM.md 8.0). 관리자는 있는 슬롯에 역할을 주고 쓸 뿐이다."""
+    if mgr is not None and harness and _rt("harness").needs_approval(harness):
+        raise ValueError(f"{harness} 슬롯은 사람만 둡니다 - 관리자는 이미 있는 {harness} 슬롯에 역할을 주고 쓸 수 있지만 "
+                         "새로 더하거나 다른 슬롯을 이 하네스로 바꾸지 않습니다")
+
+
 def slot_add(slot=None, harness=None, model=None, role="", note="", actor="관리자"):
     """슬롯 추가. slot 을 생략하면 다음 번호. 돌려주는 값은 새 행(dict).
 
@@ -1696,9 +1703,10 @@ def slot_add(slot=None, harness=None, model=None, role="", note="", actor="관�
     if not harness:
         raise ValueError("하네스가 필요합니다")
     _check_slot_args(slot, harness, model)
+    mgr = manager_caller()
+    _no_approval_slot_by_manager(mgr, harness)
     cfg = _slot_cfg()
     _check_model(cfg, harness, model)
-    mgr = manager_caller()
     with connect() as con:
         con.execute("BEGIN IMMEDIATE")      # 세기와 더하기 사이에 다른 관리자가 끼지 않게
         slot = slot or next_slot_id()
@@ -1733,6 +1741,8 @@ def slot_set(slot, harness=None, model=None, role=None, note=None, actor="관리
         cur = con.execute("SELECT * FROM slots WHERE slot=?", (slot,)).fetchone()
         if not cur:
             raise ValueError(f"{slot} 이 명부에 없습니다")
+        if harness and harness != cur["harness"]:
+            _no_approval_slot_by_manager(mgr, harness)
         engine = bool(harness and harness != cur["harness"]) or clear_model or (model is not None and model != cur["model"])
         if engine:
             new_h = harness or cur["harness"]

@@ -4,9 +4,9 @@ The single source of truth for every AI session that works in `/home/tsyi/work/a
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 190** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-17 15:52 KST
-- **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode) that the
+- **REV: 191** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
+- Last updated: 2026-11-23 13:55 KST
+- **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker (claude / codex / opencode / freebuff) that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **the `role=manager` session the engine starts for a round** (harness claude,
   model Opus), identified by its session id `M-R<N>-<HHMMSS>` (form pinned in the linter). `tools/fleet_ctl.py
@@ -293,6 +293,11 @@ Manager; standing slots' harness and model stay his (control table, `8.0-8`). Ap
   `spawn` prepends the header (slot, token, REV, write paths, hard limits, report format) and checks `--write`
   against `Section 6`. codex runs `codex exec --sandbox workspace-write`, opencode `opencode run`, claude
   `claude -p` with auto-accepted edits and a read/verify Bash allow-list. Records: `.aimem/sessions/<id>/`
+- **freebuff slots:** freebuff runs in Taeseok's tmux pane and takes its instruction from a person - the session
+  waits (`승인 대기`) until he sends it from the monitor. Give it only work no other node depends on; an unsent node
+  comes back `blocked` (`unsent`). **Only Taeseok places a freebuff slot, by hand.** If one exists the Manager may
+  give it a role and use it; it never adds one or turns another slot into one (the engine refuses), and never
+  sends the instruction itself
 - **Slots and models:** `aimem_db.py slot list` (DB `slots`) is the source of truth - harness, model, role, and
   whether a provider is free or paid (`fleet.toml` `tier`). Only providers and models listed in `fleet.toml` may be
   chosen (keys live in the repo `.env`). Taeseok sets the standing slots; **the Manager may set any slot's role and
@@ -493,7 +498,7 @@ nothing to do the Manager reports and ends.
 | ------ | ---------- | ---- | ---------------------- |
 | Standing slots: harness and model | Taeseok | web Fleet tab / `aimem_db.py slot` | auto NEW request from `슬롯 관리(웹)`, readiness check, `events(kind=slot)` |
 | Slot role, remark, assignment | Manager only | `aimem_db.py slot set`, graphs | (the web refuses with 400) |
-| Extra slots (add, change, remove its own) | Manager, within `[policy.<key>] extra_slots` / `slot_tiers` | `aimem_db.py slot add\|set\|remove` | marked `관리자 추가 R<N>`, `events(kind=slot)`, report item (6) |
+| Extra slots (add, change, remove its own; never harness freebuff) | Manager, within `[policy.<key>] extra_slots` / `slot_tiers` | `aimem_db.py slot add\|set\|remove` | marked `관리자 추가 R<N>`, `events(kind=slot)`, report item (6) |
 | Taking a slot out or adding one, before or during a round (pause `일시 사용 중지` / resume, remove, add) | Taeseok only (a Manager session is refused pause/resume) | web Fleet tab slot panel / `fleet_ctl.py slot pause\|resume\|remove S<n>` | the engine cancels that slot's worker, spawns nothing on it and leaves its nodes waiting (`paused:<S>` / `removed:<S>`, not counted as attempts); a running round gets `INBOX.md` (rc 4) and `run` prints `쓸 수 없는 슬롯에 걸린 노드`; otherwise the brief's slot list. The Manager re-divides the work with `move` and gives an added slot its role; report item (6) |
 | Moving a node to another slot | Manager, within the operating policy | `fleet_graph.py move <G> <node> --slot S<n>` | graph log, `round.json` metrics |
 | Operating policy | Taeseok, per round | `fleet_ctl.py round --policy` / web | the policy block of the brief |

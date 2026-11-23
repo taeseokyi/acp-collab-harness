@@ -355,6 +355,19 @@ class GraphRules(unittest.TestCase):
             self.assertEqual(g["nodes"][1]["status"], "running")
 
 
+class SlotRules(unittest.TestCase):
+    """freebuff 슬롯은 사람만 둔다 - 관리자 세션은 더하지 못한다."""
+
+    def test_manager_cannot_add_an_approval_slot(self):
+        import aimem_db
+        with mock.patch.object(aimem_db, "manager_caller", return_value={"round": 1, "policy": "cost"}):
+            with self.assertRaises(ValueError) as cm:
+                aimem_db.slot_add(None, "freebuff")
+            self.assertIn("사람만", str(cm.exception))
+            aimem_db._no_approval_slot_by_manager({"round": 1, "policy": "cost"}, "claude")     # 다른 하네스는 막지 않는다
+        aimem_db._no_approval_slot_by_manager(None, "freebuff")                                # 사람은 막지 않는다
+
+
 class MonitorSend(Base):
     """모니터의 보기·고치기·보내기. 승인 파일을 쓰는 곳은 여기 하나다."""
 
