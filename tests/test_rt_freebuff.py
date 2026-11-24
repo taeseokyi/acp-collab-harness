@@ -495,12 +495,26 @@ class GraphRules(unittest.TestCase):
             {"id": "T-2", "slot": "S6", "task": "x", "deps": [], "status": "running",
              "attempts": [{"run_id": "R2", "started": "2020-01-01T00:00:00"}]}]}
 
-    def test_no_node_may_depend_on_an_approval_slot(self):
+    def test_a_node_may_depend_on_an_approval_slot(self):
         g = {"id": "G-1", "nodes": [{"id": "T-1", "slot": "S6", "task": "x", "deps": []},
                                     {"id": "T-2", "slot": "S1", "task": "x", "deps": ["T-1"]}]}
-        self.assertTrue(any("보내기" in p for p in fleet_graph.validate_graph(g)))
-        g["nodes"][1]["deps"] = []
         self.assertEqual(fleet_graph.validate_graph(g), [])
+
+    def test_unsent_node_is_handed_over_when_only_its_dependents_wait(self):
+        g = self._g()
+        g["nodes"].append({"id": "T-3", "slot": "S1", "task": "x", "deps": ["T-2"], "status": "todo"})
+        old = {"phase": "await", "since": "2020-01-01T00:00:00"}
+        with mock.patch.object(fleet, "run_gate", return_value=old), \
+                mock.patch.object(fleet_graph, "_kill_run", return_value=(1, "killed")):
+            self.assertTrue(fleet_graph._cut_unsent(g))
+        self.assertEqual(g["nodes"][1]["status"], "blocked")
+        # 앞이 다 끝나 곧 뜰 노드가 있으면 아직 다른 일이 남은 것
+        g = self._g()
+        g["nodes"].append({"id": "T-3", "slot": "S1", "task": "x", "deps": ["T-1"], "status": "todo"})
+        with mock.patch.object(fleet, "run_gate", return_value=old), \
+                mock.patch.object(fleet_graph, "_kill_run") as kill:
+            self.assertFalse(fleet_graph._cut_unsent(g))
+            kill.assert_not_called()
 
     def test_unsent_node_is_handed_over_when_everything_else_ended(self):
         g = self._g()

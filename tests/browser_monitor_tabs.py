@@ -366,6 +366,8 @@ def first_instruction_scenario(browser, base, checks):
         checks.ok("기본 1차 지시 단추: 써 둔 종류 수가 보인다", btn.count() == 1 and "1/5" in btn.first.inner_text(), btn.all_inner_texts())
         page.locator("#tab-requests").click()
         page.wait_for_selector(".node-first-btn", timeout=10000)
+        gl = page.locator(".node-gist-list li").all_inner_texts()
+        checks.ok("그래프: 노드마다 지시문의 요지가 보인다", len(gl) == 2 and "T-902 요지" in gl[1] and "날짜 검사" in gl[1], str(gl))
         page.locator(".node-first-btn").nth(1).click()          # T-902 - 고치기, 써 둔 글 없음
         page.wait_for_selector("#pane-first[open]", timeout=5000)
         val, hint = page.locator("#pane-first textarea").input_value(), page.locator("#pane-first .hint").inner_text()

@@ -169,3 +169,39 @@
 {"seq": 199, "at": "2026-11-10T14:25:09", "actor": "클로드 코드", "rev": 119, "kind": "rev", "body": "REV 119: 보드·큐·요청 트리 1차 정리 - DONE 59건 아카이브, 요청 10건·그래프 6개 아카이브, 큐 2건 내림"}
 {"seq": 200, "at": "2026-11-10T14:31:11", "actor": "클로드 코드", "rev": 120, "kind": "rev", "body": "REV 120: 상세보기 잘림 제거(로그·관리자 단계/이벤트·stderr 전문, ?all=1) + 줄바꿈 보장"}
 {"seq": 201, "at": "2026-11-10T14:48:41", "actor": "클로드 코드", "rev": 121, "kind": "rev", "body": "REV 121: 상세보기 마크다운 렌더링(의존성 없음, HTML 비해석, 원문 토글)"}
+{"seq": 202, "at": "2026-11-10T15:04:47", "actor": "웹(접근 토큰)", "rev": 121, "kind": "slot", "body": "slot add S5 opencode 모델 exaone/k-exaone_v2.5 - 시험 슬롯"}
+{"seq": 203, "at": "2026-11-10T15:04:47", "actor": "웹(접근 토큰)", "rev": 121, "kind": "slot", "body": "slot set S5: 하네스 opencode→codex, 모델 exaone/k-exaone_v2.5→kisti/kistillm"}
+{"seq": 204, "at": "2026-11-10T15:04:48", "actor": "웹(접근 토큰)", "rev": 121, "kind": "slot", "body": "slot remove S5 (codex, 모델 kisti/kistillm, 소유권 0행 내림)"}
+{"seq": 205, "at": "2026-11-10T15:05:18", "actor": "웹(접근 토큰)", "rev": 121, "kind": "slot", "body": "slot add S5 codex 모델 kisti/kistillm - UI 시험 슬롯"}
+{"seq": 206, "at": "2026-11-10T15:05:22", "actor": "웹(접근 토큰)", "rev": 121, "kind": "slot", "body": "slot remove S5 (codex, 모델 kisti/kistillm, 소유권 0행 내림)"}
+{"seq": 207, "at": "2026-11-10T15:06:16", "actor": "클로드 코드", "rev": 122, "kind": "rev", "body": "REV 122: 슬롯 관리(추가·삭제·하네스·모델) 웹+CLI, 모델은 OpenClaw 설정 목록"}
+{"seq": 208, "at": "2026-11-10T15:19:10", "actor": "클로드 코드", "rev": 123, "kind": "rev", "body": "REV 123: archive 가 요청·그래프까지, 실행 지점 관리자 체크포인트 + 웹 '끝난 것 정리'"}
+{"seq": 209, "at": "2026-11-10T15:19:32", "actor": "웹(접근 토큰)", "rev": 123, "kind": "archive", "body": "0일 경과 - 태스크 0건, 요청 1건, 그래프 1개 아카이브"}
+{"seq": 210, "at": "2026-11-10T15:35:36", "actor": "웹(접근 토큰)", "rev": 123, "kind": "slot", "body": "slot add S5 codex 모델 (하네스 기본) - (미배정 - 관리자가 다음 라운드에 정함)"}
+{"seq": 211, "at": "2026-11-10T15:35:36", "actor": "관리자(R7)", "rev": 123, "kind": "slot", "body": "slot set S5: 역할, 비고"}
+{"seq": 212, "at": "2026-11-10T15:35:36", "actor": "웹(접근 토큰)", "rev": 123, "kind": "slot", "body": "slot remove S5 (codex, 모델 -, 소유권 0행 내림)"}
+{"seq": 213, "at": "2026-11-10T15:37:41", "actor": "웹(접근 토큰)", "rev": 123, "kind": "slot", "body": "slot add S5 codex 모델 (하네스 기본) - (미배정 - 관리자가 다음 라운드에 정함)"}
+{"seq": 214, "at": "2026-11-10T15:37:47", "actor": "웹(접근 토큰)", "rev": 123, "kind": "slot", "body": "slot remove S5 (codex, 모델 -, 소유권 0행 내림)"}
+{"seq": 215, "at": "2026-11-10T15:38:25", "actor": "클로드 코드", "rev": 124, "kind": "rev", "body": "REV 124: 슬롯 통제권 - 웹은 하네스·모델만, 역할·비고는 관리자, 웹 변경은 NEW 요청으로 관리자 통지"}
+{"seq": 216, "at": "2026-11-10T15:43:45", "actor": "클로드 코드", "rev": 125, "kind": "rev", "body": "REV 125: PWA 설치형(매니페스트·서비스 워커·아이콘), API 캐시 금지"}
+{"seq": 217, "at": "2026-11-10T16:11:46", "actor": "클로드 코드", "rev": 126, "kind": "rev", "body": "REV 126: 8.0-8 관리자 라운드 루틴과 통제권 신설, 브리프 정비, 8.0-5 중복 번호 해소"}
+{"seq": 218, "at": "2026-11-10T16:21:30", "actor": "클로드 코드", "rev": 127, "kind": "rev", "body": "REV 127: archive 같은 초 비교 결함 수정 - archive_plan 기준 시각을 포함 비교(<=)로, 회귀 테스트 추가"}
+{"seq": 219, "at": "2026-11-10T16:34:02", "actor": "Claude Code", "rev": 128, "kind": "rev", "body": "REV 128: AIMEM.md rewritten in English (declarative protocol text, same section numbers); Korean-only regexes in linter/reader/migrate widened to accept the English labels"}
+{"seq": 242, "at": "2026-11-10T16:45:07", "actor": "Claude Code", "rev": 128, "kind": "ownership", "body": ".aimem/handoff.md -> 관리자"}
+{"seq": 244, "at": "2026-11-10T16:47:15", "actor": "Claude Code", "rev": 129, "kind": "archive", "body": "핸드오프 로그 9건 → .aimem/archive/handoff-<YYYY-MM>.md (최신 4건 유지)"}
+{"seq": 248, "at": "2026-11-10T18:02:30", "actor": "Claude Code", "rev": 132, "kind": "ownership", "body": ".aimem/handoff.md -> 관리자"}
+{"seq": 253, "at": "2026-11-10T18:31:47", "actor": "Claude Code", "rev": 136, "kind": "queue", "body": "queue -11 `report_block_reason` 소문자 평문 거짓 양성 (`blocked: none`·`reject: no`·`needs-review: none`)"}
+{"seq": 254, "at": "2026-11-10T18:31:47", "actor": "Claude Code", "rev": 136, "kind": "queue", "body": "queue -8 `aimem_monitor` HTTP 테스트가 샌드박스(codex/S2)에서 소켓 금지로 22건 error - TCP 불가 시 폴백 `PipeConnection` 에 `settimeout` 없음"}
+{"seq": 255, "at": "2026-11-10T18:31:47", "actor": "Claude Code", "rev": 136, "kind": "queue", "body": "queue -7 `fleet.roster()` 마크다운 폴백의 셋째 칸이 세션키가 아니라 **역할** 이다 (docstring 불일치)"}
+{"seq": 256, "at": "2026-11-10T18:31:47", "actor": "Claude Code", "rev": 136, "kind": "queue", "body": "queue -6 `state_dict()` 이벤트 합집합 질의와 `migrate` 의 REV 씨앗 규칙 테스트"}
+{"seq": 257, "at": "2026-11-10T18:31:47", "actor": "Claude Code", "rev": 136, "kind": "queue", "body": "queue -5 `aimem_board.py` 의 `--file` 마크다운 경로 폐기 여부 결정"}
+{"seq": 258, "at": "2026-11-10T18:31:47", "actor": "Claude Code", "rev": 136, "kind": "queue", "body": "queue -4 `serve()` 가 `Handler.rate` 를 묶는지 보는 테스트"}
+{"seq": 259, "at": "2026-11-10T18:31:47", "actor": "Claude Code", "rev": 136, "kind": "queue", "body": "queue -3 그래프 노드 <-> 요청 서브태스크 자동 동기화"}
+{"seq": 260, "at": "2026-11-10T18:31:47", "actor": "Claude Code", "rev": 136, "kind": "queue", "body": "queue -2 요청 -> 서브태스크 분담을 관리자 CLI 로 (`fleet.py request` 또는 `fleet_graph` 와 요청 파일 연결)"}
+{"seq": 261, "at": "2026-11-10T18:31:47", "actor": "Claude Code", "rev": 136, "kind": "queue", "body": "queue -1 `.aimem/runs/<id>.json`·`.rc` 에도 심볼릭 링크 검사"}
+{"seq": 263, "at": "2026-11-10T18:38:08", "actor": "Claude Code", "rev": 137, "kind": "queue", "body": "queue -3 `tests/test_fleet_graph.py` 커버리지 구멍 - 결함 1·2·7·8·10 을 막는 테스트가 없다"}
+{"seq": 264, "at": "2026-11-10T18:38:08", "actor": "Claude Code", "rev": 137, "kind": "queue", "body": "queue -2 `fleet_graph.harness_durations()` - 깨진 run 메타(`pid` 가 문자열) 하나로 `progress`/`status`/`list` 가 TypeError"}
+{"seq": 265, "at": "2026-11-10T18:38:08", "actor": "Claude Code", "rev": 137, "kind": "queue", "body": "queue -1 `fleet_graph` 결함 11 - `refused` 로 `blocked` 가 된 노드를 아무도 거두지 않는다 (`unblock`/`reset` 명령 없음)"}
+{"seq": 267, "at": "2026-11-10T18:50:59", "actor": "Claude Code", "rev": 138, "kind": "ownership", "body": "rounds/** -> 관리자"}
+{"seq": 271, "at": "2026-11-10T20:08:35", "actor": "Claude Code", "rev": 141, "kind": "ownership", "body": "projects/** -> 관리자"}
+{"seq": 272, "at": "2026-11-10T20:08:35", "actor": "Claude Code", "rev": 141, "kind": "ownership", "body": "rounds/** -> 관리자"}

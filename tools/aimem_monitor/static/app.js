@@ -3874,6 +3874,20 @@ function graphBlock(g) {
       block.appendChild(tw);
       const notes = graphNotes(nodes);
       if (notes) block.appendChild(notes);
+      // 노드마다 지시문의 요지 한 줄 - 어느 슬롯의 노드든 무슨 일인지 한눈에
+      const gists = nodes.filter((n) => n.gist);
+      if (gists.length) {
+        const gl = document.createElement('ul');
+        gl.className = 'node-first-list node-gist-list';
+        for (const n of gists) {
+          const li = document.createElement('li');
+          const b = document.createElement('b');
+          b.textContent = `${show(n.id)} 요지`;
+          li.append(b, document.createTextNode(' ' + n.gist));
+          gl.appendChild(li);
+        }
+        block.appendChild(gl);
+      }
       // 노드에 써 둔 1차 지시를 한눈에 - 폰에서는 단추에 마우스를 올려 볼 수 없다. 줄을 누르면 고치는 창이 열린다
       const firsts = nodes.filter((n) => paneFirstStored(String(n.id)));
       if (firsts.length) {

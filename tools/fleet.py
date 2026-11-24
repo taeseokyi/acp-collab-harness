@@ -409,10 +409,8 @@ def _brief_text(slot, token, rev, label, write, harness, task):
         "금지: git commit / push / 삭제(자기 /tmp 작업 폴더는 지워도 됨) / 의존성 설치. 보고는 응답 본문에 직접 쓴다.",
         "보고 첫 줄은 상태(DONE / PARTIAL / BLOCKED / REJECT / NEEDS-LOCK / NEEDS-APPROVAL / NEEDS-FIX), "
         "이어서 한 일·고친 파일·실제로 돌린 검증 명령과 출력·다음 담당자가 알아야 할 것.",
-        *(["검증 명령은 승인 없이 실행되는 형태로 쓴다: `python3 ...`, `PYTHONPATH=tools python3 ...`, "
-           "`ls/cat/grep/sed -n/wc/diff/git status/git diff/curl ...`. "
-           "셸 변수 대입이나 다른 접두사를 앞에 붙이면 승인 요구로 막힌다. py_compile 이 만드는 __pycache__ 는 쓰기로 치지 않는다."]
-          if harness == "claude" else []),
+        "검증 명령은 접두사 없이 그대로 쓴다: `python3 ...`, `ls/cat/grep/sed -n/wc/diff/git status/git diff ...` "
+        "(셸 변수 대입 따위를 앞에 붙이지 않는다). py_compile 이 만드는 __pycache__ 는 쓰기로 치지 않는다.",
         "", task.strip(), ""])
 
 

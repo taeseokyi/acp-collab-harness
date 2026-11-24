@@ -56,7 +56,7 @@ PROBE_TTL_SEC = 30.0
 #: 공급자가 응답하지 않아(`probe:<p>`) 이만큼 넘게 기다린 노드는 `blocked`+`infra` 로 넘긴다 - 그래프가 제 시간 한도까지
 #: 말없이 놀지 않고 관리자·사람이 `move`/`unblock` 으로 판단하게.
 PROBE_WAIT_MAX_SEC = 600
-#: 사람이 '보내기' 를 눌러야 일하는 슬롯의 노드를 기다려 주는 최소 시간. 이만큼 지났고 다른 노드가 모두 끝났는데도
+#: 사람이 '보내기' 를 눌러야 일하는 슬롯의 노드를 기다려 주는 최소 시간. 이만큼 지났고 나아갈 다른 노드가 없는데도
 #: 아직 안 보냈으면 `blocked` 로 넘긴다 - 라운드가 사람 손을 기다리며 서 있지 않게.
 APPROVAL_GRACE_SEC = 600
 #: `run` 의 틱 간격(초). 노드 하나가 끝난 뒤 다음이 뜨기까지 평균 절반을 기다린다 (설계 5.7: 예전 15초).
@@ -176,15 +176,6 @@ def validate_graph(g, spawnable_only=False):
         pr = n.get("project")
         if pr not in (None, "") and not (isinstance(pr, str) and re.match(fleet.PROJECT_NAME_RE, pr)):
             problems.append(f"{n['id']}: project {pr!r} 는 프로젝트 이름이 아님 (`projects/` 아래 폴더 이름 하나 - 한글·영문·숫자·`-`·`_`, 40자 이하)")
-    # 사람 승인 슬롯의 노드는 언제 시작할지 모른다 - 다른 노드가 거기에 걸리면 라운드가 사람 손을 기다린다
-    for n in g["nodes"]:
-        if n.get("status", "todo") in TERMINAL:
-            continue
-        for d in n.get("deps", []):
-            dn = nodes.get(d)
-            if dn is not None and dn.get("status") != "done" and _needs_approval(dn):
-                problems.append(f"{n['id']}: 의존 {d} 는 사람이 '보내기' 를 눌러야 시작하는 슬롯({dn.get('slot')})의 노드 - "
-                                f"그런 노드에는 다른 노드가 의존할 수 없음 (막히지 않는 일만 맡기십시오)")
     # 사이클 검사 (Kahn)
     indeg = {k: 0 for k in nodes}
     for n in g["nodes"]:
@@ -870,12 +861,27 @@ def _board_sync(task_id, status, slot=None, g=None):
         return None
 
 
-_BOARD_FILLED = set()      # 이 프로세스가 보드의 빈 제목·슬롯을 이미 채워 본 (그래프, 태스크)
+_BOARD_FILLED = set()      # 이 프로세스가 보드 줄을 이미 만들어·채워 본 (그래프, 태스크)
+
+
+def _node_request(g, n):
+    """노드가 딸린 요청 id. 그래프가 요청 여럿을 다루면 노드의 프로젝트와 같은 프로젝트의 요청, 못 가리면 첫 요청."""
+    ids = str(g.get("request") or "").split()
+    if len(ids) > 1 and n.get("project"):
+        for rid in ids:
+            try:
+                rec = json.loads((ROOT / ".aimem" / "requests" / f"{rid}.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(rec, dict) and rec.get("project") == n.get("project"):
+                return rid
+    return ids[0] if ids else None
 
 
 def _board_fill(g):
-    """보드 줄의 **비어 있는** 제목·슬롯을 그래프 노드의 값으로 채운다 - 관리자가 번호만 넣어 만든 줄이 라운드가 도는 내내
-    '-' 로 보였다 (R42). 이미 적힌 값은 덮지 않고, 행을 만들지 않는다. 노드마다 프로세스에서 한 번만 해 본다."""
+    """그래프의 태스크 노드마다 보드 줄을 둔다 - **그래프가 정본이고 보드 줄은 거기서 나온다.** 없는 줄은 만들고(번호·요청·
+    제목·슬롯·상태), 있는 줄은 **비어 있는** 제목·슬롯만 채운다(관리자가 적은 값은 덮지 않는다). 예전에는 관리자가 손으로
+    등록해서, 잊으면 라운드 내내 보드에 안 보였다 (R42 는 제목이 비었고 R44 는 줄이 없었다). 노드마다 프로세스에서 한 번만 해 본다."""
     todo = [n for n in g.get("nodes") or [] if _TASK_ID_RE.fullmatch(str(n.get("id")))
             and (g.get("id"), str(n.get("id"))) not in _BOARD_FILLED]
     db = _board_db()
@@ -885,16 +891,22 @@ def _board_fill(g):
         con = sqlite3.connect(db.as_uri() + "?mode=rw", uri=True, timeout=2)
         try:
             with con:
+                known = {r[0] for r in con.execute("SELECT id FROM requests")}
+                now = _now()
                 for n in todo:
+                    nid, title, slot = str(n.get("id")), str(n.get("title") or "")[:300], str(n.get("slot") or "")
+                    rid = _node_request(g, n)
+                    con.execute("INSERT OR IGNORE INTO tasks(id,request_id,title,slot,status,created,updated) VALUES(?,?,?,?,?,?,?)",
+                                (nid, rid if rid in known else None, title, slot,
+                                 BOARD_STATUS.get(n.get("status", "todo"), "TODO"), now, now))
                     con.execute("UPDATE tasks SET title=CASE WHEN title IS NULL OR title='' THEN ? ELSE title END, "
                                 "slot=CASE WHEN slot IS NULL OR slot='' THEN ? ELSE slot END "
-                                "WHERE id=? AND (title IS NULL OR title='' OR slot IS NULL OR slot='')",
-                                (str(n.get("title") or "")[:300], str(n.get("slot") or ""), str(n.get("id"))))
+                                "WHERE id=? AND (title IS NULL OR title='' OR slot IS NULL OR slot='')", (title, slot, nid))
         finally:
             con.close()
         _BOARD_FILLED.update((g.get("id"), str(n.get("id"))) for n in todo)
     except Exception as e:  # noqa: BLE001 - 보드가 잠겨도 그래프는 돈다 (다음 틱에 다시 해 본다)
-        _log_once(g, ("board-fill", type(e).__name__), f"warn 보드 제목·슬롯 채우기 실패: {type(e).__name__}: {e}")
+        _log_once(g, ("board-fill", type(e).__name__), f"warn 보드 줄 만들기 실패: {type(e).__name__}: {e}")
 
 
 def _board_sync_changes(g, before):
@@ -908,17 +920,22 @@ def _board_sync_changes(g, before):
 
 
 def _cut_unsent(g):
-    """다른 노드가 모두 끝났는데 사람이 아직 '보내기' 를 누르지 않은 노드를 끊고 `blocked` 로 넘긴다. 바꿨으면 True.
+    """다른 노드가 모두 끝났거나 이 노드만 기다리는데 사람이 아직 '보내기' 를 누르지 않은 노드를 끊고 `blocked` 로 넘긴다. 바꿨으면 True.
 
     기다리는 것은 최소 `APPROVAL_GRACE_SEC` - 노드가 그것 하나뿐인 그래프도 사람이 볼 틈은 준다. 이미 보낸 노드는
     일하는 중이므로 건드리지 않는다(보낸 뒤 멈춘 것은 하네스 운전기가 본다). 시간은 `gate.since` 부터 센다 - 운전기가
     세션이 끝나 이어 보내기를 기다리기 시작할 때 그 시각을 옮기므로, 이어 보낼 틈도 같은 만큼 준다.
     """
     waiting = []
+    done = {str(n.get("id")): n.get("status", "todo") for n in g["nodes"]}
     for n in g["nodes"]:
         st = n.get("status", "todo")
         if st in TERMINAL:
             continue
+        if st == "todo" and any(done.get(d) != "done" for d in n.get("deps", [])):
+            continue            # 앞 노드를 기다리는 중 - 스스로 나아갈 일이 아니다
+        if st == "todo" and any(done.get(d) != "done" for d in n.get("deps", [])):
+            continue            # 앞 노드를 기다리는 중 - 스스로 나아갈 일이 아니다
         gate = fleet.run_gate(n["attempts"][-1]["run_id"]) if st == "running" and n.get("attempts") else None
         if not gate or gate.get("phase") != "await":
             return False        # 아직 다른 일이 남았다
@@ -1229,6 +1246,10 @@ def round_budget_problem(rnd, new_ids, followup, exclude=None):
     return None
 
 
+#: 지시문의 요지 줄 - `요지: <무엇을 어떻게, 끝난 기준>` (어느 슬롯의 노드든 같다)
+_GIST_RE = re.compile(r"^[ \t>*-]*요지[ \t]*[:：][ \t]*\S", re.M)
+
+
 def graph_shape(g):
     """그래프의 병렬 모양. `{"nodes", "levels": [[노드 id …], …], "notes": [사람이 읽을 말 …]}`.
 
@@ -1266,6 +1287,9 @@ def graph_shape(g):
             desc = ", ".join(f"{s} {len(ids)}개" for s, ids in crowded.items())
             notes.append(f"{k}단계의 노드가 한 슬롯에 몰렸습니다({desc}) - 슬롯은 한 번에 하나라 줄을 섭니다. "
                          "다른 슬롯(다른 공급자면 더 좋음)에 나누면 동시에 돕니다")
+    bare = [nid for nid in nodes if not _GIST_RE.search(str(nodes[nid].get("task") or ""))]
+    if bare:
+        notes.append(f"지시문 첫 줄에 `요지:` 가 없는 노드: {', '.join(bare)} - 무엇을 어떻게, 끝난 기준을 한 문장으로 적으십시오")
     return {"nodes": n, "levels": levels, "notes": notes}
 
 

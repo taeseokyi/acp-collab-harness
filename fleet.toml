@@ -26,6 +26,15 @@ max_concurrent = 3
 idle_timeout_sec = 240
 models = ["deepseek/deepseek-v4.1-flash"]
 
+[providers.nvidia]        # NVIDIA API (integrate.api.nvidia.com). 오픈코드가 아는 공급자라 따로 설정 없이 키만으로 붙는다 (태석님 2026-11-24)
+tier = "free"
+base_url = "https://integrate.api.nvidia.com/v1"
+env_key = "NVIDIA_API_KEY"
+max_concurrent = 1
+idle_timeout_sec = 240
+probe = "models"
+models = ["z-ai/glm-5.3-flash"]
+
 [providers.opencode]      # 오픈코드 자체 공급(Zen). 무료 모델은 키 없이 오픈코드 하네스에서만 쓸 수 있다
 tier = "free"
 max_concurrent = 1        # 동시에 띄울 세션 수
@@ -55,7 +64,7 @@ providers = ["kisti", "openrouter"]
 default_model = "kisti/kistillm"
 
 [harness.opencode]        # ~/.config/opencode/opencode.jsonc 의 model 은 'kisti/kistillm'
-providers = ["kisti", "exaone", "openrouter", "opencode"]
+providers = ["kisti", "exaone", "openrouter", "opencode", "nvidia"]
 default_model = "kisti/kistillm"
 
 [harness.freebuff]        # 지시는 사람이 한다 - 세션은 모니터의 '보내기' 를 기다렸다가 팬에 한 줄을 넣는다

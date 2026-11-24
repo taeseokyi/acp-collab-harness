@@ -179,6 +179,36 @@ class Resident(Base):
                 self.assertTrue(_wait(lambda: sessions.state(self.sroot / sid)["state"] != "running", 10))
                 fleet_ctl.stop("test")
 
+    def test_project_modes_put_only_the_stamped_lines_at_the_end(self):
+        # 관리 방식: 그 라운드의 프로젝트에 찍힌 방식의 지시만 붙는다. 안 찍힌 프로젝트는 균형, 일이 없는 프로젝트의 것은 안 붙는다
+        for k in fleet_ctl.PMODE_LABEL:
+            (self.briefs / f"mode-{k}.md").write_text(f"- {k} 의 지시 한 줄\n", encoding="utf-8")
+        (self.aimem / "requests").mkdir()
+        for i, proj in enumerate(("가앱", "나앱", "")):
+            (self.aimem / "requests" / f"Q-{i}.json").write_text(json.dumps({"id": f"Q-{i}", "status": "NEW", "project": proj}), encoding="utf-8")
+        (self.aimem / fleet_ctl.PMODES_FILE).write_text(json.dumps({"가앱": "quality", "다앱": "speed", "나앱": "모르는 값"}), encoding="utf-8")
+        self.assertEqual(fleet_ctl.project_modes(), {"가앱": "quality", "다앱": "speed"})
+        out = self.launch()                                                     # 운영 방식 지시 파일이 없어도 관리 방식은 붙는다
+        self.assertTrue(out["ok"], out)
+        n, sid = out["round"], out["session"]
+        frozen = (self.root / "rounds" / f"R{n}" / "policy.md").read_text(encoding="utf-8")
+        self.assertTrue(frozen.startswith("## 관리 방식\n"), frozen)
+        self.assertIn("### 가앱 · 품질 우선\n- quality 의 지시 한 줄", frozen)
+        self.assertIn("### 나앱 · 균형\n- balance 의 지시 한 줄", frozen)
+        self.assertNotIn("speed", frozen)                                       # 이 라운드에 일이 없는 프로젝트
+        self.assertEqual(self.record(n)["modes"], {"가앱": "quality", "나앱": "balance"})
+        sent = (self.sroot / sid / "brief.md").read_text(encoding="utf-8")
+        self.assertTrue(sent.endswith(frozen), sent[-200:])
+        self.assertTrue(_wait(lambda: sessions.state(self.sroot / sid)["state"] != "running", 10))
+        fleet_ctl.stop("test")
+        self.policies("cost")                                                   # 운영 방식 지시가 있으면 그 뒤에 붙는다
+        out = self.launch("cost")
+        frozen = (self.root / "rounds" / f"R{out['round']}" / "policy.md").read_text(encoding="utf-8")
+        self.assertTrue(frozen.startswith("## 운영 방식 cost"), frozen)
+        self.assertIn("\n\n## 관리 방식\n", frozen)
+        self.assertTrue(_wait(lambda: sessions.state(self.sroot / out["session"])["state"] != "running", 10))
+        fleet_ctl.stop("test")
+
     def test_an_unknown_policy_is_refused_without_side_effects(self):
         fleet_ctl.set_mode("ready", "test")
         before = fleet_ctl.read_mode()

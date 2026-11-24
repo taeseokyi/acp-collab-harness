@@ -66,6 +66,13 @@ POLICY_CHOICES = [
     {"key": "speed", "label": "빠른 구현", "desc": "모든 슬롯으로 최대 병렬, 막히면 유료로 옮겨 계속"},
 ]
 POLICY_LABEL = {c["key"]: c["label"] for c in POLICY_CHOICES}
+#: 관리 방식 (2026-11-24) - 프로젝트마다 사람이 찍어 두는 취향. 확인(검수·검사)을 얼마나 할지를 정한다. 운영 방식(슬롯을 어떻게
+#: 쓰나)과는 다른 축이다. 찍는 자리는 `.aimem/project-modes.json` `{"<프로젝트>": "<키>"}`, 없는 프로젝트는 `balance`.
+#: 지시는 `.aimem/briefs/mode-<키>.md` (네 줄) - 라운드를 띄울 때 **그 라운드의 프로젝트에 찍힌 것만** 골라 `policy.md` 끝에 붙인다.
+PMODE_BRIEF = "mode-{key}.md"
+PMODE_LABEL = {"speed": "속도 우선", "balance": "균형", "quality": "품질 우선"}
+PMODE_DEFAULT = "balance"
+PMODES_FILE = "project-modes.json"
 #: 라운드 기록에 관리자 세션 id 를 적은 뒤 세션 폴더가 생기기까지 봐 주는 시간. 넘으면 그 관리자는 lost.
 LAUNCH_GRACE_SEC = 60
 
@@ -288,7 +295,34 @@ def _open_requests():
     return out
 
 
-def _write_round_record(n, at, brief_name, session=None, policy=None):
+def project_modes():
+    """`{프로젝트: 관리 방식 키}` - 사람이 찍어 둔 것만. 못 읽거나 모르는 키는 뺀다(그 프로젝트는 기본값으로 돈다)."""
+    try:
+        d = json.loads((_aimem_dir() / PMODES_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(k): v for k, v in d.items() if v in PMODE_LABEL} if isinstance(d, dict) else {}
+
+
+def _modes_block(projects):
+    """이 라운드의 프로젝트마다 찍힌 관리 방식의 지시를 한 덩이로: `(글 또는 None, {프로젝트: 키})`.
+    지시 틀(`mode-<키>.md`)이 없는 방식은 건너뛴다 - 그 프로젝트는 표준 브리프대로 돈다."""
+    stamped, parts, modes = project_modes(), [], {}
+    for name in sorted(p for p in projects if p):
+        key = stamped.get(name, PMODE_DEFAULT)
+        try:
+            body = (fleet.ROOT / ".aimem" / "briefs" / PMODE_BRIEF.format(key=key)).read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        modes[name] = key
+        parts.append(f"### {name} · {PMODE_LABEL[key]}\n{body}")
+    if not parts:
+        return None, {}
+    head = "## 관리 방식\n프로젝트마다 사람이 찍어 둔 취향입니다. 아래대로 일을 나누고, 찍힌 방식은 바꾸지 않습니다."
+    return head + "\n\n" + "\n\n".join(parts) + "\n", modes
+
+
+def _write_round_record(n, at, brief_name, session=None, policy=None, modes=None):
     """`rounds/R<N>/round.json` 을 새로 적는다 - 언제 떴고 어떤 요청·프로젝트를 다루는지, 관리자 세션 id 와 운영 방식.
 
     세션 id 는 띄우기 **전에** 적으므로 세션 폴더가 아직 없으면 '띄우는 중' 으로 읽힌다.
@@ -301,6 +335,8 @@ def _write_round_record(n, at, brief_name, session=None, policy=None):
         rec["session"] = str(session)
     if policy:
         rec["policy"] = str(policy)
+    if modes:
+        rec["modes"] = dict(modes)
     return roundrec.update(_round_dir(n), lambda _old: rec)
 
 
@@ -355,8 +391,6 @@ def slot_roster_lines(rows=None, cfg=None):
             parts.append(role[:80])
         if r.get("origin") == "manager":
             parts.append("관리자 추가")
-        if rt_harness.needs_approval(h):
-            parts.append("**사람이 '보내기' 를 눌러야 시작 - 막히지 않는 일만**")
         if r.get("paused"):
             why = " ".join(str(r.get("paused_note") or "").split())[:80]
             parts.append("**일시 사용 중지 - 쓰지 않음**" + (f"({why})" if why else ""))
@@ -1019,8 +1053,13 @@ def _launch_round_locked(by, policy="cost", policy_template=None):
     try:
         # 운영 방식 지시를 `policy.md` 로 굳히고 아래에서 브리프 뒤에 붙여 보낸다
         policy_text = _freeze_policy(n, at, policy_template, policy)
+        # 이 라운드의 프로젝트에 찍힌 관리 방식의 지시를 같은 파일 끝에 굳힌다 (도중에 찍은 것을 바꿔도 굳힌 글이 이긴다)
+        modes_text, modes = _modes_block({p for _i, p in _open_requests()})
+        if modes_text:
+            policy_text = _with_policy(policy_text or "", modes_text).lstrip("\n")
+            _write_text_replace(_round_dir(n) / "policy.md", policy_text)
         brief = _round_brief_path(b, at, policy)
-        _write_round_record(n, at, b["file"], session=sid, policy=policy)
+        _write_round_record(n, at, b["file"], session=sid, policy=policy, modes=modes)
     except (OSError, ValueError) as e:
         # 라운드 폴더가 저장소 밖을 가리키는 등 - 아무것도 띄우지 않고 모드도 그대로 둔다
         return {"ok": False, "round": n, "error": f"R{n} 라운드 폴더를 준비하지 못했습니다: {str(e)[:200]}"}

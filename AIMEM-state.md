@@ -1,17 +1,17 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-24T15:11:26 / REV 197
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-24T21:13:30 / REV 200
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | `a41f0c` | claude | opus | R43 대기 (무료 중심 라운드) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
-| S2 | `d27e93` | codex | kisti/kistillm | R43 VoxLog 조사 문서: 초안 주인 판정의 표준 방식 (무료, 웹 문서 읽기) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
-| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R43 VoxLog 대기 큐 R42-N2·N3 수정 (무료) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
-| S4 | `6cd650` | claude | sonnet | R43 적대적 검수: 조사 문서 근거 대조 + 큐 수정 (유료, 판단) | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
-| S5 | `61dfcc` | claude | sonnet | R43 대기 (무료 중심 라운드) |  |
-| S6 | `47764b` | freebuff | (하네스 기본) | R43 대기 (맡길 독립 일 없음) |  |
+| S1 | `a41f0c` | claude | opus | R45 대기 (무료 중심) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S2 | `d27e93` | codex | kisti/kistillm | R45 주보알림 bulletin.py (무료) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
+| S3 | `5b8c1e` | opencode | kisti/kistillm | R45 주보알림 serve.py·화면·app.json (무료) | 11-24 태석님: 오픈코드 + kistillm (aida:10430). 그 전은 nvidia/z-ai/glm-5.3-flash |
+| S4 | `6cd650` | claude | sonnet | R45 대기 (주보알림 속도 우선 - 검수 없음) | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
+| S5 | `61dfcc` | claude | sonnet | R45 대기 (무료 중심) |  |
+| S6 | `47764b` | freebuff | (하네스 기본) | R45 대기 |  |
 
 ## 3. 작업 보드
 
@@ -318,15 +318,31 @@
 | T-394 | Q-261124-e24b |  | - | DONE |  |
 | T-395 | Q-261124-e24b |  | - | DONE |  |
 | T-396 | Q-261124-e24b |  | - | DONE |  |
+| T-397 | Q-261124-795c | [VoxLog] 조사 문서: 초안 주인 판정의 표준 방식 (docs/RESEARCH-draft-owner.md) | S2 | DONE | projects/VoxLog/docs/RESEARCH-draft-owner.md |
+| T-398 | Q-261124-795c | [VoxLog] R42-N2 store.set_job 64자 자름 제거 | S3 | DONE | projects/VoxLog/voxlog/store.py |
+| T-399 | Q-261124-795c | [VoxLog] R42-N3 ask 본문 검사: 까닭 문구·유효한 ids·절대 마감 변이 | S3 | DONE | projects/VoxLog/tests/test_serve_ask_body.py |
+| T-400 | Q-261124-795c | [VoxLog] R43 적대적 검수 (조건부 통과) | S4 | DONE |  |
+| T-401 | Q-261124-795c | [VoxLog] R43-N1~N4 조사 문서 수정 | S2 | DONE | projects/VoxLog/docs/RESEARCH-draft-owner.md |
+| T-402 | Q-261124-795c | [VoxLog] R43 재검수 (조건부 통과, R43-N6~N8 큐) | S4 | DONE |  |
+| T-403 | Q-261124-b4ad | [VoxLog] queue.js 웹 잠금 전환·lease 걷어냄·기다리는 회수·R41-N16 | S2 | DONE |  |
+| T-404 | Q-261124-b4ad | [VoxLog] app.js lease 타이머·22초 재시도 제거·R41-N18·늦은 회수 알림 | S2 | DONE |  |
+| T-405 | Q-261124-b4ad | [VoxLog] 브라우저 검사: 웹 잠금 회수·열화·전환기 | S2 | DONE |  |
+| T-406 | Q-261124-b4ad | [VoxLog] README·INTERFACE.md 웹 잠금·열화 | S2 | DONE |  |
+| T-407 | Q-261124-b4ad | [VoxLog] 조사 문서 R43-N6~N8 정리 | S6 | DONE |  |
+| T-408 | Q-261124-b4ad | [VoxLog] R44 적대적 검수(부작용 중심) | S4 | DONE |  |
+| T-409 | Q-261124-ba96 | [주보알림] bulletin.py: 확인·미리 보기·전송·기록 논리 (ref 스크립트를 그대로 부름) | S2 | DONE | projects/주보알림/bulletin.py |
+| T-410 | Q-261124-ba96 | [주보알림] serve.py·화면(web/)·app.json - 화면 하나, 확인·미리 보기·카톡 보내기·보낸 기록 | S3 | DONE | projects/주보알림/serve.py,projects/주보알림/web/,projects/주보알림/app.json |
+| T-411 | Q-261124-ba96 | [주보알림] bulletin.preview(): 실제 전송과 같은 쪽·순서(maria 1~7쪽, bstsd 내림차순)와 seq | S2 | DONE | projects/주보알림/bulletin.py |
+| T-412 | Q-261124-ba96 | [주보알림] 화면: 미리 보기를 카톡 대화방에 그림이 온 것처럼 (seq 순서, 묶음 말풍선) | S3 | DONE | projects/주보알림/web/ |
+| T-413 | Q-261124-ba96 | [주보알림] 실물 시험: 앱으로 확인·미리 보기·카톡 보내기 한 번 (실제 전송) | S2 | DONE | projects/주보알림/data/history.json |
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
-| 1 | [VoxLog] R41-N13(중)·R41-N14·R41-N15·R41-N16·R41-N17·R41-N18(하) 초안 회수 - 비고(R42, 태석님): 초안 판정을 웹 잠금(navigator.locks)으로 바꾸기로 함 - 조사 먼저, 구현은 태석님 승인 뒤. R42 T-391 의 덧댄 수정은 되돌림. 원래 항목: 다른 탭이 열린 채 녹음 탭이 22초 재시도 뒤 죽으면 회수 안 됨(app.js:1073), 20초 넘는 프리즈 때 lease 만료, 빠른 새로고침 회수 22초 지연, 조각 0개 초안도 '살렸습니다', draftOk=false 때 activeDraft 누수, lease 만료 회수·sw.js 업로드 엄격 판정 검사 없음. rounds/R41/REVIEW-r41-s6.md 'T-388' |  |  |
-| 2 | [VoxLog] R42-N2(하, 선행) voxlog/store.py:450 이 작업 id 를 64자로 잘라 저장 - stt id 규칙은 128자까지라 65~128자 id 면 재시작 뒤 이어받기가 404 → 새로 맡김(중복 맡기기). 상한을 맞출 것. 검수 기록 .aimem/sessions/T-394-S3-a1-143146/report.md |  |  |
-| 3 | [자모맞히기] 태석님께 물음(R39-N3 를 닫으며 남김): data/trend.txt 의 2026-11-29~12-05 일곱 줄은 정답 고르기 경로를 거치지 않고 들어옴 - 출처 확인. rounds/R39/REVIEW-r39.md |  |  |
-| 4 | [VoxLog] R42-N3(하, 검사 강도) tests/test_serve_ask_body.py 느린 본문 검사가 400 의 까닭(본문이 중간에 끊겼습니다)을 확인하지 않고 ids 도 없는 녹음 - 유휴 기반 변이를 소켓 timeout 으로 간접적으로만 잡음. 메시지 확인·유효한 ids. .aimem/sessions/T-396-S3-a1-144911/report.md |  |  |
+| 1 | [자모맞히기] 태석님께 물음(R39-N3 를 닫으며 남김): data/trend.txt 의 2026-11-29~12-05 일곱 줄은 정답 고르기 경로를 거치지 않고 들어옴 - 출처 확인. rounds/R39/REVIEW-r39.md |  |  |
+| 2 | [VoxLog] R43-N5(하, 검사 강도) tests/test_serve_ask_body.py 가 serve.py:361-363 _read_body 의 'left <= 0' 분기와 'got != length' 분기의 문구·상태 변이를 못 잡음(느린 본문은 socket.timeout 분기가 먼저 걸림). 경쟁 상태에서만 도는 분기라 실제 결함은 아님. 검수 보고 .aimem/sessions/T-400-S4-a1-152551/report.md 의 다섯째 발견 |  |  |
+| 3 | [VoxLog] R44-N1·R44-N2·R44-N3(하) 웹 잠금 전환 검수 남은 지적: R44-N1 app.js startRec 에서 draftStart 가 잠금을 쥔 뒤 mr.start(5000) 가 예외면 finishRec 이 안 불려 잠금·초안 줄·state.rc 가 탭을 닫을 때까지 남음(조각 0개라 소실 없음, mr.start 를 try/catch 로 감싸 draftDiscard·stream 정리, 추정·미재현); R44-N2 docs/RESEARCH-draft-owner.md:147 의 옛 계획 문장(t30 을 fallback 검사로)이 남음; R44-N3 첫 로드 때 pageshow 의 resumeRecover 가 init 의 onrecover 등록보다 먼저 끝나면 살렸다는 토스트가 빠질 수 있음(데이터 영향 없음, 추정). 검수 보고 .aimem/sessions/T-408-S4-a1-174145/report.md |  |  |
 
 ## 6. 파일 소유권
 
@@ -350,12 +366,13 @@
 | `CLAUDE.md` | 관리자 | 부트스트랩. 자동 주입되는 유일한 파일 |
 | `README.md` | 관리자 | 저장소 소개 |
 | `projects/**` | 관리자 | 프로젝트 결과물 projects/<이름>/ - 여러 라운드에 걸쳐 쌓임 (REV 142). 관리자가 하위 경로를 슬롯에 배정 |
+| `projects/VoxLog/README.md` | S2 | R44 |
 | `projects/VoxLog/docs/**` | S6 | R39 |
-| `projects/VoxLog/docs/INTERFACE.md` | S2 | R42 F1 |
-| `projects/VoxLog/docs/RESEARCH-draft-owner.md` | S2 | R43 |
+| `projects/VoxLog/docs/INTERFACE.md` | S2 | R44 |
+| `projects/VoxLog/docs/RESEARCH-draft-owner.md` | S6 | R44 |
 | `projects/VoxLog/serve.py` | S2 | R42 F1 |
 | `projects/VoxLog/tests/**` | S6 | R39 |
-| `projects/VoxLog/tests/browser_voxlog.py` | S6 | R42 |
+| `projects/VoxLog/tests/browser_voxlog.py` | S2 | G-094 T-405 S3→S2 |
 | `projects/VoxLog/tests/test_ask.py` | S6 | R42 |
 | `projects/VoxLog/tests/test_serve.py` | S6 | R42 |
 | `projects/VoxLog/tests/test_serve_ask_body.py` | S3 | R43 |
@@ -367,11 +384,11 @@
 | `projects/VoxLog/voxlog/stt.py` | S6 | R42 |
 | `projects/VoxLog/web/**` | S4 | R34 |
 | `projects/VoxLog/web/api.js` | S6 | R41 |
-| `projects/VoxLog/web/app.js` | S6 | R42 |
+| `projects/VoxLog/web/app.js` | S2 | R44 |
 | `projects/VoxLog/web/icons/**` | S5 | R33 |
 | `projects/VoxLog/web/index.html` | S4 | R33 |
 | `projects/VoxLog/web/manifest.webmanifest` | S5 | R33 |
-| `projects/VoxLog/web/queue.js` | S6 | R42 |
+| `projects/VoxLog/web/queue.js` | S2 | G-094 T-403 S3→S2 |
 | `projects/VoxLog/web/style.css` | S4 | R33 |
 | `projects/VoxLog/web/sw.js` | S6 | R42 |
 | `projects/웹워들/README.md` | S3 | R10 |
@@ -444,6 +461,11 @@
 | `projects/자모맞히기/web/js/trend.js` | S5 | R32 |
 | `projects/자모맞히기/web/js/ui.js` | S5 | R32 |
 | `projects/자모맞히기/web/js/words.js` | S5 | R31 |
+| `projects/주보알림/app.json` | S3 | R45 |
+| `projects/주보알림/bulletin.py` | S2 | R45 |
+| `projects/주보알림/data/**` | S2 | R45 |
+| `projects/주보알림/serve.py` | S3 | R45 |
+| `projects/주보알림/web/**` | S3 | R45 |
 | `rounds/**` | 관리자 | 라운드 기록 폴더 rounds/R<N>/ - brief.md·REPORT.md 만 (결과물은 projects/) |
 | `rounds/R10/REVIEW.md` | S1 | R10 |
 | `rounds/R11/REVIEW-A.md` | S1 | R11 T-136 적대적 검수 A |
@@ -587,4 +609,6 @@
 | Q-261124-9281 | [VoxLog] 시험 라운드: 새 보내기 방식(1차 지시를 줄 앞에 붙여 한 번에)으로 freebuff 세션 풀림 이어 가기 - 대기 큐 VoxLog 4건 (S6 노드 셋) | 태석 (클로드 코드 전달) | DONE | 2026-11-24T09:56:42 |
 | Q-261124-e24b | [VoxLog] 대기 큐 VoxLog 4건 처리 - S6(freebuff)에 맡김, 종류별 기본 1차 지시의 첫 실물 시험 | 태석 (클로드 코드 전달) | DONE | 2026-11-24T13:23:08 |
 | Q-261124-7f0b | [자모맞히기] 대기 큐 R39-N3 - tests/README.md 의 기대 검사 수 맞추기 (S6, 문서 노드) | 태석 (클로드 코드 전달) | DONE | 2026-11-24T13:23:08 |
-| Q-261124-795c | [VoxLog] 조사: 녹음 초안이 살아 있는지 판정하는 표준 방식 (웹 잠금 등) - 구현하지 않음 | 태석 (클로드 코드 전달) | NEW | 2026-11-24T15:08:47 |
+| Q-261124-795c | [VoxLog] 조사: 녹음 초안이 살아 있는지 판정하는 표준 방식 (웹 잠금 등) - 구현하지 않음 | 태석 (클로드 코드 전달) | DONE | 2026-11-24T15:08:47 |
+| Q-261124-b4ad | [VoxLog] 녹음 초안의 주인 판정을 웹 잠금(navigator.locks)으로 바꾸기 | 태석 (클로드 코드 전달) | DONE | 2026-11-24T16:17:54 |
+| Q-261124-ba96 | [주보알림] 새 주보 확인하고 카톡으로 보내는 웹 앱 (시제품) | 태석 (클로드 코드 전달) | DONE | 2026-11-24T18:31:06 |

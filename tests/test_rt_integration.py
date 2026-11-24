@@ -665,11 +665,12 @@ class BoardSyncTests(Base):
         self.assertFalse(any(e[3].startswith("T-3") for e in ev))
         self.assertEqual(len(ev), 4)                                      # 같은 상태는 다시 적지 않는다
 
-    def test_no_task_row_is_not_created_and_non_task_ids_ignored(self):
+    def test_a_missing_task_row_is_made_from_the_graph_and_non_task_ids_ignored(self):
+        # 그래프가 정본이다 - 관리자가 등록하지 않은 태스크도 보드에 줄이 생기고 상태가 따라간다 (R44: 줄이 없어 보드에 안 보였다)
         g = self.graph([self.node("T-99", "FAKE: report DONE\\nok"), self.node("N1", "FAKE: report DONE\\nok", slot="S2")])
         self.assertTrue(self.drive(g, lambda g: all(n["status"] == "done" for n in g["nodes"])))
-        self.assertNotIn("T-99", self.board())
-        self.assertEqual(self.events(), [])
+        self.assertEqual(self.board().get("T-99"), "REVIEW")
+        self.assertNotIn("N1", self.board())
 
     def test_no_db_no_error(self):
         self.db.unlink()
