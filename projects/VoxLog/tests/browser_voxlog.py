@@ -3,6 +3,7 @@
 
 실행: python3 projects/VoxLog/tests/browser_voxlog.py
 서버는 이 검사가 임시 data 폴더로 직접 띄우고(subprocess) 끝나면 내린다.
+검사는 모두 38개입니다.
 마지막 줄 `N/M 통과`, 하나라도 실패면 종료 코드 1.
 """
 import json
@@ -392,6 +393,25 @@ def run_all(browser, base, data, tmp, procs):
     def draft_recover_done(pg):
         """탭의 draftRecover 가 실제로 끝날 때까지 기다릴 때 쓴다."""
         return pg.evaluate("window.VoxQueue.draftRecover().then(function () { return true; })")
+
+    def draft_info(pg):
+        """가장 최근 초안의 {id, lock, aliveAtInf} - 없으면 None."""
+        return pg.evaluate(
+            "new Promise(function (res) { var r = indexedDB.open('voxlog', 2);"
+            " r.onsuccess = function () { var db = r.result;"
+            " var tx = db.transaction('drafts', 'readonly');"
+            " var g = tx.objectStore('drafts').getAll();"
+            " tx.oncomplete = function () { var rows = g.result || []; var d = rows[0];"
+            " res(d ? {id: d.draftId, lock: d.lock === true, aliveAtInf: d.aliveAt === Infinity} : null); };"
+            " tx.onerror = function () { res(null); }; };"
+            " r.onerror = function () { res(null); }; })")
+
+    def lock_names(pg, kind='held'):
+        """이 출처의 navigator.locks.query() 이름 목록(held 또는 pending)."""
+        return pg.evaluate("""async (kind) => {
+            var q = await navigator.locks.query();
+            return (q[kind] || []).map(function (l) { return l.name; });
+        }""", kind)
 
     def t12():
         b, _ = new_server("d12")
@@ -983,38 +1003,30 @@ def run_all(browser, base, data, tmp, procs):
     check("29 JSON 아닌 200·빈 200·500 text/html → '연결됨' 아님·오류 표시", t29)
 
     def t30():
-        # R41: BroadcastChannel 이 없는 탭1 녹음 중 탭2 를 열어도 aliveAt lease 로 초안을 가져가지 않는다
+        # R44: 웹 잠금이 없는 탭에서는 초안 자체를 만들지 않는다 - 녹음·올리기는 그대로
         b, _ = new_server("d30")
         c = new_ctx()
         try:
             p1 = c.new_page()
-            p1.add_init_script("Object.defineProperty(window, 'BroadcastChannel', { configurable: true, value: undefined });")
+            p1.add_init_script("Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined });")
             p1.goto(b + "/")
             p1.wait_for_selector("#rec")
-            need(p1.evaluate("typeof window.BroadcastChannel") != "function", "탭1 BroadcastChannel 이 꺼지지 않음")
+            need(p1.evaluate("window.VoxQueue.supported().draftLocks === false"),
+                 "웹 잠금이 없는데 supported().draftLocks 가 false 가 아님")
             p1.click("#rec")
             need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", 5, pg=p1), "탭1 녹음이 켜지지 않음")
             time.sleep(7)
-            need(db_drafts(p1)[1] >= 1, "녹음 중 조각이 초안에 쌓이지 않음: %s" % db_drafts(p1))
-            p2 = c.new_page()
-            p2.goto(b + "/")
-            p2.wait_for_selector("#rec")
-            need(wait_for(lambda: draft_recover_done(p2), 10, pg=p2), "탭2 의 draftRecover 가 끝나지 않음")
-            left = db_drafts(p1)
-            need(left[0] == 1, "탭2 가 녹음 중인 초안을 가져감 [초안, 조각]=%s" % left)
-            need(queue_n(p2) == 0, "탭2 가 녹음 중인 초안을 대기열에 넣음")
-            need("끝나지 않은 녹음" not in p2.inner_text("#toast"), "탭2 가 살렸다고 알림: " + p2.inner_text("#toast"))
+            need(db_drafts(p1) == [0, 0], "웹 잠금 없는 탭이 초안을 만듦: %s" % db_drafts(p1))
             p1.click("#rec")
             need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "false", 5, pg=p1), "탭1 녹음이 꺼지지 않음")
             need(wait_for(lambda: len(server_items(b)) == 1, 30, pg=p1), "탭1 녹음이 서버에 올라가지 않음")
             it = server_items(b)[0]
-            need(it.get("duration_ms") is not None, "duration_ms 없음: %s" % it)
             need((it.get("duration_ms") or 0) >= 6000, "녹음이 잘려 올라감: %s ms" % it.get("duration_ms"))
-            need(wait_for(lambda: db_drafts(p1) == [0, 0], 10, pg=p1), "고아 초안·조각이 남음: %s" % db_drafts(p1))
+            need(db_drafts(p1) == [0, 0], "초안·조각이 남음: %s" % db_drafts(p1))
             need(wait_for(lambda: queue_n(p1) == 0, 10, pg=p1), "대기열이 비지 않음")
         finally:
             c.close()
-    check("30 BroadcastChannel 없는 탭에서 녹음 중 초안 안 가져감 → 온전한 1건(duration_ms 있음)", t30)
+    check("30 웹 잠금 없는 탭: 초안 없음·녹음 온전히 1건", t30)
 
     def t31():
         # R41: 200 text/html·id 없는 JSON 은 업로드 성공이 아니다 - 대기열에 남고 정상 응답에서 올라간다
@@ -1058,6 +1070,234 @@ def run_all(browser, base, data, tmp, procs):
         finally:
             c.close()
     check("31 200 text/html·id 없는 JSON 은 대기열에 남고 정상 응답에서 올라감", t31)
+
+    def t32():
+        # R41-N13: 탭2 가 먼저 열린 뒤 탭1 이 녹음하고 닫히면, 탭2 의 기다리는 요청이 회수해야 한다
+        b, _ = new_server("d32")
+        c = new_ctx()
+        try:
+            p2 = c.new_page()
+            p2.goto(b + "/")
+            p2.wait_for_selector("#rec")
+            p1 = c.new_page()
+            p1.goto(b + "/")
+            p1.wait_for_selector("#rec")
+            p1.click("#rec")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", 5, pg=p1), "탭1 녹음이 켜지지 않음")
+            time.sleep(7)
+            need(db_drafts(p1)[0] == 1, "탭1 녹음 중 초안이 없음: %s" % db_drafts(p1))
+            n = p2.evaluate("window.VoxQueue.draftRecover()")
+            need(n == 0, "탭2 의 즉시 판정이 0 이 아님: %s" % n)
+            p1.close()
+            need(wait_for(lambda: len(server_items(b)) == 1, 10, pg=p2),
+                 "탭1 을 닫은 뒤 10초 안에 탭2 가 초안을 회수하지 못함")
+            need(wait_for(lambda: db_drafts(p2) == [0, 0], 10, pg=p2), "탭2 회수 뒤 초안·조각이 남음: %s" % db_drafts(p2))
+            need(wait_for(lambda: "끝나지 않은 녹음 1건" in p2.inner_text("#toast"), 5, pg=p2),
+                 "탭2 토스트에 '끝나지 않은 녹음 1건' 이 없음: " + p2.inner_text("#toast"))
+            need(wait_for(lambda: queue_n(p2) == 0, 10, pg=p2), "탭2 대기열이 비지 않음")
+        finally:
+            c.close()
+    check("32 탭2 먼저 열림·탭1 닫힘 → 기다리던 요청이 10초 안에 회수", t32)
+
+    def t33():
+        # R41-N15: 녹음 중 새로고침하면 22초 재시도 없이 곧바로 초안을 살린다
+        b, _ = new_server("d33")
+        c = new_ctx()
+        try:
+            p = c.new_page()
+            p.goto(b + "/")
+            p.wait_for_selector("#rec")
+            p.click("#rec")
+            need(wait_for(lambda: p.get_attribute("#rec", "aria-pressed") == "true", 5, pg=p), "녹음이 켜지지 않음")
+            time.sleep(7)
+            need(db_drafts(p)[0] == 1, "새로고침 전 초안이 없음: %s" % db_drafts(p))
+            p.reload()
+            p.wait_for_selector("#rec")
+            need(wait_for(lambda: len(server_items(b)) == 1, 10, pg=p),
+                 "새로고침 뒤 10초 안에 초안이 올라가지 않음")
+            need(wait_for(lambda: db_drafts(p) == [0, 0], 10, pg=p), "새로고침 뒤 초안·조각이 남음: %s" % db_drafts(p))
+            need(wait_for(lambda: queue_n(p) == 0, 10, pg=p), "새로고침 뒤 대기열이 비지 않음")
+        finally:
+            c.close()
+    check("33 녹음 중 새로고침 → 10초 안에 초안 회수·업로드", t33)
+
+    def t34():
+        # R41-N16: 조각 0개 새 세대 초안은 '살렸습니다' 로 세지 않고 지운다
+        b, _ = new_server("d34")
+        c = new_ctx()
+        try:
+            p = c.new_page()
+            p.goto(b + "/")
+            p.wait_for_selector("#rec")
+            p.evaluate("""async () => {
+                await new Promise((resolve, reject) => {
+                    var req = indexedDB.open('voxlog', 2);
+                    req.onsuccess = () => {
+                        var db = req.result;
+                        var tx = db.transaction('drafts', 'readwrite');
+                        tx.objectStore('drafts').put({
+                            draftId: 'empty-1', lock: true, aliveAt: Infinity,
+                            mime: 'audio/webm', recordedAt: new Date().toISOString()
+                        });
+                        tx.oncomplete = resolve;
+                        tx.onerror = () => reject(tx.error);
+                    };
+                    req.onerror = () => reject(req.error);
+                });
+            }""")
+            n = p.evaluate("window.VoxQueue.draftRecover()")
+            need(n == 0, "조각 0개 초안을 %s건으로 셈" % n)
+            need(db_drafts(p) == [0, 0], "조각 0개 초안이 지워지지 않음: %s" % db_drafts(p))
+        finally:
+            c.close()
+    check("34 조각 0개 새 세대 초안: 회수 0·초안 삭제", t34)
+
+    def t35():
+        # R41-N18: draftAppend 실패로 draftOk=false 인 길도 DB 초안·잠금을 정리한다
+        b, _ = new_server("d35")
+        c = new_ctx()
+        try:
+            p1 = c.new_page()
+            p1.goto(b + "/")
+            p1.wait_for_selector("#rec")
+            p1.evaluate("() => { window.VoxQueue.draftAppend = () => Promise.reject(new Error('x')); }")
+            p1.click("#rec")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", 5, pg=p1), "녹음이 켜지지 않음")
+            time.sleep(7)
+            need(db_drafts(p1)[0] == 1, "녹음 중 초안이 없음: %s" % db_drafts(p1))
+            p1.click("#rec")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "false", 5, pg=p1), "녹음이 꺼지지 않음")
+            need(wait_for(lambda: len(server_items(b)) == 1, 30, pg=p1), "draftAppend 실패 뒤 녹음이 올라가지 않음")
+            need((server_items(b)[0].get("duration_ms") or 0) >= 6000,
+                 "녹음이 잘려 올라감: %s ms" % server_items(b)[0].get("duration_ms"))
+            need(wait_for(lambda: db_drafts(p1) == [0, 0], 10, pg=p1), "초안·조각이 남음: %s" % db_drafts(p1))
+            need(wait_for(lambda: queue_n(p1) == 0, 10, pg=p1), "대기열이 비지 않음")
+            p2 = c.new_page()
+            p2.goto(b + "/")
+            p2.wait_for_selector("#rec")
+            held = lock_names(p2, "held")
+            need(not any(name.startswith("voxlog-draft-") for name in held),
+                 "다른 탭의 held 에 초안 잠금이 남음: %s" % held)
+        finally:
+            c.close()
+    check("35 draftAppend 실패 → 서버 1건·초안 0·잠금 없음", t35)
+
+    def t36():
+        # R43-N6 전환기: 잠금 표식 없는 구세대 초안은 신선하면 건너뛰고, 오래되면 회수한다
+        b, _ = new_server("d36")
+        c = new_ctx()
+        try:
+            p = c.new_page()
+            p.goto(b + "/")
+            p.wait_for_selector("#rec")
+            p.evaluate("""async () => {
+                await new Promise((resolve, reject) => {
+                    var req = indexedDB.open('voxlog', 2);
+                    req.onsuccess = () => {
+                        var db = req.result;
+                        var tx = db.transaction(['drafts', 'chunks'], 'readwrite');
+                        tx.objectStore('drafts').put({
+                            draftId: 'old-1', mime: 'audio/webm',
+                            recordedAt: new Date().toISOString(), aliveAt: Date.now()
+                        });
+                        tx.objectStore('chunks').add({
+                            draftId: 'old-1', seq: 0,
+                            blob: new Blob([new Uint8Array(4096)], { type: 'audio/webm' })
+                        });
+                        tx.oncomplete = resolve;
+                        tx.onerror = () => reject(tx.error);
+                    };
+                    req.onerror = () => reject(req.error);
+                });
+            }""")
+            n = p.evaluate("window.VoxQueue.draftRecover()")
+            need(n == 0, "신선한 구세대 초안을 %s건으로 셈" % n)
+            need(db_drafts(p) == [1, 1], "신선한 구세대 초안이 지워짐: %s" % db_drafts(p))
+            p.evaluate("""async () => {
+                await new Promise((resolve, reject) => {
+                    var req = indexedDB.open('voxlog', 2);
+                    req.onsuccess = () => {
+                        var db = req.result;
+                        var tx = db.transaction('drafts', 'readwrite');
+                        var st = tx.objectStore('drafts');
+                        var g = st.get('old-1');
+                        g.onsuccess = () => {
+                            var d = g.result;
+                            d.aliveAt = Date.now() - 60000;
+                            st.put(d);
+                        };
+                        tx.oncomplete = resolve;
+                        tx.onerror = () => reject(tx.error);
+                    };
+                    req.onerror = () => reject(req.error);
+                });
+            }""")
+            n = p.evaluate("window.VoxQueue.draftRecover()")
+            need(n == 1, "오래된 구세대 초안을 %s건으로 셈" % n)
+            need(wait_for(lambda: len(server_items(b)) == 1, 20, pg=p), "오래된 구세대 초안이 서버에 올라가지 않음")
+            need(wait_for(lambda: db_drafts(p) == [0, 0], 10, pg=p), "회수 뒤 초안·조각이 남음: %s" % db_drafts(p))
+        finally:
+            c.close()
+    check("36 구세대 전환기: 신선하면 남김·오래되면 회수", t36)
+
+    def t37():
+        # R44: 새 초안 줄은 lock=true·aliveAt=Infinity, 녹음 탭이 실제 잠금을 쥐고 있다
+        b, _ = new_server("d37")
+        c = new_ctx()
+        try:
+            p1 = c.new_page()
+            p1.goto(b + "/")
+            p1.wait_for_selector("#rec")
+            p1.click("#rec")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", 5, pg=p1), "녹음이 켜지지 않음")
+            time.sleep(7)
+            info = draft_info(p1)
+            need(info is not None, "녹음 중 초안이 없음")
+            need(info["lock"] is True, "초안 lock 표식이 true 가 아님: %s" % info)
+            need(info["aliveAtInf"] is True, "초안 aliveAt 이 Infinity 가 아님: %s" % info)
+            p2 = c.new_page()
+            p2.goto(b + "/")
+            p2.wait_for_selector("#rec")
+            name = "voxlog-draft-" + info["id"]
+            held = lock_names(p2, "held")
+            need(name in held, "탭2 의 held 에 %s 가 없음: %s" % (name, held))
+        finally:
+            c.close()
+    check("37 녹음 초안의 lock 표식·다른 탭에서 보이는 잠금", t37)
+
+    def t38():
+        # R41-N13/R44: 기다리는 요청은 freeze 에서 abort 되고 resume 에서 다시 걸린다
+        b, _ = new_server("d38")
+        c = new_ctx()
+        try:
+            p1 = c.new_page()
+            p1.goto(b + "/")
+            p1.wait_for_selector("#rec")
+            p1.click("#rec")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", 5, pg=p1), "녹음이 켜지지 않음")
+            time.sleep(7)
+            info = draft_info(p1)
+            need(info is not None and info["lock"] is True, "녹음 중 새 세대 초안이 없음: %s" % info)
+            name = "voxlog-draft-" + info["id"]
+            p2 = c.new_page()
+            p2.goto(b + "/")
+            p2.wait_for_selector("#rec")
+            need(wait_for(lambda: lock_names(p2, "pending").count(name) == 1, 10, pg=p2),
+                 "탭2 의 pending 에 %s 가 1개가 아님: %s" % (name, lock_names(p2, "pending")))
+            p2.evaluate("document.dispatchEvent(new Event('freeze'))")
+            need(wait_for(lambda: lock_names(p2, "pending").count(name) == 0, 5, pg=p2),
+                 "freeze 뒤 pending 에 %s 가 남음: %s" % (name, lock_names(p2, "pending")))
+            p2.evaluate("document.dispatchEvent(new Event('resume'))")
+            need(wait_for(lambda: lock_names(p2, "pending").count(name) == 1, 10, pg=p2),
+                 "resume 뒤 pending 에 %s 가 다시 1개가 아님: %s" % (name, lock_names(p2, "pending")))
+            p1.click("#rec")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "false", 5, pg=p1), "녹음이 꺼지지 않음")
+            need(wait_for(lambda: len(server_items(b)) == 1, 20, pg=p1), "녹음이 정상 저장되지 않음")
+            need(wait_for(lambda: db_drafts(p2) == [0, 0], 10, pg=p2), "초안·조각이 남음: %s" % db_drafts(p2))
+            need("끝나지 않은 녹음" not in p2.inner_text("#toast"), "탭2 가 살렸다고 알림: " + p2.inner_text("#toast"))
+        finally:
+            c.close()
+    check("38 기다리는 요청: freeze abort→resume 재요청·녹음 탭 정상 저장", t38)
 
 
 if __name__ == "__main__":

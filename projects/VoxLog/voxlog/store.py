@@ -443,11 +443,15 @@ class Store:
             self._write_json(self._meta_path(rid), meta)
 
     def set_job(self, rid, jid):
-        """받아쓰기 서버에 맡긴 작업 id 를 적는다(None 이면 지움). 앱 서버가 다시 떠도 이어 기다리는 데 쓴다."""
+        """받아쓰기 서버에 맡긴 작업 id 를 적는다(None 이면 지움). 앱 서버가 다시 떠도 이어 기다리는 데 쓴다.
+
+        길이 상한은 여기서 걸지 않는다 - 맡길 때 stt.py 가 1~128자로 이미 확인하고, 여기서 자르면
+        65~128자 id 가 잘린 채 저장돼 다시 뜬 뒤 이어받기가 404 → 중복 맡기기가 된다(G-092).
+        """
         with self._lock:
             meta = self._load_meta(rid)
             if jid:
-                meta["stt_job"] = str(jid)[:64]
+                meta["stt_job"] = str(jid)
             else:
                 meta.pop("stt_job", None)
             self._write_json(self._meta_path(rid), meta)

@@ -1,0 +1,24 @@
+[
+ {
+  "id": "T-411",
+  "title": "[주보알림] bulletin.preview(): 실제 전송과 같은 쪽·순서(maria 1~7쪽, bstsd 내림차순)와 seq",
+  "slot": "S2",
+  "project": "주보알림",
+  "write": ["projects/주보알림/bulletin.py", "projects/주보알림/data/**"],
+  "deps": [],
+  "max_attempts": 2,
+  "task": "사람의 지시(`rounds/R45/INBOX.md` 의 2026-11-24T20:46 줄)와 `rounds/R45/spec.md` 맨 끝 '덧붙임' 절을 먼저 읽는다. 앞 노드가 만든 `projects/주보알림/bulletin.py` 의 `preview()` 를 그 절대로 고친다: 미리 보기 그림이 ref `pipeline.py` 의 `convert_pdfs_to_images()` 가 실제로 보내는 것과 같은 쪽·같은 순서(maria 1~7쪽 오름차순, 그다음 bstsd 전 쪽 내림차순)가 되게, 안 가는 쪽 그림은 지우고, 항목에 `seq`(1부터) 를 더한다. ref/ 는 고치지 않는다. 다른 함수는 필요한 만큼만 건드린다. 바로 파일을 고친다(계획을 따로 세우지 않는다). 의존성 설치 금지.\n\n쓰기 경로: `projects/주보알림/bulletin.py`(와 실행 중 생기는 data/).\n\n관리 방식 '속도 우선' - 검사 파일을 새로 쓰지 않는다. 손으로 `JUBO_DATA=/tmp/jubo-try python3 -c \"import sys;sys.path.insert(0,'projects/주보알림');import bulletin as b;r=b.preview();print([(i['seq'],i['site'],i['name']) for i in r['images']])\"` 를 돌려 순서를 본다. **send() 는 부르지 않는다.**\n\n검사(verify): 모듈이 불리고 preview 소스에 seq 가 있는지.\n\n보고는 응답 본문에: 첫 줄 판정, 바꾼 것, 손으로 본 순서 목록(seq·사이트·파일), 검사 결과 줄. 답의 마지막은 반드시 글(보고)로 끝낸다.",
+  "verify": "python3 -c \"import os,sys,tempfile,inspect;os.environ['JUBO_DATA']=tempfile.mkdtemp();sys.path.insert(0,'projects/주보알림');import bulletin as b;src=inspect.getsource(b.preview);ok=('seq' in inspect.getsource(b)) and callable(b.preview);print('seq 있음',ok);sys.exit(0 if ok else 1)\""
+ },
+ {
+  "id": "T-412",
+  "title": "[주보알림] 화면: 미리 보기를 카톡 대화방에 그림이 온 것처럼 (seq 순서, 묶음 말풍선)",
+  "slot": "S3",
+  "project": "주보알림",
+  "write": ["projects/주보알림/web/**"],
+  "deps": ["T-411"],
+  "max_attempts": 2,
+  "task": "사람의 지시(`rounds/R45/INBOX.md` 의 2026-11-24T20:46 줄)와 `rounds/R45/spec.md` 맨 끝 '덧붙임' 절을 먼저 읽는다. 앞 노드들이 만든 `projects/주보알림/web/`(index.html·app.js·style.css) 의 미리 보기 부분만 그 절대로 바꾼다: 카톡 대화방 바탕에 내가 보낸 그림 묶음 말풍선(2~3열 격자), `seq` 순서, 옆에 시각과 장 수, 위에 '보낼 그림 미리 보기 - 실제 전송과 같은 N장'. 나머지 화면은 그대로 둔다. serve.py·bulletin.py 는 고치지 않는다. 바로 파일을 고친다(계획을 따로 세우지 않는다).\n\n쓰기 경로: `projects/주보알림/web/**`.\n\n관리 방식 '속도 우선' - 검사 파일을 새로 쓰지 않는다. 손으로 `JUBO_DATA=/tmp/jubo-try python3 projects/주보알림/serve.py --port <빈 포트>` 로 띄워 브라우저(플레이라이트 크롬)로 '미리 보기' 를 눌러 보고, 360px 폭에서 말풍선이 넘치지 않는지 bounding box 로 본다. **'카톡 보내기' 는 누르지 않는다.**\n\n검사(verify): 빈 포트에 serve.py 를 띄워 `/` 와 `api/state` 가 응답하는지.\n\n보고는 응답 본문에: 첫 줄 판정, 바꾼 것, 손으로 본 것(그림 수·폭), 검사 결과 줄. 답의 마지막은 반드시 글(보고)로 끝낸다.",
+  "verify": "python3 -c \"\nimport os,sys,json,time,socket,subprocess,tempfile,urllib.request\ns=socket.socket();s.bind(('127.0.0.1',0));p=s.getsockname()[1];s.close()\nenv=dict(os.environ,JUBO_DATA=tempfile.mkdtemp())\npr=subprocess.Popen([sys.executable,'projects/주보알림/serve.py','--host','127.0.0.1','--port',str(p)],env=env)\nok=False\nfor i in range(30):\n  time.sleep(0.5)\n  try:\n    h=urllib.request.urlopen('http://127.0.0.1:%d/'%p,timeout=5).read().decode('utf-8');j=json.load(urllib.request.urlopen('http://127.0.0.1:%d/api/state'%p,timeout=10));ok=('카톡' in h) and ('sent' in j);print('index 글자',len(h),'state 키',sorted(j));break\n  except Exception as e:\n    err=e\npr.terminate()\nif not ok: print('안 뜸 또는 응답 이상:',locals().get('err'))\nsys.exit(0 if ok else 1)\n\""
+ }
+]

@@ -197,7 +197,8 @@ VoxQueue.enqueue({blob, mime, recordedAt, durationMs, clientId, location}) -> Pr
 VoxQueue.pending() -> Promise<[{clientId, recordedAt, size, tries, lastError}]>
 VoxQueue.flush() -> Promise<{sent, failed}>          // 앞 화면에서 바로 올림(동시에 둘 돌지 않음)
 VoxQueue.onchange(cb)                               // 대기열이 바뀌면(넣음·올림·실패, 서비스 워커가 올린 것 포함) cb()
-VoxQueue.supported() -> {indexedDB, serviceWorker, backgroundSync}
+VoxQueue.supported() -> {indexedDB, serviceWorker, backgroundSync, draftLocks}
+  // draftLocks = navigator.locks && typeof navigator.locks.request === 'function' (없거나 예외면 false)
 ```
 IndexedDB `voxlog` 판 1: 저장소 `queue`(keyPath `clientId`: `{clientId, blob, mime, recordedAt, durationMs, tries, lastError, addedAt}`),
 `config`(키 `"main"`). 서비스 워커 `web/sw.js` 는 `sync` 태그 `voxlog-upload` 에서 같은 DB 를 읽어
@@ -216,14 +217,30 @@ VoxQueue.pending()        -> 위 항목에 state·mime 포함 (failed 도 돌려
 VoxQueue.remove(clientId) -> Promise<void>          // 지움 + onchange
 VoxQueue.blob(clientId)   -> Promise<Blob|null>     // 내려받기용
 VoxQueue.retry(clientId)  -> Promise<void>          // failed → waiting, tries 0, 그리고 flush
-// 녹음 중 조각을 기기에 바로 저장(페이지가 죽어도 녹음이 남게). 저장소 `drafts`(keyPath draftId: {draftId, mime, recordedAt, started})
-// 와 `chunks`(autoIncrement, 색인 draftId: {draftId, seq, blob})
-VoxQueue.draftStart({draftId, mime, recordedAt}) -> Promise<void>
+// 녹음 중 조각을 기기에 바로 저장(페이지가 죽어도 녹음이 남게). 저장소 `drafts`(keyPath draftId:
+// {draftId, mime, recordedAt, location, started, aliveAt, lock}) 와 `chunks`(autoIncrement, 색인 draftId: {draftId, seq, blob})
+// 새 코드가 만드는 초안은 `lock: true`(새 세대 표식)와 `aliveAt: Infinity` 를 함께 쓴다. Infinity 는 이미 열린 구버전 탭의
+// 'now - aliveAt < 20000' 회수 필터가 이 초안을 영영 건너뛰게 하는 배포 전환기 막이다. 새 코드는 aliveAt 을 다시 고치지 않는다.
+// 잠금 이름은 'voxlog-draft-<draftId>'.
+VoxQueue.draftStart({draftId, mime, recordedAt, location}) -> Promise<boolean>
+  // navigator.locks 로 그 이름의 잠금을 ifAvailable 로 얻어 쥔 채 초안 줄을 넣는다. 잠금을 얻어 넣었으면 true,
+  // 잠금이 없거나(null) 넣기가 실패하면 false - 초안을 만들지 않는다. 잠금은 draftFinish·draftDiscard 가 놓는다.
 VoxQueue.draftAppend(draftId, blob)              -> Promise<void>   // MediaRecorder.start(5000) 의 조각마다
-VoxQueue.draftFinish(draftId, durationMs)        -> Promise<void>   // 조각을 seq 순으로 이어 한 Blob → enqueue(clientId = draftId) → 초안 지움
-VoxQueue.draftDiscard(draftId)                   -> Promise<void>
-VoxQueue.draftRecover(exceptDraftId?)            -> Promise<number> // 끝나지 않은 초안을 durationMs null 로 draftFinish, 살린 수
+VoxQueue.draftFinish(draftId, durationMs, location?) -> Promise<boolean>
+  // 조각을 seq 순으로 이어 한 Blob → enqueue(clientId = draftId) → 초안 지움 → true. 초안이 없거나 조각이 0개면
+  // 초안·조각을 지우고 false(0개는 살릴 것이 없음, R41-N16). 성공·실패 모두 끝에 잠금을 놓는다.
+VoxQueue.draftDiscard(draftId)                   -> Promise<void>   // 초안·조각 지움 + 잠금 놓음
+VoxQueue.draftRecover(exceptDraftId?)            -> Promise<number>
+  // navigator.locks 가 없으면 0. 아니면 초안마다 잠금을 ifAvailable 로 바로 얻어 봄:
+  //   exceptDraftId·이 탭의 activeDraft·이 탭이 쥔(held) 초안은 빼고 본다.
+  //   얻으면 주인이 죽은 것 → durationMs null 로 draftFinish, 성공 수를 센다.
+  //   못 얻으면(주인이 쥐고 있음) 새 세대(lock: true) 초안에 한해 기다리는 요청을 걸어, 주인이 놓을 때 회수한다.
+  // 구세대 초안(lock !== true)은 aliveAt 이 숫자이고 20초 안이면 건너뛴다(OLD_DRAFT_FRESH_MS - 구버전 탭이 녹음 중일 수 있음),
+  // 아니면 위 즉시 판정. 구세대에는 기다리는 요청을 걸지 않는다. 기다리는 요청은 freeze·pagehide 에서 abort 하고,
+  // resume·pageshow 에서 draftRecover 를 다시 불러 새로 건다. 이 탭이 쥔 잠금은 freeze·pagehide 에서 놓지 않는다.
+  // 기다리는 동안 draftRecover 의 Promise 는 그 요청을 기다리지 않는다.
 VoxQueue.draftSetLocation(draftId, location)     -> Promise<void>   // 녹음 중 위치를 얻으면 초안에 적음(R33-N18) - 살린 녹음도 위치를 가짐
+VoxQueue.onrecover(cb)                           // 기다리던 회수가 나중에 끝나면 cb(살린 수); onchange 도 알림
 ```
 **위치정보(요청 수정 2026-11-16 14:03 - '음성파일과 위치정보를 서버로 전송')**:
 ```
@@ -239,7 +256,7 @@ store 메타에 "location": {"lat","lon","accuracy"} | None (옛 메타엔 없�
 ask.build_prompt: 녹취 머리에 위치가 있으면 `위치=<lat>,<lon>` 를 덧붙임
 ```
 
-격리된 출처에서는 draft*/remove/blob/retry 가 reject 또는 0/null. `recordedAt` 은 **지역 시각 + 오프셋 ISO**
+격리된 출처에서는 draft*/remove/blob/retry 가 reject 또는 false/0/null. `recordedAt` 은 **지역 시각 + 오프셋 ISO**
 (`2026-11-16T08:00:00.000+09:00`) - 서버는 앞 10자를 날짜로 쓰므로 이것이 기기의 날짜가 됨(R33-N2).
 
 `web/manifest.webmanifest`: name "VoxLog", short_name "VoxLog", `start_url: "./?source=launch"`, `display: standalone`,

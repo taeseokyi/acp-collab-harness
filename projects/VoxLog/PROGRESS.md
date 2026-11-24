@@ -6,7 +6,7 @@
 (R33 에서 요청 `Q-261116-fa85` 와 README 를 보고 끝까지 가는 데 필요한 것을 예측해 적었습니다.)
 
 - [x] 프로젝트 뼈대 - README, 인터페이스 문서, `serve.py` 로 열림, `app.json` 으로 모니터에서 목록·묻기
-- [x] 녹음 - 큰 단추로 시작·멈춤, 시간 표시, 64kbps(통화용 울림 제거·잡음 억제·자동 음량 조절은 끔), 녹음 중 조각을 기기에 저장해 페이지가 죽어도 살림 (크롬 webm/opus 로 확인)
+- [x] 녹음 - 큰 단추로 시작·멈춤, 시간 표시, 64kbps(통화용 울림 제거·잡음 억제·자동 음량 조절은 끔), 녹음 중 조각을 기기에 저장해 페이지가 죽어도 살림 - 초안 주인 판정은 웹 잠금(`navigator.locks`, R44), 없으면 되살리기만 꺼짐 (크롬 webm/opus·브라우저 검사로 확인, 폰 실기기 확인 목록은 R44 항목)
 - [x] 측면 버튼 - 앱 열기 신호(`launchQueue`·`focus-existing`·`?action=toggle`)로 녹음 켜고 끄기 + 바로가기, 기기별 설정 안내 (흉내 검사로 확인, 실물은 아래)
 - [x] 올리기 대기열 - IndexedDB 에 먼저 넣고 올림, 같은 녹음 두 번 올라가지 않음(client_id), 영구 실패는 '올리지 못한 녹음' 칸(내려받기·다시·지우기)
 - [x] 위치정보 - 녹음 때 위치를 얻어 음성과 함께 서버로 보내 쌓고(`X-Location`), 상세에 지도 링크, 살린 녹음도 위치 유지 (요청 수정 14:03)
@@ -17,9 +17,41 @@
 - [x] 묻기 - 요약·핵심어·할 일·직접 묻기를 claude CLI 로(도구·MCP·설정 끔, 빈 임시 폴더), 답을 앱에 보이고 쌓음 (가짜 LLM 으로 확인)
 - [x] 보안 - 토큰·HTTPS·경로 탈출·남의 출처·DNS 리바인딩·프롬프트 감쌈, ffmpeg 입력 형식 강제·protocol_whitelist, 업로드 흘려 쓰기·동시 2개·디스크 여유·업로드 마감(받은 만큼으로 재서 넘기면 408)·저장 OSError 500/507 (R36 에서 R35-N1·N2·N3 닫힘, 하 R36-N1·N2·N3 는 큐)
 - [x] 폰(320~430px)·데스크톱에서 겹침·넘침 없음, 어두운 모드
-- [x] 검사 - 단위 151·끝에서 끝 브라우저 31/31, 적대적 검수 10회(R33 2회·R34·R35·R36·R39 1회씩·R41 2회·R42 2회)
+- [x] 검사 - 단위 153·끝에서 끝 브라우저 38/38, 적대적 검수 13회(R33 2회·R34·R35·R36·R39 1회씩·R41 2회·R42 2회·R43 2회·R44 1회)
 - [x] 실제 폰에서 동작 확인 - 태석님이 폰에서 써 보고 "모두 잘됩니다" 라고 확인(2026-11-17). 항목별(측면 버튼·오프라인 올리기·위치 권한·사파리 mp4) 결과는 따로 받지 않음
 - [x] 실제 음성인식 백엔드 연결 - KISTI Qwen3-ASR(`VOXLOG_STT_URL`, 화자 구분 `diarized_json`)로 받아쓰기, 태석님이 폰 녹음으로 확인(2026-11-17). 실제 `claude` 묻기는 배포본에서 답 2건 완료(2026-11-16)
+
+## R44 (2026-11-24)
+
+요청 `Q-261124-b4ad`(녹음 초안의 주인 판정을 웹 잠금으로 바꾸기, 태석님 승인). 운영 방식 무료 중심. 그래프 G-094 하나. 목표 체크는 바뀐 것 없음(녹음·검사 줄만 갱신).
+
+- **한 일**
+  - 공통 약속 `rounds/R44/spec.md` 를 관리자가 먼저 정하고 파일별로 나눔
+  - `web/queue.js`(T-403): 옛 장치(tabId·BroadcastChannel `voxlog-drafts`·draftPings·liveDraftIds·DRAFT_LEASE_MS 판정·draftTouch, 조각마다 aliveAt 갱신) 삭제. 초안마다 `voxlog-draft-<id>` 배타 잠금 - `draftStart` 가 잠금을 얻은 **뒤에** 초안 줄을 넣고 `Promise<boolean>`, `draftFinish`·`draftDiscard` 가 끝에 놓음. `draftRecover`: `ifAvailable` 즉시 판정 + 주인이 쥔 새 세대 초안엔 AbortController 기다리는 요청(R41-N13), freeze/pagehide 에 abort·resume/pageshow 에 다시 걸기, `onrecover` 알림. 조각 0개 초안은 `false`(R41-N16). `supported().draftLocks`. 웹 잠금이 없으면 초안을 만들지 않음(녹음·올리기는 그대로)
+  - 전환기(R43-N6, 더 단순한 쪽): 새 초안은 `lock: true` 세대 표식 + `aliveAt: Infinity`(이미 열린 구버전 탭의 20초 필터가 영영 건너뜀). 20초 신선도 규칙(`OLD_DRAFT_FRESH_MS`)은 표식 없는 구세대 초안에만, 구세대엔 기다리는 요청 없음. heartbeat 를 남기지 않음
+  - `web/app.js`(T-404): `rc.touchTimer`·5초 draftTouch·init 22초 재시도 삭제(R41-N15), draftOk 는 draftStart 의 true 일 때만, 메모리 조각으로 올리는 두 길 모두 enqueue 뒤 `draftDiscard`(R41-N18), `onrecover` 토스트
+  - `tests/browser_voxlog.py`(T-405): t30 을 '웹 잠금 없는 탭' 으로 교체, 새 t32~t38(닫힌 녹음 탭의 초안을 기다리던 탭이 회수·새로고침 회수 22초 없이·0개 초안·draftAppend 실패 뒤 정리·구세대 20초 규칙·lock/Infinity 표식과 held 잠금·freeze/resume 로 대기 요청 abort/재등록)
+  - 문서: README(기능 6 '끊긴 녹음 되살리기'·열화 절)·`docs/INTERFACE.md` 초안 절(T-406), `docs/RESEARCH-draft-owner.md` 에 구현 결정·R43-N6~N8 반영(T-407, S6). R43 항목의 '없는 브라우저는 lease+BroadcastChannel 로 열화' 권고는 이 결정으로 대체됨
+- **걷어낸 양**: `git diff --numstat` - queue.js −89/+165, app.js −20/+23 (web/ 합계 −109/+188). 옛 장치는 남지 않음(검수 (5) 확인). 줄 수가 늘어난 것은 기다리는 요청·페이지 수명 처리·주석 때문
+- **바뀐 파일**: `web/queue.js`, `web/app.js`, `tests/browser_voxlog.py`, `README.md`, `docs/INTERFACE.md`, `docs/RESEARCH-draft-owner.md`. `sw.js` 는 변경 없음
+- **검증**: 엔진 verify(T-405 `python3 projects/VoxLog/tests/browser_voxlog.py` rc 0), 검수자 재실행 브라우저 38/38·단위 153 OK, 관리자 단위 153 OK. S4(Sonnet) 적대적 검수 T-408 **통과**(상·중 0, 하 3) - /tmp 사본 변이 6/6 잡힘(0개→true·draftDiscard 삭제·기다리는 요청 삭제·freeze abort 삭제·구세대 20초 규칙 삭제·Infinity→Date.now())
+- **실제 기기에서 볼 것**(함대는 못 함, 조사 문서 §6): 녹음 탭을 닫거나 앱을 스와이프로 죽였을 때 다른 탭/다음 방문이 바로 살리는가, 녹음 중 새로고침 뒤 바로 살아나는가, 화면을 끄거나 다른 앱으로 오래 갔다 돌아왔을 때 녹음이 빼앗기지 않는가, iOS 사파리에서 백그라운드·탭 종료 때 잠금이 풀리는가, bfcache·freeze 뒤 잠금 유지와 pageshow 동작, 넘겨받은 직후 얼어붙은 대기 탭, MediaRecorder 가 백그라운드에서 계속 녹음하는가
+- **남은 일**: 큐 R44-N1~N3(하 - mr.start 예외 때 잠금 누수(추정), 조사 문서 147행 옛 문장, 첫 로드 토스트 순서(추정)), 큐 R43-N5(하, 검사 강도)
+
+## R43 (2026-11-24)
+
+요청 `Q-261124-795c`(조사만, 구현 안 함) + 대기 큐 R42-N2·R42-N3. 운영 방식 무료 중심. 목표 체크는 바뀐 것 없음(검사 수만 갱신).
+
+- **한 일**
+  - 조사 문서 `docs/RESEARCH-draft-owner.md`(S2 codex 가 MDN·규격·BCD·Page Lifecycle·bfcache 를 직접 받아 읽고 씀, T-397 → 검수 반영 T-401). 권고: **Web Locks API(`navigator.locks`) 배타 잠금으로 바꿀 만함** - 녹음 탭이 `voxlog-draft-<id>` 를 쥐고, 다른 탭은 `ifAvailable` 로 즉시 판정 + AbortSignal 단 대기 요청(freeze/pagehide 에서 abort), 없는 브라우저는 지금의 aliveAt lease+BroadcastChannel 로 열화. 지원: Chrome/Android 69·Firefox 96·Safari(iOS 포함) 15.4·Edge 79(추정), HTTPS 필요, 워커에서도 됨. 맞바꿈: 얼어 있는 녹음 탭의 초안은 그 탭이 풀리거나 버려질 때까지 회수 안 됨
+  - R42-N2: `voxlog/store.py` `set_job` 이 작업 id 를 64자로 자르던 것을 없앰(유일한 호출 전에 `stt._job_id_ok` 가 1~128자로 검증) + `tests/test_store.py` 128자 검사 (T-398)
+  - R42-N3: `tests/test_serve_ask_body.py` - setUp 에서 실제 녹음을 만들어 유효한 ids, 400 은 까닭 문구('본문이 중간에 끊겼습니다')까지 확인, 마감 안 느린 본문은 202 → `/api/answers/{id}` done·'가짜 답', 시작부터 합계가 마감을 넘는 느린 본문 → 400 (유휴 기준 변이를 직접 잡음) (T-399)
+- **바뀐 파일**: `docs/RESEARCH-draft-owner.md`(새), `voxlog/store.py`, `tests/test_store.py`, `tests/test_serve_ask_body.py`
+- **검증**: 단위 153 OK. S4(Sonnet) 적대적 검수 T-400 - 문서는 공식 문서와 대조해 조건부 통과(R43-N1~N4), 큐 수정 합격(/tmp 사본 변이: 옛 `[:64]`·유휴 기준 마감 모두 잡힘, CPU 부하 6회 흔들림 없음). 재검수 T-402 조건부 통과(N1·N3·N4 통과)
+- **남은 일**
+  - 큐 R43-N6(중)·N7·N8(하): 문서 §4.4 전환기 규칙(aliveAt 이 신선하면 잠금을 얻어도 안 건드림)이 새 코드끼리의 즉시 회수·22초 재시도 제거와 모순 - 초안에 세대 표식을 두는 쪽이 유력. **구현 요청 때 함께 정할 것**
+  - 큐 R41-N13~N18(초안 회수): 조사 문서 §5.5 표에 새 방식에서 각각 어떻게 되는지 있음. 태석님이 문서를 보고 승인하면 구현 요청을 따로
+  - 큐 R43-N5(하): ask 본문 검사가 `_read_body` 의 경쟁 분기 두 곳 변이를 못 잡음(실제 결함 아님)
 
 ## R42 (2026-11-24)
 

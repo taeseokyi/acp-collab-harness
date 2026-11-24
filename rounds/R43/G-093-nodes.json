@@ -1,0 +1,23 @@
+[
+ {
+  "id": "T-401",
+  "title": "[VoxLog] R43-N1~N4 고치기: 조사 문서 RESEARCH-draft-owner.md - 얼어붙은 대기 탭·구버전 탭 혼재·mirror 버전 숫자·출처 귀속",
+  "slot": "S2",
+  "project": "VoxLog",
+  "write": ["projects/VoxLog/docs/RESEARCH-draft-owner.md"],
+  "deps": [],
+  "max_attempts": 2,
+  "task": "바로 고친다. 쓰기 경로는 `projects/VoxLog/docs/RESEARCH-draft-owner.md` 하나뿐이다(코드는 고치지 않는다). 검수 보고 `.aimem/sessions/T-400-S4-a1-152551/report.md` 의 발견 F1~F4 를 문서에 반영한다(F5 는 문서와 무관, 하지 않는다). 보고서를 먼저 읽는다.\n\n- **R43-N1 (F1, 중)**: 규격의 잠금 요청 큐는 FIFO 라서, timeout 없이 대기 `request(name, cb)` 를 걸어 둔 탭 B 가 얼거나 bfcache 에 들어간 뒤 주인 탭 A 가 죽으면 잠금이 B 에게 넘어가고 B 의 콜백이 돌지 못해 회수 줄 전체(뒤의 살아 있는 탭·새 탭의 ifAvailable)가 막힐 수 있다. §4 설계안에 보완을 넣는다(예: 대기 요청에 `AbortSignal` 을 달아 `freeze`/`pagehide` 에서 abort, `resume`/`pageshow` 에서 다시 건다 - 또는 대기 요청을 아예 쓰지 않고 visibilitychange/pageshow 때 ifAvailable 로 다시 묻는 더 단순한 쪽. 둘을 비교하고 하나를 권한다). §6 에 '실제 기기에서 확인할 것' 으로도 적는다. 이것이 규격과 Page Lifecycle 문서를 합친 추론이라는 점을 밝힌다.\n- **R43-N2 (F2, 중)**: 배포 너머로 구버전 탭(잠금 없이 aliveAt lease 만 쓰는 탭)이 열려 녹음 중이면, 새 코드 탭은 그 초안의 잠금이 비어 있어 ifAvailable 로 곧바로 얻고 녹음 중인 초안을 거둘 수 있다. §4·§5 에 전환기 규칙을 적는다(예: 전환기 동안 새 코드도 aliveAt 이 신선한 초안은 건드리지 않는다, 또는 서비스 워커 VERSION 을 올려 구탭을 정리한다는 전제 - 더 단순한 쪽을 권하고 그 까닭). §5 의 '걷어낼 범위' 가 이 규칙 때문에 바뀌면(lease 를 언제 걷어낼 수 있는지) 그것도 적는다.\n- **R43-N3 (F3, 하)**: §2 지원 표의 'mirror' 를 숫자로 푼다: Chrome Android 69, Firefox Android 96, Safari iOS 15.4, WebView Android 69, WebView iOS 15.4, Edge 는 79(크로미엄 엣지 첫 버전 - 'mirror 에서 추정' 이라고 표시).\n- **R43-N4 (F4, 하)**: §3 bfcache 행의 출처 귀속을 고친다. 'frozen 에서 held Web Locks 를 놓으라' 는 권고는 Chrome Page Lifecycle 문서(https://developer.chrome.com/docs/web-platform/page-lifecycle-api, frozen 절 'Release any held Web Locks')의 것이고, web.dev bfcache 글은 Web Locks 를 다른 탭에 영향을 줄 수 있는 API 의 예로만 든다. 그리고 이 설계가 녹음 중에는 그 권고를 일부러 따르지 않는다는 점(녹음 탭이 잠금을 쥔 채 얼 수 있음)을 분명히 적는다.\n\n고칠 때 기존 제목 여덟 개(`## 요약과 권고`, `## 1. `~`## 6. `, `## 출처`)와 R41-N13~N18 표는 그대로 둔다. `## 요약과 권고` 가 바뀐 설계를 반영하게 고친다. 문서 끝에 `## 고친 이력` 을 두고 'R43 검수 반영: R43-N1~N4' 한 줄씩 적는다. 근거를 새로 읽으면(curl 로 /tmp 에) 끝나고 지운다.\n\n보고는 응답 본문에(발견마다 고친 절과 요지, 권한 쪽과 까닭). 답의 마지막은 반드시 글로 끝낸다.",
+  "verify": "python3 -c \"import sys;t=open('projects/VoxLog/docs/RESEARCH-draft-owner.md',encoding='utf-8').read();need=['## 요약과 권고','## 1. ','## 2. ','## 3. ','## 4. ','## 5. ','## 6. ','## 출처','## 고친 이력','developer.mozilla.org','R43-N1','R43-N2','R43-N3','R43-N4']+['R41-N1%d'%i for i in range(3,9)];miss=[n for n in need if n not in t];print('빠진 것:',miss) if miss else print('OK',len(t));sys.exit(1 if miss else 0)\""
+ },
+ {
+  "id": "T-402",
+  "title": "[VoxLog] R43 재검수: 조사 문서의 R43-N1~N4 반영(T-401)",
+  "slot": "S4",
+  "project": "VoxLog",
+  "write": [],
+  "deps": ["T-401"],
+  "max_attempts": 1,
+  "task": "읽기 전용 재검수. 저장소 파일은 만들거나 고치지 않는다. 바로 시작한다.\n\n당신의 앞 검수 `.aimem/sessions/T-400-S4-a1-152551/report.md` 의 F1~F4 가 `projects/VoxLog/docs/RESEARCH-draft-owner.md` 에 R43-N1~N4 로 반영됐는지 본다(작업자 보고 `.aimem/sessions/T-401-S2-*/report.md`, 바뀐 곳은 `git diff -- projects/VoxLog/docs/RESEARCH-draft-owner.md` - 새 파일이면 전문을 읽는다).\n\n볼 것: (1) N1 보완안이 규격 의미상 맞는가 - AbortSignal 로 대기 요청을 거두는 것이 이미 넘겨받은 잠금에도 통하는지(규격: signal 은 아직 허락되지 않은 요청만 abort) 등, 권한 쪽이 녹음 중인 초안을 빼앗는 새 경로를 만들지 않는가 (2) N2 전환기 규칙이 구버전 탭의 녹음 중 초안을 실제로 지키는가, 걷어낼 범위와 어긋나지 않는가 (3) N3 숫자 (4) N4 출처 (5) 고치면서 다른 절과 모순이 생기지 않았는가, `## 요약과 권고` 가 바뀐 설계와 맞는가. 필요하면 공식 문서를 직접 읽어 대조한다.\n\n각 발견마다 절, 무엇이 틀렸는지, 근거(출처 URL 또는 추론), 심각도(상/중/하). 발견이 없으면 없다고 적는다 - 억지로 채우지 않는다.\n\n보고는 응답 본문에: 첫 줄 판정(통과 / 조건부 통과 / 불합격), (1)~(5) 마다 한 줄 판정, 발견 목록. 답의 마지막은 반드시 글로 끝낸다."
+ }
+]

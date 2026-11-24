@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>주보알림</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>주보알림</h1>
+    <p class="sub">흑석동성당 주보 새것 확인 → 카톡으로 보내기</p>
+  </header>
+
+  <section class="cards" aria-label="주보 상태">
+    <div class="card">
+      <h2>최신 주보</h2>
+      <div id="latest-body" class="body muted">아직 확인하지 않았습니다.</div>
+      <p id="latest-at" class="at" hidden></p>
+    </div>
+    <div class="card">
+      <h2>보낸 주보</h2>
+      <div id="sent-body" class="body muted">보낸 주보가 없습니다.</div>
+      <p id="sent-at" class="at" hidden></p>
+    </div>
+  </section>
+
+  <p id="new-badge" class="badge unknown" role="status">아직 확인 못 함</p>
+  <p id="msg" class="msg" role="status" aria-live="polite" hidden></p>
+  <div id="detail-box"></div>
+
+  <div class="buttons">
+    <button id="btn-check" type="button">지금 확인</button>
+    <button id="btn-preview" type="button">미리 보기</button>
+    <button id="btn-send" type="button">카톡 보내기</button>
+  </div>
+
+  <section id="preview-section" aria-label="주보 미리 보기">
+    <div id="preview-room" class="chat-room">
+      <h2 id="preview-headline" class="chat-headline">보낼 그림 미리 보기</h2>
+      <p id="preview-status" class="chat-status muted">미리 보기를 눌러 주세요.</p>
+      <div id="preview-bubble-row" class="bubble-row" hidden>
+        <div class="bubble-side" id="preview-side"></div>
+        <div class="bubble">
+          <div class="bubble-thumbs" id="preview-thumbs"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="history-section" aria-label="보낸 기록">
+    <h2>보낸 기록</h2>
+    <p id="history-empty" class="muted" hidden>아직 보낸 기록이 없습니다.</p>
+    <div class="table-wrap">
+      <table id="history-table">
+        <thead>
+          <tr><th>언제</th><th>주보</th><th>결과</th><th>까닭</th></tr>
+        </thead>
+        <tbody id="history-body"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

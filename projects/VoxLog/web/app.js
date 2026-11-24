@@ -322,15 +322,16 @@
       }
       var rc = { // 녹음마다 자기 상태 - 멈춘 녹음의 저장이 다음 녹음과 섞이지 않게
         mr: mr, stream: stream, chunks: [], mime: mr.mimeType || mime || 'audio/webm',
-        startedAt: Date.now(), draftId: uuid(), draftOk: false, chain: Promise.resolve(), locDone: null, loc: null, timer: 0, touchTimer: 0
+        startedAt: Date.now(), draftId: uuid(), draftOk: false, chain: Promise.resolve(), locDone: null, loc: null, timer: 0
       };
       rc.startedIso = localIso(new Date(rc.startedAt));
       state.rc = rc;
       state.rec = mr;
       var dq = queueApi();
       try {
+        // 초안 주인 판정은 웹 잠금이 한다. draftStart 가 잠금을 쥐고, 저장·정리가 끝날 때 queue 가 놓는다.
         rc.chain = Promise.resolve(dq.draftStart({ draftId: rc.draftId, mime: rc.mime, recordedAt: rc.startedIso, location: null }))
-          .then(function () { rc.draftOk = true; }, function () { rc.draftOk = false; });
+          .then(function (ok) { rc.draftOk = ok === true; }, function () { rc.draftOk = false; });
       } catch (e) { rc.chain = Promise.resolve(); }
       // 위치를 얻는 대로 초안에 적는다 - 페이지가 내려가 초안으로 살아난 녹음도 위치를 가지고 간다
       rc.locDone = getLocation().then(function (loc) {
@@ -359,11 +360,6 @@
       rc.timer = setInterval(function () {
         $('rec-time').textContent = fmtClock(Date.now() - rc.startedAt);
       }, 500);
-      // 초안 lease: 조각(5초) 사이에도 살아 있음을 알린다. 다른 탭의 draftRecover 가 이 초안을 가져가지 않게.
-      rc.touchTimer = setInterval(function () {
-        if (!dq || !rc.draftOk) return;
-        try { Promise.resolve(dq.draftTouch(rc.draftId)).catch(function () {}); } catch (e) { /* 무시 */ }
-      }, 5000);
       $('rec-result').textContent = '녹음 중…';
       lockScreen();
     }, function (e) {
@@ -423,12 +419,19 @@
     });
   }
 
+  function discardDraftQuiet(q, draftId) {
+    try { return Promise.resolve(q.draftDiscard(draftId)).catch(function () {}); } catch (e) { return Promise.resolve(); }
+  }
+
+  function enqueueAndDiscard(q, item, draftId) {
+    return Promise.resolve(q.enqueue(item)).then(function () { return discardDraftQuiet(q, draftId); });
+  }
+
   function finishRec(rc) {
     if (!rc || rc.finished) return;
     rc.finished = true;
     var durationMs = Date.now() - rc.startedAt;
     clearInterval(rc.timer);
-    clearInterval(rc.touchTimer);
     if (rc.stream) rc.stream.getTracks().forEach(function (t) { t.stop(); });
     if (state.rc === rc) { state.rc = null; state.rec = null; }
     unlockScreen();
@@ -448,10 +451,10 @@
       if (rc.draftOk) {
         // 초안이 없으면(다른 탭이 가져갔거나 지워졌으면) 메모리의 조각으로 올린다 - 녹음을 버리지 않는다
         return Promise.resolve(q.draftFinish(draftId, durationMs, rc.loc)).then(function (done) {
-          if (done === false) return q.enqueue(item);
-        }).catch(function () { return q.enqueue(item); });
+          if (done === false) return enqueueAndDiscard(q, item, draftId);
+        }, function () { return enqueueAndDiscard(q, item, draftId); });
       }
-      return q.enqueue(item);
+      return enqueueAndDiscard(q, item, draftId);
     });
     p.then(function () {
       $('rec-result').textContent = '마지막 녹음 ' + fmtClock(durationMs) + ' · 저장됨, 서버로 올리는 중입니다.';
@@ -1058,6 +1061,15 @@
     applyRecSupport(); // 설정을 읽기 전에도 안내는 바로 보이게
     var q = queueApi();
     try { if (q && q.onchange) q.onchange(function () { updateQueue(); }); } catch (e) { /* 무시 */ }
+    var oq = queueApi();
+    try {
+      if (oq && typeof oq.onrecover === 'function') {
+        oq.onrecover(function (n) {
+          toast('끝나지 않은 녹음 ' + n + '건을 살렸습니다');
+          updateQueue();
+        });
+      }
+    } catch (e) { /* 무시 */ }
     api().getConfig().then(function (cfg) {
       state.cfg = cfg;
       fillSettings();
@@ -1069,15 +1081,6 @@
       try { rec = Promise.resolve(rq.draftRecover()); } catch (e) { rec = Promise.resolve(0); }
       return rec.catch(function () { return 0; }).then(function (n) {
         if (n > 0) { toast('끝나지 않은 녹음 ' + n + '건을 살렸습니다'); updateQueue(); }
-        // lease 가 최근이라 건너뛴 초안이 정말 버려진 탭의 것이면, 몇십 초 뒤 한 번 더 본다.
-        setTimeout(function () {
-          var lq = queueApi();
-          try {
-            Promise.resolve(lq.draftRecover()).then(function (n2) {
-              if (n2 > 0) { toast('끝나지 않은 녹음 ' + n2 + '건을 살렸습니다'); updateQueue(); }
-            }).catch(function () {});
-          } catch (e) { /* 무시 */ }
-        }, 22000);
         return initOpen();
       });
     }).catch(function (e) { toast((e && e.message) || '시작 중 오류'); });

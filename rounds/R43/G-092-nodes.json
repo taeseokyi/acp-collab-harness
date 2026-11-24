@@ -1,0 +1,45 @@
+[
+ {
+  "id": "T-397",
+  "title": "[VoxLog] 조사: 녹음 초안의 주인 탭이 살아 있는지 판정하는 표준 방식 (웹 잠금 등) - 문서만, 코드 안 고침",
+  "slot": "S2",
+  "project": "VoxLog",
+  "write": ["projects/VoxLog/docs/RESEARCH-draft-owner.md"],
+  "deps": [],
+  "max_attempts": 2,
+  "task": "조사 문서 하나를 쓴다: `projects/VoxLog/docs/RESEARCH-draft-owner.md`. **코드는 하나도 고치지 않는다** (web/·tests/·voxlog/ 모두 읽기만). 바로 시작한다.\n\n배경: VoxLog 는 녹음 도중 탭이 죽으면 다른 탭/다음 방문이 초안(IndexedDB 의 조각)을 되살린다. 지금은 '이 초안의 주인 탭이 아직 살아 있는가' 를 손으로 만든 장치(5초마다 시각 갱신 lease, 20초 만료, BroadcastChannel 로 묻고 22초 재시도)로 추측한다. 이 자리를 R40·R41·R42 에서 거듭 고쳤고, 표준 방식으로 바꿀지 정하려고 조사한다. 지금 코드: `projects/VoxLog/web/queue.js`, `web/app.js`(초안·lease·회수 부분, 예: 1073행 근처), `web/sw.js`, 검사 `projects/VoxLog/tests/browser_voxlog.py`. 큐의 원래 결함 여섯 건 R41-N13~N18 은 `rounds/R41/REVIEW-r41-s6.md` 의 'T-388' 절에 있다(R41-N13 다른 탭이 열린 채 녹음 탭이 22초 재시도 뒤 죽으면 회수 안 됨, N14 20초 넘는 프리즈 때 lease 만료, N15 빠른 새로고침 회수 22초 지연, N16 조각 0개 초안도 '살렸습니다', N17 draftOk=false 때 activeDraft 누수, N18 lease 만료 회수·sw.js 업로드 엄격 판정 검사 없음).\n\n**근거는 공식 문서에서 직접 읽는다.** 네트워크가 열려 있으니 `curl -sL <URL> -o /tmp/r43-xxx.html` 로 받아 읽는다(또는 쓸 수 있는 웹 검색 도구). 최소한 읽을 곳: MDN Web Locks API https://developer.mozilla.org/en-US/docs/Web/API/Web_Locks_API , LockManager.request https://developer.mozilla.org/en-US/docs/Web/API/LockManager/request , LockManager.query, 규격 https://w3c.github.io/web-locks/ , 지원 표 https://raw.githubusercontent.com/mdn/browser-compat-data/main/api/LockManager.json (와 api/Lock.json), 페이지 수명 https://developer.chrome.com/docs/web-platform/page-lifecycle-api , bfcache https://web.dev/articles/bfcache . 다른 후보(BroadcastChannel 만 쓰기, SharedWorker, 서비스 워커 clients.matchAll, IndexedDB 의 lease 그대로)도 같은 식으로 근거를 찾아 비교한다. 문서에서 확인한 것과 추정한 것을 구분하고, 주장마다 출처 URL 을 단다. 읽지 못한 URL 은 읽지 못했다고 적는다 - 기억으로 채우지 않는다. 끝나면 /tmp 에 받은 파일은 지운다.\n\n문서 구성(이 제목을 그대로 쓴다):\n- `## 요약과 권고` - 바꿀 만한가, 어느 방식인가, 세 줄 안팎\n- `## 1. 표준·권장 방식` - 후보 비교표(방식·주인 생존 판정이 되는가·죽은 탭을 누가 언제 아는가·복잡도·근거)\n- `## 2. 지원 범위` - 크롬·엣지·파이어폭스·사파리(iOS·iPadOS 포함) 지원 버전, 보안 연결(HTTPS) 조건, 서비스 워커·워커에서 쓸 수 있는지\n- `## 3. 폰에서의 동작` - 탭이 뒤로 밀림·frozen·discarded·화면 꺼짐·bfcache 에서 잠금이 어떻게 되는가, 녹음 중인 탭의 초안을 다른 탭이 가져가지 않는가, 죽은 탭의 초안은 언제 거둘 수 있게 되는가\n- `## 4. VoxLog 적용 설계안` - 녹음 탭이 무엇(잠금 이름 예: `voxlog-draft-<id>`)을 언제 쥐고 놓는가, 회수하는 쪽의 판정(ifAvailable / query / 풀리기를 기다리는 request), 회수를 언제 시도하는가, 지원하지 않는 브라우저의 가장 단순한 열화\n- `## 5. 걷어낼 범위` - 지금 코드·검사에서 없어질 것과 남을 것을 파일·함수 단위로(실제 함수 이름을 코드에서 찾아 적는다), 그리고 R41-N13~N18 여섯 건이 새 방식에서 각각 '저절로 사라짐 / 여전히 고쳐야 함' 인지 표\n- `## 6. 걸리는 점과 모르는 점` - 문서로 확인되지 않아 실제 기기에서 봐야 하는 것 목록\n- `## 출처` - 읽은 URL 목록\n\n검사: 문서에 위 제목 여덟 개와 `developer.mozilla.org` 출처, `R41-N13`~`R41-N18` 이 모두 있어야 한다.\n\n보고는 응답 본문에: 첫 줄 판정, 권고 요약 세 줄, 실제로 읽은 URL 과 못 읽은 URL, 확신이 낮은 주장. 답의 마지막은 반드시 글(보고)로 끝낸다.",
+  "verify": "python3 -c \"import sys;t=open('projects/VoxLog/docs/RESEARCH-draft-owner.md',encoding='utf-8').read();need=['## 요약과 권고','## 1. ','## 2. ','## 3. ','## 4. ','## 5. ','## 6. ','## 출처','developer.mozilla.org']+['R41-N1%d'%i for i in range(3,9)];miss=[n for n in need if n not in t];print('빠진 것:',miss) if miss else print('OK',len(t));sys.exit(1 if miss else 0)\""
+ },
+ {
+  "id": "T-398",
+  "title": "[VoxLog] R42-N2 고치기: store.set_job 이 작업 id 를 64자로 자르는 것을 stt id 규칙(128자)에 맞춤",
+  "slot": "S3",
+  "project": "VoxLog",
+  "write": ["projects/VoxLog/voxlog/store.py", "projects/VoxLog/tests/test_store.py"],
+  "deps": [],
+  "max_attempts": 2,
+  "task": "바로 고친다. `projects/VoxLog/voxlog/store.py` 의 `set_job`(450행 근처)이 `str(jid)[:64]` 로 작업 id 를 64자로 잘라 저장한다. 그런데 `voxlog/stt.py` 의 `_JOB_ID_RE`(40행)는 1~128자를 받으므로, 65~128자 id 는 잘린 채 저장되고 앱 서버가 다시 뜬 뒤 이어받기가 404 → 새로 맡김(중복 맡기기)이 된다. 상한을 128 로 맞춘다(같은 수를 두 곳에 따로 적지 말고, 가능하면 stt.py 의 상한을 상수로 두고 store.py 가 그것을 쓰거나, 아니면 store.py 에서 자르지 않는 쪽 - 더 단순한 쪽을 고른다. stt.py 를 고쳐야 하면 쓰지 말고 보고에 적는다: 이 노드의 쓰기 경로는 store.py·test_store.py 뿐이다).\n\n`tests/test_store.py` 의 `test_stt_job_id_is_kept_in_meta_until_cleared`(104행) 옆에 검사를 더한다: 128자 id 가 그대로 저장되고 다시 읽힌다(잘리지 않음). 고치기 전 코드면 이 검사가 실패해야 한다.\n\n검사: `python3 -m unittest discover -s projects/VoxLog/tests`. 보고는 응답 본문에(바꾼 줄, 고르지 않은 대안과 까닭, 검사 결과 줄). 답의 마지막은 반드시 글로 끝낸다.",
+  "verify": "python3 -m unittest discover -s projects/VoxLog/tests"
+ },
+ {
+  "id": "T-399",
+  "title": "[VoxLog] R42-N3 고치기: test_serve_ask_body.py 느린 본문 검사가 400 의 까닭을 확인하고 유효한 녹음 ids 를 쓰게",
+  "slot": "S3",
+  "project": "VoxLog",
+  "write": ["projects/VoxLog/tests/test_serve_ask_body.py"],
+  "deps": ["T-398"],
+  "max_attempts": 2,
+  "task": "바로 고친다. 쓰기 경로는 `projects/VoxLog/tests/test_serve_ask_body.py` 뿐이다(제품 코드 serve.py 는 고치지 않는다).\n\n검수 지적(R42-N3, `.aimem/sessions/T-396-S3-a1-144911/report.md`): 이 파일의 느린 본문·덜 온 본문 검사가 (1) 400 응답의 까닭 문구(serve.py 가 내는 '본문이 중간에 끊겼습니다' 류 - serve.py 에서 실제 문구를 찾아 쓴다)를 확인하지 않고 상태 코드만 보며, (2) 보내는 본문의 `ids` 가 없거나 없는 녹음을 가리켜 - 다른 까닭의 400 과 구별이 안 된다. 그래서 '유휴 시간 기준' 으로 잘못 바꾼 코드(변이)를 소켓 timeout 으로 간접적으로만 잡는다.\n\n고칠 것: setUp 에서 서버의 저장소에 녹음 하나를 실제로 만들어(serve.make_server 가 쓰는 저장소 경로에 store API 로, 또는 업로드 엔드포인트로) 그 id 를 본문 `ids` 에 넣는다. 덜 온 본문 → 400 이고 응답 본문의 까닭 문구까지 확인. 마감 안에 다 오는 느린 본문 → 200 이고 가짜 답('가짜 답')이 응답에 있는지 확인. 시작부터 마감을 넘기는 느린 본문(바이트 사이 침묵은 짧지만 합계가 GRACE 를 넘김) → 400 이고 까닭 문구 확인 - 이것이 '유휴 기준' 변이를 직접 잡는다. 검사 전체가 몇 초 안에 끝나야 한다.\n\n/tmp 사본으로 변이를 한 번 해 본다: `cp -r projects/VoxLog /tmp/r43-voxlog`, 사본 serve.py 의 본문 마감을 유휴 기준으로 바꾸고 `python3 -m unittest discover -s /tmp/r43-voxlog/tests -p 'test_serve_ask_body.py'` 가 실패하는지, 끝나면 사본을 지운다. /tmp 쓰기가 거절되면 그 사실을 보고에 적고 넘어간다.\n\n검사: `python3 -m unittest discover -s projects/VoxLog/tests`. 보고는 응답 본문에(바꾼 검사, 변이 결과, 검사 결과 줄). 답의 마지막은 반드시 글로 끝낸다.",
+  "verify": "python3 -m unittest discover -s projects/VoxLog/tests"
+ },
+ {
+  "id": "T-400",
+  "title": "[VoxLog] R43 적대적 검수: 조사 문서 근거 대조(T-397) + 큐 수정 T-398·T-399",
+  "slot": "S4",
+  "project": "VoxLog",
+  "write": [],
+  "deps": ["T-397", "T-398", "T-399"],
+  "max_attempts": 1,
+  "task": "읽기 전용 적대적 검수. 저장소 파일은 하나도 만들거나 고치지 않는다. 바로 시작한다.\n\nA. 조사 문서 `projects/VoxLog/docs/RESEARCH-draft-owner.md`(작업자 보고 `.aimem/sessions/T-397-S2-*/report.md`). 요청 원문은 `.aimem/requests/Q-261124-795c.json` 의 detail(알아볼 것 1~6). 무료 모델이 썼으니 사실 주장을 믿지 말고 **공식 문서를 직접 읽어 대조**한다(WebFetch 등 - MDN Web Locks API·LockManager.request·규격 w3c.github.io/web-locks·browser-compat-data 의 api/LockManager.json·Page Lifecycle·bfcache). 특히: (1) 지원 버전 숫자(크롬·엣지·파이어폭스·사파리 iOS), 보안 연결 조건, 워커/서비스 워커 노출 여부 (2) 탭이 frozen·discarded·bfcache 일 때 잠금이 풀리는지 - 문서가 무엇을 말하고 무엇을 말하지 않는지 (3) 설계안의 판정 방식(ifAvailable·steal·query·기다리는 request)이 의미상 맞는지, 녹음 중인 탭의 초안을 빼앗는 경로가 없는지 (4) 걷어낼 범위에 적은 함수 이름이 실제 `projects/VoxLog/web/queue.js`·`app.js`·`sw.js`·`tests/browser_voxlog.py` 에 있는지, R41-N13~N18 표의 판정이 `rounds/R41/REVIEW-r41-s6.md` 'T-388' 절의 원래 결함과 맞는지 (5) 요청이 물은 1~6 중 빠진 것. 틀린 사실은 맞는 값과 출처 URL 을 적는다.\n\nB. 큐 수정 `git diff -- projects/VoxLog/voxlog/store.py projects/VoxLog/tests/test_store.py projects/VoxLog/tests/test_serve_ask_body.py`(보고 `.aimem/sessions/T-398-S3-*/report.md`, `T-399-S3-*`). R42-N2: 128자 id 가 잘리지 않는가, 상한이 stt.py `_JOB_ID_RE` 와 어긋날 여지가 남았는가, 새 검사가 옛 코드(`[:64]`)를 잡는가. R42-N3: 검사가 400 까닭 문구와 유효한 ids 로 다른 400 과 구별되는가, '유휴 기준 마감' 변이를 직접 잡는가, 검사가 흔들리지(시간에 민감) 않는가. **변이는 /tmp 사본에서** (`cp -r projects/VoxLog /tmp/r43-review-voxlog` → 사본 코드를 틀리게 → `python3 -m unittest discover -s /tmp/r43-review-voxlog/tests`), 끝나면 사본을 지운다. 운영 서버에는 접속하지 않는다. 검사: `python3 -m unittest discover -s projects/VoxLog/tests`.\n\n각 발견마다 **파일:행**(문서면 절), 무엇이 틀렸는지, 재현할 입력·변이 또는 출처 URL, 심각도(상/중/하). 직접 확인하지 못한 것은 '추정'. 발견이 없으면 없다고 적는다 - 억지로 채우지 않는다.\n\n보고는 응답 본문에: 첫 줄 판정(통과 / 조건부 통과 / 불합격), A(1)~(5)·B 마다 한 줄 판정, 발견 목록(심각도 순), 직접 읽은 URL, 변이 시험 표, 검사 결과 줄. 답의 마지막은 반드시 글로 끝낸다."
+ }
+]

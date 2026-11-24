@@ -1,0 +1,38 @@
+{
+ "round": 45,
+ "at": "2026-11-24T20:26:03",
+ "brief": "manager-round-standard.md",
+ "requests": [
+  "Q-261124-ba96"
+ ],
+ "projects": [
+  "주보알림"
+ ],
+ "session": "M-R45-202603",
+ "policy": "cost",
+ "modes": {
+  "주보알림": "speed"
+ },
+ "metrics": {
+  "workers": 5,
+  "peak_parallel": 1,
+  "minutes": {
+   "free": 35.43,
+   "paid": 0.0
+  },
+  "by_slot": {
+   "S2": {
+    "runs": 3,
+    "minutes": 17.85,
+    "tier": "free"
+   },
+   "S3": {
+    "runs": 2,
+    "minutes": 17.58,
+    "tier": "free"
+   }
+  },
+  "moves": 0,
+  "manager_slots": []
+ }
+}

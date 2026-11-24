@@ -1,0 +1,7 @@
+{
+  "root": "web",
+  "entry": "index.html",
+  "server": "serve.py",
+  "title": "주보알림",
+  "note": "새 주보 확인·미리 보기·카톡 보내기 - 전송은 지금 쓰는 pipeline.py 그대로"
+}

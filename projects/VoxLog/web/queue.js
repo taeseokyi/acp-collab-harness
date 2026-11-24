@@ -1,6 +1,9 @@
 /* VoxLog 오프라인 업로드 대기열 - window.VoxQueue (docs/INTERFACE.md)
  * IndexedDB `voxlog` 판 2: 저장소 queue(keyPath clientId) · config(키 "main") · drafts · chunks.
- * sw.js 가 같은 DB·같은 규칙으로 올립니다(코드는 sw.js 안에 따로 있음 - 고치면 둘 다 고칠 것). */
+ * sw.js 가 같은 DB·같은 규칙으로 올립니다(코드는 sw.js 안에 따로 있음 - 고치면 둘 다 고칠 것).
+ * 녹음 초안의 주인 판정은 웹 잠금(navigator.locks)이 한다. 녹음 탭은 초안마다 배타 잠금을 쥐고,
+ * 저장·정리가 끝날 때 놓는다. 다른 탭은 ifAvailable 로 잠금을 바로 얻어 보아 주인이 죽었으면 거둔다.
+ * 웹 잠금이 없는 브라우저에서는 초안을 만들지 않는다(녹음·올리기는 그대로, 끊긴 녹음 되살리기만 꺼짐). */
 (function () {
   'use strict';
 
@@ -17,42 +20,18 @@
   var flushing = null;
   var flushAgain = false;
   var retryTimer = null;
-  var tabId = 't-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
   var activeDraft = null; // 이 탭이 지금 녹음 중인 초안(다른 탭의 draftRecover 가 건드리지 않게)
-  var draftBc = null;     // 탭끼리 '이 초안 아직 살아 있다' 를 알리는 길
-  var draftPings = {};    // ping 토큰 -> { ids: {초안: true} }
-  var DRAFT_LEASE_MS = 20000; // 초안이 이만큼 최근에 갱신됐으면 살아 있는 것으로 본다
+  var held = {};  // draftId -> 쥔 잠금을 놓는 함수
+  var waits = {}; // draftId -> 기다리는 요청의 AbortController
+  var recoverListeners = [];
+  var OLD_DRAFT_FRESH_MS = 20000; // 잠금 이전 초안 전용: 구버전 탭이 녹음 중일 수 있는 시간
 
-  try {
-    if (typeof BroadcastChannel === 'function') {
-      draftBc = new BroadcastChannel('voxlog-drafts');
-      draftBc.onmessage = function (ev) {
-        var m = (ev && ev.data) || {};
-        if (m.type === 'draft-alive?') {
-          if (activeDraft) {
-            try { draftBc.postMessage({ type: 'draft-alive', tab: tabId, draftId: activeDraft, ping: m.ping }); } catch (e) { /* 무시 */ }
-          }
-        } else if (m.type === 'draft-alive' && m.tab !== tabId) {
-          var p = m.ping && draftPings[m.ping];
-          if (p && m.draftId) p.ids[m.draftId] = true;
-        }
-      };
+  function locksOk() {
+    try {
+      return !!(navigator.locks && typeof navigator.locks.request === 'function');
+    } catch (e) {
+      return false;
     }
-  } catch (e) { draftBc = null; }
-
-  // 다른 탭이 지금 녹음 중인 초안의 id 집합. waitMs 동안 대답을 모은다.
-  function liveDraftIds(waitMs) {
-    if (!draftBc) return Promise.resolve({});
-    return new Promise(function (resolve) {
-      var token = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-      draftPings[token] = { ids: {} };
-      try { draftBc.postMessage({ type: 'draft-alive?', tab: tabId, ping: token }); } catch (e) { /* 무시 */ }
-      setTimeout(function () {
-        var p = draftPings[token];
-        delete draftPings[token];
-        resolve((p && p.ids) || {});
-      }, waitMs);
-    });
   }
 
   function openDb() {
@@ -367,19 +346,58 @@
     });
   }
 
-  // ---- 녹음 중 초안: 조각을 바로 IndexedDB 에 ----
+  // ---- 녹음 중 초안: 조각을 바로 IndexedDB 에, 초안마다 웹 잠금을 쥔다 ----
+  function draftRelease(draftId) {
+    var release = held[draftId];
+    if (release) {
+      delete held[draftId];
+      try { release(); } catch (e) { /* 무시 */ }
+    }
+    if (activeDraft === draftId) activeDraft = null;
+  }
+
+  // 잠금을 얻은 뒤에만 초안 줄을 넣는다. 잠금은 draftFinish/draftDiscard 가 놓을 때까지 쥔 채로 둔다.
   function draftStart(d) {
     d = d || {};
-    activeDraft = d.draftId || null;
-    return guard().then(function (db) {
-      var now = Date.now();
-      var s = store(db, 'drafts', 'readwrite');
-      s.st.put({
-        draftId: d.draftId, mime: d.mime || 'audio/webm',
-        recordedAt: d.recordedAt || new Date().toISOString(),
-        location: normLoc(d.location), started: now, aliveAt: now
-      });
-      return txDone(s.tx);
+    var draftId = d.draftId;
+    if (!draftId || !locksOk()) return Promise.resolve(false);
+    var name = 'voxlog-draft-' + draftId;
+    return new Promise(function (resolve) {
+      try {
+        navigator.locks.request(name, { ifAvailable: true }, function (lock) {
+          if (!lock) return null; // 주인이 쥐고 있음 - 초안을 만들지 않는다
+          var release;
+          var hold = new Promise(function (r) { release = r; });
+          held[draftId] = function () {
+            delete held[draftId];
+            release();
+          };
+          return guard().then(function (db) {
+            var now = Date.now();
+            var s = store(db, 'drafts', 'readwrite');
+            s.st.put({
+              draftId: draftId, mime: d.mime || 'audio/webm',
+              recordedAt: d.recordedAt || new Date().toISOString(),
+              location: normLoc(d.location), started: now, aliveAt: Infinity, lock: true
+            });
+            return txDone(s.tx);
+          }).then(function () {
+            activeDraft = draftId;
+            resolve(true);
+            return hold;
+          }, function () {
+            draftRelease(draftId);
+            resolve(false);
+            return null;
+          });
+        }).then(function () {
+          resolve(false);
+        }, function () {
+          resolve(false);
+        });
+      } catch (e) {
+        resolve(false);
+      }
     });
   }
 
@@ -392,7 +410,6 @@
         var d = g.result;
         if (!d) return;
         d.location = normLoc(location);
-        d.aliveAt = Date.now();
         s.st.put(d);
       };
       return txDone(s.tx);
@@ -407,27 +424,12 @@
       g.onsuccess = function () {
         var d = g.result;
         if (!d) return; // 초안이 이미 없으면(다른 탭이 가져갔거나 지웠으면) 고아 조각을 남기지 않는다
-        d.aliveAt = Date.now();
         tx.objectStore('drafts').put(d);
         // seq = 지금까지 쌓인 조각 수(같은 트랜잭션 안에서 셈)
         var cnt = st.index('draftId').count(IDBKeyRange.only(draftId));
         cnt.onsuccess = function () { st.add({ draftId: draftId, seq: cnt.result, blob: blobPart }); };
       };
       return txDone(tx);
-    });
-  }
-
-  function draftTouch(draftId) {
-    return guard().then(function (db) {
-      var s = store(db, 'drafts', 'readwrite');
-      var g = s.st.get(draftId);
-      g.onsuccess = function () {
-        var d = g.result;
-        if (!d) return;
-        d.aliveAt = Date.now();
-        s.st.put(d);
-      };
-      return txDone(s.tx);
     });
   }
 
@@ -446,7 +448,10 @@
 
   function draftDiscard(draftId) {
     return guard().then(function (db) { return draftClear(db, draftId); }).then(function () {
-      if (activeDraft === draftId) activeDraft = null;
+      draftRelease(draftId);
+    }, function (e) {
+      draftRelease(draftId);
+      throw e;
     });
   }
 
@@ -462,7 +467,7 @@
       return reqP(store(db, 'chunks', 'readonly').st.index('draftId').getAll(IDBKeyRange.only(draftId)));
     }).then(function (chunks) {
       if (!draft) return false;
-      if (!chunks || !chunks.length) return draftClear(db, draftId).then(function () { return true; });
+      if (!chunks || !chunks.length) return draftClear(db, draftId).then(function () { return false; });
       chunks.sort(function (a, b) { return a.seq - b.seq; });
       var mime = draft.mime || 'audio/webm';
       var b = new Blob(chunks.map(function (c) { return c.blob; }), { type: mime });
@@ -472,39 +477,102 @@
         location: location !== undefined && location !== null ? location : draft.location
       }).then(function () { return draftClear(db, draftId); }).then(function () { return true; });
     }).then(function (done) {
-      if (activeDraft === draftId) activeDraft = null;
+      draftRelease(draftId);
       return done;
     }, function (e) {
-      if (activeDraft === draftId) activeDraft = null;
+      draftRelease(draftId);
       throw e;
     });
   }
 
-  // 끝나지 않은 초안을 살린다. 다른 탭이 지금 녹음 중인 초안은 건드리지 않는다(그 탭이 멈출 때 스스로 올린다).
-  function draftRecover(exceptDraftId) {
-    var db, keys, live;
-    return guard().then(function (d) {
-      db = d;
-      return Promise.all([
-        reqP(store(db, 'drafts', 'readonly').st.getAll()),
-        liveDraftIds(300)
-      ]);
-    }).then(function (res) {
-      keys = res[0] || [];
-      live = res[1] || {};
-      var now = Date.now();
-      var ids = keys.filter(function (d) {
-        if (!d || d.draftId === exceptDraftId) return false;
-        if (typeof d.aliveAt === 'number' && now - d.aliveAt < DRAFT_LEASE_MS) return false;
-        return !live[d.draftId];
-      }).map(function (d) { return d.draftId; });
-      var n = 0;
-      return ids.reduce(function (p, id) {
-        return p.then(function () {
-          return draftFinish(id, null).then(function (done) { if (done) n++; }, function () {});
+  function recovered(n) {
+    recoverListeners.slice().forEach(function (cb) {
+      try { cb(n); } catch (e) { /* 화면 쪽 오류는 무시 */ }
+    });
+    notify();
+  }
+
+  function onrecover(cb) {
+    if (typeof cb === 'function') recoverListeners.push(cb);
+  }
+
+  // 주인이 쥔 새 세대 초안에 거는 요청. 주인이 죽으면 잠금을 받아 회수하고, freeze/pagehide 에서 abort 한다.
+  function waitForDraft(draftId) {
+    if (waits[draftId]) return;
+    var name = 'voxlog-draft-' + draftId;
+    var ac;
+    try { ac = new AbortController(); } catch (e) { return; }
+    waits[draftId] = ac;
+    try {
+      navigator.locks.request(name, { signal: ac.signal }, function () {
+        delete waits[draftId];
+        return draftFinish(draftId, null).then(function (done) {
+          if (done === true) recovered(1);
         });
+      }).then(function () {
+        delete waits[draftId];
+      }, function (e) {
+        delete waits[draftId];
+        if (e && e.name === 'AbortError') return;
+        // 다른 실패는 조용히 삼킨다 - 다음 방문에서 다시 본다.
+      });
+    } catch (e) {
+      delete waits[draftId];
+    }
+  }
+
+  // 끝나지 않은 초안을 회수한다. 구세대 초안은 잠금 이전 탭 보호를 위해 20초 신선도 필터를 먼저 본다.
+  // 즉시 ifAvailable 판정으로 살린 수를 돌려주고, 주인이 쥔 새 세대 초안에는 기다리는 요청을 건다.
+  function draftRecover(exceptDraftId) {
+    if (!locksOk()) return Promise.resolve(0);
+    var n = 0;
+
+    function recoverOne(draft) {
+      var id = draft.draftId;
+      var name = 'voxlog-draft-' + id;
+      if (draft.lock !== true) {
+        if (typeof draft.aliveAt === 'number' && Date.now() - draft.aliveAt < OLD_DRAFT_FRESH_MS) {
+          return Promise.resolve();
+        }
+      }
+      return navigator.locks.request(name, { ifAvailable: true }, function (lock) {
+        if (!lock) return null;
+        return draftFinish(id, null);
+      }).then(function (done) {
+        if (done === true) n++;
+        if (done === null && draft.lock === true) waitForDraft(id);
+      }, function () { /* 즉시 판정 실패는 다음 방문에서 다시 본다 */ });
+    }
+
+    return guard().then(function (db) {
+      return reqP(store(db, 'drafts', 'readonly').st.getAll());
+    }).then(function (rows) {
+      var drafts = (rows || []).filter(function (draft) {
+        if (!draft || !draft.draftId) return false;
+        if (draft.draftId === exceptDraftId) return false;
+        if (draft.draftId === activeDraft) return false;
+        if (held[draft.draftId]) return false;
+        return true;
+      });
+      return drafts.reduce(function (p, draft) {
+        return p.then(function () { return recoverOne(draft); });
       }, Promise.resolve()).then(function () { return n; });
     });
+  }
+
+  // 기다리는 요청만 abort 한다. 쥔 잠금(held)은 freeze/pagehide 에서 놓지 않는다(녹음 탭이 스스로 정리할 때까지).
+  function abortWaits() {
+    Object.keys(waits).forEach(function (draftId) {
+      var ac = waits[draftId];
+      delete waits[draftId];
+      try { ac.abort(); } catch (e) { /* 무시 */ }
+    });
+  }
+
+  function resumeRecover() {
+    draftRecover().then(function (n) {
+      if (n > 0) recovered(n);
+    }, function () { /* 무시 */ });
   }
 
   function onchange(cb) {
@@ -517,7 +585,7 @@
       sw = 'serviceWorker' in navigator && !!window.isSecureContext;
       bg = sw && 'SyncManager' in window;
     } catch (e) { /* 격리된 출처 */ }
-    return { indexedDB: idbOk, serviceWorker: sw, backgroundSync: bg };
+    return { indexedDB: idbOk, serviceWorker: sw, backgroundSync: bg, draftLocks: locksOk() };
   }
 
   window.VoxQueue = {
@@ -531,11 +599,11 @@
     retry: retry,
     draftStart: draftStart,
     draftAppend: draftAppend,
-    draftTouch: draftTouch,
     draftSetLocation: draftSetLocation,
     draftFinish: draftFinish,
     draftDiscard: draftDiscard,
     draftRecover: draftRecover,
+    onrecover: onrecover,
     onchange: onchange,
     supported: supported
   };
@@ -555,6 +623,14 @@
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'visible') flush().catch(function () {});
     });
+  } catch (e) { /* 무시 */ }
+
+  // 페이지 수명(한 번만 등록): 얼어붙은 대기 요청을 줄에서 빼고, 다시 보이면 회수를 다시 건다.
+  try {
+    document.addEventListener('freeze', abortWaits);
+    window.addEventListener('pagehide', abortWaits);
+    document.addEventListener('resume', resumeRecover);
+    window.addEventListener('pageshow', resumeRecover);
   } catch (e) { /* 무시 */ }
 
   // 격리된 출처면 여기서 idbOk 가 false 로 바뀜

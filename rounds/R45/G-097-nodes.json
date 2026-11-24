@@ -1,0 +1,13 @@
+[
+ {
+  "id": "T-413",
+  "title": "[주보알림] 실물 시험: 앱으로 확인·미리 보기·카톡 보내기 한 번 (실제 전송)",
+  "slot": "S2",
+  "project": "주보알림",
+  "write": ["projects/주보알림/data/**"],
+  "deps": [],
+  "max_attempts": 1,
+  "task": "요청 원문 `.aimem/requests/Q-261124-ba96.json` 의 '지킬 것' 을 먼저 읽는다: 카카오톡은 태석님 본인에게 가는 것이라 **지금 쓰는 전송 방식 그대로면 시험으로 실제 전송을 해도 된다**. 받는 대화방·AutoHotkey 스크립트·ref/ 는 바꾸지 않는다. 이 노드는 코드를 고치지 않는다 - 앱을 실물로 한 번 돌려 결과를 적기만 한다.\n\n순서(실제 data 폴더 `projects/주보알림/data/` 를 쓴다 - JUBO_DATA 를 주지 않는다):\n1. 빈 포트에 `python3 projects/주보알림/serve.py --port <빈 포트>` 를 띄운다.\n2. `curl -s -X POST http://127.0.0.1:<포트>/api/check` - 최신 주보·is_new 를 적는다.\n3. `curl -s -X POST .../api/preview` - 그림 수와 seq 순서를 적는다.\n4. `curl -s -X POST .../api/send` **한 번만** (최대 10분 걸릴 수 있다 - 끝날 때까지 기다린다, 다시 누르지 않는다). 결과 `result.ok`, `result.entry`(날짜·제목·reason·rc), `log_tail` 의 끝 15줄을 그대로 적는다. 실패해도 그대로 적는다(윈도우 잠김·카톡 로그아웃이면 실패가 정상 결과다).\n5. `curl -s .../api/state` 로 `sent` 와 `history` 첫 건이 갱신됐는지 본다.\n6. 서버를 끈다.\n\n검사(verify): `data/history.json` 에 기록이 1건 이상 있는지(성공·실패 무관).\n\n보고는 응답 본문에: 첫 줄 판정(전송이 성공이면 DONE, 전송이 실패했어도 기록이 제대로 남았으면 DONE 이고 실패 까닭을 적음), 2~5의 결과. 답의 마지막은 반드시 글(보고)로 끝낸다.",
+  "verify": "python3 -c \"import json,sys;h=json.load(open('projects/주보알림/data/history.json',encoding='utf-8'));h=h if isinstance(h,list) else h.get('history',[]);print('기록',len(h),'첫 건',h[0] if h else None);sys.exit(0 if h else 1)\""
+ }
+]

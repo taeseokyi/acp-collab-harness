@@ -112,6 +112,13 @@ class StoreTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.set_job("r-20200101-000000-abcd", "x")
 
+    def test_stt_job_id_up_to_128_chars_is_kept_whole(self):
+        rid = self.add()["id"]
+        jid = "a" * 128                                      # stt.py 의 id 상한(128자) 끝 - 잘리면 이어받기가 404 난다
+        self.store.set_job(rid, jid)
+        self.assertEqual(self.store.get(rid)["stt_job"], jid)
+        self.assertEqual(Store(self.root).get(rid)["stt_job"], jid)   # 다시 읽어도 그대로
+
     def test_list_search_date_status_order(self):
         a = self.add(recorded_at="2026-01-01T10:00:00")
         b = self.add(recorded_at="2026-01-02T10:00:00")

@@ -1,0 +1,24 @@
+[
+ {
+  "id": "T-409",
+  "title": "[주보알림] bulletin.py: 확인·미리 보기·전송·기록 논리 (ref 스크립트를 그대로 부름)",
+  "slot": "S2",
+  "project": "주보알림",
+  "write": ["projects/주보알림/bulletin.py", "projects/주보알림/data/**"],
+  "deps": [],
+  "max_attempts": 2,
+  "task": "요청 원문: `.aimem/requests/Q-261124-ba96.json` 의 detail. **공통 인터페이스는 `rounds/R45/spec.md`** - 먼저 읽고 'bulletin.py' 절을 그대로 구현한다(함수 이름·돌려주는 값). 원본 스킬 사본은 `projects/주보알림/ref/`(먼저 `ref/README.md`, 그다음 `ref/church-bulletin-monitor/scripts/check_bulletin.py`·`ref/bulletin-pdf-downloader/scripts/download.py`·`pipeline.py`). ref/ 는 고치지 않는다. 바로 파일을 쓴다(계획을 따로 세우지 않는다). 쓰기 경로 밖은 읽기만 한다. 의존성을 설치하지 않는다 - 표준 라이브러리만.\n\n이 노드의 쓰기 경로는 `projects/주보알림/bulletin.py` 하나(실행 중 생기는 `projects/주보알림/data/` 포함)다. serve.py·web/ 은 다른 노드가 이 spec 대로 쓴다 - 건드리지 않는다.\n\n관리 방식이 '속도 우선' 이라 검사 파일은 새로 쓰지 않는다. 대신 손으로 한 번씩 돌려 본다: `JUBO_DATA=/tmp/jubo-try python3 -c \"import sys;sys.path.insert(0,'projects/주보알림');import bulletin as b;print(b.check());print(b.state())\"` - 실제 사이트를 읽어 최신 주보 날짜·제목이 나오는지 본다. `preview()` 도 한 번 돌려 그림이 생기는지 본다(시간이 걸리면 결과만 적는다). **`send()` 는 부르지 않는다**(실제 카톡 전송 - 관리자가 나중에 한다).\n\n검사(verify): 모듈을 불러 state() 가 spec 의 키를 다 갖고 함수 다섯이 있는지.\n\n보고는 응답 본문에: 첫 줄 판정, 만든 함수, 손으로 돌린 check()·preview() 결과(최신 주보 날짜·제목, 그림 수, 실패면 까닭), spec 과 다르게 한 것과 까닭, 검사 결과 줄. 답의 마지막은 반드시 글(보고)로 끝낸다.",
+  "verify": "python3 -c \"import os,sys,tempfile;os.environ['JUBO_DATA']=tempfile.mkdtemp();sys.path.insert(0,'projects/주보알림');import bulletin as b;s=b.state();need=[k for k in ['sent','last_check','is_new','busy','history','preview'] if k not in s];fs=[f for f in ['check','preview','send','history','state'] if not callable(getattr(b,f,None))];print('state 키',sorted(s),'빠진 키',need,'빠진 함수',fs);sys.exit(1 if need or fs else 0)\""
+ },
+ {
+  "id": "T-410",
+  "title": "[주보알림] serve.py·화면(web/)·app.json - 화면 하나, 확인·미리 보기·카톡 보내기·보낸 기록",
+  "slot": "S3",
+  "project": "주보알림",
+  "write": ["projects/주보알림/serve.py", "projects/주보알림/web/**", "projects/주보알림/app.json"],
+  "deps": ["T-409"],
+  "max_attempts": 2,
+  "task": "요청 원문: `.aimem/requests/Q-261124-ba96.json` 의 detail. **공통 인터페이스는 `rounds/R45/spec.md`** - 먼저 읽고 'serve.py' 절과 '화면 web/' 절을 그대로 구현한다. 앞 노드가 `projects/주보알림/bulletin.py` 를 spec 대로 만들어 두었다 - 읽기만 하고 고치지 않는다(결함을 찾으면 보고에 적는다). 바로 파일을 쓴다(계획을 따로 세우지 않는다). 의존성을 설치하지 않는다 - 표준 라이브러리만, 화면은 프레임워크 없이 HTML·CSS·JS.\n\n이 노드의 쓰기 경로는 `projects/주보알림/serve.py`, `projects/주보알림/web/**`, `projects/주보알림/app.json` 이다.\n\n`app.json` 은 다른 프로젝트와 같은 꼴: `{\"root\": \"web\", \"entry\": \"index.html\", \"server\": \"serve.py\", \"title\": \"주보알림\", \"note\": \"<한 줄>\"}` (`projects/VoxLog/app.json` 참고). 화면에서 API 는 **상대 경로**(`api/state`)로 부른다.\n\n관리 방식이 '속도 우선' 이라 검사 파일은 새로 쓰지 않는다. 대신 손으로 띄워 본다: `JUBO_DATA=/tmp/jubo-try python3 projects/주보알림/serve.py --port <빈 포트>` 뒤 브라우저(플레이라이트 크롬)로 열어 '지금 확인' 을 눌러 최신 주보가 보이는지, 360px 폭에서 넘치지 않는지 본다(화면은 is_visible·bounding box 로 본다). **'카톡 보내기' 는 누르지 않는다**(실제 전송 - 관리자가 나중에 한다).\n\n검사(verify): 빈 포트에 serve.py 를 띄워 `/` 와 `api/state` 가 응답하는지(뜨는지).\n\n보고는 응답 본문에: 첫 줄 판정, 만든 파일, 손으로 본 것(확인 결과·폭), spec 과 다르게 한 것과 까닭, 검사 결과 줄. 답의 마지막은 반드시 글(보고)로 끝낸다.",
+  "verify": "python3 -c \"\nimport os,sys,json,time,socket,subprocess,tempfile,urllib.request\ns=socket.socket();s.bind(('127.0.0.1',0));p=s.getsockname()[1];s.close()\nenv=dict(os.environ,JUBO_DATA=tempfile.mkdtemp())\npr=subprocess.Popen([sys.executable,'projects/주보알림/serve.py','--host','127.0.0.1','--port',str(p)],env=env)\nok=False\nfor i in range(30):\n  time.sleep(0.5)\n  try:\n    h=urllib.request.urlopen('http://127.0.0.1:%d/'%p,timeout=5).read().decode('utf-8');j=json.load(urllib.request.urlopen('http://127.0.0.1:%d/api/state'%p,timeout=10));ok=('카톡' in h) and ('sent' in j);print('index 글자',len(h),'state 키',sorted(j));break\n  except Exception as e:\n    err=e\npr.terminate()\nif not ok: print('안 뜸 또는 응답 이상:',locals().get('err'))\na=json.load(open('projects/주보알림/app.json',encoding='utf-8'));print('app.json',a)\nsys.exit(0 if ok and a.get('server')=='serve.py' else 1)\n\""
+ }
+]

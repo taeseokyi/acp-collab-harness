@@ -1,0 +1,67 @@
+[
+ {
+  "id": "T-403",
+  "title": "[VoxLog] queue.js: 초안 주인 판정을 웹 잠금으로 - lease·BroadcastChannel 걷어냄, 기다리는 회수, R41-N16",
+  "slot": "S3",
+  "project": "VoxLog",
+  "write": ["projects/VoxLog/web/queue.js"],
+  "deps": [],
+  "max_attempts": 2,
+  "task": "요청 원문: `.aimem/requests/Q-261124-b4ad.json` 의 detail. **공통 인터페이스는 `rounds/R44/spec.md`** - 먼저 읽고 그대로 따른다(함수 이름·돌려주는 값·지울 것). 근거 문서 `projects/VoxLog/docs/RESEARCH-draft-owner.md`(§4·§5) 와 이 spec 이 다르면 spec 이 맞다. 원래 결함 R41-N13~N18 은 `rounds/R41/REVIEW-r41-s6.md` 의 'T-388' 절. 바로 파일을 고친다(계획을 따로 세우지 않는다). 쓰기 경로 밖은 읽기만 한다.\n\n이 노드의 쓰기 경로는 `projects/VoxLog/web/queue.js` 하나다(app.js 는 다른 슬롯이 동시에 고친다 - 건드리지 않는다).\n\nspec 의 'queue.js' 절을 전부 구현한다: 옛 장치(tabId·draftBc·draftPings·liveDraftIds·DRAFT_LEASE_MS 판정·draftTouch 와 export, draftSetLocation·draftAppend 의 aliveAt 갱신)를 지우고, locksOk·supported().draftLocks·draftStart(잠금 안에서 초안 줄, aliveAt: Infinity·lock: true, Promise<boolean>)·draftRelease·draftFinish(0개면 false, 끝에 놓기)·draftDiscard(놓기)·draftRecover(구세대는 OLD_DRAFT_FRESH_MS 필터 뒤 즉시 판정만, 새 세대는 ifAvailable 즉시 판정 + AbortController 기다리는 요청)·onrecover·freeze/pagehide abort·resume/pageshow 다시 걸기. 파일 머리 주석과 함수 주석도 새 방식에 맞게 고친다. ES5 꼴(var·function)을 지금 파일처럼 유지한다.\n\n검사(verify): 옛 이름이 남지 않고 새 이름이 있으며 `node --check` 통과. 동작 검사는 다음 노드가 브라우저로 한다.\n\n보고는 응답 본문에: 첫 줄 판정, 바꾼 함수, **지운 줄 수와 더한 줄 수**(`git diff --numstat -- <파일>` 결과), spec 과 다르게 한 것과 까닭, 검사 결과 줄. 답의 마지막은 반드시 글(보고)로 끝낸다.",
+  "verify": "python3 -c \"import sys,subprocess;t=open('projects/VoxLog/web/queue.js',encoding='utf-8').read();bad=[w for w in ['BroadcastChannel','draftPings','liveDraftIds','DRAFT_LEASE_MS','draftTouch','tabId'] if w in t];need=[w for w in ['navigator.locks','ifAvailable','AbortController','onrecover','draftLocks','OLD_DRAFT_FRESH_MS','freeze','pageshow'] if w not in t];r=subprocess.run(['node','--check','projects/VoxLog/web/queue.js']).returncode;print('남은 옛 장치:',bad,'빠진 것:',need,'node --check rc',r);sys.exit(1 if bad or need or r else 0)\""
+ },
+ {
+  "id": "T-404",
+  "title": "[VoxLog] app.js: 녹음 lease 타이머·22초 재시도 제거, 메모리 저장 길에서 초안 정리(R41-N18), 늦은 회수 알림",
+  "slot": "S2",
+  "project": "VoxLog",
+  "write": ["projects/VoxLog/web/app.js"],
+  "deps": [],
+  "max_attempts": 2,
+  "task": "요청 원문: `.aimem/requests/Q-261124-b4ad.json` 의 detail. **공통 인터페이스는 `rounds/R44/spec.md`** - 먼저 읽고 그대로 따른다(함수 이름·돌려주는 값·지울 것). 근거 문서 `projects/VoxLog/docs/RESEARCH-draft-owner.md`(§4·§5) 와 이 spec 이 다르면 spec 이 맞다. 원래 결함 R41-N13~N18 은 `rounds/R41/REVIEW-r41-s6.md` 의 'T-388' 절. 바로 파일을 고친다(계획을 따로 세우지 않는다). 쓰기 경로 밖은 읽기만 한다.\n\n이 노드의 쓰기 경로는 `projects/VoxLog/web/app.js` 하나다(queue.js 는 다른 슬롯이 동시에 spec 대로 고친다 - 건드리지 않는다. 새 queue 함수는 spec 의 약속대로 있다고 보고 쓴다).\n\nspec 의 'app.js' 절을 전부 구현한다: startRec 의 draftOk 를 draftStart 의 돌려준 값(true 일 때만)으로, `rc.touchTimer`·5초 setInterval·draftTouch 호출 삭제(rc 초기값의 touchTimer 포함), finishRec 의 clearInterval(rc.touchTimer) 삭제, 메모리 조각으로 enqueue 하는 두 길 모두 enqueue 뒤 `q.draftDiscard(draftId)`(실패는 삼킴), init 의 22초 setTimeout 재시도 삭제와 `onrecover` 토스트 등록(`queueApi()` 가 없거나 onrecover 가 없어도 죽지 않게). 주석의 lease 설명도 고친다. 나머지 코드는 건드리지 않는다.\n\n검사(verify): 옛 이름이 남지 않고 onrecover·draftDiscard 가 있으며 `node --check` 통과.\n\n보고는 응답 본문에: 첫 줄 판정, 바꾼 함수, **지운 줄 수와 더한 줄 수**(`git diff --numstat -- <파일>` 결과), spec 과 다르게 한 것과 까닭, 검사 결과 줄. 답의 마지막은 반드시 글(보고)로 끝낸다.",
+  "verify": "python3 -c \"import sys,subprocess;t=open('projects/VoxLog/web/app.js',encoding='utf-8').read();bad=[w for w in ['touchTimer','draftTouch','22000'] if w in t];need=[w for w in ['onrecover','draftDiscard'] if w not in t];r=subprocess.run(['node','--check','projects/VoxLog/web/app.js']).returncode;print('남은 옛 장치:',bad,'빠진 것:',need,'node --check rc',r);sys.exit(1 if bad or need or r else 0)\""
+ },
+ {
+  "id": "T-405",
+  "title": "[VoxLog] 브라우저 검사: 웹 잠금 회수·열화·전환기 (t30 교체, 새 검사)",
+  "slot": "S3",
+  "project": "VoxLog",
+  "write": ["projects/VoxLog/tests/browser_voxlog.py"],
+  "deps": ["T-403", "T-404"],
+  "max_attempts": 2,
+  "task": "요청 원문: `.aimem/requests/Q-261124-b4ad.json` 의 detail. **공통 인터페이스는 `rounds/R44/spec.md`** - 먼저 읽는다. 원래 결함 R41-N13~N18 은 `rounds/R41/REVIEW-r41-s6.md` 의 'T-388' 절. 바로 파일을 고친다(계획을 따로 세우지 않는다).\n\n이 노드의 쓰기 경로는 `projects/VoxLog/tests/browser_voxlog.py` 하나다. 제품 코드(web/)는 고치지 않는다 - 제품 결함을 찾으면 보고 첫 줄을 `NEEDS-FIX` 로 하고 재현 방법을 적는다.\n\n앞 노드들이 spec 대로 web/queue.js·app.js 를 바꿨다(`git diff -- projects/VoxLog/web` 로 확인). 검사를 이렇게 맞춘다(기존 헬퍼 db_drafts·draft_recover_done·wait_for·rec_cycle·new_server·new_ctx 를 쓴다, 화면은 is_visible·inner_text 로 본다):\n- t27 은 그대로 두되 통과하는지 본다.\n- t30 을 바꾼다: '웹 잠금 없는 탭' - `add_init_script` 로 `navigator.locks` 를 undefined 로 만든 탭에서 `VoxQueue.supported().draftLocks === false`, 녹음 7초 동안 `db_drafts == [0, 0]`(초안을 만들지 않음), 멈추면 서버에 온전한 1건(duration_ms >= 6000), 대기열 0.\n- 새 t32(R41-N13): 탭2 를 먼저 연 뒤 탭1 녹음 7초 → 탭1 을 `close()` → 탭2 가 기다리던 요청으로 10초 안에 회수: 서버 1건, `db_drafts(p2) == [0, 0]`, 탭2 토스트에 '끝나지 않은 녹음 1건'.\n- 새 t33(R41-N15): 녹음 7초 중 `reload()` → 10초 안에(22초 기다림 없이) 서버 1건, 초안 0.\n- 새 t34(R41-N16): page.evaluate 로 drafts 에 조각 없는 새 세대 초안(`{draftId:'empty-1', lock:true, aliveAt:Infinity, mime:'audio/webm', recordedAt:...}`)을 넣고 `draftRecover()` 가 0 을 돌려주며 그 초안이 지워짐.\n- 새 t35(R41-N18): 녹음 전에 `window.VoxQueue.draftAppend = () => Promise.reject(new Error('x'))` 로 바꾼 탭에서 녹음 7초 → 멈춤 → 서버 1건, `db_drafts == [0, 0]`, 다른 탭 `navigator.locks.query()` 의 held 에 `voxlog-draft-` 가 없음.\n- 새 t36(전환기, R43-N6): lock 표식 없는 구세대 초안을 조각 1개와 함께 넣는다 - aliveAt=지금이면 `draftRecover()` 0·초안 남음, aliveAt=지금-60000 이면 1·서버에 올라감.\n- 새 t37: 녹음 중 초안 줄이 `lock === true` 이고 `aliveAt === Infinity`(구버전 탭 막이), 탭1 녹음 중 탭2 의 `navigator.locks.query()` held 에 `voxlog-draft-<id>` 가 있음.\n- 새 t38(기다리는 요청 abort): 탭1 녹음 중 탭2 를 열고 `query().pending` 에 그 이름이 1개 → 탭2 에서 `document.dispatchEvent(new Event('freeze'))` 뒤 0개 → `document.dispatchEvent(new Event('resume'))` 뒤 다시 1개. 탭1 을 멈춰 정상 저장 1건(탭2 가 살렸다고 하지 않음).\n각 검사는 실패 까닭을 need 문구로 남긴다. 맨 위 설명 주석의 검사 수를 맞춘다.\n\n검사(verify): `python3 projects/VoxLog/tests/browser_voxlog.py` 전체 통과. 제품 결함 때문에 못 넘으면 NEEDS-FIX 로 보고한다.\n\n보고는 응답 본문에: 첫 줄 판정, 더한·바꾼 검사, 지운 줄 수와 더한 줄 수(`git diff --numstat -- <파일>`), 검사 결과 줄. 답의 마지막은 반드시 글(보고)로 끝낸다.",
+  "verify": "python3 projects/VoxLog/tests/browser_voxlog.py"
+ },
+ {
+  "id": "T-406",
+  "title": "[VoxLog] 문서: README·INTERFACE.md 에 웹 잠금 방식과 열화(웹 잠금 없으면 되살리기만 꺼짐)",
+  "slot": "S2",
+  "project": "VoxLog",
+  "write": ["projects/VoxLog/README.md", "projects/VoxLog/docs/INTERFACE.md"],
+  "deps": ["T-404"],
+  "max_attempts": 2,
+  "task": "요청 원문: `.aimem/requests/Q-261124-b4ad.json` 의 detail. **공통 인터페이스는 `rounds/R44/spec.md`** - 먼저 읽고 그대로 따른다. 바로 파일을 고친다(계획을 따로 세우지 않는다). 쓰기 경로는 `projects/VoxLog/README.md`, `projects/VoxLog/docs/INTERFACE.md`. 코드는 고치지 않는다.\n\nINTERFACE.md 의 VoxQueue 초안 절(219행 근처)을 spec 에 맞춘다: drafts 줄의 필드(lock·aliveAt=Infinity 의 뜻), draftStart -> Promise<boolean>, draftFinish -> Promise<boolean>(없음·0개는 false), draftRecover 의 판정(잠금 ifAvailable·기다리는 요청·구세대 20초 규칙), onrecover, supported().draftLocks, draftTouch 삭제, 잠금 이름 `voxlog-draft-<id>`. README 에는 '끊긴 녹음 되살리기' 를 설명하는 곳(없으면 기능 목록 근처)에 **열화**를 적는다: 웹 잠금(`navigator.locks` - Chrome 69+·Firefox 96+·Safari/iOS 15.4+, HTTPS 필요)이 없으면 녹음·올리기는 되고 페이지가 죽었을 때 되살리기만 꺼진다. 얼어 있는(frozen) 녹음 탭의 초안은 그 탭이 풀리거나 버려질 때까지 회수되지 않는다는 맞바꿈도 한 줄. 지금 코드(`web/queue.js`·`web/app.js`)를 읽고 실제와 맞는지 확인한다(queue.js 는 다른 노드가 동시에 고치는 중일 수 있다 - spec 기준으로 쓴다).\n\n검사(verify): 두 파일에 `navigator.locks` 가 있고 INTERFACE.md 에 `draftLocks`·`onrecover` 가 있고 `draftTouch` 가 없음.\n\n보고는 응답 본문에: 첫 줄 판정, 바꾼 절, 검사 결과 줄. 답의 마지막은 반드시 글(보고)로 끝낸다.",
+  "verify": "python3 -c \"import sys;r=open('projects/VoxLog/README.md',encoding='utf-8').read();i=open('projects/VoxLog/docs/INTERFACE.md',encoding='utf-8').read();bad=[x for x,c in [('README navigator.locks','navigator.locks' in r),('INTERFACE navigator.locks','navigator.locks' in i),('INTERFACE draftLocks','draftLocks' in i),('INTERFACE onrecover','onrecover' in i),('INTERFACE no draftTouch','draftTouch' not in i)] if not c];print('빠진 것:',bad);sys.exit(1 if bad else 0)\""
+ },
+ {
+  "id": "T-407",
+  "title": "[VoxLog] 조사 문서에 구현 결정 반영: R43-N6(전환기 규칙)·N7·N8 정리",
+  "slot": "S6",
+  "project": "VoxLog",
+  "write": ["projects/VoxLog/docs/RESEARCH-draft-owner.md"],
+  "deps": [],
+  "max_attempts": 2,
+  "task": "요지: projects/VoxLog/docs/RESEARCH-draft-owner.md 에 R44 구현 결정(rounds/R44/spec.md)을 반영해 R43-N6 전환기 규칙·N7 얼음 단정·N8 표 단서를 고침, 문서만\n\n요청 원문: `.aimem/requests/Q-261124-b4ad.json` 의 detail. 구현 결정은 `rounds/R44/spec.md` 에 있다. 쓰기 경로는 `projects/VoxLog/docs/RESEARCH-draft-owner.md` 하나. 코드는 고치지 않는다.\n\n대기 큐의 R43 재검수 지적(`.aimem/sessions/T-402-S4-a1-154149/report.md`): R43-N6 §4.4 전환기 규칙('aliveAt 이 신선하면 잠금을 얻어도 안 건드림')이 새 코드끼리의 즉시 회수·22초 재시도 제거와 모순, R43-N7 §4.2 '얼어도 줄을 막지 않는다' 단정이 지나침(넘겨받은 직후 freeze, iOS 처럼 freeze/pagehide 없이 정지), R43-N8 §5.5 R41-N14 행에 전환기 단서 없음.\n\n고칠 것: (1) §4.4 를 spec 의 결정으로 바꾼다 - 새 초안은 `lock: true` 세대 표식과 `aliveAt: Infinity`(구버전 탭의 회수 필터가 영영 건너뜀), 20초 신선도 규칙은 표식 없는 구세대 초안에만, 새 코드는 heartbeat·BroadcastChannel 을 두지 않음. (2) §4.3·§5.1·§5.2 의 '열화 경로로 lease 를 남긴다' 를 요청의 결정('웹 잠금이 없으면 되살리기만 끄고 옛 장치를 남기지 않음')으로 고친다. (3) §4.2 의 얼음 단정을 누그러뜨리고 N7 의 두 경우를 §6 기기 검증 목록에 이름으로 넣는다. (4) §5.5 R41-N14 행에 전환기(구세대 초안은 20초 규칙) 단서. (5) 맨 끝 '고친 이력' 에 R44 줄. 문서 맨 위 요약도 바뀐 결정과 어긋나지 않게 고친다.\n\n검사(verify): 문서에 `lock: true`·`Infinity` 와 `R43-N6`·`R43-N7`·`R43-N8`, `R44` 가 있음.\n\n보고는 응답 본문에: 첫 줄 판정, 바꾼 절, 검사 결과 줄. 답의 마지막은 반드시 글(보고)로 끝낸다.",
+  "verify": "python3 -c \"import sys;t=open('projects/VoxLog/docs/RESEARCH-draft-owner.md',encoding='utf-8').read();m=[w for w in ['lock: true','R43-N6','R43-N7','R43-N8','R44','Infinity'] if w not in t];print('빠진 것:',m);sys.exit(1 if m else 0)\""
+ },
+ {
+  "id": "T-408",
+  "title": "[VoxLog] R44 적대적 검수(부작용 중심): 웹 잠금 전환 T-403~T-406",
+  "slot": "S4",
+  "project": "VoxLog",
+  "write": [],
+  "deps": ["T-403", "T-404", "T-405", "T-406"],
+  "max_attempts": 1,
+  "task": "읽기 전용 적대적 검수. 저장소 파일은 하나도 만들거나 고치지 않는다. 바로 시작한다.\n\n대상: `git diff -- projects/VoxLog/web projects/VoxLog/tests/browser_voxlog.py projects/VoxLog/README.md projects/VoxLog/docs/INTERFACE.md`, 약속 `rounds/R44/spec.md`, 요청 `.aimem/requests/Q-261124-b4ad.json`, 작업자 보고 `.aimem/sessions/T-40[3-6]-*/report.md`. 원래 결함 `rounds/R41/REVIEW-r41-s6.md` 'T-388' 절, 조사 문서 `projects/VoxLog/docs/RESEARCH-draft-owner.md`.\n\n**부작용 중심**으로 본다: (1) 녹음 중인 초안을 다른 탭이 빼앗는 경로가 남았나(잠금 획득 전 초안 쓰기, held 를 놓는 시점, draftFinish 실패 뒤, 같은 탭의 pageshow 재회수가 자기 초안을 건드림, 구세대·새 세대 판정) (2) 녹음이 사라지거나 두 번 올라가는 경로(메모리 저장 길 뒤 draftDiscard, 회수와 정상 종료가 겹침, clientId 중복) (3) 잠금이 영영 안 풀리는 경로(예외, finishRec 이 안 불리는 길, held 누수) (4) 웹 잠금 없는 브라우저·격리된 출처에서 녹음·올리기가 여전히 되는가 (5) 걷어낼 것이 다 걷혔나(옛 장치·죽은 코드·주석) - 요청은 두 방식을 함께 남기지 말라고 했다 (6) 검사가 되돌리면 실패하는가: /tmp 사본(`cp -r projects/VoxLog /tmp/r44-review-voxlog`)에서 변이를 넣고 `python3 /tmp/r44-review-voxlog/tests/browser_voxlog.py` (오래 걸리면 해당 검사만 골라 도는 방법을 써도 된다) - 최소한 R41-N16(0개 → true 로), R41-N18(draftDiscard 호출 삭제), 기다리는 요청 삭제(N13), freeze abort 삭제, 구세대 20초 규칙 삭제, aliveAt Infinity 삭제. 끝나면 사본을 지운다. 운영 서버에는 접속하지 않는다. (7) 문서(README·INTERFACE.md)가 코드와 맞는가.\n\n각 발견마다 **파일:행**, 무엇이 틀렸는지, 재현할 입력·변이, 심각도(상/중/하). 직접 확인하지 못한 것은 '추정'. 발견이 없으면 없다고 적는다 - 억지로 채우지 않는다.\n\n보고는 응답 본문에: 첫 줄 판정(통과 / 조건부 통과 / 불합격), (1)~(7) 마다 한 줄 판정, 발견 목록(심각도 순), 변이 시험 표, 검사 결과 줄(`python3 projects/VoxLog/tests/browser_voxlog.py` 마지막 줄, `python3 -m unittest discover -s projects/VoxLog/tests` 마지막 줄). 답의 마지막은 반드시 글로 끝낸다."
+ }
+]
