@@ -751,6 +751,13 @@ class EngineV2Stage3(unittest.TestCase):
         att = n["attempts"][0]
         self.assertEqual((n["status"], att["verify_rc"], att["fail_kind"]), ("todo", -5, "work"))
         self.assertIn("no-report T-1", (self.graphs / "G-900.log").read_text(encoding="utf-8"))
+        # 어댑터가 '보고문 없음' 으로 적은 보고(답을 맺기 전에 끊김)도 완료가 아니다 - 까닭은 다음 시도에 전한다 (R41 T-385)
+        n = self.node(max_attempts=2)
+        self.reap(self.graph([n]), {"state": "done", "fail_kind": None}, ("done", 0),
+                  fleet_graph.NO_REPORT + "\n작업자가 답을 맺지 못하고 도구 호출 도중에 끝났다.\npermission requested: external_directory (/tmp/*); auto-rejecting")
+        att = n["attempts"][0]
+        self.assertEqual((n["status"], att["verify_rc"]), ("todo", -5))
+        self.assertIn("auto-rejecting", att["verify_tail"])
 
     # ---- 5.4 공급자 문지기
     def _spawn_tick(self, g, by_prov, cap=1, busy=()):

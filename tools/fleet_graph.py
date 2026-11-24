@@ -44,7 +44,7 @@ import time
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import fleet  # noqa: E402
-from fleet_rt.base import parse_status  # noqa: E402
+from fleet_rt.base import NO_REPORT, parse_status  # noqa: E402
 
 ROOT = fleet.ROOT
 GRAPHS = ROOT / ".aimem" / "graph"
@@ -1054,9 +1054,12 @@ def _step(g, concurrency=None, allow_spawn=None, hold_on_block=False):
             # 도구 호출을 글자로 찍고 끝난 시도 - 한 일이 없다. verify 가 느슨해도 done 이 되지 않게
             vrc, vtail = -2, "작업자가 도구 호출을 본문에 글자로 찍고 끝났다 - 한 일이 없다. 처음부터 다시 하라"
             _log(g, f"aborted {n['id']} ({att['run_id']}) - 보고가 도구 호출 글자로 끝남")
-        elif rc == 0 and not report.strip():
-            # 보고가 곧 결과물이다 - 읽기 전용 노드는 이것 말고 걸러 줄 장치가 없다 (R37: 세션이 끝나 멈춘 답이 done 이 됐다)
-            vrc, vtail = -5, "작업자가 보고 없이 끝났다 - 한 일을 알 수 없다. 끝에 보고를 적어라"
+        elif rc == 0 and (not report.strip() or report.lstrip().startswith(NO_REPORT)):
+            # 보고가 곧 결과물이다 - 읽기 전용 노드는 이것 말고 걸러 줄 장치가 없다 (R37: 세션이 끝나 멈춘 답이 done 이 됐다).
+            # 어댑터가 '보고문 없음' 으로 적은 것(답을 맺기 전에 끊김 - R41 T-385)도 같다. 아는 까닭은 다음 시도에 전한다
+            why = " / ".join(l.strip() for l in report.splitlines()[1:4] if l.strip())
+            vrc, vtail = -5, ("작업자가 보고 없이 끝났다 - 한 일을 알 수 없다. 끝에 보고를 적어라"
+                              + (f" (끝난 까닭: {why[:300]})" if why else ""))
             _log(g, f"no-report {n['id']} ({att['run_id']}) - 보고가 비어 있음")
         elif rc == 0 and wrote_nothing(n, att):
             vrc, vtail = -3, ("작업자가 쓰라고 받은 경로(" + ", ".join(n.get("write") or [])[:300] + ")를 하나도 고치지 않고 끝났다. "

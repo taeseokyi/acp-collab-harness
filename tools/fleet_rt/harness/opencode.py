@@ -17,6 +17,12 @@ from .. import base
 from ..base import LIMIT_RE, Command, Event, ProbeResult, SessionSpec, one_line as _one_line, require_repo_cwd
 
 _BASE_ARGV = ["opencode", "run", "--format", "json"]
+#: 작업자에게 저장소 밖에서 허용하는 자리 - `/tmp` 뿐이다. opencode 는 저장소 밖 경로를 쓰려 하면 권한을 묻는데, 사람이 없는
+#: 실행이라 자동으로 거절되고 그 자리에서 대화가 끝난다 (R41 T-385: 검수 지시대로 /tmp 에 사본을 만들려다 빈손으로 끝남).
+#: 다른 하네스(claude·codex·freebuff)의 작업자는 이미 /tmp 를 쓴다 - 같은 지시문이 어느 슬롯에서나 통하게 맞춘다.
+#: 사용자의 opencode 설정 파일은 건드리지 않고 이 실행에만 얹는다 (opencode 1.18.33 실측).
+_CONFIG_CONTENT = json.dumps({"permission": {"external_directory": {"/tmp/**": "allow"}}})
+_PERMISSION_RE = re.compile(r"permission requested:.*", re.I)
 
 _TIMEOUT_RE = re.compile(r"timed? ?out", re.I)
 
@@ -75,6 +81,13 @@ def _session_objs(session_dir):
             yield obj
 
 
+def _stderr(session_dir) -> str:
+    try:
+        return base._ANSI_RE.sub("", (pathlib.Path(session_dir) / "stderr.log").read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return ""
+
+
 def _error_messages(session_dir) -> list:
     return [_error_message(o) for o in _session_objs(session_dir) if o.get("type") == "error"]
 
@@ -89,7 +102,8 @@ class OpencodeHarness:
             argv += ["-m", spec.model]
         msg = (_head(spec) + "다음 파일이 이 지시의 전문이다. 읽고 그 안의 지시를 그대로 수행하라"
                "(파일 자체는 수정하지 말라): " + _brief_ref(spec.brief_path, cwd))
-        return Command(argv=argv + [msg], cwd=str(spec.cwd), stdin_path=None)
+        return Command(argv=argv + [msg], cwd=str(spec.cwd), stdin_path=None,
+                       env_set={"OPENCODE_CONFIG_CONTENT": _CONFIG_CONTENT})
 
     def parse_event(self, line: str) -> Optional[Event]:
         if not line or not line.strip():
@@ -136,16 +150,30 @@ class OpencodeHarness:
     def final_report(self, session_dir) -> str:
         step_texts: list = []      # 마지막 step 의 text 조각들
         last_text = ""             # 스트림 전체의 마지막 비지 않은 text
+        last_reason, tool_error = None, ""
         for obj in _session_objs(session_dir):
             t = obj.get("type")
+            part = obj.get("part") if isinstance(obj.get("part"), dict) else {}
             if t == "step_start":
                 step_texts = []
             elif t == "text":
-                s = (obj.get("part") or {}).get("text")
+                s = part.get("text")
                 if isinstance(s, str):
                     step_texts.append(s)
                     if s.strip():
                         last_text = s.strip()
+            elif t == "step_finish":
+                last_reason = part.get("reason")
+            elif t == "tool_use":
+                st = part.get("state") if isinstance(part.get("state"), dict) else {}
+                tool_error = _one_line(st.get("error") or "") if st.get("status") == "error" else ""
+        if last_reason == "tool-calls":
+            # 도구 결과를 기다리던 걸음에서 끝났다 = 답을 맺지 못하고 끊겼다 (권한 거절 따위). 앞 걸음의 혼잣말을 보고로
+            # 내지 않는다 - 그것이 done 으로 받아들여진다 (R41 T-385). 까닭을 아는 만큼 적는다
+            why = [m.group(0).strip() for m in _PERMISSION_RE.finditer(_stderr(session_dir))][-3:]
+            why += [tool_error] if tool_error else []
+            return "\n".join([base.NO_REPORT, "작업자가 답을 맺지 못하고 도구 호출 도중에 끝났다."] + why
+                             + _error_messages(session_dir))
         report = "".join(step_texts).strip() or last_text
         if report:
             return report

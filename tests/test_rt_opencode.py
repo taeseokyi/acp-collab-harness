@@ -168,6 +168,27 @@ class ReportTest(unittest.TestCase):
             (d2 / "events.jsonl").write_text("\n".join("t\t" + l for l in lines2))
             self.assertEqual(A.final_report(d2), "앞 보고")
 
+    def test_a_run_cut_in_the_middle_of_a_tool_call_has_no_report(self):
+        # 권한 거절로 도구 호출 도중 끝난 실행: 앞 걸음의 혼잣말을 보고로 내지 않는다 (R41 T-385 - done 으로 받아들여졌다)
+        with tempfile.TemporaryDirectory() as t:
+            d = _session(t, [_ev("step_start"), _ev("text", part={"text": "I'll start by checking the slot."}),
+                             _ev("step_finish", part={"reason": "tool-calls"}), _ev("step_start"),
+                             _ev("tool_use", part={"tool": "bash", "state": {"status": "error", "input": {"command": "cp -a x /tmp/y"},
+                                                                         "error": "The user rejected permission to use this specific tool call."}}),
+                             _ev("step_finish", part={"reason": "tool-calls"})],
+                         stderr="\x1b[93m! \x1b[0mpermission requested: external_directory (/tmp/*); auto-rejecting\n")
+            r = A.final_report(d)
+            self.assertTrue(r.startswith(base.NO_REPORT), r)
+            self.assertNotIn("I'll start", r)
+            self.assertIn("permission requested: external_directory (/tmp/*); auto-rejecting", r)
+            self.assertIn("rejected permission", r)
+
+    def test_tmp_is_allowed_outside_the_repo_for_this_run_only(self):
+        with tempfile.TemporaryDirectory() as t:
+            c = A.command(_spec(_repo(t)))
+            cfg = json.loads(c.env_set["OPENCODE_CONFIG_CONTENT"])
+            self.assertEqual(cfg, {"permission": {"external_directory": {"/tmp/**": "allow"}}})
+
     def test_multiple_text_parts_of_last_step_joined(self):
         with tempfile.TemporaryDirectory() as t:
             d = _session(t, [_ev("step_start"), _ev("text", part={"text": "옛"}), _ev("step_start"),
