@@ -4,6 +4,7 @@ import errno
 import http.client
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -185,6 +186,45 @@ class TestServe(Base):
         status, _ = self.jreq("GET", "/api/recordings?from=2026-01-01&to=2026-12-31")
         self.assertEqual(status, 200)
 
+    def test_list_status_filter(self):
+        # R41-N3: status 는 meta 의 status 와 정확히 같은 것만 남긴다
+        _, a = self.upload()
+        self.wait_done(a["id"])
+        _, b = self.upload()
+        self.wait_done(b["id"])
+        self.server.store.set_status(b["id"], "failed")
+        _, done = self.jreq("GET", "/api/recordings?status=done")
+        self.assertEqual([r["id"] for r in done["items"]], [a["id"]])
+        _, failed = self.jreq("GET", "/api/recordings?status=failed")
+        self.assertEqual([r["id"] for r in failed["items"]], [b["id"]])
+        _, none = self.jreq("GET", "/api/recordings?status=no-such-status")
+        self.assertEqual(none["items"], [])
+
+    def test_list_limit_zero_is_one(self):
+        # R41-N3: limit 은 1 밑으로 내려가지 않는다 (0 -> 1건)
+        for _ in range(2):
+            self.upload()
+        status, body = self.jreq("GET", "/api/recordings?limit=0")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body["items"]), 1)
+
+    def test_list_limit_not_integer_is_400(self):
+        status, body = self.jreq("GET", "/api/recordings?limit=abc")
+        self.assertEqual(status, 400)
+        self.assertIn("error", body)
+        self.assertEqual(self.jreq("GET", "/api/recordings?limit=2.5")[0], 400)
+
+    def test_list_limit_capped_at_thousand(self):
+        # R41-N3: limit 상한은 1000 - 넘겨도 1000건까지만
+        for i in range(1001):
+            self.server.store.add_recording(b"x", "audio/webm",
+                                            recorded_at="2026-01-01T00:00:00")
+        status, body = self.jreq("GET", "/api/recordings?limit=99999")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body["items"]), 1000)
+        status, body = self.jreq("GET", "/api/recordings?limit=1000")
+        self.assertEqual(len(body["items"]), 1000)
+
     def test_duplicate_client_id(self):
         s1, m1 = self.upload(client_id="c-1")
         s2, m2 = self.upload(client_id="c-1")
@@ -312,6 +352,15 @@ class TestServe(Base):
         self.assertEqual(self.jreq("GET", "/api/answers")[1]["items"], [])
         self.assertEqual(self.jreq("GET", "/api/recordings/" + meta["id"])[0], 200)   # 녹취는 그대로
 
+    def test_delete_running_answer_409(self):
+        # R41-N6: 아직 묻는 중(running)인 답은 404 가 아니라 409 로 거절하고 남긴다
+        ans = self.server.store.add_answer("summary", "", ["r-20200101-000000-abcd"])
+        self.assertEqual(ans["status"], "running")
+        status, body = self.jreq("DELETE", "/api/answers/" + ans["id"])
+        self.assertEqual(status, 409)
+        self.assertIn("error", body)
+        self.assertEqual(self.jreq("GET", "/api/answers/" + ans["id"])[0], 200)
+
     def test_ask_bad_kind_400(self):
         _, meta = self.upload()
         self.wait_done(meta["id"])
@@ -427,6 +476,18 @@ class TestHealthBadQuoteLlmCmd(Base):
         self.assertTrue(body["ok"])
         self.assertFalse(body["llm"])
         self.assertIn("llm_error", body)
+
+
+class TestHealthLlmAvailable(Base):
+    """LLM 명령이 실제로 있으면 health 의 llm 이 참이어야 한다(가짜 늘 false 변이를 잡는다)."""
+    env = {"VOXLOG_LLM_CMD": shlex.quote(sys.executable) + " -p"}
+
+    def test_health_llm_true(self):
+        status, body = self.jreq("GET", "/api/health")
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertTrue(body["llm"])
+        self.assertNotIn("llm_error", body)
 
 
 class TestRetryUpload(Base):

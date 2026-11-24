@@ -1,0 +1,17 @@
+[
+ {
+  "id": "T-395",
+  "title": "[VoxLog] R42-N1 고치기: POST /api/ask 본문 마감을 '시작부터 BODY_GRACE_S 안에 다 와야 함' 으로 설명·문서·검사를 코드에 맞춤",
+  "slot": "S2",
+  "project": "VoxLog",
+  "write": [
+   "projects/VoxLog/serve.py",
+   "projects/VoxLog/docs/INTERFACE.md",
+   "projects/VoxLog/tests/test_serve_ask_body.py"
+  ],
+  "deps": [],
+  "max_attempts": 2,
+  "verify": "python3 -m unittest discover -s projects/VoxLog/tests",
+  "task": "VoxLog `serve.py` 의 POST /api/ask 본문 읽기(`_read_body`, 약 342~380행)는 요청 시작부터 `BODY_GRACE_S`(30초) 안에 본문이 다 오지 않으면 400 을 주는 **절대 마감**이다(느린 본문 공격을 막으려는 뜻이라 동작은 그대로 둔다). 그런데 설명 네 곳이 '덜 온 채 이만큼 **조용하면**'(유휴 기반)이라고 잘못 말한다. 검수 기록: `.aimem/sessions/T-394-S3-a1-143146/report.md` 의 F1·F2.\n\n쓰는 파일은 `projects/VoxLog/serve.py`, `projects/VoxLog/docs/INTERFACE.md`, `projects/VoxLog/tests/test_serve_ask_body.py` 셋뿐이다. 바로 고친다:\n1. 설명을 동작에 맞춘다: `serve.py:43` 의 주석, `_read_body` docstring(약 344~346행, '업로드 쪽 마감 처리와 같은 방식' 이라는 말도 - 업로드는 진행 기반이라 다르다), `serve.py:617` 근처 `make_server` docstring 의 body_grace 설명, `docs/INTERFACE.md:167` 줄. 뜻: '요청을 받기 시작한 때부터 BODY_GRACE_S 안에 Content-Length 만큼 다 오지 않으면(느리게라도 계속 오는 경우 포함) 400 `본문이 중간에 끊겼습니다` 로 답하고 연결을 닫는다'. 코드 동작은 바꾸지 않는다.\n2. 검사를 더한다(test_serve_ask_body.py): 서버를 `body_grace` 를 짧게(예: 1.0초) 띄우고 `Content-Length: 68` 본문을 1바이트씩 0.2초 간격으로 계속 보내면(침묵은 grace 보다 짧음) grace 를 넘긴 뒤 400 이 오는지. 보내는 쪽은 BrokenPipe/ConnectionReset 을 견디게 짜고 응답을 읽어 400 과 `error` 를 확인한다. 정상 본문은 202 라는 기존·새 검사도 그대로 통과해야 한다. 검사 하나가 몇 초 안에 끝나게 한다.\n\n운영 서버에는 접속하지 않는다(검사가 임시 포트로 띄우는 서버만). 끝나면 `python3 -m unittest discover -s projects/VoxLog/tests` 를 돌려 전부 통과하는지 본다(지금 150 OK).\n\n보고는 응답 본문에 쓴다. 첫 줄 상태(DONE 등), 고친 자리 파일:행, 더한 검사 이름, 검사 결과 줄(Ran N tests / OK), 바꾼 파일 목록. 답의 마지막은 반드시 글(보고)로 끝낸다."
+ }
+]

@@ -6,16 +6,16 @@
 
 | 무엇 | 파일 | 명령 | 초록이면 |
 |---|---|---|---|
-| 로직·저장 | `test_game.mjs` · `test_jamo.mjs` · `test_storage.mjs` · `test_dict.mjs` · `test_trend.mjs` | `node --test projects/자모맞히기/tests/*.mjs` | `ℹ pass 107`, `ℹ fail 0` |
-| 낱말 목록·사전 서버·정답 고르기 | `test_words.py` · `test_dict_server.py` · `test_pick_answers.py` · `test_trend_news.py` · `test_trend_store.py` | `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'` | `Ran 132 tests`, `OK` |
+| 로직·저장 | `test_game.mjs` · `test_jamo.mjs` · `test_storage.mjs` · `test_dict.mjs` · `test_trend.mjs` | `node --test projects/자모맞히기/tests/*.mjs` | `ℹ pass 109`, `ℹ fail 0` |
+| 낱말 목록·사전 서버·정답 고르기 | `test_words.py` · `test_dict_server.py` · `test_pick_answers.py` · `test_trend_news.py` · `test_trend_store.py` | `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'` | `Ran 144 tests`, `OK` |
 | 브라우저 - 그려진 화면 | `browser_game.py` | `python3 projects/자모맞히기/tests/browser_game.py` | rc 0, `통과 121 / 전체 121` |
 | 브라우저 - 모드 오가기·시스템 테마 | `browser_modes.py` | `python3 projects/자모맞히기/tests/browser_modes.py` | rc 0, `통과 100 / 전체 100` |
 | 브라우저 - 외부 사전 조회(R31) | `browser_dict.py` | `python3 projects/자모맞히기/tests/browser_dict.py` | rc 0, `통과 75 / 전체 75` |
-| 브라우저 - 뉴스 정답 고르기(R31·R32) | `browser_trend.py` | `python3 projects/자모맞히기/tests/browser_trend.py` | rc 0, `통과 81 / 전체 81` |
+| 브라우저 - 뉴스 정답 고르기(R31·R32) | `browser_trend.py` | `python3 projects/자모맞히기/tests/browser_trend.py` | rc 0, `통과 85 / 전체 85` |
 
-2026-11-15 (R32 T-334) 단위 검사 수: 로직 `pass 107`·`fail 0`, 파이썬 `Ran 132 tests`·`OK`, 화면 `통과 121 / 전체 121` rc 0,
-모드 `통과 100 / 전체 100` rc 0, 사전 `통과 75 / 전체 75` rc 0, 트렌드 `통과 81 / 전체 81` rc 0 - 여섯 벌 모두 초록.
-(R31 T-318 때는 로직 90·파이썬 97·트렌드 45, 그 앞 R28 T-302 때는 로직 66·낱말 13.)
+2026-11-24 (R42) 단위 검사 수: 로직 `pass 109`·`fail 0`, 파이썬 `Ran 144 tests`·`OK`, 화면 `통과 121 / 전체 121` rc 0,
+모드 `통과 100 / 전체 100` rc 0, 사전 `통과 75 / 전체 75` rc 0, 트렌드 `통과 85 / 전체 85` rc 0 - 여섯 벌 모두 초록.
+(2026-11-15 R32 T-334 때는 로직 107·파이썬 132·트렌드 81, R31 T-318 때는 로직 90·파이썬 97·트렌드 45, 그 앞 R28 T-302 때는 로직 66·낱말 13.)
 `test_trend_store.py`(R32)는 서버 정답 저장소 `trend_store.py` 를 임시 파일로만 검사하고(진짜 `data/` 는 안 건드림),
 `test_trend.mjs`(R32)는 `web/js/trend.js` 의 `sinceText`·`mergeTrend` 를 검사합니다. 함대 쪽
 `tests/browser_monitor_app_server.py` 는 모니터의 '앱 열기' 가 이 프로젝트의 `serve.py` 를 띄워 `/api/*` 를 이어 주는지
@@ -86,7 +86,7 @@ gemini 일 때만 보이는 키 입력, 있음(줄·색·`jamo.extraWords`·새�
 | 어두운 모드 - 시스템 설정 따름 + 단추로 바꿈, 저장됨 | `browser_game.py:scenario_dark` (계산된 body 배경 밝기, 새로 고침 뒤 같은 색·체크박스), `browser_modes.py:scenario_system_dark`·`scenario_system_light` (`color_scheme='dark'`/`'light'` 첫 방문 body 배경 밝기, 어두운 문맥에서 설정을 끄면 새로 고침 뒤에도 밝음) | 증명됨 |
 | 접근성 - 키보드만으로 완주, `aria-live` | `browser_game.py:scenario_keyboard_only` (Escape 로 첫 도움말, Tab+Enter 로 다시 열기, Tab 으로 모드 단추, 물리 자판으로 이김, `#toasts[aria-live=polite]` 에 결과 글), `browser_modes.py:scenario_enter_buttons` (모드 단추·`#btn-new` 에 포커스 + Enter 가 그 단추를 누르고 제출로 새지 않음) | 증명됨 |
 | 통계 - 판수·승률·연승·최대 연승·분포 | `browser_game.py:scenario_win` (첫 판 `1 100 1 1`, 분포 `1 0 0 0 0 0`, 이긴 줄만 `hl`, 새로 고침 뒤 그대로) | 증명됨(날마다 모드만) - 연습은 통계를 안 남긴다는 것도 `scenario_practice` 가 봄 |
-| 검사 - 로직·브라우저 모두 초록 | 이 표의 여섯 명령 | 증명됨 - 로직 107·파이썬 132·화면 121·모드 100·사전 75·트렌드 81 모두 초록 |
+| 검사 - 로직·브라우저 모두 초록 | 이 표의 여섯 명령 | 증명됨 - 로직 109·파이썬 144·화면 121·모드 100·사전 75·트렌드 85 모두 초록 |
 
 ## 이 검사가 일부러 보지 않는 것 / 약점
 

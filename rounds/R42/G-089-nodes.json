@@ -1,0 +1,12 @@
+[
+ {
+  "id": "T-394",
+  "title": "[VoxLog] R42 적대적 검수: S6 수정 T-390(stt id·ask 본문 timeout)·T-392(검사)·T-393(INTERFACE.md) + 자모맞히기 T-389 README 수",
+  "slot": "S3",
+  "project": "VoxLog",
+  "write": [],
+  "deps": [],
+  "max_attempts": 1,
+  "task": "R42 에서 freebuff 슬롯이 만든 변경을 적대적으로 검수한다. 바로 `git diff -- projects/VoxLog projects/자모맞히기/tests/README.md` 와 `git status --short projects/VoxLog` 를 읽고 시작한다(새 파일 `projects/VoxLog/tests/test_serve_ask_body.py` 도 본다). 작업자 보고: `.aimem/sessions/T-390-S6-a1-133530/report.md`, `.aimem/sessions/T-392-S6-a1-141340/report.md`, `.aimem/sessions/T-393-S6-a1-142426/report.md`, `.aimem/sessions/T-389-S6-a2-133046/report.md`. 원래 발견은 `rounds/R41/REVIEW-r41-s6.md` 13~24행.\n\nweb/ 아래(초안 회수)는 이번 검수 대상이 아니다 - 그 수정은 되돌렸고 방식이 바뀔 예정이다.\n\n볼 것:\n1. T-390 R41-N1: `voxlog/stt.py` 의 작업 id 규칙(1~128자, 글자·숫자·`-`·`_`·`.`, `.`·`..` 거절)이 경로 탈출을 막는가(URL 인코딩·`%2e`·공백·유니코드 글자·개행 등). UUID·`job_1` 은 받는가. 검사가 그 규칙을 지키는가.\n2. T-390 R41-N5: `serve.py` POST /api/ask 의 덜 온 본문이 400 이 되는가, 본문이 정상일 때와 큰 본문·느린 본문(마감 안에 다 오면 받아야 함)·Content-Length 없음·음수에서 회귀가 없는가, 다른 엔드포인트(업로드)의 마감과 섞이지 않는가, 원래 timeout 이 돌아오는가.\n3. T-392 새 검사가 정말 결함을 잡는가 - 보고의 변이 표를 그대로 믿지 말고 몇 개를 직접 재현한다.\n4. T-393 `docs/INTERFACE.md` 의 고친 행이 지금 코드와 맞는가(R41-N4·N8~N12, recordings limit, stt id, ask 본문 400). 초안 회수(lease·회수 지연)는 일부러 문서에 넣지 않았다 - 빠진 것으로 적지 않는다.\n5. 자모맞히기 `tests/README.md` 의 수(로직 109·파이썬 144·화면 121·모드 100·사전 75·트렌드 85)가 실제 검사 수와 맞는가 - 최소한 `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'` 와 `node --test projects/자모맞히기/tests/*.mjs` 를 돌려 대조한다.\n\n**변이 시험은 /tmp 사본에서 한다**: `cp -r projects/VoxLog /tmp/r42-review-voxlog` 처럼 /tmp 에 복사해 코드를 일부러 틀리게 바꾸고(예: id 규칙의 `..` 거절 삭제, 덜 온 본문 400 → 무응답, limit 상한 삭제) 그 사본에서 `python3 -m unittest discover -s /tmp/r42-review-voxlog/tests` 로 검사가 잡는지 본다. 끝나면 /tmp 사본을 지운다. /tmp 쓰기가 거절되면 멈추지 말고 그 사실(거절된 도구와 메시지)을 보고에 적고 코드 읽기와 검사 실행으로 판정한다. 운영 서버에는 접속하지 않는다.\n\n읽기 전용 검수다. 저장소 파일은 하나도 만들거나 고치지 않는다(쓰기 경로 없음). 검사: `python3 -m unittest discover -s projects/VoxLog/tests`.\n\n각 발견마다 **파일:행**, 무엇이 틀렸는지, **재현할 구체적인 입력이나 변이**, 심각도(상/중/하)를 적는다. 직접 재현하지 못한 것은 '추정' 이라고 적는다. 발견이 없으면 없다고 적는다 - 억지로 채우지 않는다.\n\n보고는 응답 본문에 쓴다. 첫 줄은 판정(통과 / 조건부 통과 / 불합격), 이어서 1~5 마다 한 줄 판정, 발견 목록(심각도 순), 변이 시험 표(어디서·무엇을 바꿨고·잡혔는지 - /tmp 를 실제로 썼는지 분명히), 돌린 검사의 결과 줄. 답의 마지막은 반드시 글(보고)로 끝낸다."
+ }
+]

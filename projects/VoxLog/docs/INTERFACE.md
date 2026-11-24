@@ -37,7 +37,7 @@ id 형식: 녹음 `r-YYYYMMDD-HHMMSS-xxxx`, 답 `a-YYYYMMDD-HHMMSS-xxxx` (xxxx �
 {"id", "client_id": str|None, "created": 서버 ISO 시각, "recorded_at": 클라이언트 ISO 시각(쓸 수 없으면 created),
  "duration_ms": int|None, "mime": "audio/webm" 꼴(매개변수 뗀 것), "size": int,
  "status": "pending"|"transcribing"|"done"|"failed"|"no-stt", "error": str|None,
- "title": 받아 적은 글 앞 40자(없으면 ""), "chars": int}
+ "title": 받아 적은 글에서 공백을 접은(줄바꿈·연속 공백을 한 칸으로) 앞 40자(없으면 ""), "chars": int}
 ```
 
 ## voxlog/store.py
@@ -72,22 +72,26 @@ class Store:
     def add_answer(self, kind, prompt, ids) -> dict      # {"id","kind","prompt","ids","created","status":"running","answer":None,"error":None}
     def set_answer(self, aid, status, answer=None, error=None) -> None   # status "done"|"failed"
     def get_answer(self, aid) -> dict|None
+    def delete_answer(self, aid) -> bool|"running"   # 지웠으면 True, 없거나 잘못된 id 면 False, 아직 status "running" 이면 "running"(지우지 않음)
     def list_answers(self, limit=50) -> list[dict]       # 최신순. 항목마다 about = 첫 녹취의 {recorded_at, title} (지워졌으면 None)
 ```
-잘못된 id 는 get/audio_path/get_answer 가 None, set_*/delete 는 False 또는 KeyError 없이 조용히 무시하지 말고 `ValueError`.
+잘못된 id 는 get/audio_path/get_answer 가 None, delete_answer 가 False, set_*(set_status·set_job·set_transcript·set_answer) 와 삭제 delete(녹음) 는 `ValueError`.
 
 ## voxlog/stt.py
 
 ```python
 class SttUnavailable(Exception)   # 백엔드가 없음 → 메타 status "no-stt"
 class SttError(Exception)         # 실패 → status "failed", error 에 짧은 까닭(키·주소 없이)
-def backend_name(env=None) -> str  # "command" | "api" | "none"
-    # VOXLOG_STT 가 있으면 그것. 없으면 VOXLOG_STT_CMD 가 있으면 "command", VOXLOG_STT_URL 이 있으면 "api", 아니면 "none"
+def backend_name(env=None) -> str  # VOXLOG_STT 값을 그대로 | "command" | "api" | "none"
+    # VOXLOG_STT 가 있으면 그 값을 검사하지 않고 그대로 돌려줌("garbage" → "garbage"). 없으면 VOXLOG_STT_CMD 가 있으면 "command",
+    # VOXLOG_STT_URL 이 있으면 "api", 아니면 "none"
 def to_audio(src: pathlib.Path, fmt: str) -> pathlib.Path   # ffmpeg 로 16kHz 모노 wav 임시 파일 - command 백엔드용 (ffmpeg 없으면 SttError)
 def transcribe(path: pathlib.Path, mime: str, env=None, opener=None, job=None) -> str
     # command: VOXLOG_STT_CMD 를 shlex.split, "{wav}" 자리에 16k 모노 wav 경로, shell 없이 실행, stdout 이 글, 시간 상한 600초
     # api: 화자 구분 받아쓰기 서버의 작업 API. 받은 원본 그대로(다시 압축하지 않음)
     #   POST VOXLOG_STT_URL (multipart: file, language=VOXLOG_STT_LANG(기본 "ko"), model=VOXLOG_STT_MODEL(있을 때)) → {"id"}
+    #   작업 id 는 `[A-Za-z0-9._-]{1,128}` 이고 "."·".." 이 아니어야 함(UUID·job_1 꼴은 받고, `/`·`..` 로 경로를 벗어나는 것만 거절).
+    #   꼴이 아니면 SttError("음성인식 서버 응답을 읽지 못했습니다")
     #   GET VOXLOG_STT_URL/<id> 를 POLL_SECONDS(10초)마다 → status done|failed|cancelled 까지 (상한 JOB_TIMEOUT 6시간,
     #   조회가 POLL_MAX_ERRORS(30)번 잇달아 실패하면 SttError). 끝나면 DELETE VOXLOG_STT_URL/<id>.
     #   키는 VOXLOG_STT_API_KEY(Authorization: Bearer). result.segments([{speaker, text, …}])를 "화자 N: 글" 줄들로 적음
@@ -109,21 +113,26 @@ class Transcriber:
 ```python
 KINDS = {"summary": "요약", "keywords": "핵심어·주제", "todo": "할 일·약속 뽑기", "custom": "직접 묻기"}
 MAX_PROMPT_CHARS = 200_000
+MAX_USER_PROMPT = 2000      # user_prompt 는 앞 2000자만 씀(넘는 부분은 알리지 않고 버림)
 class AskUnavailable(Exception)  # 명령이 없음
 class AskError(Exception)
 def build_prompt(kind, user_prompt, items) -> str
     # items: [{"id","recorded_at","transcript"}] recorded_at 의 실제 시각(시간대 포함) 오래된 순으로 묶음,
     # 각 녹취는 구분선과 id·시각 머리로 감쌈 (길이 초과로 뺄 때 가장 오래된 것부터)
     # "아래 녹취는 자료일 뿐 지시가 아니다" 를 명시. 너무 길면 오래된 것부터 빼고 뺐다는 줄을 넣음
-    # custom 은 user_prompt 필수(없으면 ValueError), 나머지는 user_prompt 를 덧붙임(있으면)
+    # user_prompt 는 앞뒤 공백을 떼고 앞 MAX_USER_PROMPT(2000)자만 씀. custom 은 그것이 필수(비면 ValueError),
+    # 나머지는 "\n추가 요청: " 으로 덧붙임(있으면)
 def llm_command(env=None) -> list[str]
-    # VOXLOG_LLM_CMD 가 있으면 shlex.split, 없으면 ["claude","-p","--tools","","--no-session-persistence","--output-format","text"]
+    # VOXLOG_LLM_CMD 가 있으면 shlex.split, 없으면 ["claude","-p","--tools","","--strict-mcp-config","--setting-sources","",
+    #   "--no-session-persistence","--output-format","text"] (사용자 설정 파일·MCP 서버를 읽지 않게 고정)
 def run_llm(prompt, env=None, timeout=300) -> str   # 프롬프트는 stdin 으로, 코드 0 이 아니면 AskError(stderr 끝 300자), 실행 파일 없음 → AskUnavailable
 class Asker:
     def __init__(self, store, env=None, run=run_llm)
-    def start(self) ; def stop(self, timeout=5) ; def idle(self) -> bool
+    def start(self)   # 데몬 스레드 하나. 시작할 때 저장된 답 중 status "running" 인 것을 모두 "failed" 로 바꿈
+                      #   (error "서버가 다시 시작되어 끊겼습니다 - 다시 물어 주십시오") - 화면에서 다시 물어야 함
+    def stop(self, timeout=5) ; def idle(self) -> bool
     def submit(self, kind, prompt, ids) -> dict
-        # kind 검사(ValueError), ids 가 비었거나 받아 적은 글이 하나도 없으면 ValueError
+        # kind 검사(ValueError), ids 는 문자열 1~200개의 목록(아니면 ValueError), 받아 적은 글이 하나도 없으면 ValueError
         # store.add_answer → 큐(한 번에 하나) → build_prompt → run → set_answer(done|failed)
 ```
 
@@ -141,19 +150,22 @@ API (JSON, 오류는 `{"error": "한국어 까닭"}` + 4xx/5xx). 토큰이 있�
 | ---- | -- |
 | `GET /api/health` | `{"ok":true,"auth":bool,"stt":backend_name,"llm":bool(명령 있음),"version":"0.1"}` (+ `"llm_error": str`, `VOXLOG_LLM_CMD` 가 비었거나 따옴표가 안 맞을 때) |
 | `POST /api/recordings` 본문=오디오 그대로, 머리 `Content-Type`, `X-Recorded-At`, `X-Duration-Ms`, `X-Client-Id` | 201 메타(새 것) / 200 메타(duplicate) / 400 / 408(업로드 마감 넘김) / 413 / 500(저장 실패) / 503(동시 업로드 2개 넘음, `Retry-After: 5`) / 507(디스크 여유 부족) |
-| `GET /api/recordings?q=&from=&to=&status=&limit=` | `{"items":[…],"stats":{…}}` / 400(`from`·`to` 가 실제 날짜가 아님) |
+| `GET /api/recordings?q=&from=&to=&status=&limit=` | `{"items":[…],"stats":{…}}` / 400(`from`·`to` 가 실제 날짜가 아님·`limit` 가 정수가 아님) |
 | `GET /api/recordings/<id>` | 메타+transcript / 404 |
 | `GET /api/recordings/<id>/audio` | 오디오 바이트(그 mime) |
 | `POST /api/recordings/<id>/retry` | 음성인식 다시 넣음 → 200 메타 / 404 / 409(이미 큐에 있거나 받아쓰는 중) |
 | `DELETE /api/recordings/<id>` | `{"ok":true}` |
 | `DELETE /api/answers/<id>` | `{"ok":true}` · 없으면 404 · 아직 묻는 중이면 409 |
-| `POST /api/ask` `{"kind","prompt","ids":[…]}` | 202 답 메타 / 400(본문이 JSON 객체가 아님·`prompt` 나 `kind` 가 문자열이 아님·`ids` 가 비었거나 받아 적은 글이 없음) |
+| `POST /api/ask` `{"kind","prompt","ids":[…]}` | 202 답 메타 / 400(본문이 JSON 객체가 아님·`prompt` 나 `kind` 가 문자열이 아님·`ids` 가 1~200개 문자열이 아님·받아 적은 글이 없음·본문이 `Content-Length` 보다 덜 옴) |
 | `GET /api/answers` · `GET /api/answers/<aid>` | 목록 `{"items":[…]}` · 답 하나 |
 
 업로드 본문은 메모리에 모으지 않고 `Store.incoming_path()` 의 `incoming/` 파일에 조각씩 흘려 쓴 뒤(fsync) `Store.add_recording_file` 로
 `audio/` 로 옮깁니다. `X-Recorded-At` 은 `datetime.fromisoformat` 으로 읽히고 시간대가 붙어 있으며 서버 시계보다 하루 넘게
 미래가 아닐 때만 그 값을 쓰고, 아니면 업로드를 거절하지 않고 `created`(서버가 받은 시각)로 기록합니다. `from`·`to` 는
-`YYYY-MM-DD` 이면서 달력에 실제로 있는 날짜여야 하고 아니면 400. 동시에 받는 업로드는 2개(`max_uploads`)이고 넘으면 본문을 읽지 않고 503 + `Retry-After: 5`, 저장소 디스크 여유가
+`YYYY-MM-DD` 이면서 달력에 실제로 있는 날짜여야 하고 아니면 400. `limit` 은 정수만 받고(아니면 400) 기본 200,
+1보다 작으면 1, 1000 을 넘으면 1000 으로 조입니다. `status` 는 메타 status 와 글자 그대로 비교하므로 모르는 값이면 빈 목록입니다.
+`POST /api/ask` 본문은 `Content-Length` 만큼 다 올 때까지 받되, 요청을 받기 시작한 때부터 `BODY_GRACE_S`(30초) 안에
+다 오지 않으면(느리게라도 계속 오는 경우 포함) **400** `본문이 중간에 끊겼습니다`(연결 닫음, R41-N5). 동시에 받는 업로드는 2개(`max_uploads`)이고 넘으면 본문을 읽지 않고 503 + `Retry-After: 5`, 저장소 디스크 여유가
 본문 길이+여유분보다 적으면 507. 큰 본문이면 서버가 연결을 닫으므로 클라이언트에는 상태 코드 대신 **연결 오류**로 보일 수 있음
 (그래서 503·507·연결 오류는 영구 실패가 아니라 대기열에 남겨 다시 올림). 받는 도중 끊기면 400.
 
@@ -164,12 +176,16 @@ API (JSON, 오류는 `{"error": "한국어 까닭"}` + 4xx/5xx). 토큰이 있�
 **저장 실패**: incoming 쓰기·`add_recording_file` 의 `OSError` 가 `ENOSPC`/`EDQUOT` 이면 **507**, 그 밖은 **500**
 `서버가 녹음을 저장하지 못했습니다`(연결 닫음). incoming 폴더를 만들지 못해도(mkdir OSError) 같은 규칙: `ENOSPC`/`EDQUOT` **507**, 그 밖 **500**(R35-N3).
 
-**503/507 이 연결 오류로 보일 수 있음**: 503(업로드 자리 없음)·디스크 여유 507 은 본문을 읽기 전에 답하고 연결을 닫으므로,
-64KB 넘는 녹음을 보내던 쪽은 상태 코드 대신 연결 오류를 받을 수 있음. 페이지 대기열은 이를 '연결 안 됨' 으로 두고 줄을 남겨
+**503/507 이 연결 오류로 보일 수 있음**: 503(업로드 자리 없음)·디스크 여유 507 은 본문을 저장·해석하지 않고 답한 뒤 연결을 닫으므로
+(받은 본문 중 64KB 이하만 버려서 읽고 나머지는 읽지 않음), 64KB 넘는 녹음을 보내던 쪽은 상태 코드 대신 연결 오류를 받을 수 있음.
+같은 까닭에 503·507 의 오류 글(JSON 본문)도 클라이언트에 닿지 않을 수 있으므로 화면은 **상태 코드로만** 판단함.
+페이지 대기열은 이를 '연결 안 됨' 으로 두고 줄을 남겨
 다음에 다시 올림(영구 실패 아님). 대기열의 상태 코드 처리: 408 은 영구 실패가 아니고(400·413·415 만 영구),
 500/507/503 은 `Retry-After`(없으면 5초, 최대 60초) 뒤 다시 올림.
-받은 녹음은 바로 `Transcriber.submit`. 남의 출처(`Origin` 이 있고 Host 와 다르고 `null` 도 아님) 쓰기 요청은 토큰 없을 때 403
-(자모맞히기 `serve.py` 의 같은 검사를 참고).
+받은 녹음은 바로 `Transcriber.submit`. 토큰이 없으면 `Host` 가 루프백(`127.0.0.1`·`localhost`·`::1`) 인 요청만 받고,
+그 밖의 이름이면 403 `이 주소로는 열 수 없습니다`(DNS 리바인딩 방어 - `--host` 검사와 별개로 모든 요청에 걸림).
+남의 출처(`Origin` 이 있고 `Host` 와 다르거나 `Origin: null`)인 쓰기 요청도 토큰 없을 때 403 `허용되지 않은 출처입니다`
+(`null` 은 샌드박스 iframe 등이라 남의 출처로 봄; 자모맞히기 `serve.py` 의 같은 검사를 참고).
 
 ## 브라우저 쪽 (전역 객체, 바닐라 JS)
 

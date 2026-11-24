@@ -1,0 +1,71 @@
+[
+ {
+  "id": "T-389",
+  "title": "[자모맞히기] R39-N3 문서: tests/README.md 의 기대 검사 수를 지금 수로 (S6 1/5, 큐 1)",
+  "slot": "S6",
+  "project": "자모맞히기",
+  "write": ["projects/자모맞히기/tests/README.md"],
+  "deps": [],
+  "max_attempts": 2,
+  "verify": "python3 -c \"t=open('projects/자모맞히기/tests/README.md',encoding='utf-8').read(); bad=[s for s in ('pass 107','Ran 132','전체 81') if s in t]; assert 'Ran 144 tests' in t and not bad, 'README 에 낡은 수가 남음: %s' % bad\"",
+  "task": "요지: 자모맞히기 tests/README.md 에 적힌 기대 검사 수(로직 107·파이썬 132·트렌드 81 등)를 여섯 검사를 실제로 돌려 얻은 지금 수로 맞추면 끝\n\n`projects/자모맞히기/tests/README.md` 의 표(9~14행)와 단락(16~18행), 89행 '검사' 줄에 적힌 기대 검사 수가 낡았다. 여섯 검사를 돌려 지금 수를 확인한다(명령은 README 표에 있다):\n- `node --test projects/자모맞히기/tests/*.mjs` (ℹ pass N)\n- `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'` (관리자가 돌렸을 때 Ran 144 tests OK)\n- `python3 projects/자모맞히기/tests/browser_game.py` · `browser_modes.py` · `browser_dict.py` · `browser_trend.py` (통과 N / 전체 N)\n\n돌린 결과의 수로 표의 기대 값 칸, 16~17행 단락(날짜는 2026-11-24 (R42), 앞 수는 괄호 안 옛 기록으로 남김), 89행의 수를 고친다. 검사가 실패하면 수를 고치지 말고 실패를 보고한다. 쓰는 파일은 이 README 하나뿐이다. 브라우저 검사는 서버를 따로 띄우지 않는다(검사가 스스로 띄움).\n\n보고는 응답 본문에 쓴다. 첫 줄 상태(DONE 등), 여섯 검사의 결과 줄, 고친 행. 답의 마지막은 반드시 글(보고)로 끝낸다."
+ },
+ {
+  "id": "T-390",
+  "title": "[VoxLog] R41-N1·N5 고치기: stt 작업 id 규칙·ask 본문 읽기 timeout (S6 2/5, 큐 3)",
+  "slot": "S6",
+  "project": "VoxLog",
+  "write": [
+   "projects/VoxLog/voxlog/stt.py",
+   "projects/VoxLog/serve.py",
+   "projects/VoxLog/tests/test_stt.py",
+   "projects/VoxLog/tests/test_serve_ask_body.py"
+  ],
+  "deps": [],
+  "max_attempts": 2,
+  "verify": "python3 -m unittest discover -s projects/VoxLog/tests",
+  "task": "요지: VoxLog voxlog/stt.py 의 작업 id 검사(isalnum 만 받음, R41-N1)를 실제 id 형식에 맞게 완화하고 serve.py 의 POST /api/ask 본문이 덜 왔을 때 응답 없이 끊기는 것(R41-N5)을 400 으로 고쳐 검사를 더하고 VoxLog 단위 검사 전체가 통과하면 끝\n\n재현은 `rounds/R41/REVIEW-r41-s6.md` 13·17행. 쓰는 파일은 `projects/VoxLog/voxlog/stt.py`, `projects/VoxLog/serve.py`, `projects/VoxLog/tests/test_stt.py`, 새 파일 `projects/VoxLog/tests/test_serve_ask_body.py` 넷뿐이다. docs/·web/·test_serve.py 는 다른 노드 몫이라 건드리지 않는다(문서는 뒤 노드가 코드를 읽고 맞춘다).\n\n1. R41-N1(중): `voxlog/stt.py:229` 근처가 작업 API 의 `{\"id\": …}` 를 `isalnum()` 일 때만 받아 UUID(`3f2a…-…`)·`job_1` 이면 받아쓰기가 실패한다. 실서버는 부르지 말고, 코드·`docs/INTERFACE.md`(90~92행)·`tests/fake_stt.py`·`tests/test_stt.py` 에서 쓰는 id 꼴을 확인한다. 이 id 는 URL 경로에 들어가므로 경로 탈출만 막으면 된다: 1~128자, 글자·숫자·`-`·`_`·`.` 만(단 `.`·`..` 자체는 거절) 받게 완화한다. 검사: UUID·`job_1` 은 받고, `../x`·`a/b`·빈 값·129자는 SttError.\n2. R41-N5(하): `serve.py:333` 근처 POST /api/ask 가 `Content-Length` 보다 본문이 덜 오고 연결이 살아 있으면 읽기 timeout 을 잡지 않아 응답 없이 끊긴다(문서는 400). 소켓 읽기에 timeout 을 걸고(업로드 쪽 마감 처리를 참고) 덜 온 본문은 400 JSON 으로 답하게 고친다. 검사(새 파일): 임시 포트로 서버를 띄워 `Content-Length: 100` 에 7바이트만 보내고 연결을 유지하면 400 응답이 오는지. 기다림은 timeout 을 짧게 주입할 수 있게 해서 몇 초 안에 끝나게 한다.\n\n바로 파일을 고친다. 끝나면 `python3 -m unittest discover -s projects/VoxLog/tests` 를 돌려 전부 통과하는지 본다(지금 137 OK, 더한 만큼 늘어야 함). 운영 서버에는 접속하지 않는다.\n\n보고는 응답 본문에 쓴다. 첫 줄 상태(DONE 등), 고친 것마다 파일:행과 더한 검사 이름, 확인한 id 꼴과 근거, 검사 결과 줄(Ran N tests / OK), 바꾼 파일 목록. 답의 마지막은 반드시 글(보고)로 끝낸다."
+ },
+ {
+  "id": "T-391",
+  "title": "[VoxLog] R41-N13·N14·N16·N17·N18 고치기: 초안 회수 남은 경쟁·0조각 초안·activeDraft 누수·검사 (S6 3/5, 큐 2)",
+  "slot": "S6",
+  "project": "VoxLog",
+  "write": [
+   "projects/VoxLog/web/app.js",
+   "projects/VoxLog/web/queue.js",
+   "projects/VoxLog/web/sw.js",
+   "projects/VoxLog/tests/browser_voxlog.py"
+  ],
+  "deps": [],
+  "max_attempts": 2,
+  "verify": "python3 projects/VoxLog/tests/browser_voxlog.py",
+  "task": "요지: VoxLog web/ 의 초안 회수 남은 결함(R41-N13 다른 탭이 열린 채 녹음 탭이 죽으면 회수 안 됨, N14 프리즈 때 lease 만료, N16 조각 0개 초안도 살렸다고 셈, N18 draftOk=false 때 activeDraft 누수)을 고치고 N17 의 빠진 검사를 포함해 고친 것마다 브라우저 시나리오를 더해 browser_voxlog.py 가 모두 통과하면 끝\n\n재현과 위치는 `rounds/R41/REVIEW-r41-s6.md` 44~49행, 앞 수정의 설명은 `projects/VoxLog/PROGRESS.md` 의 R41 절(초안 lease `aliveAt` 20초, 녹음 중 5초마다 갱신, 시작 22초 뒤 한 번 더 회수). 쓰는 파일은 `projects/VoxLog/web/app.js`, `web/queue.js`, `web/sw.js`(캐시 VERSION 올리기와 N17 판정 검사에 필요할 때만), `tests/browser_voxlog.py` 넷뿐이다. 서버·docs/·다른 tests 는 다른 노드 몫이다.\n\n1. R41-N13(중): `app.js:1073` 의 회수는 시작 때와 22초 뒤 한 번뿐이라, 다른 탭이 열려 있는 동안 녹음 탭이 죽으면 앱을 다시 열 때까지 초안이 회수되지 않는다. 열린 탭이 주기적으로(예: lease 길이마다) 그리고 `visibilitychange` 로 보일 때 다시 회수를 시도하게 한다. 회수는 한 번에 하나만 돌게(겹침 방지) 한다.\n2. R41-N14(하): 탭이 20초 넘게 멈췄다 깨어나면 자기 초안이 이미 회수됐을 수 있다. 깨어난 녹음 탭이 `draftAppend`/`draftFinish` 에서 자기 초안이 없음을 알면 R40-N1 수정처럼 메모리 조각으로 이어서 잃지 않게 하고 같은 녹음이 두 번 올라가지 않게(client_id) 한다. 할 수 없는 부분은 보고에 적는다.\n3. R41-N16(하): `queue.js:465,504` 조각 0개 초안은 '살렸습니다' 수에 넣지 말고 지운다.\n4. R41-N18(하): `queue.js:373,475`·`app.js:448-454` draftAppend 실패(draftOk=false) 뒤 activeDraft 가 남아 DB 초안이 정리되지 않는 것을 정리한다.\n5. R41-N17(검사): lease 만료 회수 경로, sw.js 엄격 판정(JSON 이고 문자열 id 일 때만 지움), id 없는 JSON 응답의 lastError 를 브라우저 시나리오로 고정한다. 기다림은 sleep 이 아니라 상태 확인으로, lease 시간은 검사에서 줄일 수 있게 한다.\n\n화면 검사는 보이는 것(is_visible·글자)을 묻는다. 검사 서버는 테스트가 임시 포트로 띄우는 것만 쓴다(운영 서버 접속 금지). web 파일을 바꿨으니 `sw.js` 의 캐시 VERSION 을 올린다.\n\n바로 파일을 고친다. 끝나면 `python3 projects/VoxLog/tests/browser_voxlog.py`(지금 31/31, 더한 만큼 늘어야 함)를 돌려 모두 통과하는지 본다. 고친 것마다 시나리오를 더할 때까지 줄이거나 건너뛰지 않는다.\n\n보고는 응답 본문에 쓴다. 첫 줄 상태(DONE 등), 고친 것마다 파일:행과 더한 시나리오 이름, 검사 결과 줄, 바꾼 파일 목록. 답의 마지막은 반드시 글(보고)로 끝낸다."
+ },
+ {
+  "id": "T-392",
+  "title": "[VoxLog] R41-N2·N3·N6·N7·N11 검사 더하기: 검색 계약·recordings status·limit·answers 409·health llm·ask ids 상한 (S6 4/5, 큐 4)",
+  "slot": "S6",
+  "project": "VoxLog",
+  "write": [
+   "projects/VoxLog/tests/test_store.py",
+   "projects/VoxLog/tests/test_serve.py",
+   "projects/VoxLog/tests/test_ask.py"
+  ],
+  "deps": [],
+  "max_attempts": 2,
+  "verify": "python3 -m unittest discover -s projects/VoxLog/tests",
+  "task": "요지: VoxLog tests/ 의 검사 빈틈(R41-N2 검색 계약, N3 GET /api/recordings 의 status·limit, N6 묻는 중 DELETE answers 409, N7 health llm 참 경로, N11 ask ids 상한 200)을 검사 파일에만 검사를 더해 메우고, 각 검사가 해당 변이를 잡는 것을 확인해 VoxLog 단위 검사 전체가 통과하면 끝\n\n재현과 변이는 `rounds/R41/REVIEW-r41-s6.md` 14·15·18·19·23행. 쓰는 파일은 `projects/VoxLog/tests/test_store.py`, `tests/test_serve.py`, `tests/test_ask.py` 셋뿐이다. 제품 코드(serve.py·voxlog/·web/)와 docs/ 는 고치지 않는다. 지금 코드의 동작을 검사로 고정하는 일이다 - 코드가 문서와 달라 보이면 고치지 말고 보고에 적는다.\n\n1. R41-N2: `voxlog/store.py:383,400,404-410` 의 검색 - 대소문자 무시, title 에서도 찾음, snippet 이 찾은 곳 앞뒤 40자. 각각을 따로 묻는 검사(test_store.py).\n2. R41-N3: `serve.py:449-469` GET /api/recordings 의 `status` 거르기와 `limit` 규칙(0→1건, abc→400, 상한 1000) HTTP 검사(test_serve.py).\n3. R41-N6: `serve.py:545-549` 답을 묻는 중(running)일 때 DELETE /api/answers/<id> 가 409(test_serve.py).\n4. R41-N7: `serve.py:292-311` health 의 `llm` 이 참이 되는 경로(가짜 LLM 명령이 있을 때) 검사(test_serve.py, 기존 95~102행 옆).\n5. R41-N11: `voxlog/ask.py` 의 ids 개수 1~200 - 201개면 거절, 200개는 받음(test_ask.py).\n\n검사를 더한 뒤 /tmp 에 프로젝트 복사본을 만들어 리뷰 파일의 변이(대소문자 구분·title 검사 삭제·창 축소, limit 규칙, 409→404, llm=False 고정, ids 상한 200→2)를 하나씩 넣고 새 검사가 실패하는지 확인한다. 끝나면 /tmp 복사본은 지운다. 운영 서버에는 접속하지 않는다.\n\n바로 파일을 고친다. 끝나면 `python3 -m unittest discover -s projects/VoxLog/tests` 로 전부 통과하는지 본다.\n\n보고는 응답 본문에 쓴다. 첫 줄 상태(DONE 등), 더한 검사 이름마다 무엇을 묻는지, 변이 시험 결과(변이마다 잡힘/안 잡힘), 검사 결과 줄, 바꾼 파일 목록. 답의 마지막은 반드시 글(보고)로 끝낸다."
+ },
+ {
+  "id": "T-393",
+  "title": "[VoxLog] R41-N4·N8~N12·N15 문서: INTERFACE.md 를 지금 코드에 맞춤 (S6 5/5, 큐 5)",
+  "slot": "S6",
+  "project": "VoxLog",
+  "write": ["projects/VoxLog/docs/INTERFACE.md"],
+  "deps": [],
+  "max_attempts": 2,
+  "verify": "python3 -m unittest discover -s projects/VoxLog/tests",
+  "task": "요지: VoxLog docs/INTERFACE.md 를 지금 코드에 맞춰 R41-N4·N8·N9·N10·N11·N12·N15 와 recordings limit 규칙, stt 작업 id 규칙, ask 본문 덜 옴 400 을 문서화하면 끝\n\n항목과 코드 위치는 `rounds/R41/REVIEW-r41-s6.md` 16·20~24·46행. 쓰는 파일은 `projects/VoxLog/docs/INTERFACE.md` 하나뿐이다. 코드를 고치지 않는다 - **지금 코드를 직접 읽고** 그 동작을 적는다(같은 라운드의 다른 노드가 stt.py·serve.py·web/ 를 고치고 있을 수 있으니 리뷰 파일의 행 번호보다 지금 파일을 믿는다).\n\n1. R41-N4: llm 기본 명령 인자(`voxlog/ask.py:84-86`, `--strict-mcp-config --setting-sources \"\"` 포함).\n2. R41-N8: `Origin: null` 은 403, 루프백 아닌 Host 는 403(DNS 리바인딩 방어) - `serve.py:247,185-187`.\n3. R41-N9: title 은 공백을 접은 40자(`voxlog/store.py:462`).\n4. R41-N10: `Store.delete_answer` 를 store API 목록에, 잘못된 id 에 False(`store.py:578-581`).\n5. R41-N11: ask 의 user_prompt 2000자 자름, start 가 running 답을 failed 로, ids 1~200(`voxlog/ask.py`).\n6. R41-N12: `backend_name` 은 `VOXLOG_STT` 값을 그대로 돌려줌(`voxlog/stt.py:49-50`).\n7. 503/507 응답 본문은 버린다(화면 쪽 처리), `draftFinish -> Promise<boolean>`(web/queue.js) - 지금 코드대로.\n8. R41-N15: 녹음 중 새로고침하면 초안 회수가 최대 lease 길이만큼(지금 코드의 값) 늦음.\n9. GET /api/recordings 의 limit 규칙(0→1, 숫자 아님→400, 상한 1000, `serve.py:449-469`), STT 작업 id 로 받는 꼴(`voxlog/stt.py` 의 지금 검사), POST /api/ask 본문이 Content-Length 보다 덜 오면 400(`serve.py` 의 지금 동작 - 아직 400 이 아니면 그대로 적고 보고에 남긴다).\n\n바로 파일을 고친다. 문서의 기존 짜임(표·절)을 지키고 새 절을 함부로 만들지 않는다. 끝나면 `python3 -m unittest discover -s projects/VoxLog/tests` 가 통과하는지 본다.\n\n보고는 응답 본문에 쓴다. 첫 줄 상태(DONE 등), 항목마다 고친 INTERFACE.md 행과 근거 코드 파일:행, 코드와 문서가 맞지 않아 결정이 필요한 곳. 답의 마지막은 반드시 글(보고)로 끝낸다."
+ }
+]

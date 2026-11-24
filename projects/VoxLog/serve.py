@@ -40,6 +40,7 @@ WEB = HERE / "web"
 VERSION = "0.1"
 JSON_BODY_MAX = 1024 * 1024
 DRAIN_MAX = 64 * 1024  # 413 뒤 연결을 깨끗이 닫으려고 버리는(저장 안 함) 작은 본문의 상한
+BODY_GRACE_S = 30  # 본문(JSON) 마감 - 요청 시작부터 이만큼 안에 선언한 길이만큼 다 오지 않으면(느리게라도 계속 오는 경우 포함) 400 (R41-N5)
 CHUNK = 64 * 1024  # 업로드를 디스크로 흘려 쓰는 단위
 DISK_MARGIN = 100 * 1024 * 1024  # 업로드 크기에 더해 남겨야 하는 디스크 여유
 UPLOAD_GRACE_S = 30  # 업로드 마감 = 이 여유 + 지금까지 받은 바이트 / UPLOAD_MIN_RATE(선언한 길이가 아님)
@@ -339,16 +340,48 @@ class Handler(BaseHTTPRequestHandler):
         return length
 
     def _read_body(self, limit):
-        """Content-Length 필수. 돌려주는 값은 bytes, 아니면 이미 오류 응답을 보낸 뒤 None."""
+        """Content-Length 필수. 돌려주는 값은 bytes, 아니면 이미 오류 응답을 보낸 뒤 None.
+
+        요청을 받기 시작한 때부터 body_grace 안에 선언한 길이만큼 다 오지 않으면(느리게라도 계속
+        오는 경우 포함) 400 으로 답하고 연결을 닫는다. 업로드 마감은 받은 바이트/속도로 잼하는
+        진행 기반이라 다르다. 마감은 server.body_grace 로 바꿔 끼울 수 있다 (R41-N5)."""
         length = self._content_length(limit)
         if length is None:
             return None
         self._body_read = True
-        data = self.rfile.read(length) if length else b""
-        if len(data) != length:
+        if not length:
+            return b""
+        grace = getattr(self.server, "body_grace", BODY_GRACE_S)
+        deadline = time.monotonic() + grace
+        chunks = []
+        got = 0
+        try:
+            while got < length:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    self._err(400, "본문이 중간에 끊겼습니다", close=True)
+                    return None
+                self.connection.settimeout(min(self.timeout, left))
+                try:
+                    chunk = self.rfile.read1(min(CHUNK, length - got))
+                except socket.timeout:
+                    self._err(400, "본문이 중간에 끊겼습니다", close=True)
+                    return None
+                except ConnectionError:
+                    break
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                got += len(chunk)
+        finally:
+            try:
+                self.connection.settimeout(self.timeout)
+            except OSError:
+                pass
+        if got != length:
             self._err(400, "본문이 중간에 끊겼습니다", close=True)
             return None
-        return data
+        return b"".join(chunks)
 
     def _rec_upload(self, _u):
         length = self._content_length(MAX_AUDIO_BYTES)
@@ -575,12 +608,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def make_server(host, port, data_dir, token=None, env=None, stt_fn=None, llm_run=None,
-                max_uploads=2, upload_grace=UPLOAD_GRACE_S, upload_min_rate=UPLOAD_MIN_RATE):
+                max_uploads=2, upload_grace=UPLOAD_GRACE_S, upload_min_rate=UPLOAD_MIN_RATE,
+                body_grace=BODY_GRACE_S):
     """검사가 임시 포트(0)·임시 폴더·가짜 함수로 띄울 수 있는 서버. 일꾼은 start() 해 둔다.
 
     max_uploads: 동시에 받는 업로드 수(넘으면 503). server.disk_free 는 저장소 디스크 여유
     바이트를 돌려주는 함수라 검사에서 바꿔 끼울 수 있다. upload_grace·upload_min_rate: 업로드
-    마감(초) = grace + 지금까지 받은 바이트 / min_rate(매 바퀴 다시 셈, 넘기면 408), server.upload_grace·upload_min_rate 로 둔다."""
+    마감(초) = grace + 지금까지 받은 바이트 / min_rate(매 바퀴 다시 셈, 넘기면 408), server.upload_grace·upload_min_rate 로 둔다.
+    body_grace: JSON 본문 마감(초). 요청 시작부터 이만큼 안에 Content-Length 만큼 다 오지 않으면
+    (느리게라도 계속 오는 경우 포함) 400 (server.body_grace)."""
 
     class _Server(VoxServer):
         address_family = socket.AF_INET6 if ":" in host else socket.AF_INET
@@ -593,6 +629,7 @@ def make_server(host, port, data_dir, token=None, env=None, stt_fn=None, llm_run
         server.upload_slots = threading.BoundedSemaphore(max_uploads)
         server.upload_grace = upload_grace
         server.upload_min_rate = upload_min_rate
+        server.body_grace = body_grace
         server.disk_free = lambda: shutil.disk_usage(server.store.root).free
         server.transcriber = stt_mod.Transcriber(
             server.store, env, transcribe_fn=stt_fn or stt_mod.transcribe)

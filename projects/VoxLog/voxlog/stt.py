@@ -8,6 +8,7 @@ import json
 import os
 import pathlib
 import queue
+import re
 import shlex
 import shutil
 import subprocess
@@ -33,6 +34,16 @@ POLL_MAX_ERRORS = 30    # 조회가 이만큼 잇달아 실패하면 그만둔�
 JOB_TIMEOUT = 6 * 3600  # 맡긴 뒤 결과까지 기다리는 상한 (서버 줄 서기 포함)
 
 NO_BACKEND_MESSAGE = "음성인식 백엔드가 없습니다 - VOXLOG_STT_URL 또는 VOXLOG_STT_CMD"
+
+# 서버가 주는 작업 id 는 URL 경로(GET VOXLOG_STT_URL/<id>)에 들어간다. UUID·job_1 같은 실제 꼴을 받되
+# 경로를 벗어나는 글자(`/`, `..`)만 막는다. R41-N1.
+_JOB_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,128}")
+
+
+def _job_id_ok(jid) -> bool:
+    if not isinstance(jid, str) or not _JOB_ID_RE.fullmatch(jid):
+        return False
+    return jid not in (".", "..")
 
 
 class SttUnavailable(Exception):
@@ -226,7 +237,7 @@ def _transcribe_api(path, mime, env, opener, job=None) -> str:
         if code != 200:
             raise SttError(_http_reason(code))
         jid = obj.get("id") if obj else None
-        if not isinstance(jid, str) or not jid.isalnum() or len(jid) > 64:
+        if not _job_id_ok(jid):
             raise SttError("음성인식 서버 응답을 읽지 못했습니다")
         if job is not None:
             job.set(jid)

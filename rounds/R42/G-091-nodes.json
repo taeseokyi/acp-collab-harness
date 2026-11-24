@@ -1,0 +1,12 @@
+[
+ {
+  "id": "T-396",
+  "title": "[VoxLog] R42 재검수: T-395 수정(ask 본문 절대 마감 설명·문서·느린 본문 검사)",
+  "slot": "S3",
+  "project": "VoxLog",
+  "write": [],
+  "deps": [],
+  "max_attempts": 1,
+  "task": "VoxLog 의 작은 수정을 적대적으로 재검수한다. 앞 검수 전문은 `.aimem/sessions/T-394-S3-a1-143146/report.md`(F1·F2), 수정 보고는 `.aimem/sessions/T-395-S2-a1-144230/report.md`. 바로 `git diff -- projects/VoxLog/serve.py projects/VoxLog/docs/INTERFACE.md` 와 `projects/VoxLog/tests/test_serve_ask_body.py`(새 파일, git 미추적)를 읽고 시작한다.\n\n볼 것:\n1. F1 닫힘: `serve.py` 의 BODY_GRACE_S 주석·`_read_body` docstring·`make_server` docstring·`docs/INTERFACE.md` 의 ask 본문 줄이 모두 '요청 시작부터 BODY_GRACE_S 안에 다 오지 않으면 400'(절대 마감)으로 코드(`_read_body` 의 deadline)와 맞는가. '조용하면' 같은 유휴 기반 말이 남았는가. 코드 동작은 바뀌지 않았는가.\n2. F2 닫힘: 새 검사 `test_slow_continuous_body_gets_400_after_grace` 가 느리게 계속 오는 본문을 정말 만들고 400 을 확인하는가. /tmp 사본(`cp -r projects/VoxLog /tmp/r42-rereview-voxlog`)에서 `_read_body` 를 유휴 기반(바이트가 올 때마다 마감 연장)으로 바꾸면 이 검사가 실패하는지 직접 본다. 끝나면 /tmp 사본을 지운다. /tmp 쓰기가 거절되면 그 사실을 적고 코드 읽기로 판정한다.\n3. 검사가 불안정하지 않은가(시간에 기대는 부분, BrokenPipe 처리) - `python3 -m unittest projects/VoxLog/tests/test_serve_ask_body.py` 를 세 번 돌려 본다.\n\n읽기 전용이다. 저장소 파일은 만들거나 고치지 않는다(쓰기 경로 없음). 운영 서버에는 접속하지 않는다. 전체 검사: `python3 -m unittest discover -s projects/VoxLog/tests`.\n\n발견마다 파일:행, 무엇이 틀렸는지, 재현, 심각도(상/중/하). 발견이 없으면 없다고 적는다 - 억지로 채우지 않는다.\n\n보고는 응답 본문에 쓴다. 첫 줄은 판정(통과 / 조건부 통과 / 불합격), 1~3 마다 한 줄, 발견 목록, 변이 시험 결과(/tmp 를 실제로 썼는지), 돌린 검사의 결과 줄. 답의 마지막은 반드시 글(보고)로 끝낸다."
+ }
+]

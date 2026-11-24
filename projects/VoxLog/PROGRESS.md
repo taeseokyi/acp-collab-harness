@@ -17,9 +17,24 @@
 - [x] 묻기 - 요약·핵심어·할 일·직접 묻기를 claude CLI 로(도구·MCP·설정 끔, 빈 임시 폴더), 답을 앱에 보이고 쌓음 (가짜 LLM 으로 확인)
 - [x] 보안 - 토큰·HTTPS·경로 탈출·남의 출처·DNS 리바인딩·프롬프트 감쌈, ffmpeg 입력 형식 강제·protocol_whitelist, 업로드 흘려 쓰기·동시 2개·디스크 여유·업로드 마감(받은 만큼으로 재서 넘기면 408)·저장 OSError 500/507 (R36 에서 R35-N1·N2·N3 닫힘, 하 R36-N1·N2·N3 는 큐)
 - [x] 폰(320~430px)·데스크톱에서 겹침·넘침 없음, 어두운 모드
-- [x] 검사 - 단위 137·끝에서 끝 브라우저 31/31, 적대적 검수 8회(R33 2회·R34·R35·R36·R39 1회씩·R41 2회)
+- [x] 검사 - 단위 151·끝에서 끝 브라우저 31/31, 적대적 검수 10회(R33 2회·R34·R35·R36·R39 1회씩·R41 2회·R42 2회)
 - [x] 실제 폰에서 동작 확인 - 태석님이 폰에서 써 보고 "모두 잘됩니다" 라고 확인(2026-11-17). 항목별(측면 버튼·오프라인 올리기·위치 권한·사파리 mp4) 결과는 따로 받지 않음
 - [x] 실제 음성인식 백엔드 연결 - KISTI Qwen3-ASR(`VOXLOG_STT_URL`, 화자 구분 `diarized_json`)로 받아쓰기, 태석님이 폰 녹음으로 확인(2026-11-17). 실제 `claude` 묻기는 배포본에서 답 2건 완료(2026-11-16)
+
+## R42 (2026-11-24)
+
+**한 일.** 요청 `Q-261124-e24b`(대기 큐 VoxLog 4건을 S6 에 - 종류별 기본 1차 지시 첫 실물 시험). 그래프 G-088(S6 노드) → G-089(S3 검수) → G-090(S2 수정) → G-091(S3 재검수).
+- T-390(S6) R41-N1: `voxlog/stt.py` 작업 id 규칙을 `isalnum` → 1~128자 `[A-Za-z0-9._-]`(`.`·`..` 거절)로 완화. R41-N5: `serve.py` `_read_body` 가 POST /api/ask 본문을 마감(`BODY_GRACE_S` 30초, `make_server(body_grace=…)`) 안에 다 받지 못하면 400 `본문이 중간에 끊겼습니다`
+- T-391(S6) R41-N13~N18 초안 회수 - **되돌림.** 태석님이 초안 판정 방식(시각 갱신·만료·BroadcastChannel)을 웹 잠금(`navigator.locks`)으로 바꾸기로 해, 클로드 코드가 web/ 네 파일을 R41 끝(d094881) 상태로 돌림(31/31). 큐 2번에 비고
+- T-392(S6) 검사 13개: 검색 계약(R41-N2)·recordings status·limit(N3)·running 답 DELETE 409(N6)·health llm 참(N7)·ask ids 1~200(N11). 변이 9/9 잡힘
+- T-393(S6) `docs/INTERFACE.md` 를 코드에 맞춤(R41-N4·N8~N12, limit 규칙, stt id, ask 본문 400). 초안 회수(R41-N15)는 방식이 바뀌어 일부러 안 적음
+- T-394(S3) 적대적 검수 조건부 통과(/tmp 사본 변이 10/10): 중 1(ask 본문 마감 설명이 '조용하면' 인데 코드는 절대 마감) → T-395(S2) 설명 네 곳과 INTERFACE.md 를 절대 마감으로, 느린 본문 검사 추가 → T-396(S3) 재검수 **통과**(남은 하 1 = R42-N3 큐)
+
+**바뀐 파일.** `serve.py`, `voxlog/stt.py`, `docs/INTERFACE.md`, `tests/test_stt.py`, `tests/test_store.py`, `tests/test_serve.py`, `tests/test_ask.py`, 새 `tests/test_serve_ask_body.py`. web/ 는 변경 없음(되돌림).
+
+**검증.** 관리자 `python3 -m unittest discover -s projects/VoxLog/tests` → 151 OK. 검수자 /tmp 사본 변이 10/10·재검수 유휴 기반 변이 잡힘, 느린 본문 검사 15회 반복 OK.
+
+**남은 일.** 큐 `[VoxLog]`: R41-N13~N18(초안 회수 - 웹 잠금으로 바꾸기, 조사 먼저·구현은 태석님 승인 뒤), R42-N2(store.py:450 id 64자 자름 vs 규칙 128자, 선행), R42-N3(느린 본문 검사가 400 까닭을 안 봄).
 
 ## R41 (2026-11-24)
 

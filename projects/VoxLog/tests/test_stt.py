@@ -107,6 +107,20 @@ class FakeJob:
         self.history.append(jid)
 
 
+class FakeJobIdOpener:
+    """맡기기에는 정해 준 작업 id 를 주고, 조회·지우기에는 바로 done 을 준다 (작업 id 규칙 검사용)."""
+
+    def __init__(self, jid):
+        self.jid = jid
+        self.urls = []
+
+    def __call__(self, req, timeout):
+        if req.get_method() == "POST":
+            return json.dumps({"id": self.jid}).encode("utf-8")
+        self.urls.append(req.full_url)
+        return json.dumps({"status": "done", "result": {"text": "받아 적음"}}).encode("utf-8")
+
+
 class FakeJobServer:
     """받아쓰기 서버의 작업 API 흉내(opener). states = 조회마다 차례로 돌려줄 것 -
     상태 글자("queued"…), 0(연결 실패) 또는 HTTP 오류 코드. 다 쓰면 마지막 것을 되풀이."""
@@ -435,6 +449,39 @@ class ApiBackendTest(unittest.TestCase):
             self.assertNotIn(secret, repr(exc))
             self.assertNotIn("stt.example", str(exc))
             self.assertEqual(len(opener.calls), 1)                   # 맡기기가 거절되면 조회하지 않는다
+
+
+class ApiJobIdTest(unittest.TestCase):
+    """작업 id 규칙(R41-N1): 실제 꼴(UUID·job_1)은 받고, URL 경로를 벗어나는 것만 SttError."""
+
+    URL = "https://stt.example/v1/audio/diarize/jobs"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.src = pathlib.Path(self.tmp.name) / "sine.webm"
+        self.src.write_bytes(b"x")
+
+    def run_api(self, jid):
+        opener = FakeJobIdOpener(jid)
+        env = {"VOXLOG_STT_URL": self.URL}
+        with mock.patch.object(stt, "_sleep", lambda s: None):
+            text = stt.transcribe(self.src, "audio/webm", env=env, opener=opener)
+        return text, opener
+
+    def test_real_id_shapes_are_accepted(self):
+        for jid in ("3f2a1b4c-5d6e-7f80-9a1b-2c3d4e5f6071", "job_1", "abc.def", "A" * 128):
+            text, opener = self.run_api(jid)
+            self.assertEqual(text, "받아 적음", jid)
+            self.assertIn(self.URL + "/" + jid, opener.urls)
+
+    def test_ids_that_escape_the_path_are_rejected(self):
+        for jid in ("../x", "a/b", "", ".", "..", "A" * 129):
+            opener = FakeJobIdOpener(jid)
+            env = {"VOXLOG_STT_URL": self.URL}
+            with self.assertRaises(stt.SttError, msg=jid):
+                stt.transcribe(self.src, "audio/webm", env=env, opener=opener)
+            self.assertEqual(opener.urls, [], jid)          # 받지 않은 id 로 조회하지 않는다
 
 
 class TranscriberTest(unittest.TestCase):

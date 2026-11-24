@@ -135,6 +135,38 @@ class StoreTest(unittest.TestCase):
         self.assertEqual([m["id"] for m in self.store.list(limit=1)], [c["id"]])
         self.assertEqual(self.store.list(limit=0), [])
 
+    def test_list_search_is_case_insensitive(self):
+        # 찾는 말을 40자 뒤에 둬 제목(앞 40자)에는 없게 한다 - 본문 검색만 대소문자를 무시하는지 본다
+        meta = self.add(recorded_at="2026-01-01T10:00:00")
+        self.store.set_transcript(meta["id"], "가" * 50 + "Hello World")
+        for q in ("hello", "HELLO", "HeLLo"):
+            found = self.store.list(q=q)
+            self.assertEqual([m["id"] for m in found], [meta["id"]], q)
+
+    def test_list_search_matches_title(self):
+        # 제목만 다른 말을 담게 바꿔 둔다 - 본문에 없는 말도 제목으로 찾아야 한다
+        meta = self.add(recorded_at="2026-01-01T10:00:00")
+        self.store.set_transcript(meta["id"], "본문에는 없는 말")
+        mpath = self.store.meta_dir / (meta["id"] + ".json")
+        stored = json.loads(mpath.read_text(encoding="utf-8"))
+        stored["title"] = "특별한 제목"
+        mpath.write_text(json.dumps(stored, ensure_ascii=False), encoding="utf-8")
+        found = self.store.list(q="특별한")
+        self.assertEqual([m["id"] for m in found], [meta["id"]])
+        self.assertNotIn("특별한", found[0]["snippet"])
+        self.assertEqual(self.store.list(q="없는말"), [])
+
+    def test_list_search_snippet_window_is_forty_each_side(self):
+        meta = self.add(recorded_at="2026-01-01T10:00:00")
+        text = "가" * 50 + "찾는말" + "나" * 50
+        self.store.set_transcript(meta["id"], text)
+        found = self.store.list(q="찾는말")
+        self.assertEqual(len(found), 1)
+        idx = text.index("찾는말")
+        self.assertEqual(found[0]["snippet"], text[idx - 40:idx + len("찾는말") + 40])
+        self.assertTrue(found[0]["snippet"].startswith("가" * 40))
+        self.assertTrue(found[0]["snippet"].endswith("나" * 40))
+
     # 8
     def test_pending_ids(self):
         a = self.add()

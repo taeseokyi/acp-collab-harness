@@ -275,6 +275,20 @@ class AskerTest(unittest.TestCase):
         finally:
             asker.stop()
 
+    def test_submit_ids_bound_one_to_two_hundred(self):
+        # R41-N11: ids 는 1~200개 - 0개·201개는 거절하고 200개는 받는다
+        recs = {"r-%03d" % i: {"id": "r-%03d" % i, "recorded_at": "2026-01-01T00:00:00",
+                              "transcript": "글"} for i in range(201)}
+        store = FakeStore(recs)
+        asker = ask.Asker(store, env={"VOXLOG_LLM_CMD": FAKE_CMD})
+        with self.assertRaises(ValueError):
+            asker.submit("summary", "", [])
+        ids = ["r-%03d" % i for i in range(200)]
+        meta = asker.submit("summary", "", ids)
+        self.assertEqual(meta["ids"], ids)
+        with self.assertRaises(ValueError):
+            asker.submit("summary", "", ids + ["r-200"])
+
 
 if __name__ == "__main__":
     unittest.main()
