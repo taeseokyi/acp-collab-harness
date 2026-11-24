@@ -870,8 +870,36 @@ def _board_sync(task_id, status, slot=None, g=None):
         return None
 
 
+_BOARD_FILLED = set()      # 이 프로세스가 보드의 빈 제목·슬롯을 이미 채워 본 (그래프, 태스크)
+
+
+def _board_fill(g):
+    """보드 줄의 **비어 있는** 제목·슬롯을 그래프 노드의 값으로 채운다 - 관리자가 번호만 넣어 만든 줄이 라운드가 도는 내내
+    '-' 로 보였다 (R42). 이미 적힌 값은 덮지 않고, 행을 만들지 않는다. 노드마다 프로세스에서 한 번만 해 본다."""
+    todo = [n for n in g.get("nodes") or [] if _TASK_ID_RE.fullmatch(str(n.get("id")))
+            and (g.get("id"), str(n.get("id"))) not in _BOARD_FILLED]
+    db = _board_db()
+    if not todo or not db.is_file():
+        return
+    try:
+        con = sqlite3.connect(db.as_uri() + "?mode=rw", uri=True, timeout=2)
+        try:
+            with con:
+                for n in todo:
+                    con.execute("UPDATE tasks SET title=CASE WHEN title IS NULL OR title='' THEN ? ELSE title END, "
+                                "slot=CASE WHEN slot IS NULL OR slot='' THEN ? ELSE slot END "
+                                "WHERE id=? AND (title IS NULL OR title='' OR slot IS NULL OR slot='')",
+                                (str(n.get("title") or "")[:300], str(n.get("slot") or ""), str(n.get("id"))))
+        finally:
+            con.close()
+        _BOARD_FILLED.update((g.get("id"), str(n.get("id"))) for n in todo)
+    except Exception as e:  # noqa: BLE001 - 보드가 잠겨도 그래프는 돈다 (다음 틱에 다시 해 본다)
+        _log_once(g, ("board-fill", type(e).__name__), f"warn 보드 제목·슬롯 채우기 실패: {type(e).__name__}: {e}")
+
+
 def _board_sync_changes(g, before):
     """틱 앞의 노드 상태 `before` 와 지금을 견줘 바뀐 태스크 노드만 보드에 옮긴다."""
+    _board_fill(g)
     for n in g.get("nodes") or []:
         nid, st = str(n.get("id")), n.get("status", "todo")
         if before.get(nid) == st or st not in BOARD_STATUS or not _TASK_ID_RE.fullmatch(nid):

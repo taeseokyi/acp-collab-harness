@@ -1572,6 +1572,8 @@ def pane_info(run_id, root=ROOT):
                  "ref": fb.brief_ref(sdir, root), "text_max": fb.LINE_TEXT_MAX, "kind": _pane_kind(meta, gate),
                  "gist": mask(fb.brief_gist(sdir, meta)),
                  "first": _pane_first_text(root, meta, gate), "resume": bool(gate.get("resume")),
+                 # 보인 1차 지시가 노드에 쓴 글이 아니라 종류별 기본 지시면 그 종류
+                 "first_default": (_pane_stored_first(root, meta) or {}).get("default"),
                  "pane": {"name": pane, "ok": st["ok"], "why": st["why"], "left": st["left"], "model": st["model"],
                           "lines": [mask(x) for x in st["lines"]]}}
 
@@ -2259,6 +2261,9 @@ def collect_graphs(root=ROOT, errors=None):
                     "waiting": n.get("waiting") if isinstance(n.get("waiting"), str) else None,
                     # 관리자가 지시문 첫 줄에 적은 `요지:` - 사람이 1차 지시를 쓸 때 무슨 일인지 보게 (없으면 None)
                     "gist": _node_gist(n.get("task")),
+                    # 일의 종류 - 1차 지시 창이 그 종류의 기본 지시를 보여 준다 (보낼 때 엔진이 보는 것과 같은 판정)
+                    "kind": _pane_base_kind({"label": n.get("title"), "write_paths": n.get("write")
+                                             if isinstance(n.get("write"), list) else []}),
                     "infra": bool(n.get("infra")),
                     "infra_attempts": sum(1 for a in (n.get("infra_attempts") if isinstance(n.get("infra_attempts"), list) else [])
                                           if isinstance(a, dict) and not a.get("cleared")),

@@ -314,6 +314,72 @@ def tab_counts_scenario(browser, base, checks):
         ctx.close()
 
 
+def first_instruction_scenario(browser, base, checks):
+    """1차 지시를 쓰는 자리: 창은 무슨 일인지(작업·요지) 보여 주고, 노드에 쓴 글이 없으면 그 일의 종류의 기본 지시를 채워 보인다."""
+    import time
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    rid, posted, firsts = "T-901-S6-a1-000000", [], {}
+    defaults = {"edit": {"text": "개발자처럼 접근하세요. -검사-"}}
+
+    def auto_route(route):
+        route.fulfill(content_type="application/json", body=json.dumps({
+            "ok": True, "on": True, "refused": False, "sec": 10, "by": "x", "at": "2026-11-24T10:00:00",
+            "runs": {rid: {"held": False, "step": "ask", "resume": False, "due_in": None, "note": None, "need_first": True, "task": "T-901"}},
+            "firsts": firsts, "first_kinds": ["review", "read", "docs", "test", "edit"], "first_defaults": defaults,
+            "sessions": {"today": 1, "expires": None}}))
+
+    def first_route(route):
+        posted.append(json.loads(route.request.post_data))
+        route.fulfill(content_type="application/json", body=json.dumps({"ok": True}))
+
+    def state_route(route):
+        r = route.fetch()
+        d = r.json()
+        time.sleep(2.5)          # 상태가 늦게 온다 - 창이 먼저 떠도 작업·요지가 채워져야 한다
+        d["slots"] = [{"slot": "S6", "harness": "freebuff", "model": "freebuff/pane", "role": "x", "token": "t"}]
+        node = lambda i, kind, gist: {"id": f"T-90{i}", "title": f"[앱] 노드 {i}", "slot": "S6", "status": "todo", "deps": [], "attempts": 0,  # noqa: E731
+                                      "max_attempts": 3, "last_run": None, "kind": kind, "gist": gist}
+        d["graphs"] = [{"id": "G-900", "request": "Q-1", "created": "2026-11-24T10:00:00", "updated": "2026-11-24T10:00:00", "percent": 0,
+                        "eta_seconds": 100, "counts": {"todo": 2}, "nodes": [node(1, "read", "문서와 코드를 대조해 다른 곳을 찾으면 끝"),
+                                                                             node(2, "edit", "serve.py 의 날짜 검사를 고치면 끝")]}]
+        d["runs"] = [{"id": rid, "slot": "S6", "harness": "freebuff", "model": "m", "label": "T-901 [앱] 노드 1", "started": "2026-11-24T10:00:00",
+                      "state": "running", "rc": None, "elapsed_sec": 5, "report_head": "", "role": "worker", "session_state": "running",
+                      "last_event_at": None, "last_event": None, "gate": "await"}]
+        route.fulfill(response=r, body=json.dumps(d), content_type="application/json")
+    page.route("**/api/pane/auto", auto_route)
+    page.route("**/api/pane/first", first_route)
+    page.route("**/api/state*", state_route)
+    try:
+        page.goto(base + "/", wait_until="load")
+        page.wait_for_selector("#pane-first[open]", timeout=20000)
+        page.wait_for_function("() => /요지/.test(document.querySelector('.pane-first-gist').textContent)", timeout=20000)
+        gist = page.locator(".pane-first-gist").inner_text()
+        checks.ok("1차 지시 창: 상태가 늦게 와도 작업 제목과 요지가 보인다",
+                  "[앱] 노드 1" in gist and "문서와 코드를 대조해" in gist and "T-901 [앱] 노드 1" in page.locator(".pane-first-what").inner_text(), gist)
+        page.locator("#pane-first textarea").fill("지금부터 일을 하나 줄게.")
+        page.locator("#pane-first .btn-primary").click()
+        page.wait_for_function("() => !document.getElementById('pane-first').open", timeout=5000)
+        checks.ok("1차 지시 창: 쓴 글은 그 노드에 적힌다 (따로 보내지 않는다)",
+                  posted[-1:] == [{"task": "T-901", "text": "지금부터 일을 하나 줄게."}], str(posted))
+        btn = page.locator(".pane-default-btn")
+        checks.ok("기본 1차 지시 단추: 써 둔 종류 수가 보인다", btn.count() == 1 and "1/5" in btn.first.inner_text(), btn.all_inner_texts())
+        page.locator("#tab-requests").click()
+        page.wait_for_selector(".node-first-btn", timeout=10000)
+        page.locator(".node-first-btn").nth(1).click()          # T-902 - 고치기, 써 둔 글 없음
+        page.wait_for_selector("#pane-first[open]", timeout=5000)
+        val, hint = page.locator("#pane-first textarea").input_value(), page.locator("#pane-first .hint").inner_text()
+        checks.ok("노드의 1차 지시 창: 쓴 글이 없으면 그 일의 종류(고치기)의 기본 지시를 채워 보인다",
+                  val == defaults["edit"]["text"] and "고치기" in hint and "serve.py 의 날짜 검사" in page.locator(".pane-first-gist").inner_text(),
+                  f"{val!r} / {hint[:60]}")
+        page.locator("#pane-first .btn-link", has_text="닫기").click()
+        page.locator(".node-first-btn").nth(0).click()          # T-901 - 읽기, 기본 지시 없음
+        page.wait_for_selector("#pane-first[open]", timeout=5000)
+        checks.ok("노드의 1차 지시 창: 그 종류의 기본 지시가 없으면 비어 있다", page.locator("#pane-first textarea").input_value() == "")
+    finally:
+        ctx.close()
+
+
 def main():
     checks = Checks()
     try:
@@ -328,6 +394,7 @@ def main():
                         project_picker_scenario(browser, base, checks)
                         edit_picker_scenario(browser, base, checks)
                         tab_counts_scenario(browser, base, checks)
+                        first_instruction_scenario(browser, base, checks)
             finally:
                 browser.close()
     except Exception as exc:

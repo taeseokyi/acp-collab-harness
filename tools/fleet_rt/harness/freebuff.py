@@ -60,6 +60,8 @@ CPU_CHECK_SEC = 10.0
 POLL_SEC = 2.0
 #: 대화 파일이 이만큼 안 바뀌어야 끝난 답으로 본다.
 SETTLE_SEC = 3.0
+#: '세션 끝남' 창에 엔터를 넣은 뒤 창이 걷히고 새 세션의 기록이 생기기를 기다리는 한도.
+HELD_CLEAR_SEC = 6.0
 RC_UNSENT, RC_TIMEOUT = 3, 124
 RESUME = "resume"        # `_work` 의 답: 세션이 끝나 멈췄다 - 같은 대화에 이어 보낸다
 REFUSED = "refused"      # `_work` 의 답: freebuff 가 사용 정책으로 그 줄을 거절했다 - 다시 보내지 않는다
@@ -377,6 +379,11 @@ def send_line(pane, line, new=True, info=None):
             _tmux("send-keys", "-t", pane, "Enter")
             if info is not None:
                 info["held"] = True
+            # 창이 걷히고 새 세션이 열릴 때까지 잠깐 기다린다 - 바로 돌아가면 부르는 쪽이 아직 떠 있는 창을 보고
+            # '지시가 걸려 있다' 고 적고, 세션이 끝나는 시각도 못 읽는다 (R40·R42 의 기록 잡티)
+            t_end = time.monotonic() + HELD_CLEAR_SEC
+            while time.monotonic() < t_end and pane_status(pane)["held"]:
+                time.sleep(0.5)
             break
     return True, ""
 
@@ -593,6 +600,7 @@ class Driver:
         self.gate = {"phase": "await", "since": _now(), "pane": self.pane}
         self.sent = False
         self.stop = False
+        self.sent_wall = 0.0      # 작업 지시 줄을 팬에 넣기 직전의 시각
         # 일하는 고리의 상태 - 세션이 끝나 같은 대화에 이어 보낼 때도 그대로 이어진다
         self.chat, self.blocks, self.emitted = None, [], 0
         self.answers = 0          # 이미 끝난 것으로 본 답의 수 (이어 보낸 뒤에는 그다음 답을 기다린다)
@@ -634,6 +642,7 @@ class Driver:
                 ok, why = False, "사람이 고른 문구가 없습니다"       # 문구 없이는 보내지 않는다 - 기본 문구는 없다
             else:
                 info = {}
+                self.sent_wall = time.time()     # 넣기 **전** 시각 - 답이 몇 초 만에 끝나도 그 뒤의 대화로 친다
                 ok, why = (False, st["why"]) if not st["ok"] else send_line(
                     self.pane, line, new=not self.sent and said.get("same_chat") is not True, info=info)
             if ok:
@@ -649,6 +658,10 @@ class Driver:
     def _session_note(self, held):
         """지시를 넣은 뒤의 사용 세션 - 새로 열렸는지 쓰던 것인지, '세션 끝남' 창을 넘겼는지. 세션 기록에도 남긴다."""
         exp, new = note_session(self.cwd, self.chats, run=self.d.name)
+        t_end = time.monotonic() + (HELD_CLEAR_SEC if held else 0.0)
+        while exp is None and time.monotonic() < t_end:      # 새 세션의 기록 파일은 창을 넘긴 뒤 조금 있다 생긴다
+            time.sleep(0.5)
+            exp, new = note_session(self.cwd, self.chats, run=self.d.name)
         if exp is None:
             text = "freebuff 세션: 끝나는 시각을 읽지 못함"
         else:
@@ -667,7 +680,7 @@ class Driver:
         멈춘 것으로 본다 (화면은 보지 않는다 - 쉬는 동안에도 광고가 바뀐다).
         """
         marker = self.d.name
-        wall0 = time.time()
+        wall0 = self.sent_wall or time.time()      # 줄을 넣는 데 몇 초가 걸린다 - 그 사이 끝난 답을 놓치지 않게 넣기 전 시각부터 본다
         if self.chat is not None:
             # 이어 보낸 줄이 다른 대화에 들어갔을 수 있다(사람이 그 사이 새 대화를 열었다) - 그러면 그 대화를 본다
             newest = find_chat(self.chats, self.cwd, marker)

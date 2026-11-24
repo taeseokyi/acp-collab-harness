@@ -1048,8 +1048,10 @@ function renderPaneGate(parent, runId) {
     // 1차 지시: 작업 지시 줄 맨 앞에 붙는, 사람이 직접 쓴 글. 노드에 써 둔 것이 있으면 그것을 보인다 (한 번에 같이 나간다)
     let fi = null;
     if (!info.resume) {
+      const dk = info.first_default && (PANE_KIND_LABELS[info.first_default] || [info.first_default])[0];
       box.appendChild(line('pane-gate-hint', info.first
-        ? '1차 지시 - 이 노드에 써 둔 글입니다. 아래 지시 줄의 맨 앞에 붙어 한 번에 나갑니다 (고쳐도 됩니다. 비우면 붙지 않습니다).'
+        ? (dk ? `1차 지시 - 이 일의 종류(${dk})에 써 두신 기본 지시입니다. 아래 지시 줄의 맨 앞에 붙어 한 번에 나갑니다 (이번 건만 고쳐 보내도 됩니다. 비우면 붙지 않습니다).`
+          : '1차 지시 - 이 노드에 써 둔 글입니다. 아래 지시 줄의 맨 앞에 붙어 한 번에 나갑니다 (고쳐도 됩니다. 비우면 붙지 않습니다).')
         : '1차 지시 - 직접 쓰는 글입니다. 아래 지시 줄의 맨 앞에 붙어 한 번에 나갑니다 (비우면 붙지 않습니다).'));
       fi = document.createElement('input');
       fi.type = 'text';
@@ -1575,7 +1577,13 @@ function openNodeFirst(n) {
   paneFirstMode(d, String(n.id), false);
   d._what.textContent = `${show(n.slot)} · ${plainText(n.title) || ''}`;
   const f = paneFirstStored(String(n.id));
-  d._ta.value = f ? f.text : '';
+  // 써 둔 글이 없으면 이 일의 종류의 기본 지시를 채워 보인다 - 참고하고, 고쳐 저장하면 이 노드에만 그 글이 나간다
+  const def = !f && n.kind && state.paneAuto && state.paneAuto.first_defaults && state.paneAuto.first_defaults[n.kind];
+  d._ta.value = f ? f.text : (def ? def.text : '');
+  if (def) {
+    const nm = (PANE_KIND_LABELS[n.kind] || [n.kind])[0];
+    d._hint.textContent = `이 일의 종류(${nm})에 써 두신 기본 1차 지시를 채워 두었습니다. 그대로 닫으면 기본 지시가 나가고, 고쳐서 저장하면 이 노드에는 고친 글이 나갑니다. ` + d._hint.textContent;
+  }
   d._clear.hidden = !f;
   d.showModal();
   d._ta.focus();

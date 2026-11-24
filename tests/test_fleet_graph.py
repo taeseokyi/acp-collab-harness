@@ -894,6 +894,23 @@ class EngineV2Stage3(unittest.TestCase):
         self.assertEqual(board, {"T-1": "IN-PROGRESS", "T-2": "DONE", "T-3": "REJECTED", "T-4": "BLOCKED"})
         self.assertEqual(events, 2)
 
+    def test_board_fill_puts_the_nodes_title_and_slot_into_blank_rows_only(self):
+        # 관리자가 번호만 넣어 만든 보드 줄은 라운드 내내 제목·슬롯이 '-' 였다 (R42) - 그래프의 값으로 채운다. 적힌 값은 안 덮는다
+        import sqlite3
+        db = self._db([("T-1", "TODO"), ("T-2", "TODO")])
+        con = sqlite3.connect(db)
+        con.execute("UPDATE tasks SET title='관리자가 적은 제목', slot='S1' WHERE id='T-2'")
+        con.commit()
+        con.close()
+        fleet_graph._BOARD_FILLED.clear()
+        g = {"id": "G-777", "nodes": [{"id": "T-1", "title": "[앱] 고치기", "slot": "S6"}, {"id": "T-2", "title": "다른 제목", "slot": "S6"},
+                                      {"id": "T-404", "title": "없는 줄", "slot": "S2"}, {"id": "verify", "title": "태스크 아님"}]}
+        fleet_graph._board_fill(g)
+        con = sqlite3.connect(db)
+        rows = {r[0]: r[1:] for r in con.execute("SELECT id,title,slot FROM tasks")}
+        con.close()
+        self.assertEqual(rows, {"T-1": ("[앱] 고치기", "S6"), "T-2": ("관리자가 적은 제목", "S1")})
+
     def test_board_sync_without_db_is_a_no_op(self):
         self.assertIsNone(fleet_graph._board_sync("T-1", "REVIEW"))
         self.assertFalse((self.tmp / "aimem.db").exists())
