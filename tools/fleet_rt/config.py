@@ -25,7 +25,7 @@ DEFAULTS = {
         "nvidia": {"tier": "free", "base_url": "https://integrate.api.nvidia.com/v1", "env_key": "NVIDIA_API_KEY",
                    "max_concurrent": 1, "idle_timeout_sec": 240, "probe": "models", "models": ["z-ai/glm-5.3-flash"]},
         "freebuff": {"tier": "free", "max_concurrent": 1, "models": ["pane"]},
-        "anthropic": {"tier": "paid", "max_concurrent": 3, "idle_timeout_sec": 600, "models": ["opus", "sonnet", "haiku"]},
+        "anthropic": {"tier": "paid", "max_concurrent": 3, "idle_timeout_sec": 600, "models": ["opus", "sonnet", "haiku", "fable"]},
     },
     "harness": {
         "claude": {"providers": ["anthropic"], "default_model": "sonnet"},
@@ -53,7 +53,9 @@ _POLICY_LIMITS = {k: DEFAULTS["policy"][k] for k in POLICIES}
 
 #: claude CLI 가 받는 모델 별칭·꼴: 이런 이름은 공급자 접두 없이도 anthropic 이다
 _CLAUDE_ALIASES = ("opus", "sonnet", "haiku", "fable")
-_CLAUDE_PREFIXES = ("claude-", "anthropic/", "claude-cli/")
+#: 그 가운데 공급자 접두 - claude 하네스에 넘길 때 떼어 낸다 (`fleet.normalize_model`)
+CLAUDE_STRIP_PREFIXES = ("anthropic/", "claude-cli/")
+_CLAUDE_PREFIXES = ("claude-",) + CLAUDE_STRIP_PREFIXES
 
 
 class ConfigError(Exception):

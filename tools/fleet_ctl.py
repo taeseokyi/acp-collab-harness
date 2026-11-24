@@ -66,6 +66,15 @@ POLICY_CHOICES = [
     {"key": "speed", "label": "빠른 구현", "desc": "모든 슬롯으로 최대 병렬, 막히면 유료로 옮겨 계속"},
 ]
 POLICY_LABEL = {c["key"]: c["label"] for c in POLICY_CHOICES}
+#: 운영 방식 지시 뒤에 엔진이 한 번 붙이는 슬롯 절 - 세 방식이 같으므로 지시 파일마다 두지 않는다 (`_freeze_policy`).
+POLICY_SLOTS_TAIL = """\
+### 지금 슬롯 (엔진이 적음)
+{slots}
+
+### 슬롯을 더하고 역할을 정하는 것은 관리자의 판단입니다
+- 역할: `python3 tools/aimem_db.py slot set --slot S<n> --role "<이번 라운드의 역할>"` (어느 슬롯이든).
+- 더하기: 일이 슬롯보다 넓으면 지금 **{extra_slots}개**까지 더할 수 있습니다({slot_tiers} 공급자). `python3 tools/aimem_db.py slot add --harness <하네스> --model <공급자/모델> --role "<역할>"` → 새 슬롯에 `ownership set` → 그래프에 배정. 엔진이 상한·모델·공급자 자리를 확인하고, 안 되면 까닭을 말합니다. 더한 슬롯은 다음 라운드에도 남으니 필요 없으면 `slot remove` 합니다. 보고 (6)에 더한 슬롯과 까닭을 적습니다.
+"""
 #: 관리 방식 (2026-11-24) - 프로젝트마다 사람이 찍어 두는 취향. 확인(검수·검사)을 얼마나 할지를 정한다. 운영 방식(슬롯을 어떻게
 #: 쓰나)과는 다른 축이다. 찍는 자리는 `.aimem/project-modes.json` `{"<프로젝트>": "<키>"}`, 없는 프로젝트는 `balance`.
 #: 지시는 `.aimem/briefs/mode-<키>.md` (네 줄) - 라운드를 띄울 때 **그 라운드의 프로젝트에 찍힌 것만** 골라 `policy.md` 끝에 붙인다.
@@ -304,21 +313,66 @@ def project_modes():
     return {str(k): v for k, v in d.items() if v in PMODE_LABEL} if isinstance(d, dict) else {}
 
 
+def project_mode(name):
+    """한 프로젝트의 관리 방식 `{"key", "label", "stamped"}` - 안 찍었으면 기본값(`PMODE_DEFAULT`)에 stamped False."""
+    k = project_modes().get(name)
+    return {"key": k or PMODE_DEFAULT, "label": PMODE_LABEL[k or PMODE_DEFAULT], "stamped": bool(k)}
+
+
+def set_project_mode(name, key, by=""):
+    """프로젝트의 관리 방식을 찍는다 - `.aimem/project-modes.json` 의 그 칸만 바꾸고 나머지는 둔다(임시 파일 → 바꿔 넣기).
+    도는 라운드에는 닿지 않는다(굳힌 `policy.md` 가 이긴다) - 다음 라운드부터. `by` 는 부른 쪽(화면·CLI) 표시일 뿐 적지 않는다."""
+    name = name.strip() if isinstance(name, str) else ""
+    if not re.match(fleet.PROJECT_NAME_RE, name):
+        return {"ok": False, "error": "프로젝트 이름이 아닙니다"}
+    if key not in PMODE_LABEL:
+        return {"ok": False, "error": f"관리 방식은 {' · '.join(PMODE_LABEL)} 가운데 하나입니다 (받은 값 {str(key)[:40]!r})"}
+    f = _aimem_dir() / PMODES_FILE
+    try:
+        d = json.loads(f.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        d = {}
+    except (OSError, ValueError) as e:
+        return {"ok": False, "error": f"{PMODES_FILE} 을(를) 읽지 못해 쓰지 않았습니다: {type(e).__name__}"}
+    if not isinstance(d, dict):
+        return {"ok": False, "error": f"{PMODES_FILE} 이(가) 사전 꼴이 아니라 쓰지 않았습니다"}
+    d[name] = key
+    try:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        _write_text_replace(f, json.dumps(d, ensure_ascii=False, indent=1) + "\n")
+    except OSError as e:
+        return {"ok": False, "error": f"{PMODES_FILE} 에 쓰지 못했습니다: {type(e).__name__}"}
+    return {"ok": True, "project": name, "mode": key}
+
+
 def _modes_block(projects):
     """이 라운드의 프로젝트마다 찍힌 관리 방식의 지시를 한 덩이로: `(글 또는 None, {프로젝트: 키})`.
+    `projects` 에 빈 이름(프로젝트 없는 요청 = 함대 자체 일)이 있으면 프로젝트 덩이 뒤에 `### 함대 자체 일 · 균형` 을 붙인다
+    - 늘 기본 방식이고 찍을 수 없으며, 돌려주는 사전에는 넣지 않는다(진짜 프로젝트만).
     지시 틀(`mode-<키>.md`)이 없는 방식은 건너뛴다 - 그 프로젝트는 표준 브리프대로 돈다."""
     stamped, parts, modes = project_modes(), [], {}
+    bodies = {}
+
+    def body(key):
+        if key not in bodies:
+            try:
+                bodies[key] = (fleet.ROOT / ".aimem" / "briefs" / PMODE_BRIEF.format(key=key)).read_text(encoding="utf-8").strip()
+            except OSError:
+                bodies[key] = None
+        return bodies[key]
+
     for name in sorted(p for p in projects if p):
         key = stamped.get(name, PMODE_DEFAULT)
-        try:
-            body = (fleet.ROOT / ".aimem" / "briefs" / PMODE_BRIEF.format(key=key)).read_text(encoding="utf-8").strip()
-        except OSError:
+        if body(key) is None:
             continue
         modes[name] = key
-        parts.append(f"### {name} · {PMODE_LABEL[key]}\n{body}")
+        parts.append(f"### {name} · {PMODE_LABEL[key]}\n{body(key)}")
+    if "" in projects and body(PMODE_DEFAULT) is not None:
+        parts.append(f"### 함대 자체 일 · {PMODE_LABEL[PMODE_DEFAULT]}\n{body(PMODE_DEFAULT)}")
     if not parts:
         return None, {}
-    head = "## 관리 방식\n프로젝트마다 사람이 찍어 둔 취향입니다. 아래대로 일을 나누고, 찍힌 방식은 바꾸지 않습니다."
+    head = ("## 관리 방식\n프로젝트마다 사람이 찍어 둔 취향입니다(안 찍은 프로젝트는 균형). 검수와 검사를 얼마나 할지는 이 절이 정하고, "
+            "운영 방식은 슬롯을 어떻게 나눌지만 정합니다. 라운드 도중 들어온 요청은 그 프로젝트의 방식을, 여기 없으면 균형을 따릅니다.")
     return head + "\n\n" + "\n\n".join(parts) + "\n", modes
 
 
@@ -458,22 +512,13 @@ def _policy_template(key):
 
 
 def _freeze_policy(n, at, template, policy=None):
-    """운영 방식 지시를 채워 `rounds/R<N>/policy.md` 로 굳히고 그 글을 준다. 틀이 없으면(cost 대체) None."""
+    """운영 방식 지시 + 슬롯 절(`POLICY_SLOTS_TAIL`)을 채워 `rounds/R<N>/policy.md` 로 굳히고 그 글을 준다.
+    틀이 없으면(cost 대체) None - 슬롯 절도 붙이지 않는다(운영 방식이 생기기 전의 동작)."""
     if template is None:
         return None
-    text = _fill_placeholders(template, n, at, policy)
+    text = _fill_placeholders(template.rstrip("\n") + "\n\n" + POLICY_SLOTS_TAIL, n, at, policy)
     _write_text_replace(_round_dir(n) / "policy.md", text)
     return text
-
-
-def _frozen_policy(n):
-    """굳혀 둔 `rounds/R<N>/policy.md` 의 글 (없으면 None). 링크는 따라가지 않는다 - 작업자도 `rounds/` 에 쓸 수 있다."""
-    try:
-        fd = os.open(_round_dir(n, create=False) / "policy.md", os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(fd, encoding="utf-8") as fh:
-            return fh.read(200_000)
-    except (OSError, ValueError):
-        return None
 
 
 def _with_policy(text, policy_text):
@@ -1630,7 +1675,6 @@ def _try_wait_limit(n, poll=None, sleep=None, clock=None):
 CHAIN_MAX_ROUNDS = 10            # 사람이 고를 수 있는 연속 상한의 최대
 CHAIN_HARD_ROUNDS = 30           # 상한을 새로 이어 가며(`renew`) 돌 때의 안전 상한(모두 합친 라운드 수) - 여기 닿으면 사람이 다시 켠다
 CHAIN_DEFAULT_ROUNDS = 3
-CHAIN_WAIT_SEC = 600            # 관리자가 끝난 뒤 라운드가 정리되기를 감시자가 기다리는 시한 (관리자가 도는 동안은 시한이 없다)
 CHAIN_POLL_SEC = 5               # 관리자 세션이 끝났는지는 세션 폴더 읽기라 싸다
 WATCH_LOCK_WAIT_SEC = 10         # 갈아 끼울 때 앞 감시자가 잠금을 놓기를 기다리는 시간
 _GOALS_HEAD = re.compile(r"^##[ \t]*(?:목표|goals)\b[^\n]*$", re.MULTILINE | re.IGNORECASE)   # aimem_monitor.server 와 같은 식
@@ -1991,15 +2035,10 @@ def _chain_queue_request(round_n, project="", items=None):
                                   "detail": detail, "requester": "함대 이어 달리기", **({"project": project} if project else {})}, fleet.ROOT)
 
 
-#: 멈춘 까닭의 종류 - 화면이 종류별로 다른 안내를 보인다
-#:   done   남은 일이 없어 끝남          cap    상한 라운드를 채움(멈춤 방식)      safety 모두 합쳐 안전 상한에 닿음
-#:   stuck  진전 없는 라운드             report 관리자 보고가 DONE 이 아니거나 없음   error  요청·라운드를 띄우지 못함
-#:   off    사람이 끔                    wait   라운드가 끝나기를 너무 오래 기다림
-CHAIN_STOP_KINDS = ("done", "cap", "safety", "stuck", "report", "error", "off", "wait")
-
-
 def _chain_stop(st, kind, why, round_n=None, left=None):
-    """이어 달리기를 끄고 **왜 멈췄는지**를 남깁니다 - 화면이 종류별로 다른 안내를 보입니다."""
+    """이어 달리기를 끄고 **왜 멈췄는지**를 남깁니다 - 화면이 종류별로 다른 안내를 보입니다.
+    `kind`: done(남은 일 없음) cap(상한을 채움) safety(안전 상한) stuck(진전 없음) report(보고가 DONE 아님·없음)
+    error(요청·라운드를 못 띄움) off(사람이 끔)."""
     st.update({"on": False, "at": _now(), "stopped_why": why, "stopped_kind": kind, "stopped_at": _now(),
                "stopped_round": round_n, "stopped_left": left})
     st.pop("limit_wait", None)
@@ -2086,15 +2125,16 @@ def _round_manager_running(n):
     return any(s["round"] == int(n) for s in manager_running())
 
 
-def _chain_wait_and_step(n, poll=None, wait=None, close_only=False):
+def _chain_wait_and_step(n, poll=None, close_only=False):
     """감시자(라운드마다 하나, `launch_round` 가 띄운다): 관리자 세션이 끝나기를 기다린다.
 
-    - 관리자가 잠깐의 API 오류로 끊겼으면 같은 대화를 잇고(`_try_resume_manager`) 기다리기 시한을 새로 잡는다
+    - 관리자가 잠깐의 API 오류로 끊겼으면 같은 대화를 잇는다(`_try_resume_manager`)
     - 완전 자율 종주에서 관리자가 사용 한도로 끊겼으면 풀릴 때까지 기다렸다가 같은 대화를 잇는다(`_try_wait_limit`)
     - 관리자가 보고 없이(done 이 아닌 상태로) 끝났으면 최소 마감을 쓴다(`close_if_unreported`, 설계 5.10)
     - 이어 달리기가 켜져 있고 라운드가 끝났으면(작업자·실행기도 없음) `chain_step` 으로 다음 라운드를 판단한다
     - 사람이 함대를 멈추면 이어 달리기를 내려놓는다 (마감은 계속 지켜본다)
     - `close_only` (이어 달리기가 꺼진 채 띄운 라운드): 마감만 보고, 이어 달리기 파일은 읽지 않는다
+    시간으로 끊지 않는다: 관리자·작업자·실행기가 도는 동안은 끝까지 지켜보고, 모두 멈추면 위대로 마감한다.
     관리자 세션이 끝났는지는 세션 폴더 읽기라 몇 초마다 봐도 싸다.
     """
     with open(_aimem_dir() / "fleet-chain.lock", "w") as lock:
@@ -2109,13 +2149,7 @@ def _chain_wait_and_step(n, poll=None, wait=None, close_only=False):
                 if time.time() >= deadline:
                     return 0
                 time.sleep(0.2)
-        return _watch(n, CHAIN_POLL_SEC if poll is None else poll, chain_wait_sec() if wait is None else wait,
-                      close_only=close_only)
-
-
-def chain_wait_sec():
-    """감시자가 관리자가 끝난 뒤 라운드가 정리되기를 기다리는 시한. 관리자가 도는 동안은 시한 없이 지켜본다."""
-    return CHAIN_WAIT_SEC
+        return _watch(n, CHAIN_POLL_SEC if poll is None else poll, close_only=close_only)
 
 
 def _dur(sec):
@@ -2124,29 +2158,27 @@ def _dur(sec):
     return " ".join(f"{v}{u}" for v, u in ((h, "시간"), (m, "분"), (s, "초")) if v) or "0초"
 
 
-def _watch(n, poll, wait, close_only=False):
+def _watch(n, poll, close_only=False):
+    """`_chain_wait_and_step` 의 본체. 시한이 없다 - 도는 것이 있으면 기다리고, 없으면 마감·판단하고 돌아온다(rc 0)."""
     try:
         rt = _rt()
         _write_text_replace(_watch_path(), json.dumps({"pid": os.getpid(), "start": rt.proc_start(os.getpid()), "round": int(n),
                                                       "at": _now(), "close_only": bool(close_only)}))
     except (OSError, ValueError):
         pass
-    deadline = time.time() + wait
     closed = None
-    while time.time() < deadline:
+    while True:
         time.sleep(poll)
         on = False if close_only else chain_state().get("on")
         if on and mode() != "running":    # 사람이 멈췄다 - 이어 달리기도 내려놓는다
             _chain_stop(chain_state(), "off", f"함대가 '{MODE_LABEL.get(mode(), mode())}' 로 바뀌어 이어 달리기도 내려놓았습니다 (사람이 멈춤)", n)
             on = False
         if _round_manager_running(n):
-            deadline = time.time() + wait   # 관리자에겐 시간 한도가 없다 - 도는 동안은 끝까지 지켜본다
-            continue
+            continue                      # 관리자에겐 시간 한도가 없다 - 도는 동안은 끝까지 지켜본다
         if closed is None and _try_resume_manager(n):
             continue                      # 잠깐의 API 오류 - 같은 대화를 이었다. 작업자는 두고 새 세션을 계속 지켜본다
         if closed is None and not close_only and _try_wait_limit(n, poll):
-            deadline = time.time() + wait  # 한도가 풀리기를 기다린 시간은 기다리기 시한에 넣지 않는다
-            continue
+            continue                      # 한도가 풀려 같은 대화를 이었다
         if closed is None:
             # 관리자가 어떤 상태로 끝났든(done 도) 실행기 없이 남은 이 라운드 작업자를 거둔다 - 마감보다 먼저
             last = next((s for s in reversed(manager_sessions()) if s.get("round") == int(n)), None)
@@ -2158,13 +2190,12 @@ def _watch(n, poll, wait, close_only=False):
         if not on:
             return 0                      # 꺼져 있거나 사람이 껐다 - 마감만 보고 끝
         if not round_over():
-            continue                      # 관리자는 갔는데 작업자·실행기가 아직 돈다
+            # 관리자는 갔는데 작업자·실행기가 아직 돈다 - 관리자와 같이 시한 없이 지켜본다. 여기서 `on` 이면 함대는 '실행' 이므로
+            # (아니면 위에서 내려놓았다) round_over 가 거짓인 까닭은 도는 것이 있다는 것뿐이다. 멈춘 작업자는 침묵 감시가 끊는다.
+            continue
         res = chain_step(n)
         print(f"{_now()} chain R{n}: {json.dumps({k: v for k, v in res.items() if k != 'open'}, ensure_ascii=False)}", flush=True)
         return 0
-    if not close_only and chain_state().get("on"):
-        _chain_stop(chain_state(), "wait", f"R{n} 관리자가 끝난 뒤 {_dur(wait)}이 지나도 라운드가 정리되지 않아 기다리기를 그만두었습니다 - 남은 작업자를 확인하십시오", n)
-    return 1
 
 
 # ----------------------------------------------------------------- 관리자에게 전하기
@@ -2744,9 +2775,11 @@ def main(argv=None):
     c.add_argument("--policy", choices=[x["key"] for x in POLICY_CHOICES], default=None,
                    help="이어 띄울 라운드의 운영 방식 (없으면: 켜져 있는 중이면 지금 것, 꺼진 데서 켜면 fleet.toml 기본값)")
     c.add_argument("--by", default="CLI")
-    pj = sub.add_parser("project", help="프로젝트 삭제: 폴더를 .aimem/archive/ 로 옮기고 열린 요청·큐·그래프·소유 경로를 닫는다")
-    pj.add_argument("action", choices=["remove"])
+    pj = sub.add_parser("project", help="remove: 프로젝트 삭제(폴더를 .aimem/archive/ 로 옮기고 열린 요청·큐·그래프·소유 경로를 닫는다)"
+                                        f" · mode <이름> <{'|'.join(PMODE_LABEL)}>: 관리 방식 찍기")
+    pj.add_argument("action", choices=["remove", "mode"])
     pj.add_argument("name")
+    pj.add_argument("key", nargs="?", help="mode 의 관리 방식 키")
     pj.add_argument("--dry-run", action="store_true", help="무엇이 닫히고 옮겨지는지만 보인다")
     pj.add_argument("--by", default="CLI")
     sl = sub.add_parser("slot", help="슬롯 일시 사용 중지·다시 쓰기·삭제 - 도는 작업자를 끊고 관리자에게 알린다 (추가·변경은 aimem_db.py slot)")
@@ -2772,7 +2805,12 @@ def main(argv=None):
         print(json.dumps(out, ensure_ascii=False, indent=1))
         return 0 if out.get("ok") else 1
     if a.cmd == "project":
-        out = project_remove_plan(a.name) if a.dry_run else project_remove(a.name, a.by)
+        if (a.action == "mode") != (a.key is not None):
+            p.error("project mode <이름> <키> 는 키가 있어야 하고, project remove <이름> 은 키를 받지 않습니다")
+        if a.action == "mode":
+            out = set_project_mode(a.name, a.key, a.by)
+        else:
+            out = project_remove_plan(a.name) if a.dry_run else project_remove(a.name, a.by)
         print(json.dumps(out, ensure_ascii=False, indent=1))
         return 0 if out.get("ok") else 1
     if a.cmd == "slot":

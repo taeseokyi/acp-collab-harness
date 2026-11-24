@@ -28,8 +28,8 @@ MANAGER_TOOLS = ",".join([
     "Bash(python3 tools/aimem_lint.py:*)",
     # 표준 브리프가 시키는 일: 노드의 verify 를 붙이기 전에 검사를 한 번 돌려 본다
     "Bash(python3 -m unittest:*)", "Bash(PYTHONPATH=tools python3 -m unittest:*)",
-    # 검사 스크립트는 `Bash(python3 tests/*)` 꼴이어야 한다. `Bash(python3 tests/:*)` 는 낱말 경계에서만 맞아
-    # `python3 tests/browser_x.py` 를 허용하지 않는다 (R22 에서 관리자가 브라우저 검사를 못 돌린 까닭, haiku 로 실측).
+    # 검사 스크립트는 `Bash(python3 tests/*)` 꼴이어야 한다 - `Bash(python3 tests/:*)` 는 낱말 경계에서만 맞아
+    # `python3 tests/browser_x.py` 를 허용하지 않는다.
     "Bash(python3 tests/*)", "Bash(PYTHONPATH=tools python3 tests/*)",
     # 전체 검사 한 줄과, 관리자가 노드의 verify 로 쓰려고 만든 검증 도구 - 붙이기 전에 지금 트리에서 한 번 돌려 본다(8.0-8).
     # 없을 때는 unittest 꼴로 감싸 돌려야 했다 (R28 관리자 제안, 2026-11-14 태석님 승인)
@@ -53,12 +53,6 @@ ID_RE = re.compile(r"\AM-R(\d+)-\d{6}(?:-\d+)?\Z")
 def manager_id(n, at=None):
     at = at or datetime.datetime.now()
     return f"M-R{int(n)}-{at.strftime('%H%M%S')}"
-
-
-def round_of(sid):
-    """세션 id 에서 라운드 번호. 관리자 id 꼴이 아니면 None."""
-    m = ID_RE.match(str(sid or ""))
-    return int(m.group(1)) if m else None
 
 
 def label(n, at=None):
@@ -85,7 +79,7 @@ RESUMED_SUFFIX = " (이어 감)"
 def resume_spec(old_meta, new_id, resume_session):
     """끊긴 관리자 세션(`meta.json`)을 같은 대화로 잇는 새 세션의 명세.
 
-    라운드·모델·도구·거부 목록·제한 시간·공급자는 처음 것을 그대로 쓴다 - 이었다고 권한이 달라지지 않게.
+    라운드·모델·도구·거부 목록·침묵 한도·공급자는 처음 것을 그대로 쓴다 - 이었다고 권한이 달라지지 않게.
     `extra.resume_session` 이 하네스 어댑터에 `--resume` 을 시키고, 이은 뒤의 대화 id 도 같은 것으로 적어 둔다
     (다음에 또 끊기면 그 id 로 다시 잇는다).
     """

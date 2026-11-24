@@ -191,7 +191,7 @@ class WorkersNextToTheManager(Base):
         g = {"id": "G-1", "concurrency": 2, "nodes": [
             {"id": "T-1", "title": "t", "slot": "S2", "task": "FAKE: report DONE\\nok", "deps": [], "write": [],
              "max_attempts": 1, "status": "todo", "attempts": []}]}
-        self.assertEqual(fleet_graph._busy_slots(g), set())
+        self.assertEqual(fleet_graph._live_scan(g)[0], set())
         self.graphs.mkdir(parents=True, exist_ok=True)
         with mock.patch.object(fleet, "owned_paths", return_value=[]):
             self.assertTrue(_wait(lambda: fleet_graph.step(g) or g["nodes"][0]["status"] == "done", 30, 0.3))
@@ -212,12 +212,12 @@ class LaunchAndStop(Base):
         n, sid = out["round"], out["session"]
         self.assertEqual(n, 8)                                     # 번호는 라운드 기록 폴더 다음
         self.assertRegex(sid, r"\AM-R8-\d{6}\Z")
-        self.assertEqual(rt_manager.round_of(sid), 8)
+        self.assertEqual(int(rt_manager.ID_RE.match(sid).group(1)), 8)
         self.assertEqual(self.started, [8])                        # 감시자를 띄운다
         meta = sessions.load_meta(self.sroot / sid)
         self.assertEqual((meta["role"], meta["round"], meta["model"], meta["tools"], meta["idle_timeout"]),
                          ("manager", 8, "opus", rt_manager.MANAGER_TOOLS, 600.0))
-        self.assertFalse(meta["timeout"])                          # 관리자도 벽시계 한도가 없다
+        self.assertNotIn("timeout", meta)                          # 관리자도 벽시계 한도가 없다
         self.assertEqual((meta["extra"]["by"], meta["extra"]["workspace"], meta["provider"]), ("test", "rounds/R8", "anthropic"))
         self.assertTrue(re.fullmatch(r"[0-9a-f-]{36}", meta["extra"]["harness_session_id"]))
         self.assertIn("관리자 R8 브리프", (self.sroot / sid / "brief.md").read_text(encoding="utf-8"))
@@ -316,7 +316,7 @@ class Watcher(Base):
         self.assertEqual(_wait(lambda: sessions.state(self.sroot / sid)["state"] != "running", 10)
                          and sessions.state(self.sroot / sid)["state"], "failed")
         # 그래프 노드가 'running' 으로 남았지만 실행기는 없다 - 라운드는 끝난 것으로 보고 이어 달리기가 판단한다
-        rc = fleet_ctl._chain_wait_and_step(n, poll=0.05, wait=5)
+        rc = fleet_ctl._chain_wait_and_step(n, poll=0.05)
         self.assertEqual(rc, 0)
         text = self.report_path(n).read_text(encoding="utf-8")
         self.assertIn("상태: PARTIAL", text)
@@ -334,7 +334,7 @@ class Watcher(Base):
         _wait(lambda: sessions.state(self.sroot / sid)["state"] == "done", 10)
         self.assertIsNone(fleet_ctl.close_if_unreported(n))
         self.assertFalse(self.report_path(n).exists())
-        self.assertEqual(fleet_ctl._chain_wait_and_step(n, poll=0.05, wait=2), 0)   # 이어 달리기가 꺼져 있으면 바로 끝
+        self.assertEqual(fleet_ctl._chain_wait_and_step(n, poll=0.05), 0)   # 이어 달리기가 꺼져 있으면 바로 끝
         self.assertEqual(fleet_ctl.public_state()["manager"]["state"], "done")
         self.assertTrue(fleet_ctl.public_state()["idle"])
 
@@ -602,12 +602,12 @@ class ReviewFixes(Base):
         (self.aimem / "requests" / "Q-evil.json").write_text(json.dumps({"id": "Q-evil", "status": "NEW"}), encoding="utf-8")
         (self.aimem / "briefs" / "manager-round900-2026-11-12.md").write_text("작업자가 고른 브리프", encoding="utf-8")
         with mock.patch.object(fleet_ctl, "launch_round") as lr:
-            self.assertEqual(fleet_ctl._watch(5, poll=0.01, wait=2, close_only=True), 0)
+            self.assertEqual(fleet_ctl._watch(5, poll=0.01, close_only=True), 0)
         lr.assert_not_called()
         self.assertTrue(fleet_ctl.chain_state()["on"])                    # 파일도 건드리지 않는다
         # 비교: 이어 달리기 감시자(사람이 켜고 띄운 것)는 같은 파일로 다음 라운드를 판단한다
         with mock.patch.object(fleet_ctl, "launch_round", return_value={"ok": True, "round": 900}) as lr:
-            fleet_ctl._watch(5, poll=0.01, wait=2)
+            fleet_ctl._watch(5, poll=0.01)
         lr.assert_called_once()
 
     # ---- 11. 라운드 폴더 링크
@@ -673,7 +673,7 @@ def _spawn_worker(slot, round_n, task, task_id="T-900"):
     import contextlib
     import io
     ns = argparse.Namespace(slot=slot, harness=None, model=None, task_id=task_id, attempt=1, label="검사 작업자",
-                            write=[], task=task, task_file=None, project=None, round=round_n, timeout=600)
+                            write=[], task=task, task_file=None, project=None, round=round_n)
     buf = io.StringIO()
     with mock.patch.object(fleet, "current_round", return_value=None), contextlib.redirect_stdout(buf):
         fleet.cmd_spawn(ns)
@@ -720,7 +720,7 @@ class LeftoversWhenTheManagerEnds(Base):
         kids = _child_pids(self.sroot / mine)
         self.assertEqual(sessions.cancel(self.sroot / sid, "검사: 관리자만 끊김"), "killed")
         with fleet_graph.graph_lock("G-2", "다른 실행자"):
-            self.assertEqual(fleet_ctl._watch(n, poll=0.05, wait=5, close_only=True), 0)
+            self.assertEqual(fleet_ctl._watch(n, poll=0.05, close_only=True), 0)
         self.assertTrue(_wait(lambda: all(_gone(p) for p in kids), 5), kids)
         self.assertEqual(sessions.state(self.sroot / mine)["state"], "killed")
         self.assertEqual(sessions.state(self.sroot / loose)["state"], "killed")
@@ -745,7 +745,7 @@ class LeftoversWhenTheManagerEnds(Base):
             {"id": "T-906", "title": "끝", "slot": "S2", "status": "done", "attempts": [{"run_id": "x", "rc": 0}]}]})
         by_hand = _spawn_worker("S1", None, "FAKE: hang", task_id="T-907")
         self.assertEqual(fleet_ctl.halt_round_leftovers(n, "검사"), [])
-        self.assertEqual(fleet_ctl._watch(n, poll=0.05, wait=2, close_only=True), 0)
+        self.assertEqual(fleet_ctl._watch(n, poll=0.05, close_only=True), 0)
         self.assertFalse(self.report_path(n).exists())
         self.assertEqual(sessions.state(self.sroot / by_hand)["state"], "running")
         self.assertEqual(fleet_graph._load("G-3")["nodes"][0]["status"], "done")
@@ -768,28 +768,28 @@ class LeftoversWhenTheManagerEnds(Base):
 
 
 class WatchDeadline(unittest.TestCase):
-    def test_no_deadline_while_the_manager_runs_and_a_short_one_after_it_ends(self):
-        # 관리자에겐 시간 한도가 없다 - 도는 동안은 시한(0.2초)을 몇 번 넘겨도 지켜본다. 끝난 뒤에도 라운드가 정리되지 않으면 그때 그만둔다.
+    def test_no_deadline_while_the_manager_runs_or_work_goes_on_after_it_ends(self):
+        # 시간으로 끊지 않는다 - 관리자가 도는 동안도, 끝난 뒤 작업자·실행기가 남아 있는 동안도 지켜본다. 라운드가 정리되면 다음으로 넘어간다.
         tmp = pathlib.Path(tempfile.mkdtemp(dir=BASE))
         t0 = time.time()
         stops = []
         with mock.patch.object(fleet_ctl, "_aimem_dir", lambda: tmp), \
-                mock.patch.object(fleet_ctl, "_round_manager_running", side_effect=lambda n: time.time() - t0 < 0.8), \
+                mock.patch.object(fleet_ctl, "_round_manager_running", side_effect=lambda n: time.time() - t0 < 0.4), \
                 mock.patch.object(fleet_ctl, "_try_resume_manager", return_value=False), \
                 mock.patch.object(fleet_ctl, "_try_wait_limit", return_value=False), \
                 mock.patch.object(fleet_ctl, "manager_sessions", return_value=[]), \
                 mock.patch.object(fleet_ctl, "halt_round_leftovers", return_value=[]), \
                 mock.patch.object(fleet_ctl, "close_if_unreported", return_value=""), \
                 mock.patch.object(fleet_ctl, "record_round_metrics"), \
-                mock.patch.object(fleet_ctl, "round_over", return_value=False), \
+                mock.patch.object(fleet_ctl, "round_over", side_effect=lambda *a, **k: time.time() - t0 >= 0.8), \
                 mock.patch.object(fleet_ctl, "mode", return_value="running"), \
                 mock.patch.object(fleet_ctl, "chain_state", return_value={"on": True}), \
+                mock.patch.object(fleet_ctl, "chain_step", return_value={"ok": True}) as step, \
                 mock.patch.object(fleet_ctl, "_chain_stop", side_effect=lambda st, kind, why, n=None: stops.append((kind, why))):
-            self.assertEqual(fleet_ctl._watch(5, poll=0.02, wait=0.2), 1)
-        self.assertGreaterEqual(time.time() - t0, 0.95)                    # 관리자가 돈 0.8 + 끝난 뒤 시한 0.2
-        self.assertEqual([k for k, _ in stops], ["wait"])
-        self.assertIn(fleet_ctl._dur(0.2), stops[0][1])
-        self.assertEqual(fleet_ctl.chain_wait_sec(), fleet_ctl.CHAIN_WAIT_SEC)
+            self.assertEqual(fleet_ctl._watch(5, poll=0.02), 0)
+        self.assertGreaterEqual(time.time() - t0, 0.8)
+        self.assertEqual(stops, [])
+        step.assert_called_once()
         self.assertEqual(fleet_ctl._dur(6 * 3600 + 600), "6시간 10분")
 
 
@@ -829,14 +829,15 @@ class ResumeAfterTransientApiError(Base):
         rec = json.loads((self.root / "rounds" / f"R{n}" / "round.json").read_text(encoding="utf-8"))
         new = rec["session"]
         self.assertNotEqual(new, sid)
-        self.assertEqual(rt_manager.round_of(new), n)
+        self.assertEqual(int(rt_manager.ID_RE.match(new).group(1)), n)
         self.assertEqual([(r["from"], r["to"]) for r in rec["resumes"]], [(sid, new)])
         meta = sessions.load_meta(self.sroot / new)
         self.assertEqual(meta["extra"]["resume_session"], f"fake-{sid}")       # 끊긴 세션의 대화 id (사건에서)
         self.assertEqual(meta["extra"]["harness_session_id"], f"fake-{sid}")
         self.assertTrue(meta["label"].endswith("(이어 감)"))
-        self.assertEqual((meta["model"], meta["tools"], meta["timeout"], meta["idle_timeout"], meta["extra"]["disallowed_tools"]),
-                         ("opus", rt_manager.MANAGER_TOOLS, 0.0, 600.0, rt_manager.MANAGER_DENIED))    # 벽시계 한도 없음, 침묵만
+        self.assertEqual((meta["model"], meta["tools"], meta["idle_timeout"], meta["extra"]["disallowed_tools"]),
+                         ("opus", rt_manager.MANAGER_TOOLS, 600.0, rt_manager.MANAGER_DENIED))    # 침묵 한도만
+        self.assertNotIn("timeout", meta)                                                         # 벽시계 한도 없음
         self.assertIn("모델 API 오류", (self.sroot / new / "brief.md").read_text(encoding="utf-8"))
         # 작업자·노드는 그대로, 마감 없음, 감시자를 새로 띄우지 않음(이 감시자가 계속 본다)
         self.assertEqual(sessions.state(self.sroot / rid)["state"], "running")
@@ -849,7 +850,7 @@ class ResumeAfterTransientApiError(Base):
         n, sid, rid = self.failed_round()
         fleet_ctl.chain_set(True, None, 3, "test", all_=True)
         with self.transient(sid), mock.patch.object(fleet_ctl, "chain_step", return_value={"ok": True}) as step:
-            self.assertEqual(fleet_ctl._watch(n, poll=0.05, wait=20), 0)
+            self.assertEqual(fleet_ctl._watch(n, poll=0.05), 0)
         step.assert_called_once_with(n)                                      # 끊김으로 이어 달리기를 멈추지 않았다
         rec = json.loads((self.root / "rounds" / f"R{n}" / "round.json").read_text(encoding="utf-8"))
         self.assertEqual(len(rec["resumes"]), 1)
@@ -865,7 +866,7 @@ class ResumeAfterTransientApiError(Base):
         f.write_text(json.dumps(rec), encoding="utf-8")
         fleet_ctl.chain_set(True, None, 3, "test", all_=True)
         with self.transient(sid):
-            self.assertEqual(fleet_ctl._watch(n, poll=0.05, wait=10), 0)
+            self.assertEqual(fleet_ctl._watch(n, poll=0.05), 0)
         self.assertEqual([s["id"] for s in fleet_ctl.manager_sessions()], [sid])   # 새 관리자 없음
         self.assertEqual(sessions.state(self.sroot / rid)["state"], "killed")      # 작업자를 거뒀다
         self.assertIn("관리자 없이 끝남 (failed)", self.report_path(n).read_text(encoding="utf-8"))
@@ -876,7 +877,7 @@ class ResumeAfterTransientApiError(Base):
         n, sid, rid = self.failed_round()
         self.assertFalse(fleet_ctl._manager_transient_end(sid))                   # 진짜 판정: result 사건이 없다
         self.assertFalse(fleet_ctl._try_resume_manager(n, sleep=self.fail))
-        self.assertEqual(fleet_ctl._watch(n, poll=0.05, wait=10, close_only=True), 0)
+        self.assertEqual(fleet_ctl._watch(n, poll=0.05, close_only=True), 0)
         self.assertEqual(sessions.state(self.sroot / rid)["state"], "killed")
         self.assertIn("상태: PARTIAL", self.report_path(n).read_text(encoding="utf-8"))
         self.assertNotIn("resumes", json.loads((self.root / "rounds" / f"R{n}" / "round.json").read_text(encoding="utf-8")))
@@ -981,7 +982,7 @@ class ResumeWhenTheLimitResets(ResumeAfterTransientApiError):
         self.autonomous()
         with self.limited(sid, reset=None), mock.patch.object(fleet_ctl, "LIMIT_WAIT_UNKNOWN_SEC", 0.2), \
                 mock.patch.object(fleet_ctl, "chain_step", return_value={"ok": True}) as step:
-            self.assertEqual(fleet_ctl._watch(n, poll=0.05, wait=20), 0)
+            self.assertEqual(fleet_ctl._watch(n, poll=0.05), 0)
         step.assert_called_once_with(n)
         rec = json.loads((self.root / "rounds" / f"R{n}" / "round.json").read_text(encoding="utf-8"))
         self.assertEqual(len(rec["resumes"]), 1)

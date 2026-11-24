@@ -197,7 +197,7 @@ class Base(unittest.TestCase):
 
     def node(self, nid, slot, task=None, write=None, **kw):
         w = write if write is not None else [f"out/{nid}.txt"]
-        n = {"id": nid, "title": nid, "slot": slot, "task": task or WORK.format(s=2, w=w[0] if w else "out/x.txt"),
+        n = {"id": nid, "title": nid, "slot": slot, "task": task or WORK.format(s=1, w=w[0] if w else "out/x.txt"),
              "write": w, "deps": [], "max_attempts": 1}
         n.update(kw)
         return n
@@ -210,7 +210,7 @@ class Base(unittest.TestCase):
                 return True
             if done:
                 return pred(g)
-            time.sleep(0.2)
+            time.sleep(0.02)
         return False
 
     def events(self, kind):
@@ -357,7 +357,7 @@ class Concurrency(Base):
 
 # ---------------------------------------------------------------- 4. 노드 옮기기 · run --stop-on-block
 class Move(Base):
-    SLOTS = (("S1", "codex", "one/x"), ("S2", "opencode", "wide/y"), ("S3", "claude", "sonnet"))
+    SLOTS = (("S1", "codex", "one/x"), ("S2", "opencode", "wide/y"), ("S3", "claude", "sonnet"), ("S4", "claude", "haiku"))
 
     def setUp(self):
         super().setUp()
@@ -414,7 +414,7 @@ class Move(Base):
         self.assertEqual(fleet_graph.round_policy(4), "cost")
         ok, msg = fleet_graph.move_node(g, "T-1", "S3")
         self.assertFalse(ok)
-        self.assertIn("운영 방식 cost 에서는 무료 슬롯으로만", msg)
+        self.assertIn("운영 방식 cost 에서는 무료 슬롯이나 같은 등급", msg)
         self.assertIn("유료", msg)
         self.assertEqual(g["nodes"][0]["slot"], "S1")
         self.assertEqual(self.owner_of("out/T-1.txt"), "S1")             # 거절은 아무것도 바꾸지 않는다
@@ -423,6 +423,25 @@ class Move(Base):
         self.assertEqual(fleet_graph.round_policy(None), "cost")         # 모르면 가장 좁은 쪽
         self.round_json(5, policy="<x>")
         self.assertEqual(fleet_graph.round_policy(5), "cost")
+
+    def test_cost_allows_a_move_within_the_same_tier(self):
+        """cost 의 거절은 허용하지 않는 등급으로 올라갈 때만 - 유료 슬롯에서 막힌 노드는 다른 유료 슬롯으로 옮길 수 있다."""
+        g = self.blocked_graph(round_n=4, policy="cost")
+        g["nodes"][0]["slot"] = "S3"                                       # 유료 슬롯에서 막혔다
+        ok, msg = fleet_graph.move_node(g, "T-1", "S4")
+        self.assertTrue(ok, msg)
+        self.assertEqual(g["nodes"][0]["slot"], "S4")
+        g["nodes"][0]["status"] = "blocked"
+        ok, msg = fleet_graph.move_node(g, "T-1", "S1")                   # 유료→무료도 된다
+        self.assertTrue(ok, msg)
+        g["nodes"][0]["status"] = "blocked"
+        ok, msg = fleet_graph.move_node(g, "T-1", "S2")                   # 무료→무료
+        self.assertTrue(ok, msg)
+        g["nodes"][0]["status"] = "blocked"
+        ok, msg = fleet_graph.move_node(g, "T-1", "S4")                   # 무료→유료는 여전히 거절
+        self.assertFalse(ok)
+        self.assertIn("지금 슬롯 S2 는 무료", msg)
+        self.assertEqual(g["nodes"][0]["slot"], "S2")
 
     def test_a_carried_over_graph_follows_the_round_that_runs_it(self):
         """무료 중심 라운드에서 만든 그래프를 빠른 구현 라운드가 돌리면 지금 라운드의 방식을 따른다."""
@@ -463,9 +482,9 @@ class Move(Base):
     def stop_graph(self, round_n, policy):
         self.round_json(round_n, policy=policy)
         self.own("out/T-3.txt", "S2")
-        g = self.new_graph([self.node("T-1", "S1", task="FAKE: sleep 1\nFAKE: report BLOCKED\\n막힘"),
+        g = self.new_graph([self.node("T-1", "S1", task="FAKE: sleep 0.5\nFAKE: report BLOCKED\\n막힘"),
                             self.node("T-2", "S1"),            # 같은 슬롯이라 T-1 뒤에 뜬다 - 띄우기를 멈추면 안 뜬다
-                            self.node("T-3", "S2", task=WORK.format(s=2, w="out/T-3.txt"))])
+                            self.node("T-3", "S2", task=WORK.format(s=1, w="out/T-3.txt"))])   # T-1 이 막힐 때 아직 돈다
         g["round"] = round_n
         fleet_graph._save(g)
 
@@ -482,9 +501,24 @@ class Move(Base):
         self.stop_graph(6, "cost")
         rc, out, err = self.run_graph()
         self.assertEqual(rc, 1)
-        self.assertNotIn("막힌 노드:", out)
+        self.assertNotIn("새 노드는 띄우지 않고", out)                       # 끝까지 돌렸다
+        self.assertIn("막힌 노드: T-1(blocked, S1) - 그래프가 끝났습니다", out)   # 끝난 뒤에도 옮길 길은 알린다
         st = {n["id"]: n["status"] for n in fleet_graph._load("G-001")["nodes"]}
         self.assertEqual(st, {"T-1": "blocked", "T-2": "done", "T-3": "done"})
+
+    def test_a_graph_that_ends_blocked_still_prints_the_hint(self):
+        """막힌 노드와 그 뒤쪽이 한 틱에 모두 끝나면 루프가 stop-on-block 갈래 전에 끝난다 - 안내는 그래도 나온다."""
+        for k, policy in enumerate(("speed", "quality", "cost")):
+            with self.subTest(policy=policy):
+                self.round_json(7 + k, policy=policy)
+                g = self.new_graph([self.node("T-1", "S1", task="FAKE: report BLOCKED\n막힘"),
+                                    self.node("T-2", "S1", deps=["T-1"])])
+                g["round"] = 7 + k
+                fleet_graph._save(g)
+                rc, out, err = self.run_graph()
+                self.assertEqual(rc, 1, out + err)
+                self.assertIn("막힌 노드: T-1(blocked, S1), T-2(blocked, S1) - 그래프가 끝났습니다", out)
+                self.assertIn("fleet_graph.py move G-001", out)
 
     def test_explicit_flag_overrides_policy(self):
         self.stop_graph(6, "cost")
@@ -821,7 +855,7 @@ class EndToEnd(Base):
         self.assertTrue(self.drive(g, lambda g: g["nodes"][0]["status"] == "blocked"))
         ok, msg = fleet_graph.move_node(g, "T-1", "S1")
         self.assertFalse(ok)
-        self.assertIn("운영 방식 cost 에서는 무료 슬롯으로만", msg)
+        self.assertIn("운영 방식 cost 에서는 무료 슬롯이나 같은 등급", msg)
         ok, msg = fleet_graph.move_node(g, "T-1", "S4")
         self.assertTrue(ok, msg)
         fleet_ctl.stop("test")

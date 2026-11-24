@@ -21,7 +21,7 @@
 
 실행은 전부 `fleet.spawn` 을 거치므로 머리말·토큰·REV·소유권 대조는 거기서 한 번 더 걸립니다.
 `run`/`step` 은 그래프마다 실행자 하나(`graph_lock`)이고, 시작 전에 모양을 한 번 검증합니다.
-실패의 종류 `attempt.fail_kind` ∈ None(성공)/work/infra/limit/timeout - infra 는 시도로 세지 않고 다시 넣고,
+실패의 종류 `attempt.fail_kind` ∈ None(성공)/work/infra/limit (옛 기록에는 timeout 도 있다) - infra 는 시도로 세지 않고 다시 넣고,
 limit 은 감독의 판정(end.json)을 따라 재시도 없이 막습니다. 공급자 자리(`max_concurrent`)가 없으면 띄우지 않고
 `waiting` 에 까닭을 적습니다. 태스크 노드의 상태가 바뀌면 DB `tasks.status` 를 같이 고칩니다.
 """
@@ -197,17 +197,6 @@ def validate_graph(g, spawnable_only=False):
     return problems
 
 
-def _needs_approval(n):
-    """이 노드가 사람 승인 하네스로 뜨는가 (노드 덮어쓰기 > 명부)."""
-    try:
-        from fleet_rt import harness as rt_harness  # noqa: PLC0415
-        h, _m = fleet.spawn_harness_model(n.get("slot"), n.get("harness"), n.get("model"))
-        return bool(h) and rt_harness.needs_approval(h)
-    except Exception:  # noqa: BLE001 - 판정을 못 하면 보통 노드로 본다
-        return False
-
-
-# ---------------------------------------------------------------- 추정
 def harness_durations():
     """지난 세션들에서 하네스별 완료 실행 시간(초) 목록."""
     out = {}
@@ -300,11 +289,6 @@ def _ready(g):
         if all(nodes[d].get("status") == "done" for d in deps):
             out.append(n)
     return out
-
-
-def _busy_slots(g):
-    """지금 작업자가 돌고 있는 슬롯 집합 - 그래프 밖에서 띄운 실행까지 센다."""
-    return _live_scan(g)[0]
 
 
 def _live_scan(g):
@@ -655,7 +639,7 @@ def _run_info(run_id):
 
 
 def session_fail_kind(sinfo, cut_orphan=False):
-    """끝난 세션의 감독 판정 -> `"infra"` / `"limit"` / `"timeout"` / None(보고를 읽어 정할 일).
+    """끝난 세션의 감독 판정 -> `"infra"` / `"limit"` / None(보고를 읽어 정할 일).
 
     infra = 일을 못 한 까닭이 공급자·전송·감독에 있다: 침묵으로 끊김(`stalled`), 감독이 정한 `fail_kind: infra`,
     감독이 사라짐(`lost`), 감독 없이 남은 하네스를 실행기가 끊음(`cut_orphan` 이고 `killed`). limit 은 감독이
@@ -668,8 +652,6 @@ def session_fail_kind(sinfo, cut_orphan=False):
         return "infra"
     if kind == "limit":
         return "limit"
-    if st == "timeout" or kind == "timeout":
-        return "timeout"
     return None
 
 
@@ -880,8 +862,8 @@ def _node_request(g, n):
 
 def _board_fill(g):
     """그래프의 태스크 노드마다 보드 줄을 둔다 - **그래프가 정본이고 보드 줄은 거기서 나온다.** 없는 줄은 만들고(번호·요청·
-    제목·슬롯·상태), 있는 줄은 **비어 있는** 제목·슬롯만 채운다(관리자가 적은 값은 덮지 않는다). 예전에는 관리자가 손으로
-    등록해서, 잊으면 라운드 내내 보드에 안 보였다 (R42 는 제목이 비었고 R44 는 줄이 없었다). 노드마다 프로세스에서 한 번만 해 본다."""
+    제목·슬롯·상태), 있는 줄은 **비어 있는** 제목·슬롯만 채운다(관리자가 적은 값은 덮지 않는다) - 손으로 등록하면 잊은 줄이
+    라운드 내내 보드에 안 보인다. 노드마다 프로세스에서 한 번만 해 본다."""
     todo = [n for n in g.get("nodes") or [] if _TASK_ID_RE.fullmatch(str(n.get("id")))
             and (g.get("id"), str(n.get("id"))) not in _BOARD_FILLED]
     db = _board_db()
@@ -934,8 +916,6 @@ def _cut_unsent(g):
             continue
         if st == "todo" and any(done.get(d) != "done" for d in n.get("deps", [])):
             continue            # 앞 노드를 기다리는 중 - 스스로 나아갈 일이 아니다
-        if st == "todo" and any(done.get(d) != "done" for d in n.get("deps", [])):
-            continue            # 앞 노드를 기다리는 중 - 스스로 나아갈 일이 아니다
         gate = fleet.run_gate(n["attempts"][-1]["run_id"]) if st == "running" and n.get("attempts") else None
         if not gate or gate.get("phase") != "await":
             return False        # 아직 다른 일이 남았다
@@ -953,7 +933,7 @@ def _cut_unsent(g):
                     "report_status": "BLOCKED", "verify_rc": None,
                     "verify_tail": f"검증 생략: {what} ({waited}초 기다림)"})
         n["status"] = "blocked"
-        _log(g, f"unsent {n['id']} ({att['run_id']}) - 다른 노드가 모두 끝났고 {waited}초 동안 {what}")
+        _log(g, f"unsent {n['id']} ({att['run_id']}) - 나아갈 다른 노드가 없고 {waited}초 동안 {what}")
     return bool(waiting)
 
 
@@ -1123,7 +1103,7 @@ def _step(g, concurrency=None, allow_spawn=None, hold_on_block=False):
             n["status"] = "done"
             _log(g, f"done {n['id']} ({att['run_id']})")
         else:
-            att["fail_kind"] = "timeout" if kind == "timeout" else "work"
+            att["fail_kind"] = "work"
             _retry_or_fail(g, n, f"rc={rc} verify_rc={vrc}")
         changed = True
     changed |= _cut_unsent(g)
@@ -1246,8 +1226,9 @@ def round_budget_problem(rnd, new_ids, followup, exclude=None):
     return None
 
 
-#: 지시문의 요지 줄 - `요지: <무엇을 어떻게, 끝난 기준>` (어느 슬롯의 노드든 같다)
-_GIST_RE = re.compile(r"^[ \t>*-]*요지[ \t]*[:：][ \t]*\S", re.M)
+def _gist_re():
+    from fleet_rt.harness import freebuff  # noqa: PLC0415 - 요지 줄의 꼴은 한 곳에서 정한다
+    return freebuff._GIST_LINE_RE
 
 
 def graph_shape(g):
@@ -1287,9 +1268,9 @@ def graph_shape(g):
             desc = ", ".join(f"{s} {len(ids)}개" for s, ids in crowded.items())
             notes.append(f"{k}단계의 노드가 한 슬롯에 몰렸습니다({desc}) - 슬롯은 한 번에 하나라 줄을 섭니다. "
                          "다른 슬롯(다른 공급자면 더 좋음)에 나누면 동시에 돕니다")
-    bare = [nid for nid in nodes if not _GIST_RE.search(str(nodes[nid].get("task") or ""))]
+    bare = [nid for nid in nodes if not _gist_re().search(str(nodes[nid].get("task") or ""))]
     if bare:
-        notes.append(f"지시문 첫 줄에 `요지:` 가 없는 노드: {', '.join(bare)} - 무엇을 어떻게, 끝난 기준을 한 문장으로 적으십시오")
+        notes.append(f"지시문에 `요지:` 줄이 없는 노드: {', '.join(bare)} - 무엇을 어떻게, 끝난 기준을 한 문장으로 적으십시오")
     return {"nodes": n, "levels": levels, "notes": notes}
 
 
@@ -1456,13 +1437,19 @@ def cmd_run(a):
         if stuck:
             return 1
         if not spawn:
-            gone = [n for n in g["nodes"] if n["id"] in blocked_new]
-            names = ", ".join(f"{n['id']}({n.get('status')}, {n.get('slot')})" for n in gone)
-            print(f"막힌 노드: {names} - 새 노드는 띄우지 않고 "
-                  f"멈췄습니다. `fleet_graph.py move {g['id']} <노드> --slot S<n>` 으로 다른 슬롯에 옮기거나 "
-                  f"`unblock` 한 뒤 `fleet_graph.py run {g['id']}` 로 이어 가십시오")
+            _print_blocked(g, [n for n in g["nodes"] if n["id"] in blocked_new], "새 노드는 띄우지 않고 멈췄습니다")
             return 1
+        # 모든 노드가 끝났는데 막힌 노드가 남았다 - 위 갈래를 타기 전에 루프가 끝나도 관리자는 같은 안내를 받는다
+        left = [n for n in g["nodes"] if n.get("status") in ("failed", "blocked") and not n.get("dropped")]
+        if left:
+            _print_blocked(g, left, "그래프가 끝났습니다")
         return 0 if all(n.get("status") == "done" for n in g["nodes"]) else 1
+
+
+def _print_blocked(g, nodes, what):
+    names = ", ".join(f"{n['id']}({n.get('status')}, {n.get('slot')})" for n in nodes)
+    print(f"막힌 노드: {names} - {what}. `fleet_graph.py move {g['id']} <노드> --slot S<n>` 으로 다른 슬롯에 옮기거나 "
+          f"`unblock` 한 뒤 `fleet_graph.py run {g['id']}` 로 이어 가십시오")
 
 
 #: 운영 방식을 바꾸며 버린 노드(`fleet_ctl.switch_policy`)는 풀지도 옮기지도 다시 검증하지도 않는다 - 그래프를 새로 짠다
@@ -1586,7 +1573,8 @@ def move_node(g, node_id, slot, policy=None, why=""):
     """노드를 다른 슬롯으로 옮긴다 - 관리자가 막힌 노드를 다른 엔진에 넘기는 길. (ok, 메시지)
 
     - todo / failed / blocked 이고 마지막 작업자가 살아 있지 않은 노드만
-    - 새 슬롯은 명부에 있어야 하고, 운영 방식(`policy`, 없으면 그 라운드의 것)이 허용하는 등급(`slot_tiers`)이어야 한다
+    - 새 슬롯은 명부에 있어야 하고, 운영 방식(`policy`, 없으면 그 라운드의 것)이 허용하는 등급(`slot_tiers`)이거나
+      지금 슬롯과 같은 등급이어야 한다
     - 쓰기 경로의 소유를 새 슬롯으로 옮기고(events), 노드를 `todo` 로. 시도 한도를 다 썼으면 한 번 더 허용하고
       (`unblock` 과 같다), 이 노드 때문에 막힌 뒤쪽 노드도 푼다. `moves` 에 기록을 남긴다.
     """
@@ -1617,11 +1605,15 @@ def move_node(g, node_id, slot, policy=None, why=""):
         h, m = fleet.spawn_harness_model(slot, n.get("harness"), n.get("model"))
         tier = cfg.slot_tier(h, m)
         allowed = cfg.policy(key)["slot_tiers"]
+        old_tier = cfg.slot_tier(*fleet.spawn_harness_model(old, n.get("harness"), n.get("model"))) if old in roster else None
     except Exception as e:  # noqa: BLE001 - 등급을 모르면 옮기지 않는다 (돈이 드는 쪽을 막는다)
         return False, f"fleet.toml 을 읽지 못해 {slot} 의 등급을 확인할 수 없습니다: {e}"
-    if tier not in allowed:
-        return False, (f"운영 방식 {key} 에서는 {'·'.join(rt_config.TIER_LABEL[x] for x in allowed) or '(없음)'} 슬롯으로만 옮깁니다 - "
-                       f"{slot}({h} {m or '하네스 기본'}) 는 {rt_config.TIER_LABEL.get(tier, tier)}입니다")
+    # 같은 등급 안의 옮김은 늘 된다 (유료→유료도 돈이 더 들지 않는다) - 거절은 운영 방식이 허용하지 않는 등급으로 **올라갈** 때만
+    if tier not in allowed and tier != old_tier:
+        label = rt_config.TIER_LABEL
+        return False, (f"운영 방식 {key} 에서는 {'·'.join(label[x] for x in allowed) or '(없음)'} 슬롯이나 같은 등급의 슬롯으로만 옮깁니다 - "
+                       f"{slot}({h} {m or '하네스 기본'}) 는 {label.get(tier, tier)}이고 지금 슬롯 {old} 는 "
+                       f"{label.get(old_tier, old_tier or '등급 모름')}입니다")
     moved = _move_ownership(list(n.get("write") or []), slot, f"{g.get('id')} {node_id} {old}→{slot}")
     n["slot"] = slot
     n.setdefault("moves", []).append({"from": old, "to": slot, "at": _now(), "why": str(why or "")[:300]})

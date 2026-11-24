@@ -122,8 +122,8 @@ def _tmux(*args, timeout=5.0):
 def auto_state(root):
     """'미리 고른 문구 전송' 옵션: `{"on","at","by","refused"}`.
 
-    켜져 있으면 모니터가 절차를 밟는다: 사람의 1차 지시(창으로 받거나 노드에 써 둔 것) → 그 답이 끝남 → 몇 초 뒤 작업
-    지시를 같은 대화에 이음. `refused` 는 freebuff 의 거절로 꺼졌다는 표시다.
+    켜져 있으면 모니터가 사람 손 없이 작업 지시 한 줄을 보낸다 (사람의 1차 지시가 있으면 그 줄 맨 앞에 붙여 한 번에).
+    `refused` 는 freebuff 의 거절로 꺼졌다는 표시다.
     """
     try:
         d = json.loads((pathlib.Path(root) / AUTO_FILE).read_text(encoding="utf-8"))
@@ -380,7 +380,7 @@ def send_line(pane, line, new=True, info=None):
             if info is not None:
                 info["held"] = True
             # 창이 걷히고 새 세션이 열릴 때까지 잠깐 기다린다 - 바로 돌아가면 부르는 쪽이 아직 떠 있는 창을 보고
-            # '지시가 걸려 있다' 고 적고, 세션이 끝나는 시각도 못 읽는다 (R40·R42 의 기록 잡티)
+            # '지시가 걸려 있다' 고 적고, 세션이 끝나는 시각도 못 읽는다
             t_end = time.monotonic() + HELD_CLEAR_SEC
             while time.monotonic() < t_end and pane_status(pane)["held"]:
                 time.sleep(0.5)

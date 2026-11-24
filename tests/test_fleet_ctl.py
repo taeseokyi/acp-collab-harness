@@ -669,7 +669,6 @@ class ChainTest(unittest.TestCase):
         with mock.patch.object(fleet_ctl, "launch_round", return_value={"ok": False, "error": "이미 실행 중인 관리자가 있습니다"}):
             fleet_ctl.chain_step(6)
         self.assertEqual(fleet_ctl.chain_state()["stopped_kind"], "error")
-        self.assertTrue(all(k in fleet_ctl.CHAIN_STOP_KINDS for k in ("done", "cap", "safety", "stuck", "report", "error", "off")))
 
     def test_open_requests_keep_the_chain_going_without_a_project(self):
         """2026-11-11 태석님: "모든 작업트리 끝내" - 남은 일은 프로젝트 목표만이 아니라 열린 요청이다."""

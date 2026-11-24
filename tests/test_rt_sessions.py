@@ -26,6 +26,7 @@ from fleet_rt import sessions
 from fleet_rt.base import ENV_ROOT, ENV_SESSION, SESSION_COLUMNS, SessionSpec
 
 BASE = None          # 이 모듈의 임시 폴더. 모든 세션 저장소가 이 아래에 있다
+IDLE = 0.5           # 침묵 검사의 침묵 한도(초). 감독은 한도의 1/3 마다 CPU·읽기를 본다 - 하네스가 뜨는 틈보다 넉넉하게
 _N = [0]
 
 
@@ -178,7 +179,7 @@ class TestRun(Base):
         self.assertEqual((st["state"], st["fail_kind"]), ("failed", "infra"))
 
     def test_stalled(self):
-        d = self.spawn(["hang"], idle_timeout=1.0)
+        d = self.spawn(["hang"], idle_timeout=IDLE)
         st = self.wait_end(d)
         self.assertEqual((st["state"], st["fail_kind"]), ("stalled", "infra"))
         self.assertIn("읽기도 없음", st["why"])
@@ -186,7 +187,7 @@ class TestRun(Base):
 
     def test_reading_without_events_is_not_silence(self):
         """사건은 없어도 데이터를 계속 읽는 하네스(긴 생성 중)는 침묵으로 끊지 않는다 - 읽기가 멈추면 끊는다."""
-        d = self.spawn(["busy-read 2", "emit 끝"], idle_timeout=1.0)
+        d = self.spawn([f"busy-read {IDLE * 2}", "emit 끝"], idle_timeout=IDLE)      # 침묵 한도의 두 배 동안 읽기만
         st = self.wait_end(d, 20)
         self.assertEqual(st["state"], "done", st)
         self.assertTrue(_wait(lambda: not self.group_of(d), 5))   # 감독이 DB 를 적고 끝날 때까지
@@ -194,27 +195,28 @@ class TestRun(Base):
     def test_reading_alone_does_not_keep_a_session_alive_forever(self):
         """사건 없이 읽기만 이어지면 침묵 한도의 몇 배에서 끊는다 - 멈춘 하네스도 제 파일을 조금씩 읽는다."""
         from fleet_rt import run as rt_run  # noqa: PLC0415
-        d = self.spawn(["busy-read 30", "emit 끝"], idle_timeout=1.0)
+        d = self.spawn(["busy-read 30", "emit 끝"], idle_timeout=IDLE)
         t0 = time.time()
         st = self.wait_end(d, 20)
         self.assertEqual((st["state"], st["fail_kind"]), ("stalled", "infra"), st)
         self.assertIn("읽기만 계속됨", st["why"])
-        self.assertLess(time.time() - t0, rt_run.READ_ONLY_IDLES * 1.0 + 6)
+        self.assertLess(time.time() - t0, rt_run.READ_ONLY_IDLES * IDLE + 4)      # 30초를 다 읽기 전에 끊었다
         self.assertTrue(_wait(lambda: not self.group_of(d), 5))
 
     def test_cpu_use_without_events_is_work_with_no_cap(self):
         """사건이 없어도 CPU 를 쓰는 동안은 일하는 중이다 - 읽기만 하는 경우와 달리 상한 없이 기다린다 (벽시계 한도도 없다)."""
         from fleet_rt import run as rt_run  # noqa: PLC0415
-        d = self.spawn([f"busy-cpu {rt_run.READ_ONLY_IDLES * 1.0 + 3}", "emit 끝"], idle_timeout=1.0)
+        # 읽기만으로 버티는 상한(침묵 한도 x READ_ONLY_IDLES)을 넉넉히 넘겨 CPU 를 쓴다 - 그래도 끊지 않는다
+        d = self.spawn([f"busy-cpu {rt_run.READ_ONLY_IDLES * IDLE + 1.0}", "emit 끝"], idle_timeout=IDLE)
         st = self.wait_end(d, 30)
         self.assertEqual(st["state"], "done", st)
         self.assertTrue(_wait(lambda: not self.group_of(d), 5))
 
     def test_a_silent_manager_is_not_cut_while_a_worker_runs(self):
         """관리자도 같은 기준이다 - 벽시계 한도가 없고, 도는 작업자가 있는 동안은 조용해도 침묵이 아니다. 작업자가 끝나면 침묵으로 끊는다."""
-        worker = self.spawn(["sleep 5", "emit 끝"])
-        mgr = self.spawn(["hang"], role="manager", write_paths=[], idle_timeout=1.0)
-        time.sleep(3.5)                                   # 침묵 한도(1초)의 몇 배
+        worker = self.spawn(["sleep 2.5", "emit 끝"])
+        mgr = self.spawn(["hang"], role="manager", write_paths=[], idle_timeout=IDLE)
+        time.sleep(1.5)                                   # 침묵 한도(0.5초)의 세 배 - 작업자는 아직 돈다(1초 남음)
         self.assertEqual(sessions.state(mgr)["state"], "running")
         self.wait_end(worker, 15)
         st = self.wait_end(mgr, 15)
@@ -223,16 +225,20 @@ class TestRun(Base):
 
     def test_reading_by_a_detached_child_is_not_silence(self):
         """하네스가 그룹을 벗어난(setsid) 백그라운드 명령을 기다리는 동안도, 그 명령이 읽고 있으면 침묵이 아니다."""
-        d = self.spawn(["detached-busy 2", "emit 끝"], idle_timeout=1.0)
+        d = self.spawn([f"detached-busy {IDLE * 2}", "emit 끝"], idle_timeout=IDLE)
         st = self.wait_end(d, 20)
         self.assertEqual(st["state"], "done", st)
         self.assertTrue(_wait(lambda: not self.group_of(d), 5))
 
-    def test_timeout(self):
-        d = self.spawn(["emit 시작", "sleep 30"], timeout=0.8)
-        st = self.wait_end(d)
+    def test_an_old_timeout_record_still_reads_as_ended(self):
+        """벽시계 제한은 없어졌지만 디스크의 옛 end.json 에 `timeout` 이 남아 있다 - 끝난 세션으로 읽는다."""
+        d = self.spawn(["emit 끝"])
+        self.assertEqual(self.wait_end(d)["state"], "done")
+        self.assertTrue(_wait(lambda: not self.group_of(d), 3))
+        (d / "end.json").write_text(json.dumps({"state": "timeout", "rc": None, "ended": "2026-11-01T00:00:00",
+                                                "fail_kind": "timeout", "why": "벽시계 60초 넘김"}), encoding="utf-8")
+        st = sessions.state(d)
         self.assertEqual((st["state"], st["fail_kind"]), ("timeout", "timeout"))
-        self.assertTrue(_wait(lambda: not self.group_of(d), 3))     # 감독은 end.json 뒤 DB 를 적고 끝난다
 
     def test_grandchild_cleaned_on_normal_exit(self):
         d = self.spawn(["child 60", "emit 끝"])
@@ -538,7 +544,7 @@ class TestReviewFindings(Base):
         self.assertEqual(sessions.cancel(sib), "killed")
 
     # 4
-    @mock.patch.object(sessions, "FINALISE_GRACE_SEC", 0.5)
+    @mock.patch.object(sessions, "FINALISE_GRACE_SEC", 0.3)
     def test_forged_end_json_while_running(self):
         root = self.work / "sessions"
         d = self.spawn(['write sessions/fe1/end.json {"state":"done","rc":0}', "hang"], sid="fe1", root=root)

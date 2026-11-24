@@ -1515,6 +1515,11 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 .proj-head h3 { overflow-wrap: anywhere; min-width: 0; }
 .proj-actions { margin-left: auto; display: inline-flex; gap: var(--st-s-2); flex-wrap: wrap; }
 .proj-sub { margin-top: 2px; }
+.proj-mode { display: flex; flex-wrap: wrap; align-items: center; gap: var(--st-s-2); margin-top: var(--st-s-2); min-width: 0; }
+.proj-mode-label { font-size: 13px; color: var(--st-ink-muted); }
+.proj-mode-btn { font-size: 13px; padding: 3px 10px; min-width: 0; border: 1px solid var(--st-line); border-radius: 999px; background: transparent; color: inherit; cursor: pointer; }
+.proj-mode-btn.is-current { background: var(--st-surface-2); font-weight: 600; border-color: var(--st-ink-muted); }
+.proj-mode-msg { font-size: 13px; flex-basis: 100%; }
 @media (max-width: 480px) {
   .proj-search { margin-left: 0; width: 100%; }
   .proj-actions { margin-left: 0; width: 100%; }

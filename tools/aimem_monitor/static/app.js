@@ -966,12 +966,12 @@ const PANE_PHRASES_KEY = 'aimem.panePhrases2';
 // 어느 문구든 '할 일은 파일 안에 있다'가 먼저다 - 문구가 일을 따로 정하면 작업자가 지시문 대신 문구를 따른다(실전에서 겪음).
 const PANE_PHRASE_SEEDS = [
   { key: 'plain', label: '보통', text: '이 파일 읽고 거기 적힌 대로 해 줘:' },
-  { key: 'read', label: '읽기만 (조사·점검)', text: '이 파일에 적힌 일을 해 줘. 살펴보고 결과만 알려 주면 돼. 아무 파일도 고치지 말고:' },
-  { key: 'edit', label: '코드 고치기', text: '이 파일에 고칠 내용이 적혀 있어. 읽고 그대로 해 줘. 거기 적힌 쓰기 범위 밖은 건드리지 마:' },
+  { key: 'read', label: '읽기', text: '이 파일에 적힌 일을 해 줘. 살펴보고 결과만 알려 주면 돼. 아무 파일도 고치지 말고:' },
+  { key: 'edit', label: '고치기', text: '이 파일에 고칠 내용이 적혀 있어. 읽고 그대로 해 줘. 거기 적힌 쓰기 범위 밖은 건드리지 마:' },
   { key: 'new', label: '새로 만들기', text: '이 파일에 만들 것이 적혀 있어. 읽고 그대로 만들어 줘. 범위와 규칙도 거기 있어:' },
-  { key: 'test', label: '검사 쓰기·돌리기', text: '이 파일에 검사 관련 지시가 있어. 읽고 그대로 한 뒤 돌린 결과를 알려 줘:' },
-  { key: 'review', label: '검수 (지적만)', text: '이 파일에 검수 지시가 있어. 읽고 거기 적힌 대상을 검수해 줘. 고치지는 말고 지적만 적어:' },
-  { key: 'docs', label: '문서 다듬기', text: '이 파일에 문서 작업 지시가 있어. 읽고 그대로 해 줘. 코드는 건드리지 말고:' },
+  { key: 'test', label: '검사', text: '이 파일에 검사 관련 지시가 있어. 읽고 그대로 한 뒤 돌린 결과를 알려 줘:' },
+  { key: 'review', label: '검수', text: '이 파일에 검수 지시가 있어. 읽고 거기 적힌 대상을 검수해 줘. 고치지는 말고 지적만 적어:' },
+  { key: 'docs', label: '문서', text: '이 파일에 문서 작업 지시가 있어. 읽고 그대로 해 줘. 코드는 건드리지 말고:' },
   { key: 'small', label: '작은 일', text: '간단한 일이야. 이 파일 읽고 적힌 것만 바로 처리해 줘:' },
   { key: 'retry', label: '다시 시도', when: 'retry', text: '아까 끝내지 못한 일이야. 이 파일을 다시 읽고 적힌 대로 처음부터 해 줘:' },
   { key: 'resume', label: '이어 하기 (세션이 끊긴 뒤)', when: 'resume', text: '이 파일의 일을 하던 중에 끊겼어. 처음부터 다시 하지 말고 하던 데서 이어서 끝까지 해 줘:' },
@@ -1398,7 +1398,6 @@ function paneFirstDialog() {
   const form = document.createElement('form');
   form.method = 'dialog';
   const h = document.createElement('h3');
-  h.textContent = '먼저 직접 한마디 쓰십시오 (1차 지시)';
   const what = document.createElement('p');
   what.className = 'pane-first-what';
   const gist = document.createElement('p');
@@ -1414,39 +1413,36 @@ function paneFirstDialog() {
   const row = document.createElement('div');
   row.className = 'slot-actions';
   const send = document.createElement('button');
-  send.type = 'button'; send.className = 'btn-primary'; send.textContent = '저장';
+  send.type = 'button'; send.className = 'btn-primary';
   const later = document.createElement('button');
-  later.type = 'button'; later.className = 'btn-link'; later.textContent = '닫기 (나중에 쓰겠음)';
+  later.type = 'button'; later.className = 'btn-link';
   row.append(send, later);
   form.append(h, what, gist, hint, ta, msg, row);
   dlg.appendChild(form);
   const clear = document.createElement('button');
   clear.type = 'button'; clear.className = 'btn-link'; clear.textContent = '지우기';
   row.insertBefore(clear, later);
-  clear.addEventListener('click', async () => {
-    try {
-      const { res, body } = await api('/api/pane/first', { task: dlg.dataset.task, text: '' });
-      if (!res.ok || !body.ok) throw new Error(body.error || `지우지 못했습니다 (${res.status})`);
-      ta.value = ''; dlg.close(); paneAutoLoad().then(() => refresh());
-    } catch (err) { msg.className = 'form-msg error'; msg.textContent = err && err.message ? err.message : String(err); }
-  });
-  later.addEventListener('click', () => dlg.close());
-  ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send.click(); } });
-  send.addEventListener('click', async () => {
-    const text = ta.value.trim();
-    if (!text) { msg.className = 'form-msg error'; msg.textContent = '직접 쓴 글이 있어야 합니다.'; ta.focus(); return; }
-    send.disabled = true;
+  // 지우기(빈 글)와 저장은 같은 호출이다 - 글과 실패 문구만 다르다
+  const saveFirst = async (text, failText, btn) => {
+    btn.disabled = true;
     msg.className = 'form-msg'; msg.textContent = '보내는 중...';
     try {
-      // 미리 써 두는 것도, 기다리는 지시가 물어서 쓰는 것도 그 노드에 적는다 - 창은 하나다
       const { res, body } = await api('/api/pane/first', { task: dlg.dataset.task, text });
-      if (!res.ok || !body.ok) throw new Error(body.error || `저장하지 못했습니다 (${res.status})`);
+      if (!res.ok || !body.ok) throw new Error(body.error || `${failText} (${res.status})`);
       ta.value = '';
       dlg.close();
       paneAutoLoad().then(() => refresh());
     } catch (err) {
       msg.className = 'form-msg error'; msg.textContent = err && err.message ? err.message : String(err);
-    } finally { send.disabled = false; }
+    } finally { btn.disabled = false; }
+  };
+  clear.addEventListener('click', () => saveFirst('', '지우지 못했습니다', clear));
+  later.addEventListener('click', () => dlg.close());
+  ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send.click(); } });
+  send.addEventListener('click', () => {
+    const text = ta.value.trim();
+    if (!text) { msg.className = 'form-msg error'; msg.textContent = '직접 쓴 글이 있어야 합니다.'; ta.focus(); return; }
+    return saveFirst(text, '저장하지 못했습니다', send);
   });
   dlg._what = what; dlg._gist = gist; dlg._msg = msg; dlg._ta = ta; dlg._h = h; dlg._hint = hint; dlg._send = send; dlg._later = later; dlg._clear = clear;
   document.body.appendChild(dlg);
@@ -1457,7 +1453,7 @@ function paneFirstMode(d, task, asked) {
   d.dataset.task = task || '';
   d._h.textContent = asked ? `먼저 직접 한마디 쓰십시오 (${task} 의 1차 지시)` : `${task} 의 1차 지시 (미리 써 두기)`;
   d._hint.textContent = asked
-    ? '이 글이 작업 지시 줄의 맨 앞에 붙어 freebuff 팬에 한 번에 들어갑니다. 저장하면 10초 뒤 나갑니다.'
+    ? `이 글이 작업 지시 줄의 맨 앞에 붙어 freebuff 팬에 한 번에 들어갑니다. 저장하면 ${(state.paneAuto && state.paneAuto.sec) || 10}초 뒤 나갑니다.`
     : '이 글이 이 노드의 작업 지시 줄 맨 앞에 붙어 freebuff 팬에 한 번에 들어갑니다(보내기 옵션이 켜져 있을 때). 써 두면 창으로 다시 묻지 않습니다.';
   d._send.textContent = asked ? '저장하고 보내기' : '저장';
   d._later.textContent = asked ? '닫기 (나중에 쓰겠음)' : '닫기';
@@ -4763,6 +4759,47 @@ function openProjectDeploy(name, note, shownToken) {
   });
 }
 
+// 프로젝트의 관리 방식(속도 우선·균형·품질 우선) - 누르면 바로 바뀐다. 찍은 적 없으면 균형이 '기본' 으로 선 것이다
+const PROJECT_MODES = [['speed', '속도 우선'], ['balance', '균형'], ['quality', '품질 우선']];
+function projectModeControl(pr) {
+  const cur = (pr.mode && pr.mode.key) || 'balance';
+  const stamped = !!(pr.mode && pr.mode.stamped);
+  const wrap = document.createElement('div');
+  wrap.className = 'proj-mode';
+  wrap.setAttribute('role', 'group');
+  wrap.setAttribute('aria-label', '관리 방식');
+  wrap.title = '이 프로젝트를 관리하는 방식';
+  const lab = document.createElement('span');
+  lab.className = 'proj-mode-label';
+  lab.textContent = '관리 방식';
+  wrap.appendChild(lab);
+  const msg = document.createElement('span');
+  msg.className = 'proj-mode-msg warn-text';
+  for (const [key, text] of PROJECT_MODES) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'proj-mode-btn' + (key === cur ? ' is-current' : '');
+    b.dataset.mode = key;
+    b.setAttribute('aria-pressed', key === cur ? 'true' : 'false');
+    b.textContent = text + (key === 'balance' && !stamped ? ' · 기본' : '');
+    b.addEventListener('click', async () => {
+      if (key === cur && stamped) return;
+      wrap.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+      try {
+        const { res, body } = await api('/api/project/mode', { project: pr.name, mode: key });
+        if (!res.ok || !body.ok) throw new Error(body.error || `바꾸지 못했습니다 (${res.status})`);
+        refresh();
+      } catch (err) {
+        msg.textContent = err && err.message ? err.message : String(err);
+        wrap.querySelectorAll('button').forEach((x) => { x.disabled = false; });
+      }
+    });
+    wrap.appendChild(b);
+  }
+  wrap.appendChild(msg);
+  return wrap;
+}
+
 function renderProjects(data) {
   const box = document.getElementById('projects-list');
   if (!box) return;
@@ -4868,6 +4905,7 @@ function renderProjects(data) {
     actions.appendChild(rm);
     item.appendChild(head);
     item.appendChild(meta);
+    item.appendChild(projectModeControl(pr));
     if (pr.app && !pr.app.runnable) {
       const bad = document.createElement('div');
       bad.className = 'proj-meta warn-text';

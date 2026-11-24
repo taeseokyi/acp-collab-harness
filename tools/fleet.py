@@ -192,7 +192,8 @@ def normalize_model(harness, model):
         return model
     m = str(model).strip()
     if harness == "claude":
-        for pre in ("anthropic/", "claude-cli/"):
+        from fleet_rt.config import CLAUDE_STRIP_PREFIXES  # noqa: PLC0415
+        for pre in CLAUDE_STRIP_PREFIXES:
             if m.startswith(pre):
                 m = m[len(pre):]
     return m
@@ -291,13 +292,13 @@ def _run_last_mtime(run_id, st=None):
 
 
 #: 감독이 끊은 세션을 `("done", rc)` 로 옮길 때 쓰는 종료코드 (하네스가 받은 신호 -15 는 뜻이 없다).
-_SESSION_RC = {"timeout": 124, "stalled": 125}
+_SESSION_RC = {"stalled": 125}
 
 
 def state_pair(st):
     """`fleet_rt.sessions.state()` 의 결과 -> `(state, rc)`. 그래프 실행기는 `running`/`done`/`lost` 만 가린다.
 
-    `killed`(사람·엔진이 끊음)는 `lost`, 감독이 끊은 `timeout`·`stalled` 는 rc != 0 인 `done` - 그래야 보고를 거두고 재시도 규칙을 탄다.
+    `killed`(사람·엔진이 끊음)는 `lost`, 감독이 끊은 `stalled` 는 rc != 0 인 `done` - 그래야 보고를 거두고 재시도 규칙을 탄다.
     """
     state, rc = st.get("state"), st.get("rc")
     if state == "running":

@@ -53,7 +53,7 @@ models = ["pane"]         # 모델은 팬에서 사람이 고른다 (`/model`)
 tier = "paid"
 max_concurrent = 3
 idle_timeout_sec = 600
-models = ["opus", "sonnet", "haiku"]
+models = ["opus", "sonnet", "haiku", "fable"]
 
 [harness.claude]
 providers = ["anthropic"]

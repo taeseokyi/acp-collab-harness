@@ -32,14 +32,12 @@ ROLES = ("manager", "worker", "reviewer")
 #:   done     하네스가 rc 0 으로 끝남
 #:   failed   하네스가 rc != 0 으로 끝남
 #:   killed   사람·엔진이 끊음 (cancel)
-#:   timeout  벽시계 제한을 넘겨 감독이 끊음 (지금은 작업자도 관리자도 벽시계 제한을 쓰지 않는다)
+#:   timeout  옛 기록만 - 벽시계 제한으로 끊긴 세션. 감독은 더 이상 쓰지 않지만 디스크의 옛 end.json 을 끝난 세션으로 읽으려고 남긴다
 #:   stalled  idle_timeout 동안 사건도 읽기(`/proc/<pid>/io`)도 없어 감독이 끊음
 END_STATES = ("done", "failed", "killed", "timeout", "stalled")
-STATES = ("running",) + END_STATES + ("lost",)
 
-#: 실패의 종류 (그래프의 재시도 정책이 본다). 감독이 정하는 것은 infra/timeout/limit 뿐이고,
-#: `work`(보고가 BLOCKED·검증 실패)는 그래프 실행기가 보고를 읽고 정한다.
-FAIL_KINDS = ("work", "infra", "limit", "timeout")
+#: 실패의 종류(end.json `fail_kind`): 감독이 정하는 것은 infra/limit 뿐이고, `work`(보고가 BLOCKED·검증 실패)는
+#: 그래프 실행기가 보고를 읽고 정한다.
 
 #: 작업자에게도 관리자에게도 벽시계 한도가 없다 - 일하는 동안은 끝까지 기다리고, 멈췄을 때만(침묵) 끊는다 (2026-11-23).
 #: 공급자에 침묵 한도가 안 적혔을 때 쓰는 값(초).
@@ -123,8 +121,6 @@ def no_report_tail(session_dir, extra=()):
     tail = "\n".join(kept[-25:] + [str(x) for x in extra]).strip()
     return f"{NO_REPORT}\n{tail}" if tail else ""
 
-EVENT_KINDS = ("text", "tool", "usage", "error", "end", "raw")
-
 #: 모든 세션의 환경에 넣는 표식. 고아 청소가 이것으로 함대 프로세스를 알아본다.
 ENV_SESSION = "AIFLEET_SESSION"
 ENV_ROLE = "AIFLEET_ROLE"
@@ -186,7 +182,6 @@ class SessionSpec:
     write_paths: list = dataclasses.field(default_factory=list)
     tools: Optional[str] = None              # 허용 도구 목록 (claude `--allowedTools`). None 이면 어댑터의 역할별 기본
     settings_path: Optional[str] = None      # 하네스 설정 파일 (claude `--settings`)
-    timeout: float = 0.0                     # 벽시계 제한(초). 0 = 없음 - 작업자도 관리자도 주지 않는다
     idle_timeout: Optional[float] = None     # 침묵 제한(초). None 이면 침묵 감지를 안 한다
     round: Optional[int] = None
     task_id: Optional[str] = None

@@ -1566,7 +1566,7 @@ def pane_info(run_id, root=ROOT):
     st = fb.pane_status(pane)
     ended = (sdir / "end.json").exists()
     return 200, {"ok": True, "id": str(run_id), "phase": "ended" if ended else gate.get("phase"),
-                 "since": gate.get("since"), "sent_at": gate.get("sent_at"), "by": gate.get("by"),
+                 "sent_at": gate.get("sent_at"), "by": gate.get("by"),
                  "error": mask(gate.get("error")) if gate.get("error") else None,
                  "pending": (sdir / "approve.json").exists(), "held": gate.get("held") or None,
                  "ref": fb.brief_ref(sdir, root), "text_max": fb.LINE_TEXT_MAX, "kind": _pane_kind(meta, gate),
@@ -1822,7 +1822,7 @@ def pane_auto_view(root=ROOT):
                 "due_in": round(max(r.get("due", 0.0), r.get("backoff", 0.0)), 1) if step == "work" else None,
                 "note": _pane_auto_notes.get(r["sdir"].name),
                 "need_first": step == "ask", "task": str(r["meta"].get("task_id") or "")}
-    return 200, {"ok": True, "on": auto["on"], "by": auto["by"], "at": auto["at"],
+    return 200, {"ok": True, "on": auto["on"], "at": auto["at"],
                  "refused": auto["refused"],
                  "sec": PANE_AUTO_SEC, "runs": runs, "sessions": pane_sessions(root), "firsts": pane_firsts(root),
                  "first_defaults": pane_first_defaults(root), "first_kinds": list(PANE_FIRST_KINDS)}
@@ -2498,6 +2498,47 @@ def deploy_ensure_all(root=ROOT):
     return _deploys(root).ensure_all(resolve)
 
 
+_PMODE_DEFAULT = {"key": "balance", "label": "균형", "stamped": False}
+
+
+def _project_modes_view(root, names):
+    """`{이름: {key, label, stamped}}` - 프로젝트별 관리 방식(엔진 `fleet_ctl.project_mode`). 운영 저장소가 아니거나 엔진이 못 주면 기본(균형·찍지 않음)."""
+    out = {n: dict(_PMODE_DEFAULT) for n in names}
+    if pathlib.Path(root).resolve() != ROOT:
+        return out
+    try:
+        fn = getattr(_fleet_ctl(root), "project_mode", None)
+        if fn is None:
+            return out
+        for n in names:
+            m = fn(n)
+            if isinstance(m, dict) and m.get("key"):
+                out[n] = {"key": str(m["key"]), "label": str(m.get("label") or m["key"]), "stamped": bool(m.get("stamped"))}
+    except Exception:  # noqa: BLE001 - 관리 방식을 못 읽어도 프로젝트 목록은 나간다
+        pass
+    return out
+
+
+def project_mode_action(payload, by, root=ROOT):
+    """`POST /api/project/mode` {project, mode} → `fleet_ctl.set_project_mode`. 판정은 엔진이 하고 막힌 것은 409. 운영 저장소에서만."""
+    if pathlib.Path(root).resolve() != ROOT:
+        return 403, {"ok": False, "error": "운영 저장소가 아닙니다"}
+    if not isinstance(payload, dict):
+        return 400, {"ok": False, "error": "JSON 객체가 아닙니다"}
+    name, key = payload.get("project"), payload.get("mode")
+    if not isinstance(name, str) or not _PROJECT_RE.match(name):
+        return 400, {"ok": False, "error": "프로젝트 이름이 아닙니다"}
+    ctl = _fleet_ctl(root)
+    labels = getattr(ctl, "PMODE_LABEL", None) or {}
+    if not isinstance(key, str) or key not in labels:
+        return 400, {"ok": False, "error": "관리 방식은 " + " / ".join(labels) + " 중 하나여야 합니다"}
+    try:
+        out = ctl.set_project_mode(name, key, by)
+    except Exception as e:  # noqa: BLE001 - 화면에는 이유가 보여야 한다
+        return 500, {"ok": False, "error": f"관리 방식을 바꾸지 못했습니다: {type(e).__name__}: {str(e)[:160]}"}
+    return (200 if out.get("ok") else 409), out
+
+
 def list_projects(root=ROOT, requests=None):
     """프로젝트별 진행 상황 (2026-11-10 태석님: "각 프로젝트가 얼마나 진행되고 있나").
 
@@ -2543,6 +2584,7 @@ def list_projects(root=ROOT, requests=None):
     launched = _round_records(root)
     names |= {pr for pr, rows in per.items() if any(st not in ("DONE", "REJECTED") for st, _ in rows)}
     deploys = deploy_states(root)
+    modes = _project_modes_view(root, names)
     out = []
     for n in sorted(names):
         rows = [r for r in per.get(n, []) if r[0] != "REJECTED"]
@@ -2566,6 +2608,7 @@ def list_projects(root=ROOT, requests=None):
                     # 배포(자기 주소로 계속 띄워 둠) - 켠 적이 있으면 {port, on, alive, auth, started}, 없으면 None.
                     # deployable = 실행 선언(app.json)이 있어 배포할 수 있나 (서버가 없는 앱도 된다)
                     "deploy": deploys.get(n),
+                    "mode": modes[n],
                     "deployable": bool(app and app.get("runnable"))})
     return out
 
@@ -2866,6 +2909,7 @@ def app_csp(origin="", connect=None):
 
 _REQ_PROJECT_RE = re.compile(r"\A/api/projects/([^/]{1,400})/(files|file)\Z")
 _REQ_PROJECT_REMOVE_RE = re.compile(r"\A/api/projects/([^/]{1,400})/remove\Z")
+_REQ_PROJECT_MODE_PATH = "/api/project/mode"
 _REQ_PROJECT_DEPLOY_RE = re.compile(r"\A/api/projects/([^/]{1,400})/deploy\Z")
 
 
@@ -3657,9 +3701,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         archive_path = path == "/api/archive"
         proj_rm = _REQ_PROJECT_REMOVE_RE.match(path)
         proj_dep = _REQ_PROJECT_DEPLOY_RE.match(path)
+        proj_mode = path == _REQ_PROJECT_MODE_PATH
         pane_m = _REQ_PANE_RE.match(path)
         if (path != "/api/requests" and not edit and not fleet_act and not slot_m and not slot_add_path and not archive_path
-                and not proj_rm and not proj_dep and not pane_m):
+                and not proj_rm and not proj_dep and not proj_mode and not pane_m):
             return self._json(404, {"ok": False, "error": f"없는 경로입니다: {path}"})
         # CSRF (S4 검수 4번). 세션 쿠키가 `SameSite=Strict` 라 1차 방어는 되지만,
         # 쿠키 정책 하나에만 기대지 않습니다. `<form enctype="text/plain">` 으로는
@@ -3721,6 +3766,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             d = result.get("deploy") or {}
             self._audit("project-deploy", f"{code} {pname[:40]!r} action={str(payload.get('action'))[:8] if isinstance(payload, dict) else '-'}"
                                           f" port={d.get('port')} auth={d.get('auth')}")
+            return self._json(code, result)
+        if proj_mode:
+            payload, sent = self._read_json_body()
+            if sent:
+                return None
+            who = self._subject()
+            code, result = project_mode_action(payload, f"웹({subject_label(who)})" if who else "웹", self.root)
+            self._audit("project-mode", f"{code} {str(payload.get('project'))[:40]!r} mode={str(payload.get('mode'))[:12]}"
+                        if isinstance(payload, dict) else f"{code} -")
             return self._json(code, result)
         if proj_rm:
             payload, sent = self._read_json_body()

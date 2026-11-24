@@ -244,5 +244,51 @@ class ProjectRemoveApiTest(unittest.TestCase):
         self.assertTrue((self.root / "projects" / "알파" / "a.txt").is_file())
 
 
+class ProjectModeTests(unittest.TestCase):
+    """관리 방식(속도 우선·균형·품질 우선) - 판정은 엔진(`fleet_ctl`)이 하고 서버는 키·이름만 거른다. 엔진은 가짜로 바꿔 시험한다."""
+
+    LABELS = {"speed": "속도 우선", "balance": "균형", "quality": "품질 우선"}
+
+    def setUp(self):
+        from unittest import mock
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name).resolve()
+        (self.root / "projects" / "알파").mkdir(parents=True)
+        self.calls = []
+
+        def setter(name, key, by=""):
+            self.calls.append((name, key, by))
+            return {"ok": True, "project": name, "mode": key} if name == "알파" else {"ok": False, "error": "없는 프로젝트입니다"}
+
+        fake = mock.Mock(PMODE_LABEL=self.LABELS, set_project_mode=setter,
+                         project_mode=lambda n: {"key": "quality", "label": "품질 우선", "stamped": True})
+        for attr, value in (("ROOT", self.root), ("_fleet_ctl", lambda root: fake)):
+            p = mock.patch.object(server, attr, value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_state_carries_mode(self):
+        self.assertEqual(server.list_projects(self.root)[0]["mode"], {"key": "quality", "label": "품질 우선", "stamped": True})
+
+    def test_state_default_when_engine_has_no_mode(self):
+        server._fleet_ctl = lambda root: object()
+        self.assertEqual(server.list_projects(self.root)[0]["mode"], {"key": "balance", "label": "균형", "stamped": False})
+
+    def test_route_ok_and_refusals(self):
+        code, res = server.project_mode_action({"project": "알파", "mode": "speed"}, "웹(t)", self.root)
+        self.assertEqual((code, res), (200, {"ok": True, "project": "알파", "mode": "speed"}))
+        self.assertEqual(self.calls, [("알파", "speed", "웹(t)")])
+        for bad in ({"project": "알파", "mode": "fast"}, {"project": "알파"}, {"project": "알파", "mode": ["speed"]}):
+            self.assertEqual(server.project_mode_action(bad, "t", self.root)[0], 400, bad)
+        for bad in ({"project": "../x", "mode": "speed"}, {"mode": "speed"}, {"project": 3, "mode": "speed"}):
+            self.assertEqual(server.project_mode_action(bad, "t", self.root)[0], 400, bad)
+        self.assertEqual(server.project_mode_action(["x"], "t", self.root)[0], 400)
+        code, res = server.project_mode_action({"project": "없는것", "mode": "speed"}, "t", self.root)
+        self.assertEqual((code, res["ok"]), (409, False))
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(server.project_mode_action({"project": "알파", "mode": "speed"}, "t", self.root.parent)[0], 403)
+
+
 if __name__ == "__main__":
     unittest.main()

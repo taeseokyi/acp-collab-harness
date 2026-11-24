@@ -330,7 +330,7 @@ class ResumeCommandTest(unittest.TestCase):
         self.assertEqual(c.argv[:-2], first.argv[:-2])
         self.assertIn("--disallowedTools", c.argv)
         self.assertEqual(c.stdin_path, "/x/brief.md")
-        self.assertEqual((spec.id, spec.round, spec.timeout, spec.role), ("M-R9-120500", 9, old["timeout"], "manager"))
+        self.assertEqual((spec.id, spec.round, spec.idle_timeout, spec.role), ("M-R9-120500", 9, old["idle_timeout"], "manager"))
         self.assertEqual(spec.label, "관리자 R9 (Opus) 2026-11-13 (이어 감)")
         self.assertEqual(rt_manager.resume_spec(spec.to_dict(), "M-R9-121000", "hsid-1").label, spec.label)
         self.assertEqual((spec.extra["harness_session_id"], spec.extra["resumed_from"], spec.extra["by"]),

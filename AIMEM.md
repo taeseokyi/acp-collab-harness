@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/a
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 201** (revision number. If the REV in an instruction differs, stop work and ask - `0.1`)
-- Last updated: 2026-11-24 22:05 KST
+- **REV: 202** (workers: if your brief's REV differs, stop and ask - `0.1`)
+- Last updated: 2026-11-24 22:59 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **the `role=manager` session the engine starts for a round**, identified by its session id `M-R<N>-<HHMMSS>` (form pinned in the linter). `tools/fleet_ctl.py
@@ -51,9 +51,7 @@ Hard limits - refused regardless of delegation, opened only by Taeseok's direct 
 global settings · writing `AIMEM.md` (Manager only) · writing outside your owned paths. This list is the single
 place these limits are stated; other sections refer here.
 
-- ❌ Never edit AIMEM.md - concurrent writes lose updates. Request changes in your report
-- ❌ Never modify a file that `Section 6` does not assign to your slot. Need it → `NEEDS-LOCK` in your report
-- ❌ Never commit, push, delete or install on your own → `NEEDS-APPROVAL` in your report
+- Need a limit opened → `NEEDS-APPROVAL`; another slot's file → `NEEDS-LOCK`; an AIMEM.md change → ask in the report
 - ✅ Inside your owned paths, work freely; your own `/tmp` scratch may be removed
 
 ### 0.3 How to Report
@@ -154,7 +152,6 @@ never invents items.
 ## 5. Shared Decisions and Constraints
 
 - **Protocol here, state in the DB.** `Section 6` or `Section 3` means that DB table. `AIMEM-state.md` is generated
-- Commit and push are hard limits (`0.2`): made only on Taeseok's instruction, from his own session
 
 **Size caps** - the cost every reader pays, and the line past which the Manager loses control. Stated here only:
 
@@ -205,7 +202,7 @@ This list is deliberately not a table - the linter would read a table in `Sectio
 ## 7. Known Limits
 
 - **Writes are not technically blocked.** Ownership and hard limits are voluntary; the engine checks `--write`
-  against `Section 6` at spawn and nothing more
+  against `Section 6` at spawn; only `verify` runs confined (`8.0-8`)
 - **A worker's or the Manager's own "fixed" is unreliable** - the Manager reproduces verification, and Manager code
   is cross-reviewed like any other
 - **Unexplained changes: suspect yourself first.** Code files have no write lock - the last writer wins
@@ -237,7 +234,7 @@ the round report, together.
 - **The engine already does this - never repeat it by hand:** reads the status from the first report line; moves
   board status with its node; retries a failed node (`max_attempts` 2) with the previous verify tail and report;
   re-queues infrastructure failures and blocks the node after 3 of them or 10 minutes of provider silence; ends
-  silent workers; fails an attempt that did nothing (`aborted`, `no-op`)
+  silent workers; fails an attempt that did nothing (`aborted`, `no-report`, `no-op`)
 - **Ownership binds the Manager too:** never edit a file a worker is writing. **A node's `verify` is scoped to its
   own deliverables** - the full suite runs only at round close
 
@@ -335,7 +332,7 @@ nothing to do the Manager reports and ends.
 **Start** (a new session is blank) - the one list of what the Manager reads
 1. `fleet_ctl.py status` · `fleet.py status` · `aimem_db.py queue list` · `request list` · `slot list` ·
    `fleet.py runs --last 10` · `aimem_db.py handoff list --last 2` · `rounds/R<N>/INBOX.md` · the `PROGRESS.md` of
-   each open request's project, then this header and `8.0`. Trim output with `| head` / `| tail`
+   each open request's project, then this header and `8.0`.
 2. **Roster:** slots with role `(미배정 - 관리자가 다음 라운드에 정함)` or `events(kind=slot)` → set role and remark
    with `aimem_db.py slot set --slot S<n> --role "…" --note "…"`. Adding slots: within the operating policy
 3. **NEW requests:** within scope and caps → split into subtasks → `PLANNED` → graph. **Caps are enforced by
@@ -347,8 +344,9 @@ nothing to do the Manager reports and ends.
 
 **Graph and verify rules**
 - **Slot use follows the round's operating policy** (chosen at launch; default `fleet.toml` `[policy] default`).
-  Its text (`.aimem/briefs/policy-<key>.md`) is appended to the Manager's brief with the live slot roster, how many
-  slots the Manager may add and the move command
+  Its text (`.aimem/briefs/policy-<key>.md`), with the live slot roster and the slot allowance filled in, follows
+  the brief; each project's mode block follows it. The policy divides slots; the mode decides how much is reviewed
+  and tested
 - **One graph per round by principle,** with every task and its `deps`; a second graph only when the first one's
   results must change the plan. Reviews are nodes inside the graph; the Manager checks once after it ends
 - **Parallel graphs:** a `deps` edge only where a node reads another's output. Fix the interface (file and function
@@ -360,12 +358,12 @@ nothing to do the Manager reports and ends.
   would both write. Do not tell a worker to "plan first" - have it edit files right away. Workers can run a browser
   and local TCP servers
 - **`verify` is ONE check command judged by its exit code** - e.g. `python3 -m unittest tests.test_x`,
-  `python3 tests/browser_x.py`, `node --test …`. Do not redirect or filter its output: the engine keeps the output
+  `python3 tests/browser_x.py`. Do not redirect or filter its output: the engine keeps the output
   tail and passes it to the retry. A node that writes checks is verified by "its checks ran" (it may add one count
   assertion), not "the product passed"; a product defect is reported `NEEDS-FIX` (`0.3`) and fixed by a later node.
   Fix and re-verify nodes require all checks to pass. Have check scripts print the failure cause in their last
-  lines. Run the command on the current tree once before using it (the Manager's tools run `python3 -m unittest …`
-  and `python3 tests/<file>.py`)
+  lines. Run the command on the current tree once before using it (the Manager's tools run `python3 -m unittest …`,
+  `python3 tests/<file>.py` and `python3 tools/check.py`)
 - **`verify` runs confined** (bubblewrap): writable only in the repo and `/tmp`, `.git` read-only, `.env` and
   `.aimem/tls/` unreadable, no API keys, tokens or session markers in the environment, its own pid namespace; the
   network stays. A `verify` that writes elsewhere, reads keys or signals processes fails even if it passed by hand.
@@ -393,9 +391,9 @@ nothing to do the Manager reports and ends.
 3. Update each project's `PROGRESS.md`; report: `Status: DONE|PARTIAL|BLOCKED` + (1) task table (2) reproduced
    verification (3) waiting time (4) queue progress (5) next round's plan (6) operating metrics - slot utilization,
    Manager-only intervals, retries, slots added or nodes moved (7) one improvement proposal. Also written to
-   `rounds/R<N>/REPORT.md`. **No commit or push** (Claude Code does it)
+   `rounds/R<N>/REPORT.md`
 
-**Request lifecycle:** `NEW` (web/phone form) → `PLANNED` (Manager splits) → `IN-PROGRESS` (graph) →
+**Request lifecycle:** `NEW` (web/phone form) → `PLANNED` (Manager splits) → `IN-PROGRESS` (Manager) →
 `DONE`/`REJECTED` (Manager). Taeseok can edit title and body only while `NEW`.
 
 **Control table** - who changes what
@@ -405,14 +403,14 @@ nothing to do the Manager reports and ends.
 | Standing slots: harness and model | Taeseok | web Fleet tab / `aimem_db.py slot` | auto NEW request, `events(kind=slot)` |
 | Slot role, remark, assignment | Manager | `aimem_db.py slot set`, graphs | - |
 | Extra slots (add, change, remove its own) | Manager, within the operating policy | `aimem_db.py slot add\|set\|remove` | the engine refuses what the policy does not allow; report item (6) |
-| Pause, resume, remove or add a slot, also mid-round | Taeseok | web Fleet tab / `fleet_ctl.py slot` | `INBOX.md` (rc 4); `run` prints `쓸 수 없는 슬롯에 걸린 노드` - re-divide with `move`; report item (6) |
-| Moving a node to another slot | Manager, within the operating policy | `fleet_graph.py move <G> <node> --slot S<n>` | graph log |
-| Operating policy, project mode | Taeseok | `fleet_ctl.py round --policy` / web; `.aimem/project-modes.json` | the blocks at the end of the brief |
+| Pause, resume, remove or add a slot, also mid-round | Taeseok | web Fleet tab / `fleet_ctl.py slot` (add: `aimem_db.py slot add`) | `INBOX.md` (rc 4); `run` prints `쓸 수 없는 슬롯에 걸린 노드` - re-divide with `move`; report item (6) |
+| Moving a node to another slot | Manager; to a slot of the same tier always, to another tier only if the policy allows | `fleet_graph.py move <G> <node> --slot S<n>` | graph log |
+| Operating policy, project mode | Taeseok | `fleet_ctl.py round --policy` / web; `fleet_ctl.py project mode <name> <key>` / web project card | the blocks at the end of the brief |
 | Requests: create, edit while NEW | Taeseok | request form | start step 3 / checkpoint (d) |
 | Requests: split, status | Manager | `aimem_db.py request set`, graphs | - |
 | Archive run | Manager (close 2) / Taeseok (web) | `aimem_db.py archive` | `events(kind=archive)` |
 | Project removal | Taeseok, while nothing runs | web project card / `fleet_ctl.py project remove <name>` | `events(kind=project)`, handoff entry |
 | Fleet mode (prepare, run, stop) | Taeseok | web fleet bar | `run` prints `함대 모드:`; rc 3 when stopped → checkpoint, report `PARTIAL` |
 | Message to a running round | Taeseok | `fleet_ctl.py tell` | `INBOX.md`, rc 4 |
-| Chained rounds (`이어 달리기`) | Taeseok | web fleet bar / `fleet_ctl.py chain` | the next round starts when one ends, while the targets have open requests or unchecked goals and the report is DONE |
+| Chained rounds (`이어 달리기`) | Taeseok | web fleet bar / `fleet_ctl.py chain` | the next round starts when one ends, while the targets have open requests, unchecked goals or queue items and the report is DONE |
 | Commit and push | Claude Code, with Taeseok's permission | git | - |

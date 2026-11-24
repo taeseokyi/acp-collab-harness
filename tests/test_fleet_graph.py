@@ -618,7 +618,7 @@ class FleetGraphContractTests(unittest.TestCase):
         self.assertEqual(fleet_graph.harness_durations(), {})
         graph = self._graph([self._node(status="todo")])
         self.assertIn("percent", fleet_graph.progress(graph))
-        self.assertEqual(fleet_graph._busy_slots(graph), set())
+        self.assertEqual(fleet_graph._live_scan(graph)[0], set())
 
 
 class EngineV2Stage3(unittest.TestCase):
@@ -670,7 +670,7 @@ class EngineV2Stage3(unittest.TestCase):
                  ({"state": "lost", "fail_kind": None}, False, "infra"),
                  ({"state": "killed", "fail_kind": None}, True, "infra"),     # 실행기가 고아를 끊음
                  ({"state": "killed", "fail_kind": None}, False, None),       # 사람이 끊음 - 보통 실패
-                 ({"state": "timeout", "fail_kind": "timeout"}, False, "timeout"),
+                 ({"state": "timeout", "fail_kind": "timeout"}, False, None),   # 옛 기록 - 보통 실패
                  ({"state": "failed", "fail_kind": None}, False, None),
                  ({"state": "failed", "fail_kind": "limit"}, False, "limit"),
                  ({"state": "done", "fail_kind": None}, False, None)]
@@ -725,13 +725,13 @@ class EngineV2Stage3(unittest.TestCase):
         self.assertEqual((n2["status"], n2["attempts"][0]["fail_kind"]), ("todo", "work"))
         self.assertNotIn("infra_attempts", n2)
 
-    def test_work_timeout_limit_and_success_kinds(self):
+    def test_work_limit_and_success_kinds(self):
         n = self.node(max_attempts=1)
         self.reap(self.graph([n]), {"state": "failed", "fail_kind": None}, ("done", 2), "DONE?\n중간에 실패")
         self.assertEqual((n["status"], n["attempts"][0]["fail_kind"]), ("failed", "work"))
         n = self.node(max_attempts=1)
-        self.reap(self.graph([n]), {"state": "timeout", "fail_kind": "timeout"}, ("done", 124))
-        self.assertEqual((n["status"], n["attempts"][0]["fail_kind"]), ("failed", "timeout"))
+        self.reap(self.graph([n]), {"state": "timeout", "fail_kind": "timeout"}, ("done", 1))   # 옛 기록 - 보통 실패
+        self.assertEqual((n["status"], n["attempts"][0]["fail_kind"]), ("failed", "work"))
         n = self.node(max_attempts=3)
         self.reap(self.graph([n]), {"state": "failed", "fail_kind": "limit"}, ("done", 1))
         self.assertEqual((n["status"], n["attempts"][0]["fail_kind"]), ("blocked", "limit"))

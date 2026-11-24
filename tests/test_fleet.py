@@ -34,6 +34,14 @@ class FleetDbStateTests(unittest.TestCase):
         p.start()
         self.addCleanup(p.stop)
 
+    def test_state_pair(self):
+        sp = fleet.state_pair
+        self.assertEqual(sp({"state": "running"}), ("running", None))
+        self.assertEqual(sp({"state": "killed"}), ("lost", None))
+        self.assertEqual(sp({"state": "stalled", "rc": -15}), ("done", 125))   # 감독이 침묵으로 끊음
+        self.assertEqual(sp({"state": "timeout", "rc": None}), ("done", 1))    # 옛 기록(벽시계 한도) - 보통 실패
+        self.assertEqual(sp({"state": "done", "rc": 0}), ("done", 0))
+
     def test_roster_db_path_filters_invalid_slot_names(self):
         state = {
             "rev": 114,

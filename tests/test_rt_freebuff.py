@@ -45,6 +45,30 @@ if sys.argv[1] == "capture-pane":
     sys.stdout.write(open(os.path.join(d, "screen.txt"), encoding="utf-8").read())
 """
 
+# 운전기의 기다림을 줄인다 - 운영 값은 몇 초씩이라 검사 하나가 10초를 넘는다. 하는 일은 그대로, 쉬는 길이만 짧다.
+# 상수는 그대로 덮고, `send_line` 등에 박힌 쉼(0.5~2초)은 `fb.time.sleep` 을 FAST_NAP 으로 눌러 줄인다.
+FAST = {"POLL_SEC": 0.05, "SETTLE_SEC": 0.2, "CPU_CHECK_SEC": 0.2, "HELD_CLEAR_SEC": 0.3}
+FAST_NAP = 0.05
+
+
+def fast_time(nap=FAST_NAP):
+    """`time` 대신 쓸 것 - sleep 만 `nap` 초 이하로 줄인다."""
+    import types
+    return types.SimpleNamespace(sleep=lambda s: time.sleep(min(s, nap)), monotonic=time.monotonic, time=time.time)
+
+
+# 검사의 운전기 프로세스: 꾸러미로 들여 FAST 를 덮은 뒤 운영과 같은 `Driver(<세션 폴더>).run()` 을 돈다.
+# (`python3 freebuff.py <세션 폴더>` 로 뜨는 길 자체는 test_cut_while_waiting_types_nothing 이 그대로 지킨다)
+FAST_DRIVER = f"""
+import sys, time, types
+sys.path.insert(0, sys.argv[1])
+from fleet_rt.harness import freebuff as fb
+for k, v in {FAST!r}.items():
+    setattr(fb, k, v)
+fb.time = types.SimpleNamespace(sleep=lambda s: time.sleep(min(s, {FAST_NAP!r})), monotonic=time.monotonic, time=time.time)
+sys.exit(fb.Driver(sys.argv[2]).run())
+"""
+
 
 class Base(unittest.TestCase):
     def setUp(self):
@@ -69,6 +93,11 @@ class Base(unittest.TestCase):
         self.addCleanup(p.stop)
         self.procs = []
         self.addCleanup(self._kill)
+        # 이 프로세스 안에서 부르는 send_line·운전기(inproc)도 짧게 쉰다
+        for k, v in dict(FAST, time=fast_time()).items():
+            q = mock.patch.object(fb, k, v)
+            q.start()
+            self.addCleanup(q.stop)
 
     def _kill(self):
         for p in self.procs:
@@ -99,8 +128,10 @@ class Base(unittest.TestCase):
     def line(self, d, text="이 파일 읽고 해 줘:"):
         return fb.follow_line("", text, fb.brief_ref(d, self.root))[0]
 
-    def drive(self, d):
-        p = subprocess.Popen([sys.executable, fb.__file__, str(d)], stdout=subprocess.PIPE, text=True,
+    def drive(self, d, real=False):
+        """운전기를 따로 띄운다. 기다림은 FAST 로 줄인다 - `real` 이면 운영 그대로 `python3 freebuff.py <폴더>`."""
+        argv = [fb.__file__, str(d)] if real else ["-c", FAST_DRIVER, str(pathlib.Path(fb.__file__).resolve().parents[2]), str(d)]
+        p = subprocess.Popen([sys.executable, *argv], stdout=subprocess.PIPE, text=True,
                              cwd=str(self.root))
         self.procs.append(p)
         return p
@@ -162,7 +193,7 @@ class Driver(Base):
         d = self.session()
         p = self.drive(d)
         self.wait_for(lambda: (fb.read_gate(d) or {}).get("phase") == "await")
-        time.sleep(1.2)
+        time.sleep(0.4)                  # 운전기가 승인 파일을 여러 번 살필 틈 (0.05초마다)
         self.assertEqual(self.sent_keys(), [], "보내기 전에 팬에 무엇인가 넣었다")
         self.assertEqual(fb.ADAPTER.final_report(d), "", "기다리는 중인데 보고가 있다")
         self.assertEqual(fb.approve(d, "웹(검사)", self.line(d)), (True, ""))
@@ -199,14 +230,14 @@ class Driver(Base):
         self.assertEqual(self.sent_keys(), [])
         self.assertFalse((d / fb.APPROVE_FILE).exists(), "못 보낸 승인이 남아 저절로 다시 나간다")
         self.screen(READY)
-        time.sleep(1.0)
+        time.sleep(0.4)
         self.assertEqual(self.sent_keys(), [], "사람이 다시 누르지 않았는데 보냈다")
         self.assertEqual(fb.approve(d, "웹", self.line(d)), (True, ""))
         self.wait_for(lambda: (fb.read_gate(d) or {}).get("phase") == "sent")
 
     def test_cut_while_waiting_types_nothing(self):
         d = self.session()
-        p = self.drive(d)
+        p = self.drive(d, real=True)          # 운영 그대로 뜨는 길 - 감독이 띄우는 `python3 freebuff.py <폴더>`
         self.wait_for(lambda: (fb.read_gate(d) or {}).get("phase") == "await")
         p.send_signal(signal.SIGTERM)
         out, _ = p.communicate(timeout=10)
@@ -234,12 +265,12 @@ class Driver(Base):
 
         def script(d):
             self.approve_when_waiting(d)
-            time.sleep(4)
+            time.sleep(2.5)
             self.answer(d, [{"type": "text", "textType": "text", "content": "DONE\n오래 걸림"}])
         d = self.session()
         rc, out = self.inproc(d, script, cpu=lambda self: time.monotonic())      # 늘 코어 하나를 다 쓰는 중
         self.assertEqual(rc, 0, out)
-        self.assertGreater(time.monotonic() - t0, 4)
+        self.assertGreater(time.monotonic() - t0, 2.5)
         self.assertEqual(json.loads(out.splitlines()[-1])["result"], "DONE\n오래 걸림")
 
     def test_interrupted_answer_is_not_a_success(self):
@@ -271,7 +302,7 @@ class Driver(Base):
         again = self.line(d, "하던 데서 이어서 해 줘:")
         self.assertEqual(fb.approve(d, "웹", again), (True, ""))
         self.assertEqual(self.sent_line(d, 2), again)
-        time.sleep(1.0)
+        time.sleep(0.5)                  # 운전기가 옛 답을 여러 번 읽을 틈 (0.05초마다, SETTLE 0.2초)
         self.assertIsNone(p.poll(), "이어 보낸 뒤 옛 답을 새 답으로 봤다")
         self.chat([{"variant": "user", "content": line}, ended, {"variant": "user", "content": again},
                    {"variant": "ai", "content": "", "isComplete": True, "completionTime": "3s",
@@ -344,9 +375,19 @@ class Driver(Base):
         self.answer(d, [{"type": "tool", "toolName": "read_files", "input": {}},
                         {"type": "text", "textType": "text", "content": "지적 1 ...\n지적 2 (쓰는 중"}], complete=False)
         self.wait_for(lambda: (fb.read_gate(d) or {}).get("phase") == "sent")
-        time.sleep(3)                    # 운전기가 대화 파일을 읽을 틈
+        # 운전기가 대화 파일을 읽을 때까지 - 다 쓴 앞 조각(read_files)을 내보냈으면 읽은 것이다
+        guard = threading.Timer(20, p.kill)
+        guard.start()
+        seen = []
+        while not any('"read_files"' in ln for ln in seen):
+            ln = p.stdout.readline()
+            if not ln:
+                break
+            seen.append(ln)
+        guard.cancel()
         p.send_signal(signal.SIGTERM)
         out, _ = p.communicate(timeout=10)
+        out = "".join(seen) + out
         self.assertEqual(p.returncode, 143, out)
         self.assertEqual(fb.read_gate(d)["phase"], "cut")
         self.assertIn("지적 1", json.loads(out.splitlines()[-1])["result"])
@@ -477,7 +518,7 @@ class Pieces(Base):
 
 
 class GraphRules(unittest.TestCase):
-    """그래프: 승인 슬롯 노드에는 의존을 못 걸고, 기다리는 시간은 한도로 안 세고, 안 보낸 채 남으면 넘긴다."""
+    """그래프: 승인 슬롯 노드에도 의존을 걸 수 있고, 기다리는 시간은 한도로 안 세고, 안 보낸 채 남으면 넘긴다."""
 
     def setUp(self):
         for attr, value in (("roster", {"S1": ("a", "claude"), "S6": ("f", "freebuff")}), ("owned_paths", []),

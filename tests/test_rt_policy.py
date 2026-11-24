@@ -195,6 +195,9 @@ class Resident(Base):
         self.assertTrue(frozen.startswith("## 관리 방식\n"), frozen)
         self.assertIn("### 가앱 · 품질 우선\n- quality 의 지시 한 줄", frozen)
         self.assertIn("### 나앱 · 균형\n- balance 의 지시 한 줄", frozen)
+        # 프로젝트 없는 요청(Q-2) = 함대 자체 일: 늘 균형, 프로젝트 덩이 뒤에. 기록의 modes 에는 진짜 프로젝트만
+        self.assertIn("### 나앱 · 균형\n- balance 의 지시 한 줄\n\n### 함대 자체 일 · 균형\n- balance 의 지시 한 줄", frozen)
+        self.assertIn("라운드 도중 들어온 요청은 그 프로젝트의 방식을, 여기 없으면 균형을 따릅니다.", frozen)
         self.assertNotIn("speed", frozen)                                       # 이 라운드에 일이 없는 프로젝트
         self.assertEqual(self.record(n)["modes"], {"가앱": "quality", "나앱": "balance"})
         sent = (self.sroot / sid / "brief.md").read_text(encoding="utf-8")
@@ -493,17 +496,66 @@ class Switch(Base):
         self.assertEqual(len(fleet_ctl.manager_sessions()), 1)                                     # 새 관리자는 안 떴다
 
 
-class FrozenPolicy(Base):
-    def test_a_policy_link_planted_in_the_round_folder_is_not_followed(self):
+class SlotSections(Base):
+    def test_the_engine_adds_the_slot_sections_once_after_the_policy_text(self):
+        """슬롯 절 두 개는 지시 파일마다 두지 않고 엔진이 한 번 붙인다 - 굳힌 policy.md 는 전과 같은 절·같은 차례."""
         self.policies("quality")
         out = self.launch("quality")
-        n = out["round"]
-        p = self.root / "rounds" / f"R{n}" / "policy.md"
-        secret = self.root / "secret.txt"
-        secret.write_text("비밀", encoding="utf-8")
-        p.unlink()
-        p.symlink_to(secret)
-        self.assertIsNone(fleet_ctl._frozen_policy(n))
+        self.assertTrue(out["ok"], out)
+        frozen = (self.root / "rounds" / f"R{out['round']}" / "policy.md").read_text(encoding="utf-8")
+        heads = [ln for ln in frozen.splitlines() if ln.startswith("#")]
+        self.assertEqual(heads, ["## 운영 방식 quality", "### 지금 슬롯 (엔진이 적음)", "### 슬롯을 더하고 역할을 정하는 것은 관리자의 판단입니다"])
+        self.assertIn("에서 quality 로 슬롯을 씁니다.\n\n### 지금 슬롯 (엔진이 적음)\n- (명부가 비어 있음)\n\n### 슬롯을", frozen)
+        self.assertNotIn("{", frozen)
+        self.assertTrue(_wait(lambda: sessions.state(self.sroot / out["session"])["state"] != "running", 10))
+        fleet_ctl.stop("test")
+
+    def test_the_real_policy_files_hold_only_their_own_lines(self):
+        briefs = pathlib.Path(__file__).resolve().parent.parent / ".aimem" / "briefs"
+        for key in rt_config.POLICIES:
+            with self.subTest(key=key):
+                text = (briefs / fleet_ctl.POLICY_BRIEF.format(key=key)).read_text(encoding="utf-8")
+                self.assertNotIn("### ", text)
+                self.assertNotIn("{slots}", text)
+        self.assertEqual(fleet_ctl.POLICY_SLOTS_TAIL.count("{slots}"), 1)
+
+
+class ProjectModeWriter(Base):
+    def test_set_and_read_one_projects_mode(self):
+        self.assertEqual(fleet_ctl.project_mode("가앱"), {"key": "balance", "label": "균형", "stamped": False})
+        (self.aimem / fleet_ctl.PMODES_FILE).write_text(json.dumps({"나앱": "speed", "옛앱": "모르는 값"}), encoding="utf-8")
+        self.assertEqual(fleet_ctl.set_project_mode("가앱", "quality", by="t"), {"ok": True, "project": "가앱", "mode": "quality"})
+        self.assertEqual(fleet_ctl.project_mode("가앱"), {"key": "quality", "label": "품질 우선", "stamped": True})
+        raw = json.loads((self.aimem / fleet_ctl.PMODES_FILE).read_text(encoding="utf-8"))
+        self.assertEqual(raw, {"나앱": "speed", "옛앱": "모르는 값", "가앱": "quality"})          # 다른 칸은 그대로
+        self.assertEqual([x.name for x in self.aimem.iterdir() if x.name.endswith(".tmp")], [])
+        self.assertEqual(fleet_ctl.set_project_mode("가앱", "speed")["mode"], "speed")
+        self.assertEqual(fleet_ctl.project_mode("가앱")["key"], "speed")
+
+    def test_bad_names_keys_and_files_are_refused_without_writing(self):
+        f = self.aimem / fleet_ctl.PMODES_FILE
+        for name, key in (("가앱", "fast"), ("가앱", None), ("../x", "speed"), ("", "speed"), (3, "speed")):
+            with self.subTest(name=name, key=key):
+                out = fleet_ctl.set_project_mode(name, key)
+                self.assertFalse(out["ok"])
+                self.assertTrue(out["error"])
+                self.assertFalse(f.exists())
+        f.write_text("[1, 2]", encoding="utf-8")
+        self.assertFalse(fleet_ctl.set_project_mode("가앱", "speed")["ok"])
+        f.write_text("{깨진", encoding="utf-8")
+        self.assertFalse(fleet_ctl.set_project_mode("가앱", "speed")["ok"])
+        self.assertEqual(f.read_text(encoding="utf-8"), "{깨진")
+        self.assertFalse(fleet_ctl.project_mode("가앱")["stamped"])
+
+    def test_cli_project_mode(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(fleet_ctl.main(["project", "mode", "가앱", "quality"]), 0)
+            self.assertEqual(fleet_ctl.main(["project", "mode", "가앱", "fast"]), 1)
+        self.assertEqual(fleet_ctl.project_mode("가앱")["key"], "quality")
+        for argv in (["project", "mode", "가앱"], ["project", "remove", "가앱", "quality"]):
+            with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                fleet_ctl.main(argv)
 
 
 class Cli(unittest.TestCase):

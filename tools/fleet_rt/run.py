@@ -8,7 +8,7 @@
    검사한 것이 도는 것이다. 어댑터는 `harness_effective` 로 다시 찾아 env_set 값·사건 해석·보고에만 쓴다
 3. stdout 을 한 줄씩 `<받은 시각>\\t<원문>` 으로 events.jsonl 에 (줄마다 flush, 한 줄 최대 1MB)
 4. 침묵(idle_timeout - 사건도, CPU 사용도, 읽기도 없음)을 1초 안 간격으로 본다. 넘으면 하네스와 그룹의 나머지를 끝낸다.
-   벽시계(timeout)는 작업자도 관리자도 쓰지 않는다 - 일하는 동안은 끝까지 기다린다. 관리자는 도는 작업자가 있으면 침묵이 아니다
+   벽시계 한도는 작업자에게도 관리자에게도 없다 - 일하는 동안은 끝까지 기다린다. 관리자는 도는 작업자가 있으면 침묵이 아니다
 5. SIGTERM/SIGINT/SIGHUP 를 받으면 하네스를 끝내고 killed 로 마감한다 (까닭은 cancel.json)
 6. 하네스가 끝나면 그룹에 남은 손자도 끝낸다. 그룹을 빠져나간(setsid)
    손자도 이 세션 환경 표식으로 찾아 pid 하나씩 끝낸다 → report.md → end.json → DB 색인. 그리고 0 으로 나간다.
@@ -284,11 +284,10 @@ class Supervisor:
                     stdout=subprocess.PIPE, stderr=errf, env=env, close_fds=True)   # 같은 그룹 (새 세션 아님)
             except OSError as e:
                 return {"state": "failed", "fail_kind": "infra", "why": f"하네스를 띄우지 못함: {e}"}
-            started = self.last_activity = self.last_event = time.monotonic()
+            self.last_activity = self.last_event = time.monotonic()
             self.reader = threading.Thread(target=self._pump, args=(self.proc.stdout, sink), daemon=True)
             self.reader.start()
             sessions.db_upsert(m.get("db_path"), sessions.index_row(self.d))
-            timeout = float(m.get("timeout") or 0) or None
             idle = m.get("idle_timeout")
             idle = float(idle) if idle else None
             verdict = None
@@ -302,9 +301,6 @@ class Supervisor:
                 if rc is not None:
                     break
                 now = time.monotonic()
-                if timeout and now - started > timeout:
-                    verdict = {"state": "timeout", "fail_kind": "timeout", "why": f"벽시계 {timeout:g}초 넘김"}
-                    break
                 if idle and now - io_at >= min(IO_CHECK_SEC, idle / 3):   # 침묵 한도 안에 세 번은 본다
                     rchar, cpu = self._group_use()
                     if cpu - cpu_last >= CPU_ACTIVE * (now - io_at):

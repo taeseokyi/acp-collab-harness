@@ -310,11 +310,11 @@ class IntegrationTests(Base):
 
     # 5
     def test_worker_has_no_wall_clock_and_gets_a_default_idle_limit(self):
-        # 작업자에겐 벽시계 한도가 없다 - 감독 meta 의 timeout 은 0 이고, 공급자에 침묵 한도가 없으면 기본값이 들어간다
+        # 작업자에겐 벽시계 한도가 없다 - 감독 meta 에 timeout 이 없고, 공급자에 침묵 한도가 없으면 기본값이 들어간다
         from fleet_rt import base as rt_base  # noqa: PLC0415
         rid = self.spawn("FAKE: report DONE\\nok", model="nolimit/x")
         m = sessions.load_meta(self.sdir(rid))
-        self.assertFalse(m.get("timeout"))
+        self.assertNotIn("timeout", m)
         self.assertEqual(m["idle_timeout"], rt_base.DEFAULT_IDLE_TIMEOUT_SEC)
         self.assertTrue(_wait(lambda: sessions.state(self.sdir(rid))["state"] == "done", 10))
 
@@ -371,7 +371,7 @@ class IntegrationTests(Base):
         fleet_graph.step(g)
         self.assertEqual(n2["status"], "todo")
         self.assertEqual(len(self.run_dirs()), 1)
-        self.assertEqual(fleet_graph._busy_slots(g), {"S2"})
+        self.assertEqual(fleet_graph._live_scan(g)[0], {"S2"})
         self.assertTrue(self.drive(g, lambda g: n2["status"] == "done", timeout=30))
         self.assertEqual(n1["status"], "done")
         self.assertEqual(len(self.run_dirs()), 2)
