@@ -1352,8 +1352,10 @@ def cmd_step(a):
         return 0 if finished else 1
 
 
-#: 사람이 돌고 있는 라운드의 관리자에게 남기는 말 (`fleet_ctl.py tell`). 그래프 실행기는 이 파일이 바뀌면 rc 4 로 돌아와
-#: 관리자가 읽게 한다 - 관리자는 `run` 에 블로킹해 있어 다른 길로는 도중에 말을 들을 수 없다.
+#: 사람이 돌고 있는 라운드의 관리자에게 남기는 말 (`fleet_ctl.py tell`). 그래프 실행기는 이 파일이 **관리자에게 마지막으로
+#: 알린 뒤** 바뀌었으면 rc 4 로 돌아와 관리자가 읽게 한다 - 관리자는 `run` 에 블로킹해 있어 다른 길로는 도중에 말을 들을 수
+#: 없다. 기준이 '이번 `run` 을 시작한 뒤' 가 아닌 까닭: `run` 과 `run` 사이(또는 첫 `run` 전)에 들어온 말이 빠진다.
+#: 알린 상태는 라운드마다 `.aimem/graph/inbox-R<N>.seen` 에 적는다(그래프가 여럿이어도 한 번만 알림).
 INBOX_NAME = "INBOX.md"
 RC_INBOX = 4
 
@@ -1365,11 +1367,39 @@ def inbox_path(round_n):
         return None
 
 
-def _mtime(p):
+def _inbox_sig(p):
+    """INBOX 의 지금 모습(`수정 시각:크기`) - 없으면 빈 글자."""
     try:
-        return p.stat().st_mtime if p is not None else None
+        st = p.stat() if p is not None else None
     except OSError:
+        st = None
+    return f"{st.st_mtime_ns}:{st.st_size}" if st else ""
+
+
+def _inbox_seen_path(round_n):
+    try:
+        return GRAPHS / f"inbox-R{int(round_n)}.seen"
+    except (TypeError, ValueError):
         return None
+
+
+def _inbox_seen(round_n):
+    """관리자에게 마지막으로 알린 INBOX 의 모습 - 알린 적이 없으면 빈 글자(= INBOX 가 없는 것과 같음)."""
+    p = _inbox_seen_path(round_n)
+    try:
+        return p.read_text(encoding="utf-8").strip() if p is not None else ""
+    except OSError:
+        return ""
+
+
+def _inbox_mark_seen(round_n, sig):
+    p = _inbox_seen_path(round_n)
+    if p is None:
+        return
+    try:
+        p.write_text(sig + "\n", encoding="utf-8")
+    except OSError:
+        pass  # 못 적으면 다음 `run` 이 한 번 더 알릴 뿐이다
 
 
 def cmd_run(a):
@@ -1380,7 +1410,8 @@ def cmd_run(a):
         deadline = time.time() + a.timeout
         halted = inbox = False
         box = inbox_path(g.get("round"))
-        box0 = _mtime(box)
+        box0 = _inbox_seen(g.get("round"))
+        box_now = box0
         stop_on_block = getattr(a, "stop_on_block", None)
         if stop_on_block is None:
             # 빨리·잘 하려는 라운드는 막힌 노드를 관리자가 곧바로 옮기거나 풀어야 한다 - 무료 중심은 끝까지 돌린다
@@ -1388,15 +1419,16 @@ def cmd_run(a):
         bad0 = {n["id"] for n in g["nodes"] if n.get("status") in ("failed", "blocked")}
         spawn, blocked_new, stuck = True, [], []
         while time.time() < deadline:
-            # 띄우기를 멈춘 뒤에도 '완전 중지' 면 함대 모드에 맡긴다 - 떠 있는 작업자를 거두는 일(`halt_running`)이 거기 있다
+            # 아직 알리지 않은 말이 있으면 새 노드를 띄우기 전에 돌아간다 (완전 중지는 아래 step 이 작업자를 거둬야 하므로 뺀다)
+            box_now = _inbox_sig(box)
+            if box_now != box0 and _fleet_mode() != "stopped":
+                inbox = True
+                break
             if step(g, a.concurrency, allow_spawn=None if spawn or _fleet_mode() == "stopped" else False,
                     hold_on_block=stop_on_block):
                 break
             if _fleet_mode() == "stopped":
                 halted = True
-                break
-            if _mtime(box) != box0:
-                inbox = True
                 break
             stuck = stuck_on_unusable(g) if spawn and _fleet_mode() == "running" else []
             if stuck:
@@ -1431,6 +1463,7 @@ def cmd_run(a):
             return 3
         if inbox:
             # 떠 있는 작업자는 그대로 둔다 - 다시 `run` 하면 거둔다
+            _inbox_mark_seen(g.get("round"), box_now)
             print(f"사람이 말을 남겼습니다: {box.relative_to(fleet.ROOT) if box else INBOX_NAME} - 읽고 판단한 뒤 "
                   f"`fleet_graph.py run {g['id']}` 로 이어 가십시오 (rc {RC_INBOX})")
             return RC_INBOX

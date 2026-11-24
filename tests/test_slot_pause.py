@@ -147,7 +147,10 @@ class PauseMidRound(SlotBase):
         for want in ("슬롯 S2 을(를) 일시 사용 중지했습니다 (까닭: 응답 없음)", f"끊은 작업자: {run_id}", "G-001 T-1(running)",
                      "fleet_graph.py move", "재시도 횟수로 세지 않습니다", "지금 슬롯:", "- S3 "):
             self.assertIn(want, box)
-        # 실행기: 끊긴 시도는 세지 않고 노드는 대기, 다른 슬롯의 노드는 끝까지 간다. 걸린 채 돌아온다
+        # 실행기: 먼저 남긴 말을 읽으라고 돌아온다(`run` 밖에서 들어온 말도 놓치지 않는다) - 한 번만
+        rc, text, err = self.run_graph()
+        self.assertEqual(rc, fleet_graph.RC_INBOX, text + err)
+        # 다시 돌리면: 끊긴 시도는 세지 않고 노드는 대기, 다른 슬롯의 노드는 끝까지 간다. 걸린 채 돌아온다
         rc, text, err = self.run_graph()
         self.assertEqual(rc, 1, text + err)
         self.assertIn("쓸 수 없는 슬롯에 걸린 노드: T-1(S2 일시 사용 중지)", text)
@@ -211,6 +214,8 @@ class RemoveMidRound(SlotBase):
         box = self.inbox(rnd)
         for want in ("슬롯 S2 을(를) 명부에서 지웠습니다", f"끊은 작업자: {run_id}", "G-001 T-1(running)", "fleet_graph.py move"):
             self.assertIn(want, box)
+        rc, text, err = self.run_graph()
+        self.assertEqual(rc, fleet_graph.RC_INBOX, text + err)           # 남긴 말부터 읽게 한다
         rc, text, err = self.run_graph()
         self.assertEqual(rc, 1, text + err)
         self.assertIn("쓸 수 없는 슬롯에 걸린 노드: T-1(S2 명부에서 삭제됨)", text)

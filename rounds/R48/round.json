@@ -1,0 +1,48 @@
+{
+ "round": 48,
+ "at": "2026-11-25T00:31:37",
+ "brief": "manager-round-standard.md",
+ "requests": [
+  "Q-261125-5fa4"
+ ],
+ "projects": [
+  "VoxLog"
+ ],
+ "session": "M-R48-003137",
+ "policy": "cost",
+ "modes": {
+  "VoxLog": "quality"
+ },
+ "metrics": {
+  "workers": 12,
+  "peak_parallel": 2,
+  "minutes": {
+   "free": 94.25,
+   "paid": 8.15
+  },
+  "by_slot": {
+   "S2": {
+    "runs": 5,
+    "minutes": 59.47,
+    "tier": "free"
+   },
+   "S3": {
+    "runs": 2,
+    "minutes": 13.62,
+    "tier": "free"
+   },
+   "S4": {
+    "runs": 3,
+    "minutes": 8.15,
+    "tier": "paid"
+   },
+   "S6": {
+    "runs": 2,
+    "minutes": 21.17,
+    "tier": "free"
+   }
+  },
+  "moves": 0,
+  "manager_slots": []
+ }
+}

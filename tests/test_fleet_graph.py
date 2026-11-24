@@ -983,6 +983,36 @@ class InboxReturnsEarly(unittest.TestCase):
                 self.assertIn("화면은 웹워들과 비슷하게", text)
                 self.assertIn("검사", text)
 
+    def test_message_left_before_run_is_told_once(self):
+        """`run` 을 시작하기 전에 들어온 말도 rc 4 로 알린다 - 새 노드를 띄우기 전에, 그리고 한 번만."""
+        import argparse  # noqa: PLC0415
+        with tempfile.TemporaryDirectory() as t:
+            root = pathlib.Path(t)
+            graphs = root / ".aimem" / "graph"
+            graphs.mkdir(parents=True)
+            for gid in ("G-902", "G-903"):
+                g = {"id": gid, "round": 7, "concurrency": 1, "created": "2026-11-13T00:00:00",
+                     "nodes": [{"id": "T-1", "title": "t", "slot": "S2", "task": "x", "deps": [], "write": [],
+                                "max_attempts": 1, "status": "todo", "attempts": []}]}
+                (graphs / f"{gid}.json").write_text(json.dumps(g), encoding="utf-8")
+            (root / "rounds" / "R7").mkdir(parents=True)
+            (root / "rounds" / "R7" / "INBOX.md").write_text("## 말\n", encoding="utf-8")
+            with mock.patch.object(fleet, "ROOT", root), mock.patch.object(fleet, "RUNS", root / ".aimem" / "runs"), \
+                    mock.patch.object(fleet_graph, "GRAPHS", graphs), mock.patch.object(fleet_graph, "_LOGGED_ONCE", set()), \
+                    mock.patch.object(fleet_graph, "_validate_or_report", return_value=True), \
+                    mock.patch.object(fleet_graph, "step", return_value=True) as step, \
+                    mock.patch.object(fleet_graph, "_fleet_mode", return_value="running"):
+                run = lambda gid: fleet_graph.cmd_run(  # noqa: E731
+                    argparse.Namespace(id=gid, timeout=5, poll=0.1, concurrency=None))
+                self.assertEqual(run("G-902"), fleet_graph.RC_INBOX)
+                step.assert_not_called()                      # 읽기 전에는 아무것도 띄우지 않는다
+                self.assertNotEqual(run("G-902"), fleet_graph.RC_INBOX)   # 같은 말로 두 번 돌아오지 않는다
+                self.assertNotEqual(run("G-903"), fleet_graph.RC_INBOX)   # 같은 라운드의 다른 그래프도
+                step.assert_called()
+                with (root / "rounds" / "R7" / "INBOX.md").open("a", encoding="utf-8") as fh:
+                    fh.write("## 또 한 말\n")
+                self.assertEqual(run("G-903"), fleet_graph.RC_INBOX)      # 그 사이 새 말은 다시 알린다
+
     def test_tell_refuses_without_a_running_round_or_text(self):
         import fleet_ctl  # noqa: PLC0415
         with mock.patch.object(fleet_ctl, "active_round", return_value=None):

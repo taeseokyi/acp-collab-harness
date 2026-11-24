@@ -1,32 +1,22 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-25T00:21:35 / REV 204
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-25T02:11:17 / REV 205
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
 | S1 | `a41f0c` | claude | opus | R47 대기 | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
-| S2 | `d27e93` | codex | kisti/kistillm | R47 VoxLog 문서 R46-N1 (무료) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
-| S3 | `5b8c1e` | opencode | kisti/kistillm | R47 대기 | 11-24 태석님: 오픈코드 + kistillm (aida:10430). 그 전은 nvidia/z-ai/glm-5.3-flash |
-| S4 | `6cd650` | claude | sonnet | R47 VoxLog 적대적 검수 (유료·판단만) | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
+| S2 | `d27e93` | codex | kisti/kistillm | R48 대기 | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
+| S3 | `5b8c1e` | opencode | kisti/kistillm | R48 대기 | 11-24 태석님: 오픈코드 + kistillm (aida:10430). 그 전은 nvidia/z-ai/glm-5.3-flash |
+| S4 | `6cd650` | claude | sonnet | R48 대기 | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
 | S5 | `61dfcc` | claude | sonnet | R47 대기 |  |
-| S6 | `47764b` | freebuff | (하네스 기본) | R47 대기 |  |
+| S6 | `47764b` | freebuff | (하네스 기본) | R48 대기 |  |
 
 ## 3. 작업 보드
 
 | ID | 요청 | 태스크 | 담당 | 상태 | 산출물 |
 | --- | --- | --- | --- | --- | --- |
-| T-105 | Q-261110-c450 | 웹워들 브라우저 검증 1: 공용 하네스 + 보드·키보드·없는 단어·판 끝 | S2 | DONE | projects/웹워들/tests/browser_harness.py, projects/웹워들/tests/browser_core.py |
-| T-106 | Q-261110-c450 | 웹워들 브라우저 검증 2: 좁은 폭(360px)·낮은 창 레이아웃 | S3 | DONE | projects/웹워들/tests/browser_layout.py |
-| T-107 | Q-261110-c450 | 웹워들 브라우저 검증 3: 통계·공유·테마·접근성·도움말 | S2 | DONE | projects/웹워들/tests/browser_ui.py |
-| T-108 | Q-261110-c450 | 웹워들 브라우저 검증 적대적 검수 + tests/README.md | S1 | DONE | projects/웹워들/tests/README.md |
-| T-109 | Q-261110-c450 | browser_core.py find_present_pair 수정 (present+correct 겹침) | S3 | DONE | projects/웹워들/tests/browser_core.py |
-| T-110 | Q-261110-c450 | 웹워들 화면 결함 3건: hidden 무력화·짧은 창 키보드 넘침·토스트가 타일 가림 | S2 | DONE |  |
-| T-111 | Q-261110-c450 | browser_ui.py: 보이는지로 검사 + 테마는 body 배경으로 | S2 | DONE |  |
-| T-112 | Q-261110-c450 | browser_core.py: 토스트가 타일을 가리지 않는지 검사 추가 | S3 | DONE |  |
-| T-113 | Q-261110-c450 | T-110 이 떨어뜨린 dvh 의 vh 대비 복구 + 불변식 테스트로 재작성 | S3 | DONE | projects/웹워들/web/css/style.css, projects/웹워들/tests/smoke_integration.mjs |
-| T-114 | Q-261110-c450 | 글자를 치면 보드가 커져 낮은 창에서 키보드가 밀려남 + 검사 순서 구멍 | S3 | DONE | projects/웹워들/web/css/style.css, projects/웹워들/tests/browser_layout.py |
 | T-115 | Q-261111-f77f | browser_harness: shot() 뷰포트 스크린샷 선택지 | S2 | DONE |  |
 | T-116 | Q-261111-f77f | browser_ui: 통계 목표 구멍 메우기 (서로 다른 네 값·진 판·끝난 판 새로 고침) | S2 | DONE |  |
 | T-117 | Q-261111-f77f | browser_ui: 보기 설정(색약 present 파랑·저장)과 접근성(대비 전면·어두움+색약·키보드 완주·aria-live) | S2 | DONE |  |
@@ -331,12 +321,26 @@
 | T-418 | Q-261124-f310 | [VoxLog] R46 적대적 검수 (부작용 중심) - T-416·T-417 | S4 | DONE | .aimem/sessions/T-418-S4-a1-233913/report.md |
 | T-419 | Q-261125-f9f0 | [VoxLog] R46-N1 문서의 'resume·pageshow 에서 회수' 서술을 지금 코드(pageshow 는 persisted 일 때만)에 맞추기 | S2 | DONE | projects/VoxLog/docs/INTERFACE.md, projects/VoxLog/docs/RESEARCH-draft-owner.md |
 | T-420 | Q-261125-f9f0 | [VoxLog] R47 적대적 검수 - T-419 문서 + R46-N2 추정 독립 확인 | S4 | DONE | .aimem/sessions/T-420-S4-a1-001546/report.md |
+| T-421 | Q-261125-5fa4 | [VoxLog] S2 가 VoxLog 를 써 보고 추가 기능 아이디어 둘 (구현 안 함) | S2 | DONE | rounds/R48/ideas.md |
+| T-422 | Q-261125-5fa4 | [VoxLog] S3 가 VoxLog 를 써 보고 추가 기능 아이디어 둘 (구현 안 함) | S3 | DONE | rounds/R48/ideas.md |
+| T-423 | Q-261125-5fa4 | [VoxLog] S6 가 VoxLog 를 써 보고 추가 기능 아이디어 둘 (구현 안 함) | S6 | DONE | rounds/R48/ideas.md |
+| T-424 | Q-261125-5fa4 | [VoxLog] S2 가 남의 아이디어 넷(I3~I6)에 의견 (구현 안 함) | S2 | DONE | rounds/R48/decision.md |
+| T-425 | Q-261125-5fa4 | [VoxLog] S3 가 남의 아이디어 넷(I1·I2·I5·I6)에 의견 (구현 안 함) | S3 | DONE | rounds/R48/decision.md |
+| T-426 | Q-261125-5fa4 | [VoxLog] S6 가 남의 아이디어 넷(I1~I4)에 의견 (구현 안 함) | S6 | DONE | rounds/R48/decision.md |
+| T-427 | Q-261125-5fa4 | [VoxLog] 다음 기능 설계 문서 docs/DESIGN-next-features.md (F1 출처·F2 이름과 태그·F3 이어 묻기 + 아이디어 전체와 의견) | S2 | DONE | projects/VoxLog/docs/DESIGN-next-features.md |
+| T-428 | Q-261125-5fa4 | [VoxLog] R48 적대적 검수 - 설계 문서가 코드·결정과 맞는지, 기존 기능을 해치는 설계가 없는지 | S4 | DONE | .aimem/sessions/T-428-S4-a1-012943/report.md |
+| T-429 | Q-261125-5fa4 | [VoxLog] 설계 문서에 R48 검수 지적 중 8건(R48-N1~N8) 반영 | S2 | DONE | projects/VoxLog/docs/DESIGN-next-features.md |
+| T-430 | Q-261125-5fa4 | [VoxLog] R48 재검수 - R48-N1~N8 반영이 맞는지와 고치며 생긴 새 문제 | S4 | DONE | .aimem/sessions/T-430-S4-a1-014911/report.md |
+| T-431 | Q-261125-5fa4 | [VoxLog] 설계 문서에 재검수 지적 중 3건(R48-N15~N17) 반영 | S2 | DONE | projects/VoxLog/docs/DESIGN-next-features.md |
+| T-432 | Q-261125-5fa4 | [VoxLog] R48 재검수 2 - R48-N15~N17 반영과 새 문제 | S4 | DONE | .aimem/sessions/T-432-S4-a1-015855/report.md |
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
 | 1 | [VoxLog] R47-N1·R47-N2(하) R47 검수 남은 지적: R47-N1 docs/RESEARCH-draft-owner.md:148 (f) 검사 항목의 'resume/pageshow 에서 다시 걸어' 에 persisted 단서가 빠짐(요약·§4.2·§6 에는 붙음); R47-N2(추정, 지금 코드에선 안 일어남) app.js init 의 첫 로드 회수와 initOpen 이 getConfig.then 안의 fillSettings·applyRecSupport·updateQueue·checkHealth 가 동기로 던지지 않아야만 돎 - 회수를 그 앞으로 빼거나 감싸면 독립. 검수 보고 .aimem/sessions/T-420-S4-a1-001546/report.md |  |  |
+| 2 | [VoxLog] R48-N9·R48-N10·R48-N11·R48-N12·R48-N13·R48-N14·R48-N18·R48-N19·R48-N20·R48-N21·R48-N22(하) 설계 문서 DESIGN-next-features.md 의 남은 검수 지적 - 다음 기능 구현 요청 때 함께 반영: R48-N9 <앞답> 은 prefix 에(녹취만 빠지게)·앞답 안 녹취 태그 이스케이프, R48-N10 INTERFACE.md 노드·시그니처 갱신, R48-N11 실 깊이·50건 한도·기존 선택자 유지·태그 입력 구분자(쉼표)·칩 stopPropagation·검색칸 placeholder, R48-N12 의견 절 S2 요약 세 줄, R48-N13 출처 되돌림 검사 근거, R48-N14 펼치기는 details 로·부모 해석을 Asker.submit 한 곳에, R48-N18 askFollowUp 이중 전송·토큰, R48-N19 FakeStore.answer_states, R48-N20 isolated() 범위, R48-N21 부모 확인은 stat 만(answer_exists), R48-N22 한도 밖 부모 표시 한 줄. 원문 .aimem/sessions/T-428-S4-a1-012943·T-430-S4-a1-014911·T-432-S4-a1-015855/report.md |  | VoxLog 설계 문서 하 등급 묶음 |
+| 3 | [VoxLog] R48-N23·R48-N24(하, 확인 필요 - 써 보다 본 것) R48-N23 날짜 거르기 뒤 목록은 1건인데 현황(stats)은 전체 수·글자(S3 관찰, 뜻한 것인지 확인), R48-N24 짧은 webm 녹음의 audio.duration 이 Infinity(S2 관찰, 넘기기는 됨). 출처 rounds/R48/decision.md '써 보다 본 다른 것' |  | VoxLog 관찰 둘 |
 
 ## 6. 파일 소유권
 
@@ -362,6 +366,7 @@
 | `projects/**` | 관리자 | 프로젝트 결과물 projects/<이름>/ - 여러 라운드에 걸쳐 쌓임 (REV 142). 관리자가 하위 경로를 슬롯에 배정 |
 | `projects/VoxLog/README.md` | S2 | R44 |
 | `projects/VoxLog/docs/**` | S6 | R39 |
+| `projects/VoxLog/docs/DESIGN-next-features.md` | S2 | R48 |
 | `projects/VoxLog/docs/INTERFACE.md` | S2 | R44 |
 | `projects/VoxLog/docs/RESEARCH-draft-owner.md` | S2 | R46 |
 | `projects/VoxLog/serve.py` | S2 | R42 F1 |
@@ -608,3 +613,4 @@
 | Q-261124-ba96 | [주보알림] 새 주보 확인하고 카톡으로 보내는 웹 앱 (시제품) | 태석 (클로드 코드 전달) | DONE | 2026-11-24T18:31:06 |
 | Q-261124-f310 | [VoxLog] 대기 큐의 VoxLog 항목 둘 처리 (R43-N5, R44-N1~N3) | 태석 (클로드 코드 전달) | DONE | 2026-11-24T23:08:57 |
 | Q-261125-f9f0 | [VoxLog] 대기 큐의 VoxLog 항목 처리 (R46-N1, R46-N2) | 태석 (클로드 코드 전달) | DONE | 2026-11-25T00:08:19 |
+| Q-261125-5fa4 | [VoxLog] 작업자마다 써 보고 추가 기능 아이디어 둘씩 → 관리자가 검토·확정 → 설계 문서 (구현하지 않음) | 태석 (클로드 코드 전달) | DONE | 2026-11-25T00:31:34 |

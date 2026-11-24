@@ -1,0 +1,5 @@
+G-012: 29.7%  남은 ETA 1208s  상태 {'done': 1, 'failed': 2, 'blocked': 1}
+  T-109  done     S3  시도 1  run T-109-S3-a1-235030  rc 0/0  browser_core.py find_present_pair 수정 (present+correct 겹침)
+  T-107  failed   S2  시도 2  run T-107-S2-a2-001507  rc 0/1  웹워들 브라우저 검증 3: 통계·공유·테마·접근성·도움말
+  T-106  failed   S3  시도 2  run T-106-S3-a2-000540  rc 0/1  웹워들 브라우저 검증 2: 좁은 폭·낮은 창 레이아웃
+  T-108  blocked  S1  시도 0  run -  rc -/-  웹워들 브라우저 검증 적대적 검수 + tests/README.md

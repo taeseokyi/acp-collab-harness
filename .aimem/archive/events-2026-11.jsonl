@@ -251,3 +251,39 @@
 {"seq": 331, "at": "2026-11-10T23:49:50", "actor": "관리자", "rev": 149, "kind": "request", "body": "Q-261110-c450 IN-PROGRESS"}
 {"seq": 332, "at": "2026-11-10T23:50:27", "actor": "관리자", "rev": 149, "kind": "ownership", "body": "projects/웹워들/tests/screenshots/core/** -> S3"}
 {"seq": 358, "at": "2026-11-11T01:57:57", "actor": "관리자", "rev": 149, "kind": "request", "body": "Q-261110-c450 DONE"}
+{"seq": 315, "at": "2026-11-10T23:13:48", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-105 ASSIGNED S2 웹워들 브라우저 검증 1: 공용 하네스 + 보드·키보드·없는 단어·판 끝"}
+{"seq": 316, "at": "2026-11-10T23:13:48", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-106 ASSIGNED S3 웹워들 브라우저 검증 2: 좁은 폭(360px)·낮은 창 레이아웃"}
+{"seq": 317, "at": "2026-11-10T23:13:49", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-107 ASSIGNED S2 웹워들 브라우저 검증 3: 통계·공유·테마·접근성·도움말"}
+{"seq": 318, "at": "2026-11-10T23:13:49", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-108 ASSIGNED S1 웹워들 브라우저 검증 적대적 검수 + tests/README.md"}
+{"seq": 327, "at": "2026-11-10T23:49:49", "actor": "관리자", "rev": 149, "kind": "graph", "body": "G-011 끝: T-105(S2) 시도 2회로 43/44 - 하네스+browser_core.py 를 만들었고 보드·없는 단어·판 끝은 모두 초록. 남은 1건은 앱 결함이 아니라 테스트 결함(find_present_pair 가 같은 글자가 한 줄에서 present+correct 로 같이 나오는 낱말 'ababa' 를 고름 - 키 색 correct 가 옳다). T-106/107/108 은 T-105 실패로 blocked. 같은 태스크를 세 번째로 굴리지 않고(8.0-4 규칙 3) 진단을 박은 좁은 수정 태스크 T-109 로 G-012 를 짠다. 덤: 하네스 new_page 는 (context,page) 가 아니라 page 하나를 준다 - T-106/107 브리프를 실제 시그니처로 고친다."}
+{"seq": 328, "at": "2026-11-10T23:49:50", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-105 REVIEW"}
+{"seq": 329, "at": "2026-11-10T23:49:50", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-109 ASSIGNED S3 browser_core.py find_present_pair 수정 (present+correct 겹침)"}
+{"seq": 333, "at": "2026-11-10T23:51:45", "actor": "관리자", "rev": 149, "kind": "note", "body": "R8 관리자가 스크린샷을 눈으로 보고 찾은 결함: 토스트가 보드 첫 줄을 가린다. style.css:168 .toasts 가 position:fixed; top:70px 인데 머리글이 약 56px 이라 보드 첫 줄(y≈55~130)과 겹친다. 이김 토스트('천재!')는 2초 뒤 사라지지만 짐 토스트('정답: BRIBE')는 ms=0 이라 사라지지 않아 첫 추측 줄 3~4번째 칸을 영영 가린다. 보드와 키보드 사이에는 180px 쯤 빈 공간이 있다. 테스트는 모두 초록이었다 - 겹침은 아무도 검사하지 않았다. G-013 에서 고치고, 글자 있는 타일과 토스트의 사각형이 겹치지 않는지 검사를 더한다."}
+{"seq": 334, "at": "2026-11-11T00:20:23", "actor": "관리자", "rev": 149, "kind": "note", "body": "R8 관리자 probe 로 찾은 결함 2건 더. (1) 공유 단추가 판이 끝나기 전에도 보인다: ui.js 는 btn-share.hidden 을 옳게 세우는데 style.css:253 .primary{display:block} 이 브라우저 기본 [hidden]{display:none} 을 이긴다. 실측 - hidden 속성 있음, is_visible true, box 104x45. 모달에는 .modal[hidden]{display:none}(203행) 이 있으나 단추에는 없다. shareText 는 진행 중이어도 터지지는 않고 '웹워들 N 0/6' 을 준다. (2) 900x420 짧은 창에서 키보드 아래 ~80px 이 창 밖(y+h=501 > 420): .board min-width:200px 가 calc((100dvh-280px)*5/6) 축소를 막고 .key height:54px 이 고정이라 그렇다. T-106(S3)이 검사를 무르게 하지 않고 그대로 실패로 보고했다 - 옳은 행동."}
+{"seq": 335, "at": "2026-11-11T00:45:45", "actor": "관리자", "rev": 149, "kind": "ownership", "body": "projects/웹워들/web/css/style.css -> S2"}
+{"seq": 336, "at": "2026-11-11T00:45:45", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-110 ASSIGNED S2 웹워들 화면 결함 3건: hidden 무력화·짧은 창 키보드 넘침·토스트가 타일 가림"}
+{"seq": 337, "at": "2026-11-11T00:45:45", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-111 ASSIGNED S2 browser_ui.py: 보이는지로 검사 + 테마는 body 배경으로"}
+{"seq": 338, "at": "2026-11-11T00:45:45", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-112 ASSIGNED S3 browser_core.py: 토스트가 타일을 가리지 않는지 검사 추가"}
+{"seq": 339, "at": "2026-11-11T00:47:49", "actor": "관리자", "rev": 149, "kind": "graph", "body": "G-012 끝: T-109 done(44/44), T-106·T-107 은 '실패' 로 찍혔지만 산출물은 옳다 - 검사가 진짜 앱 결함을 잡아 rc!=0 이 된 것이다(검증 노드의 verify 를 '전부 통과' 로 묶은 내 설계 탓). T-106=13/14, 넘친 것은 900x420 키보드. T-107=58/59, 남은 1건은 #board 가 투명이라 테마 비교가 무의미한 테스트 결함. 대비 9건 모두 4.71~11.35:1 통과. 스크린샷을 눈으로 보고 결함 2건을 더 찾았다(토스트 겹침, 공유 단추 노출) - 후자는 T-107 이 hidden '속성'만 봐서 [OK] 로 지나갔다. G-013 에서 앱 3건 고치고 검사 2건을 참값으로 바꾸고 겹침 검사를 더한다."}
+{"seq": 340, "at": "2026-11-11T00:47:49", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-109 DONE"}
+{"seq": 341, "at": "2026-11-11T00:47:49", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-106 REVIEW"}
+{"seq": 342, "at": "2026-11-11T00:47:49", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-107 REVIEW"}
+{"seq": 343, "at": "2026-11-11T01:25:56", "actor": "관리자", "rev": 149, "kind": "ownership", "body": "projects/웹워들/tests/smoke_integration.mjs -> S3"}
+{"seq": 344, "at": "2026-11-11T01:25:56", "actor": "관리자", "rev": 149, "kind": "ownership", "body": "projects/웹워들/web/css/style.css -> S3"}
+{"seq": 345, "at": "2026-11-11T01:25:56", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-113 ASSIGNED S3 T-110 이 떨어뜨린 dvh 의 vh 대비 복구 + 불변식 테스트로 재작성"}
+{"seq": 346, "at": "2026-11-11T01:49:49", "actor": "관리자", "rev": 149, "kind": "ownership", "body": "projects/웹워들/tests/browser_layout.py -> S3"}
+{"seq": 347, "at": "2026-11-11T01:49:49", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-114 ASSIGNED S3 글자를 치면 보드가 커져 낮은 창에서 키보드가 밀려남 + 검사 순서 구멍"}
+{"seq": 348, "at": "2026-11-11T01:57:56", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-105 DONE"}
+{"seq": 349, "at": "2026-11-11T01:57:56", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-106 DONE"}
+{"seq": 350, "at": "2026-11-11T01:57:56", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-107 DONE"}
+{"seq": 351, "at": "2026-11-11T01:57:56", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-108 DONE"}
+{"seq": 352, "at": "2026-11-11T01:57:56", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-110 DONE"}
+{"seq": 353, "at": "2026-11-11T01:57:56", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-111 DONE"}
+{"seq": 354, "at": "2026-11-11T01:57:56", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-112 DONE"}
+{"seq": 355, "at": "2026-11-11T01:57:56", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-113 DONE"}
+{"seq": 356, "at": "2026-11-11T01:57:56", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-114 DONE"}
+{"seq": 357, "at": "2026-11-11T01:57:56", "actor": "관리자", "rev": 149, "kind": "task", "body": "T-108"}
+{"seq": 359, "at": "2026-11-11T01:57:57", "actor": "관리자", "rev": 149, "kind": "graph", "body": "G-013 끝: 네 노드 모두 한 번에 done. T-110(S2) 이 style.css 결함 3건을 고쳤고(hidden/짧은 창/토스트), T-112(S3) 가 겹침 검사 4개를 더해 core 48/48, T-111(S2) 이 '보이는지'와 body 배경으로 검사를 강화해 ui 59/59. T-108(S1) 적대적 검수가 T-110 이 떨어뜨린 dvh 대비 회귀(로직 테스트 빨강)를 잡아내 T-113 으로 고쳤고, 관리자가 뷰포트 스크린샷을 직접 찍다가 '글자를 치면 보드가 커져 낮은 창에서 키보드가 밀린다'(412→501)를 찾아 T-114 로 고쳤다 - browser_layout 이 치기 전에만 재서 통과하던 구멍도 함께 메웠다(18/18)."}
+{"seq": 361, "at": "2026-11-11T02:06:10", "actor": "관리자", "rev": 150, "kind": "request", "body": "Q-261111-f77f PLANNED"}
+{"seq": 366, "at": "2026-11-11T02:08:36", "actor": "관리자", "rev": 150, "kind": "ownership", "body": "projects/웹워들/tests/browser_harness.py -> S3"}
+{"seq": 391, "at": "2026-11-11T04:43:30", "actor": "관리자", "rev": 150, "kind": "request", "body": "Q-261111-f77f DONE"}

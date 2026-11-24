@@ -1,0 +1,5 @@
+G-013: 100.0%  남은 ETA 0s  상태 {'done': 4}
+  T-110  done     S2  시도 1  run T-110-S2-a1-004749  rc 0/0  웹워들 화면 결함 3건: hidden 무력화·짧은 창 키보드 넘침·토스트가 타일 가림
+  T-112  done     S3  시도 1  run T-112-S3-a1-010958  rc 0/0  browser_core.py: 토스트가 타일을 가리지 않는지 검사 추가
+  T-111  done     S2  시도 1  run T-111-S2-a1-010958  rc 0/0  browser_ui.py: 보이는지로 검사 + 테마는 body 배경으로
+  T-108  done     S1  시도 1  run T-108-S1-a1-012010  rc 0/0  웹워들 브라우저 검증 적대적 검수 + tests/README.md
