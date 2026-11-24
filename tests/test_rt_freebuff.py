@@ -722,6 +722,34 @@ class MonitorSend(Base):
         self.assertEqual(s.pane_firsts(self.root), {})
         self.assertEqual(self.run_view()["step"], "ask")                        # 지우면 다시 묻는다
 
+    def test_default_first_instruction_by_kind_fills_in_when_the_node_has_none(self):
+        # 사람이 종류별로 써 둔 기본 1차 지시: 노드에 쓴 글이 없으면 그 일의 종류에 맞는 것이 붙는다. 노드의 글이 우선한다
+        s = self.server
+        self.assertEqual(s.pane_first_set({"kind": "nope", "text": "글"}, "웹", self.root)[0], 400)
+        self.assertEqual(s.pane_first_set({"kind": "edit", "text": "/bash ls"}, "웹", self.root)[0], 400)
+        self.assertEqual(s.pane_first_set({"kind": "edit", "text": "개발자처럼 해. -태석-"}, "웹", self.root)[0], 200)
+        s.pane_auto_set(True, "웹(검사)", self.root)
+        self.gate(since=datetime.datetime.fromtimestamp(time.time() - 300).isoformat(timespec="seconds"))
+        self.assertEqual(self.run_view()["step"], "ask")                        # 이 노드는 읽기 - 읽기의 기본 지시는 없다
+        self.assertEqual(s.pane_first_set({"kind": "read", "text": "분석가처럼 봐. -태석-"}, "웹", self.root)[0], 200)
+        f = self.root / s.PANE_FIRST_DEFAULT_FILE
+        d = json.loads(f.read_text(encoding="utf-8"))
+        d["read"]["at"] = "2020-01-01T00:00:00"
+        f.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+        self.assertEqual(self.run_view()["step"], "work")
+        self.assertEqual(s.pane_info(self.d.name, self.root)[1]["first"], "분석가처럼 봐. -태석-")
+        meta = json.loads((self.d / "meta.json").read_text(encoding="utf-8"))
+        meta["attempt"] = 2                                                     # 다시 시도해도 일의 종류는 그대로다
+        (self.d / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        self.assertEqual(s.pane_auto_tick(self.root), [self.d.name])
+        self.assertEqual(self.approved()["line"], self.work_line(kind="retry", first="분석가처럼 봐. -태석- 재시도합니다."))
+        self.stored()                                                           # 노드에 쓴 글이 우선한다
+        self.assertEqual(s.pane_info(self.d.name, self.root)[1]["first"], self.FIRST + " 재시도합니다.")
+        view = s.pane_auto_view(self.root)[1]
+        self.assertEqual(sorted(view["first_defaults"]), ["edit", "read"])
+        self.assertEqual(view["first_kinds"], ["review", "read", "docs", "test", "edit"])
+        self.assertEqual(s.pane_first_set({"kind": "read", "text": ""}, "웹", self.root)[1]["first"], None)
+
     def test_resume_continues_without_asking_the_person_again(self):
         # 세션이 끝나 멈춘 일은 사람의 글을 다시 받지 않는다 - 1차 지시는 이미 그 대화에 있다. 써 둔 1차 지시도 다시 붙이지 않는다
         s = self.server

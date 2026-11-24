@@ -1789,6 +1789,9 @@ button:disabled { opacity: 0.6; }
 .pane-first h3 { margin: 0 0 8px; }
 .pane-first textarea { width: 100%; box-sizing: border-box; margin: 6px 0; }
 .pane-first-what { margin: 0 0 6px; font-weight: var(--st-fw-medium); }
+.pane-default-row { display: block; margin: 8px 0; font-size: 0.92em; }
+.pane-default-btn { margin: 0 0 8px; }
+.pane-first-gist { margin: 0 0 8px; padding: 8px 10px; border-left: 3px solid var(--st-line); background: var(--st-surface-2, transparent); font-size: 0.92em; line-height: 1.5; overflow-wrap: anywhere; }
 .node-first { white-space: nowrap; }
 .node-first-list { margin: 8px 0 0; padding: 0; list-style: none; font-size: var(--st-fs-sm); color: var(--st-ink-soft); }
 .node-first-list li { margin: 2px 0; overflow-wrap: anywhere; }

@@ -27,6 +27,7 @@ USER.md
 .aimem/fleet-mode.json
 .aimem/pane_auto.json
 .aimem/pane_first.json
+.aimem/pane_first_default.json
 .aimem/freebuff_sessions.jsonl
 .aimem/fleet-prepare.json
 .aimem/relay/

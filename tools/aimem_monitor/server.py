@@ -1533,6 +1533,15 @@ def _pane_kind(meta, gate):
         return "resume"      # 세션이 끝나 멈춘 답 - 같은 대화에 이어 보낸다
     if _pane_attempt(meta) > 1:      # 보내다 한 번 못 넣은 것은 다시 시도가 아니다 - 일은 아직 나간 적이 없다
         return "retry"
+    return _pane_base_kind(meta)
+
+
+#: 일의 종류 - 사람이 종류마다 기본 1차 지시를 써 둘 수 있다 (판정 순서대로)
+PANE_FIRST_KINDS = ("review", "read", "docs", "test", "edit")
+
+
+def _pane_base_kind(meta):
+    """일의 종류(`PANE_FIRST_KINDS`) - 시도 횟수·이어 가기와 상관없이, 라벨과 쓰기 범위만 본다."""
     if "검수" in str(meta.get("label") or ""):
         return "review"
     paths = [str(x) for x in (meta.get("write_paths") or []) if str(x).strip()]
@@ -1660,6 +1669,9 @@ def pane_sessions(root=ROOT):
 # 창(옵션이 켜져 있고 써 둔 글이 없을 때 뜨는 것)에 쓴 글도 같은 곳에 적힌다. 쓰고 지우는 것은 로그인한 사람만.
 
 PANE_FIRST_FILE = ".aimem/pane_first.json"
+# 종류별 기본 1차 지시 - 사람이 자리를 비울 때를 위해 **직접 써 둔** 글. 노드에 써 둔 글이 없으면 그 노드의 일의 종류
+# (`_pane_base_kind`)에 맞는 것이 붙는다(무작위가 아니라 맞는 것 하나). 노드에 쓴 글이 늘 우선한다. (2026-11-24 태석님)
+PANE_FIRST_DEFAULT_FILE = ".aimem/pane_first_default.json"
 _TASK_ID_RE = re.compile(r"\AT-[0-9]{1,6}\Z")
 
 
@@ -1672,13 +1684,30 @@ def pane_firsts(root=ROOT):
     return {k: v for k, v in d.items() if isinstance(v, dict) and isinstance(v.get("text"), str)} if isinstance(d, dict) else {}
 
 
+def pane_first_defaults(root=ROOT):
+    """`{종류: {"text","by","at"}}` - 사람이 써 둔 종류별 기본 1차 지시. 못 읽으면 빈 것."""
+    try:
+        d = json.loads((pathlib.Path(root) / PANE_FIRST_DEFAULT_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return ({k: v for k, v in d.items() if k in PANE_FIRST_KINDS and isinstance(v, dict) and isinstance(v.get("text"), str)}
+            if isinstance(d, dict) else {})
+
+
 def pane_first_set(payload, by, root=ROOT):
-    """노드(태스크)의 1차 지시를 적거나(`text`) 지운다(빈 글). 글은 사람이 쓴 한 줄이어야 한다."""
+    """노드(태스크 `task`)의 1차 지시, 또는 일의 종류(`kind`)의 기본 1차 지시를 적거나(`text`) 지운다(빈 글).
+    글은 사람이 쓴 한 줄이어야 한다."""
     task = payload.get("task") if isinstance(payload, dict) else None
-    if not isinstance(task, str) or not _TASK_ID_RE.match(task):
+    kind = payload.get("kind") if isinstance(payload, dict) else None
+    if kind is not None:
+        if kind not in PANE_FIRST_KINDS:
+            return 400, {"ok": False, "error": "kind 는 " + " · ".join(PANE_FIRST_KINDS) + " 가운데 하나여야 합니다"}
+        task, path, firsts = kind, PANE_FIRST_DEFAULT_FILE, pane_first_defaults(root)
+    elif not isinstance(task, str) or not _TASK_ID_RE.match(task):
         return 400, {"ok": False, "error": "task 는 T-<번호> 여야 합니다"}
+    else:
+        path, firsts = PANE_FIRST_FILE, pane_firsts(root)
     fb = _fleet_rt("harness.freebuff")
-    firsts = pane_firsts(root)
     raw = payload.get("text")
     if isinstance(raw, str) and not raw.strip():
         firsts.pop(task, None)
@@ -1689,18 +1718,31 @@ def pane_first_set(payload, by, root=ROOT):
         if fb._FLEET_LINE_RE.search(text):
             return 400, {"ok": False, "error": "1차 지시에는 지시문 파일 경로를 넣지 않습니다 (직접 쓰는 글입니다)"}
         firsts[task] = {"text": text, "by": str(by or "")[:80], "at": datetime.datetime.now().isoformat(timespec="seconds")}
-    p = pathlib.Path(root) / PANE_FIRST_FILE
+    p = pathlib.Path(root) / path
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = pathlib.Path(str(p) + ".tmp")
     tmp.write_text(json.dumps(firsts, ensure_ascii=False, indent=1), encoding="utf-8")
     os.replace(tmp, p)
-    return 200, {"ok": True, "task": task, "first": firsts.get(task)}
+    return 200, {"ok": True, **({"kind": kind} if kind is not None else {"task": task}), "first": firsts.get(task)}
+
+
+def _node_gist(task):
+    """노드의 지시문에 관리자가 적은 `요지:` 줄(200자까지, 가림을 먹인 것). 없으면 None."""
+    if not isinstance(task, str):
+        return None
+    m = _fleet_rt("harness.freebuff")._GIST_LINE_RE.search(task[:4000])
+    return _reader()._redact(" ".join(m.group(1).split())[:200]) if m else None
 
 
 def _pane_stored_first(root, meta, firsts=None):
-    """이 세션의 노드에 써 둔 1차 지시(`{"text","by","at"}`), 없으면 None."""
+    """이 세션에 붙을 1차 지시(`{"text","by","at"}`): 노드에 써 둔 것, 없으면 그 일의 종류의 기본 지시(`"default": 종류`
+    가 붙는다). 둘 다 없으면 None."""
     f = (pane_firsts(root) if firsts is None else firsts).get(str(meta.get("task_id") or ""))
-    return f if f else None
+    if f:
+        return f
+    kind = _pane_base_kind(meta)
+    d = pane_first_defaults(root).get(kind)
+    return dict(d, default=kind) if d else None
 
 
 def _pane_first_text(root, meta, gate):
@@ -1780,7 +1822,8 @@ def pane_auto_view(root=ROOT):
                 "need_first": step == "ask", "task": str(r["meta"].get("task_id") or "")}
     return 200, {"ok": True, "on": auto["on"], "by": auto["by"], "at": auto["at"],
                  "refused": auto["refused"],
-                 "sec": PANE_AUTO_SEC, "runs": runs, "sessions": pane_sessions(root), "firsts": pane_firsts(root)}
+                 "sec": PANE_AUTO_SEC, "runs": runs, "sessions": pane_sessions(root), "firsts": pane_firsts(root),
+                 "first_defaults": pane_first_defaults(root), "first_kinds": list(PANE_FIRST_KINDS)}
 
 
 def pane_auto_tick(root=ROOT):
@@ -2214,6 +2257,8 @@ def collect_graphs(root=ROOT, errors=None):
                     "attempts": len(attempts), "max_attempts": n.get("max_attempts"),
                     "last_run": last.get("run_id") if isinstance(last, dict) else None,
                     "waiting": n.get("waiting") if isinstance(n.get("waiting"), str) else None,
+                    # 관리자가 지시문 첫 줄에 적은 `요지:` - 사람이 1차 지시를 쓸 때 무슨 일인지 보게 (없으면 None)
+                    "gist": _node_gist(n.get("task")),
                     "infra": bool(n.get("infra")),
                     "infra_attempts": sum(1 for a in (n.get("infra_attempts") if isinstance(n.get("infra_attempts"), list) else [])
                                           if isinstance(a, dict) and not a.get("cleared")),
@@ -3640,7 +3685,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             by = f"웹({subject_label(who)})"
             if pane_m.group(1) == "first":      # 노드에 1차 지시를 미리 써 두기·지우기
                 code, result = pane_first_set(payload, by, self.root)
-                self._audit("pane-first", f"{code} {payload.get('task') if isinstance(payload, dict) else None}")
+                self._audit("pane-first", f"{code} {(payload.get('task') or payload.get('kind')) if isinstance(payload, dict) else None}")
                 return self._json(code, result)
             if pane_m.group(1) == "auto":       # '미리 고른 문구 전송' 옵션 켜기·끄기
                 if not isinstance(payload, dict) or not isinstance(payload.get("on"), bool):

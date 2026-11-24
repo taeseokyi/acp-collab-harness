@@ -1399,6 +1399,8 @@ function paneFirstDialog() {
   h.textContent = '먼저 직접 한마디 쓰십시오 (1차 지시)';
   const what = document.createElement('p');
   what.className = 'pane-first-what';
+  const gist = document.createElement('p');
+  gist.className = 'pane-first-gist';
   const hint = document.createElement('p');
   hint.className = 'hint';
   const ta = document.createElement('textarea');
@@ -1414,7 +1416,7 @@ function paneFirstDialog() {
   const later = document.createElement('button');
   later.type = 'button'; later.className = 'btn-link'; later.textContent = '닫기 (나중에 쓰겠음)';
   row.append(send, later);
-  form.append(h, what, hint, ta, msg, row);
+  form.append(h, what, gist, hint, ta, msg, row);
   dlg.appendChild(form);
   const clear = document.createElement('button');
   clear.type = 'button'; clear.className = 'btn-link'; clear.textContent = '지우기';
@@ -1444,7 +1446,7 @@ function paneFirstDialog() {
       msg.className = 'form-msg error'; msg.textContent = err && err.message ? err.message : String(err);
     } finally { send.disabled = false; }
   });
-  dlg._what = what; dlg._msg = msg; dlg._ta = ta; dlg._h = h; dlg._hint = hint; dlg._send = send; dlg._later = later; dlg._clear = clear;
+  dlg._what = what; dlg._gist = gist; dlg._msg = msg; dlg._ta = ta; dlg._h = h; dlg._hint = hint; dlg._send = send; dlg._later = later; dlg._clear = clear;
   document.body.appendChild(dlg);
   return dlg;
 }
@@ -1459,6 +1461,106 @@ function paneFirstMode(d, task, asked) {
   d._later.textContent = asked ? '닫기 (나중에 쓰겠음)' : '닫기';
   d._clear.hidden = !!asked;
   d._msg.textContent = '';
+  paneFirstFill(d);
+}
+// 무슨 일인지 보고 쓰게 - 그 노드의 제목과, 관리자가 지시문에 적은 요지(1차 지시 바로 뒤에 붙어 나가는 글).
+// 창이 상태보다 먼저 뜰 수 있어(첫 화면) 열려 있는 동안 다시 채운다
+function paneFirstFill(d) {
+  const n = paneFirstNode(d.dataset.task);
+  if (d.dataset.run) {
+    const run = ((state.data && state.data.runs) || []).find((r) => r && r.id === d.dataset.run);
+    d._what.textContent = `${run ? show(run.slot) : 'freebuff'} 에 보낼 작업 지시가 기다리고 있습니다 - ${run ? show(run.label) : d.dataset.run}`;
+  }
+  d._gist.textContent = '';
+  if (n) {
+    const add = (label, text) => {
+      if (!text) return;
+      const b = document.createElement('b');
+      b.textContent = label;
+      d._gist.append(b, document.createTextNode(' ' + text), document.createElement('br'));
+    };
+    add('작업', plainText(n.title));
+    add('요지', n.gist);
+  }
+  d._gist.hidden = !d._gist.textContent;
+}
+function paneFirstNode(task) {
+  for (const g of ((state.data && state.data.graphs) || [])) {
+    const n = (g.nodes || []).find((x) => x && String(x.id) === String(task));
+    if (n) return n;
+  }
+  return null;
+}
+// 일의 종류별 기본 1차 지시를 보고 고치는 창. 노드에 쓴 글이 없을 때 그 노드의 종류에 맞는 것이 줄 맨 앞에 붙는다
+const PANE_KIND_LABELS = {
+  review: ['검수', '이름에 "검수" 가 든 노드 - 지적만'],
+  read: ['읽기', '쓰는 파일이 없는 노드 - 살펴보고 결과만'],
+  docs: ['문서', '쓰는 파일이 모두 .md·.txt 인 노드'],
+  test: ['검사', '쓰는 파일이 모두 검사 파일인 노드'],
+  edit: ['고치기', '그 밖의 모든 노드 - 코드를 고침'],
+};
+function openPaneDefaults() {
+  if (typeof HTMLDialogElement === 'undefined') return;
+  let dlg = document.getElementById('pane-defaults');
+  if (!dlg) {
+    dlg = document.createElement('dialog');
+    dlg.id = 'pane-defaults';
+    dlg.className = 'pane-first';
+    document.body.appendChild(dlg);
+  }
+  dlg.textContent = '';
+  const h = document.createElement('h3');
+  h.textContent = '기본 1차 지시 (일의 종류별)';
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  hint.textContent = '직접 쓰는 글입니다. 노드에 써 둔 1차 지시가 없으면, 그 노드의 일의 종류에 맞는 글이 작업 지시 줄 맨 앞에 붙어 나갑니다(창으로 묻지 않습니다). 노드에 쓴 글이 늘 우선하고, 다시 시도하는 노드면 끝에 "재시도합니다." 가 붙습니다. 비워 저장하면 지워집니다.';
+  dlg.append(h, hint);
+  const defs = (state.paneAuto && state.paneAuto.first_defaults) || {};
+  const areas = {};
+  for (const k of ((state.paneAuto && state.paneAuto.first_kinds) || [])) {
+    const lab = document.createElement('label');
+    lab.className = 'pane-default-row';
+    const name = document.createElement('span');
+    const [nm, desc] = PANE_KIND_LABELS[k] || [k, ''];
+    const b = document.createElement('b');
+    b.textContent = nm;
+    name.append(b, document.createTextNode(desc ? ' - ' + desc : ''));
+    const ta = document.createElement('textarea');
+    ta.rows = 2;
+    ta.maxLength = 300;
+    ta.value = defs[k] ? defs[k].text : '';
+    areas[k] = ta;
+    lab.append(name, ta);
+    dlg.appendChild(lab);
+  }
+  const msg = document.createElement('p');
+  msg.className = 'form-msg';
+  const row = document.createElement('div');
+  row.className = 'slot-actions';
+  const save = document.createElement('button');
+  save.type = 'button'; save.className = 'btn-primary'; save.textContent = '저장';
+  const close = document.createElement('button');
+  close.type = 'button'; close.className = 'btn-link'; close.textContent = '닫기';
+  close.addEventListener('click', () => dlg.close());
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    msg.className = 'form-msg'; msg.textContent = '저장하는 중...';
+    try {
+      for (const k of Object.keys(areas)) {
+        const text = areas[k].value.trim();
+        if (text === (defs[k] ? defs[k].text : '')) continue;
+        const { res, body } = await api('/api/pane/first', { kind: k, text });
+        if (!res.ok || !body.ok) throw new Error(`${(PANE_KIND_LABELS[k] || [k])[0]}: ${body.error || '저장하지 못했습니다 (' + res.status + ')'}`);
+      }
+      dlg.close();
+      paneAutoLoad().then(() => refresh());
+    } catch (err) {
+      msg.className = 'form-msg error'; msg.textContent = err && err.message ? err.message : String(err);
+    } finally { save.disabled = false; }
+  });
+  row.append(save, close);
+  dlg.append(msg, row);
+  dlg.showModal();
 }
 // 요청 트리의 태스크 그래프: freebuff 슬롯 노드에 1차 지시를 미리 써 둔다
 function paneFirstStored(task) {
@@ -1469,8 +1571,8 @@ function openNodeFirst(n) {
   if (typeof HTMLDialogElement === 'undefined') return;
   const d = paneFirstDialog();
   if (d.open) d.close();
-  paneFirstMode(d, String(n.id), false);
   d.dataset.run = '';
+  paneFirstMode(d, String(n.id), false);
   d._what.textContent = `${show(n.slot)} · ${plainText(n.title) || ''}`;
   const f = paneFirstStored(String(n.id));
   d._ta.value = f ? f.text : '';
@@ -1498,15 +1600,14 @@ function paneFirstAsk() {
   const runs = (paneAutoOn() && state.paneAuto.runs) || {};
   const id = Object.keys(runs).find((k) => runs[k].need_first && runs[k].task);
   const dlg = document.getElementById('pane-first');
+  if (dlg && dlg.open) paneFirstFill(dlg);                                   // 상태가 늦게 왔으면 이제 채운다
   if (dlg && dlg.open && !dlg.dataset.run) return;                          // 노드에 써 두는 중이다
   if (dlg && dlg.open && (!id || dlg.dataset.run !== id)) dlg.close();      // 다른 곳에서 이미 썼거나 그 건이 끝났다
   if (!id || paneFirstAsked.has(id) || (dlg && dlg.open) || typeof HTMLDialogElement === 'undefined') return;
   paneFirstAsked.add(id);
   const d = paneFirstDialog();
-  const run = ((state.data && state.data.runs) || []).find((r) => r && r.id === id);
-  paneFirstMode(d, runs[id].task, true);
   d.dataset.run = id;
-  d._what.textContent = `${run ? show(run.slot) : 'freebuff'} 에 보낼 작업 지시가 기다리고 있습니다 - ${run ? show(run.label) : id}`;
+  paneFirstMode(d, runs[id].task, true);
   d._ta.value = '';
   d.showModal();
   d._ta.focus();
@@ -3117,9 +3218,20 @@ function renderRuns(data) {
     cb.checked = paneAutoOn();
     cb.addEventListener('change', () => { setPaneAuto(cb.checked).then(() => refresh()); });
     const optText = document.createElement('span');
-    optText.textContent = `미리 고른 문구 전송 (내 1차 지시를 창으로 먼저 받고 - 노드에 써 둔 것이 있으면 그것 - 그 답이 끝난 뒤 ${state.paneAuto.sec || 10}초 동안 손대지 않으면 작업 지시를 이어 보냄)`;
+    optText.textContent = `미리 고른 문구 전송 (내 1차 지시 - 노드에 써 둔 것, 없으면 일의 종류별 기본 지시, 그것도 없으면 창으로 받음 - 를 작업 지시 줄 맨 앞에 붙여 ${state.paneAuto.sec || 10}초 뒤 한 번에 보냄)`;
     opt.append(cb, optText);
     wrap.appendChild(opt);
+    // 일의 종류별 기본 1차 지시 - 자리를 비울 때를 위해 사람이 직접 써 두는 글
+    const kinds = (state.paneAuto && state.paneAuto.first_kinds) || [];
+    if (kinds.length) {
+      const defs = state.paneAuto.first_defaults || {};
+      const db = document.createElement('button');
+      db.type = 'button';
+      db.className = 'btn-link pane-default-btn';
+      db.textContent = `기본 1차 지시 (${kinds.filter((k) => defs[k]).length}/${kinds.length})`;
+      db.addEventListener('click', openPaneDefaults);
+      wrap.appendChild(db);
+    }
   }
   for (const r of waiting) {
     // 사람 손을 기다리는 지시는 표 위에 따로 - 표의 한 줄로만 두면 지나친다
