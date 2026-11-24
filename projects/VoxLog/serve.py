@@ -83,13 +83,27 @@ def _valid_recorded_at(raw):
     if dt.tzinfo is None:
         return None
     now = datetime.datetime.now(datetime.timezone.utc)
-    if dt.astimezone(datetime.timezone.utc) > now + datetime.timedelta(days=1):
+    try:
+        # astimezone 은 날짜 범위 끝(0001-01-01 +14:00, 9999-12-31 -14:00)에서 OverflowError 를 낸다.
+        # 못 쓰는 값이면 서버 시각을 쓰는 규칙 그대로 None 을 준다(업로드를 끊지 않는다).
+        if dt.astimezone(datetime.timezone.utc) > now + datetime.timedelta(days=1):
+            return None
+    except (ValueError, OverflowError):
         return None
     return text
 
 
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
 def _valid_date(raw):
-    """YYYY-MM-DD 이고 달력에 실제로 있는 날짜인지 (2026-13-40 은 거짓)."""
+    """YYYY-MM-DD 이고 달력에 실제로 있는 날짜인지 (2026-13-40 은 거짓).
+
+    fromisoformat 만 보면 3.11 은 `20261123`(기본형)·`2026-W48-1`(ISO 주)도 받는다. store 는 이 값을
+    문자열로 비교하므로 정규식을 함께 통과해야 한다.
+    """
+    if not DATE_RE.match(raw or ""):
+        return False
     try:
         datetime.date.fromisoformat(raw)
     except ValueError:

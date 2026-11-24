@@ -63,12 +63,18 @@
       }
       return fetch(buildUrl(path), init).then(function (res) {
         return res.text().then(function (text) {
-          var data = {};
-          try { data = text ? JSON.parse(text) : {}; } catch (e) { data = {}; }
-          if (!res.ok) {
-            throw fail((data && data.error) || String(res.status), res.status);
+          var data = null;
+          var isJson = false;
+          if (text) {
+            try { data = JSON.parse(text); isJson = true; } catch (e) { data = null; }
           }
-          return data;
+          if (!res.ok) {
+            throw fail((isJson && data && data.error) || String(res.status), res.status);
+          }
+          if (res.status === 204) return {}; // 204 는 본문이 원래 없다
+          // 200 인데 JSON 이 아니거나 본문이 빈 응답(캐티브 포털·프록시)은 성공으로 받지 않는다
+          if (!isJson) throw fail('서버 응답이 JSON 이 아닙니다 (' + res.status + ')', res.status);
+          return data == null ? {} : data;
         });
       }, function () {
         throw fail('서버에 연결할 수 없습니다', 0);

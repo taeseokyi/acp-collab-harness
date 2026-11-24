@@ -15,7 +15,45 @@
   var listeners = [];
   var dbPromise = null;
   var flushing = null;
+  var flushAgain = false;
   var retryTimer = null;
+  var tabId = 't-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+  var activeDraft = null; // 이 탭이 지금 녹음 중인 초안(다른 탭의 draftRecover 가 건드리지 않게)
+  var draftBc = null;     // 탭끼리 '이 초안 아직 살아 있다' 를 알리는 길
+  var draftPings = {};    // ping 토큰 -> { ids: {초안: true} }
+  var DRAFT_LEASE_MS = 20000; // 초안이 이만큼 최근에 갱신됐으면 살아 있는 것으로 본다
+
+  try {
+    if (typeof BroadcastChannel === 'function') {
+      draftBc = new BroadcastChannel('voxlog-drafts');
+      draftBc.onmessage = function (ev) {
+        var m = (ev && ev.data) || {};
+        if (m.type === 'draft-alive?') {
+          if (activeDraft) {
+            try { draftBc.postMessage({ type: 'draft-alive', tab: tabId, draftId: activeDraft, ping: m.ping }); } catch (e) { /* 무시 */ }
+          }
+        } else if (m.type === 'draft-alive' && m.tab !== tabId) {
+          var p = m.ping && draftPings[m.ping];
+          if (p && m.draftId) p.ids[m.draftId] = true;
+        }
+      };
+    }
+  } catch (e) { draftBc = null; }
+
+  // 다른 탭이 지금 녹음 중인 초안의 id 집합. waitMs 동안 대답을 모은다.
+  function liveDraftIds(waitMs) {
+    if (!draftBc) return Promise.resolve({});
+    return new Promise(function (resolve) {
+      var token = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      draftPings[token] = { ids: {} };
+      try { draftBc.postMessage({ type: 'draft-alive?', tab: tabId, ping: token }); } catch (e) { /* 무시 */ }
+      setTimeout(function () {
+        var p = draftPings[token];
+        delete draftPings[token];
+        resolve((p && p.ids) || {});
+      }, waitMs);
+    });
+  }
 
   function openDb() {
     if (dbPromise) return dbPromise;
@@ -228,8 +266,20 @@
         if (cfg.token) headers['Authorization'] = 'Bearer ' + cfg.token;
         return fetch(url, { method: 'POST', headers: headers, body: row.blob }).then(function (res) {
           if (res.ok) {
-            result.sent++;
-            return removeRow(db, row.clientId).then(notify).then(next);
+            return res.json().catch(function () { return null; }).then(function (body) {
+              if (body && typeof body.id === 'string') {
+                result.sent++;
+                return removeRow(db, row.clientId).then(notify).then(next);
+              }
+              // 캡티브 포털·프록시의 200 text/html 처럼 JSON 메타가 없는 응답은 성공이 아니다.
+              result.failed++;
+              return updateRow(db, row.clientId, function (r) {
+                return { lastError: '서버 응답이 올바르지 않음', tries: (r.tries || 0) + 1 };
+              }).then(notify).then(function () {
+                scheduleRetry('5');
+                return next();
+              });
+            });
           }
           if (res.status === 401) {
             result.failed++;
@@ -275,10 +325,18 @@
     }, sec * 1000);
   }
 
+  // 올리는 중에 새로 넣은 녹음도 올라가게 - 진행 중이면 그게 끝난 뒤 한 번 더 돈다
   function flush() {
-    if (flushing) return flushing;
-    flushing = doFlush().then(function (r) { flushing = null; return r; },
-      function (e) { flushing = null; throw e; });
+    if (flushing) { flushAgain = true; return flushing; }
+    flushing = doFlush().then(function (r) {
+      flushing = null;
+      if (flushAgain) { flushAgain = false; return flush(); }
+      return r;
+    }, function (e) {
+      flushing = null;
+      if (flushAgain) { flushAgain = false; return flush(); }
+      throw e;
+    });
     return flushing;
   }
 
@@ -312,12 +370,14 @@
   // ---- 녹음 중 초안: 조각을 바로 IndexedDB 에 ----
   function draftStart(d) {
     d = d || {};
+    activeDraft = d.draftId || null;
     return guard().then(function (db) {
+      var now = Date.now();
       var s = store(db, 'drafts', 'readwrite');
       s.st.put({
         draftId: d.draftId, mime: d.mime || 'audio/webm',
         recordedAt: d.recordedAt || new Date().toISOString(),
-        location: normLoc(d.location), started: Date.now()
+        location: normLoc(d.location), started: now, aliveAt: now
       });
       return txDone(s.tx);
     });
@@ -332,6 +392,7 @@
         var d = g.result;
         if (!d) return;
         d.location = normLoc(location);
+        d.aliveAt = Date.now();
         s.st.put(d);
       };
       return txDone(s.tx);
@@ -340,12 +401,33 @@
 
   function draftAppend(draftId, blobPart) {
     return guard().then(function (db) {
-      var tx = db.transaction('chunks', 'readwrite');
+      var tx = db.transaction(['drafts', 'chunks'], 'readwrite');
       var st = tx.objectStore('chunks');
-      // seq = 지금까지 쌓인 조각 수(같은 트랜잭션 안에서 셈)
-      var cnt = st.index('draftId').count(IDBKeyRange.only(draftId));
-      cnt.onsuccess = function () { st.add({ draftId: draftId, seq: cnt.result, blob: blobPart }); };
+      var g = tx.objectStore('drafts').get(draftId);
+      g.onsuccess = function () {
+        var d = g.result;
+        if (!d) return; // 초안이 이미 없으면(다른 탭이 가져갔거나 지웠으면) 고아 조각을 남기지 않는다
+        d.aliveAt = Date.now();
+        tx.objectStore('drafts').put(d);
+        // seq = 지금까지 쌓인 조각 수(같은 트랜잭션 안에서 셈)
+        var cnt = st.index('draftId').count(IDBKeyRange.only(draftId));
+        cnt.onsuccess = function () { st.add({ draftId: draftId, seq: cnt.result, blob: blobPart }); };
+      };
       return txDone(tx);
+    });
+  }
+
+  function draftTouch(draftId) {
+    return guard().then(function (db) {
+      var s = store(db, 'drafts', 'readwrite');
+      var g = s.st.get(draftId);
+      g.onsuccess = function () {
+        var d = g.result;
+        if (!d) return;
+        d.aliveAt = Date.now();
+        s.st.put(d);
+      };
+      return txDone(s.tx);
     });
   }
 
@@ -363,9 +445,12 @@
   }
 
   function draftDiscard(draftId) {
-    return guard().then(function (db) { return draftClear(db, draftId); });
+    return guard().then(function (db) { return draftClear(db, draftId); }).then(function () {
+      if (activeDraft === draftId) activeDraft = null;
+    });
   }
 
+  // 초안을 조각 순으로 이어 올린다. 돌려주는 값: 초안이 있어 처리했으면 true, 초안이 없었으면 false
   function draftFinish(draftId, durationMs, location) {
     var db, draft;
     return guard().then(function (d) {
@@ -376,8 +461,8 @@
       if (!draft) return null;
       return reqP(store(db, 'chunks', 'readonly').st.index('draftId').getAll(IDBKeyRange.only(draftId)));
     }).then(function (chunks) {
-      if (!draft) return;
-      if (!chunks || !chunks.length) return draftClear(db, draftId);
+      if (!draft) return false;
+      if (!chunks || !chunks.length) return draftClear(db, draftId).then(function () { return true; });
       chunks.sort(function (a, b) { return a.seq - b.seq; });
       var mime = draft.mime || 'audio/webm';
       var b = new Blob(chunks.map(function (c) { return c.blob; }), { type: mime });
@@ -385,20 +470,38 @@
         blob: b, mime: mime, recordedAt: draft.recordedAt,
         durationMs: durationMs == null ? null : durationMs, clientId: draftId,
         location: location !== undefined && location !== null ? location : draft.location
-      }).then(function () { return draftClear(db, draftId); });
+      }).then(function () { return draftClear(db, draftId); }).then(function () { return true; });
+    }).then(function (done) {
+      if (activeDraft === draftId) activeDraft = null;
+      return done;
+    }, function (e) {
+      if (activeDraft === draftId) activeDraft = null;
+      throw e;
     });
   }
 
+  // 끝나지 않은 초안을 살린다. 다른 탭이 지금 녹음 중인 초안은 건드리지 않는다(그 탭이 멈출 때 스스로 올린다).
   function draftRecover(exceptDraftId) {
-    var ids;
-    return guard().then(function (db) {
-      return reqP(store(db, 'drafts', 'readonly').st.getAllKeys());
-    }).then(function (keys) {
-      ids = keys.filter(function (k) { return k !== exceptDraftId; });
+    var db, keys, live;
+    return guard().then(function (d) {
+      db = d;
+      return Promise.all([
+        reqP(store(db, 'drafts', 'readonly').st.getAll()),
+        liveDraftIds(300)
+      ]);
+    }).then(function (res) {
+      keys = res[0] || [];
+      live = res[1] || {};
+      var now = Date.now();
+      var ids = keys.filter(function (d) {
+        if (!d || d.draftId === exceptDraftId) return false;
+        if (typeof d.aliveAt === 'number' && now - d.aliveAt < DRAFT_LEASE_MS) return false;
+        return !live[d.draftId];
+      }).map(function (d) { return d.draftId; });
       var n = 0;
       return ids.reduce(function (p, id) {
         return p.then(function () {
-          return draftFinish(id, null).then(function () { n++; }, function () {});
+          return draftFinish(id, null).then(function (done) { if (done) n++; }, function () {});
         });
       }, Promise.resolve()).then(function () { return n; });
     });
@@ -428,6 +531,7 @@
     retry: retry,
     draftStart: draftStart,
     draftAppend: draftAppend,
+    draftTouch: draftTouch,
     draftSetLocation: draftSetLocation,
     draftFinish: draftFinish,
     draftDiscard: draftDiscard,
@@ -456,3 +560,4 @@
   // 격리된 출처면 여기서 idbOk 가 false 로 바뀜
   if (idbOk) openDb().catch(function () {});
 })();
+

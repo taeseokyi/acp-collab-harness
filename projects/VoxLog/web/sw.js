@@ -2,7 +2,7 @@
  * 업로드 규칙은 queue.js 와 같음(importScripts 없이 여기에 따로 둠 - 고치면 둘 다 고칠 것). */
 'use strict';
 
-var VERSION = 8;
+var VERSION = 10;
 var CACHE = 'voxlog-shell-v' + VERSION;
 var SHELL = [
   './', 'index.html', 'style.css', 'app.js', 'api.js', 'md.js', 'queue.js', 'manifest.webmanifest',
@@ -165,7 +165,20 @@ function doUpload() {
       }
       if (cfg.token) headers['Authorization'] = 'Bearer ' + cfg.token;
       return fetch(url, { method: 'POST', headers: headers, body: row.blob }).then(function (res) {
-        if (res.ok) return removeRow(db, row.clientId).then(notifyClients).then(next);
+        if (res.ok) {
+          return res.json().catch(function () { return null; }).then(function (body) {
+            if (body && typeof body.id === 'string') {
+              return removeRow(db, row.clientId).then(notifyClients).then(next);
+            }
+            // 캡티브 포털·프록시의 200 text/html 처럼 JSON 메타가 없는 응답은 성공이 아니다.
+            return updateRow(db, row.clientId, function (r) {
+              return { lastError: '서버 응답이 올바르지 않음', tries: (r.tries || 0) + 1 };
+            }).then(function () {
+              retryError = new Error('서버 응답이 올바르지 않음');
+              return next();
+            });
+          });
+        }
         if (res.status === 401) {
           return updateRow(db, row.clientId, function () { return { lastError: '인증 실패' }; });
         }

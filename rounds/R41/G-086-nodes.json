@@ -1,0 +1,19 @@
+[
+ {
+  "id": "T-387",
+  "title": "[VoxLog] R41 검수 수정: 살아 있는 초안 판별(R40-N1 남은 경쟁)·업로드 200 비-JSON·검사 빈틈",
+  "slot": "S2",
+  "project": "VoxLog",
+  "write": [
+   "projects/VoxLog/web/queue.js",
+   "projects/VoxLog/web/sw.js",
+   "projects/VoxLog/web/app.js",
+   "projects/VoxLog/tests/browser_voxlog.py",
+   "projects/VoxLog/tests/test_serve.py"
+  ],
+  "deps": [],
+  "max_attempts": 2,
+  "verify": "python3 projects/VoxLog/tests/browser_voxlog.py",
+  "task": "VoxLog 화면 쪽 결함 둘과 검사 빈틈 셋을 고친다. 검수 기록 전문은 `.aimem/sessions/T-386-S2-a1-111210/report.md`(R41 적대적 검수, 불합격). 바로 파일을 고친다. 쓰는 파일은 `projects/VoxLog/web/queue.js`, `web/sw.js`, `web/app.js`, `tests/browser_voxlog.py`, `tests/test_serve.py` 다섯뿐이다.\n\n1. **(중) R40-N1 남은 경쟁** - `web/queue.js` 의 `liveDraftIds()`(약 44행)는 BroadcastChannel 이 없으면 `{}` 를 돌려주고, 300ms 안에 답하지 못한 탭(메인 스레드가 바쁨)의 초안도 `draftRecover`(약 463행)가 가져간다. 재현: 탭1 녹음 7초 → 탭2 열기(탭1은 BroadcastChannel 없음 또는 메인 스레드 3초 차단) → 서버에 잘린 녹음 1건, 탭1 은 '저장됨'. 고칠 방향: 초안 줄에 마지막으로 살아 있던 시각(`aliveAt`, ms)을 두고, `draftStart`·`draftAppend`(조각은 `mr.start(5000)` 이라 5초마다)와 녹음 중 몇 초마다 도는 짧은 타이머가 갱신한다. `draftRecover` 는 BroadcastChannel 대답과 상관없이 `aliveAt` 이 최근(예: 20초 안)인 초안을 건너뛴다. 건너뛴 초안이 정말 버려진 것이면(탭이 죽음) 앱을 다시 열 때나 몇십 초 뒤 한 번 더 `draftRecover` 할 때 살아나게 한다(app.js). BroadcastChannel 대답은 보조로 남겨도 된다.\n2. **(중) 업로드가 200 비-JSON 을 성공으로 받음** - `web/queue.js:267-269` 와 `web/sw.js:168` 이 `res.ok` 만 보고 대기열 줄을 지운다. 재현: `POST /api/recordings` 를 200 text/html 로 응답(캡티브 포털) → 대기열 0, 서버 0 - 녹음이 조용히 사라짐. 서버는 성공 때 201/200 + 메타 JSON(`id` 문자열 포함, `docs/INTERFACE.md:143`)을 준다. 고칠 방향: 응답이 JSON 이고 `id` 가 문자열일 때만 성공으로 줄을 지운다. 아니면 영구 실패가 아닌 오류로 대기열에 남겨 다시 올린다(lastError 예: '서버 응답이 올바르지 않음'). queue.js 와 sw.js 둘 다 같은 규칙으로.\n3. **검사** (`tests/browser_voxlog.py`, 지금 29개):\n   - 새 시나리오: BroadcastChannel 이 없는 탭1 이 녹음 중일 때 탭2 를 열어도 초안을 가져가지 않고, 탭1 을 멈추면 서버에 온전한 녹음 1건(`duration_ms` 가 있음)\n   - 새 시나리오: `POST /api/recordings` 를 200 text/html 로 응답하게 하면 녹음이 대기열에 남음(지워지지 않음), 정상 응답으로 돌리면 올라감\n   - t27 의 `time.sleep(2.5)` 를 탭2 의 `draftRecover` 가 끝났음을 확인하는 대기로 바꿈. t29 에 빈 200 과 500 text/html 도 '연결됨' 이 아님을 더함\n   - `tests/test_serve.py` `test_bad_date_filter_is_400` 에 `to=20261123`, `from=2026-W48-1` 을 더함\n   화면 검사는 보이는 것(is_visible·글자)을 묻는다. 검사 서버는 테스트가 임시 포트로 띄우는 것만 쓴다(운영 서버 접속 금지).\n\nweb 파일을 바꿨으니 `sw.js` 의 `VERSION` 을 9 → 10 으로 올린다. 끝나면 `python3 projects/VoxLog/tests/browser_voxlog.py` 와 `python3 -m unittest discover -s projects/VoxLog/tests` 를 둘 다 돌려 통과하는지 확인한다. 가능하면 고친 코드를 /tmp 사본에서 되돌려 새 시나리오가 실패하는지도 본다.\n\n보고는 응답 본문에 쓴다. 첫 줄 상태(DONE 등), 고친 것마다 파일:행과 더한 검사 이름, 두 검사의 결과 줄, 바꾼 파일 목록. 답의 마지막은 반드시 글(보고)로 끝낸다."
+ }
+]

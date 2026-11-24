@@ -17,9 +17,26 @@
 - [x] 묻기 - 요약·핵심어·할 일·직접 묻기를 claude CLI 로(도구·MCP·설정 끔, 빈 임시 폴더), 답을 앱에 보이고 쌓음 (가짜 LLM 으로 확인)
 - [x] 보안 - 토큰·HTTPS·경로 탈출·남의 출처·DNS 리바인딩·프롬프트 감쌈, ffmpeg 입력 형식 강제·protocol_whitelist, 업로드 흘려 쓰기·동시 2개·디스크 여유·업로드 마감(받은 만큼으로 재서 넘기면 408)·저장 OSError 500/507 (R36 에서 R35-N1·N2·N3 닫힘, 하 R36-N1·N2·N3 는 큐)
 - [x] 폰(320~430px)·데스크톱에서 겹침·넘침 없음, 어두운 모드
-- [x] 검사 - 단위 136·끝에서 끝 브라우저 26/26, 적대적 검수 6회(R33 2회·R34·R35·R36·R39 1회씩)
+- [x] 검사 - 단위 137·끝에서 끝 브라우저 31/31, 적대적 검수 8회(R33 2회·R34·R35·R36·R39 1회씩·R41 2회)
 - [x] 실제 폰에서 동작 확인 - 태석님이 폰에서 써 보고 "모두 잘됩니다" 라고 확인(2026-11-17). 항목별(측면 버튼·오프라인 올리기·위치 권한·사파리 mp4) 결과는 따로 받지 않음
 - [x] 실제 음성인식 백엔드 연결 - KISTI Qwen3-ASR(`VOXLOG_STT_URL`, 화자 구분 `diarized_json`)로 받아쓰기, 태석님이 폰 녹음으로 확인(2026-11-17). 실제 `claude` 묻기는 배포본에서 답 2건 완료(2026-11-16)
+
+## R41 (2026-11-24)
+
+**한 일.** 요청 `Q-261124-9281`(새 보내기 방식으로 S6 세션 풀림 이어 가기 시험, 대기 큐 VoxLog 4건). 그래프 G-083(S6 셋) → G-084·G-085(검수) → G-086(수정) → G-087(재검수).
+- T-382(S6) INTERFACE.md ↔ serve.py·voxlog/·tests/ 대조 검수: 중 3·하 9(R41-N1~N12, 코드는 고치지 않음, 큐로)
+- T-383(S6) R39-N1(날짜 정규식+fromisoformat 둘 다)·R39-N2(astimezone OverflowError → 서버 시각)·R39-N4(health `llm_error`, ask 400 조건 문서)
+- T-384(S6) R40-N1(녹음 중인 초안을 다른 탭이 안 가져감)·R40-N2(flush 진행 중 넣은 녹음도 올림, `flushAgain`)·R40-N3(api.js: 본문이 JSON 아니면 오류)
+- T-386(S2) 적대적 검수 **불합격**: R40-N1 이 BroadcastChannel 없음/300ms 무응답 탭에서 남음, 업로드가 200 비-JSON 을 성공으로 받아 녹음을 지움
+- T-387(S2) 수정: 초안 lease(`aliveAt`, 20초, 녹음 중 5초마다 갱신, 시작 22초 뒤 한 번 더 회수), 업로드 성공은 JSON + 문자열 `id` 일 때만(queue.js·sw.js), sw VERSION 10
+- T-388(S3) 재검수 **조건부 통과**: 두 결함 닫힘, 남은 중 1·하 5(R41-N13~N18) 큐로
+
+**바뀐 파일.** `serve.py`, `docs/INTERFACE.md`, `tests/test_serve.py`, `web/app.js`, `web/queue.js`, `web/api.js`, `web/sw.js`, `tests/browser_voxlog.py`. 검수 기록 `rounds/R41/REVIEW-r41-s6.md`.
+
+**검증.** 관리자 `python3 -m unittest discover -s projects/VoxLog/tests` → 137 OK. 엔진 verify 로 `browser_voxlog.py` 29/29(T-384)·31/31(T-387), 재검수가 31/31 다시 돌림. 검수자 변이 시험(되돌리면 새 검사가 실패).
+
+**남은 일.** 큐 `[VoxLog]` 넷: R41-N13~N18(초안 회수 남은 경쟁, 중1), R41-N1·N5(stt id 규칙·ask 본문 timeout, 중1), R41-N2·N3·N6·N7(검사 빈틈, 중2), R41-N4·N8~N12(INTERFACE 문서 맞추기).
+목표 체크는 그대로(새 발견은 이미 검증된 목표의 빈틈 - 되돌리지 않음).
 
 ## R40 (2026-11-23)
 

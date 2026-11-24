@@ -1,0 +1,12 @@
+[
+ {
+  "id": "T-386",
+  "title": "[VoxLog] R41 적대적 검수(재시도 - S3 빈손): S6 수정 6건 (R39-N1·N2·N4, R40-N1·N2·N3)",
+  "slot": "S2",
+  "project": "VoxLog",
+  "write": [],
+  "deps": [],
+  "max_attempts": 1,
+  "task": "VoxLog 에서 이번 라운드에 고친 6건을 적대적으로 검수한다. 고친 것이 정말 고쳐졌는지, 고치면서 새 결함이나 회귀를 만들지 않았는지, 더한 검사가 틀린 코드도 통과시킬 만큼 느슨하지 않은지 본다. 바로 `git diff -- projects/VoxLog` 부터 읽고 시작한다.\n\n바뀐 파일: `projects/VoxLog/serve.py`, `docs/INTERFACE.md`, `tests/test_serve.py`, `web/app.js`, `web/queue.js`, `web/api.js`, `web/sw.js`, `tests/browser_voxlog.py`. 무엇을 고쳤어야 하는지는 `rounds/R39/REVIEW-r39.md`(R39-N1·N2·N4 행)와 `rounds/R40/REVIEW-r40-s6.md`('발견' 절, R40-N1·N2·N3).\n\n고친 내용(작업자 보고 요약):\n- R39-N1: `serve.py` `_valid_date` 가 `DATE_RE`(^\\d{4}-\\d{2}-\\d{2}$)와 `date.fromisoformat` 을 둘 다 봄. `test_bad_date_filter_is_400` 에 `20261123`·`2026-W48-1` 추가\n- R39-N2: `_valid_recorded_at` 이 `astimezone` 까지 try 안, `except (ValueError, OverflowError)`. 새 검사 `test_recorded_at_timezone_overflow_uses_server_time`\n- R39-N4: INTERFACE.md health 행 `llm_error`, ask 행 400 조건\n- R40-N1: 탭마다 `activeDraft`, `BroadcastChannel('voxlog-drafts')` 로 300ms 동안 살아 있는 초안을 물어 `draftRecover` 가 건너뜀. `draftFinish` 가 초안이 없으면 false → app.js 가 메모리 조각으로 `enqueue`. 초안 없는 `draftAppend` 는 같은 트랜잭션에서 확인해 고아 조각을 안 남김. 브라우저 검사 27\n- R40-N2: `flush()` 진행 중이면 `flushAgain` 을 세워 끝난 뒤 한 번 더. 브라우저 검사 28\n- R40-N3: `api.js` 가 본문이 있는데 JSON 이 아니면 오류를 던짐(204 는 그대로). 브라우저 검사 29. `sw.js` VERSION 8→9\n\n특히 볼 것: BroadcastChannel 판별의 경쟁(300ms 안에 답 못 한 살아 있는 탭, 탭이 닫혔는데 표지가 남는 경우, 같은 탭이 새로 고침될 때 자기 초안을 살리는지), draftFinish false 경로에서 같은 녹음이 두 번 대기열에 들어가지 않는지(client_id), flushAgain 이 끝없이 도는 경우, api.js 가 JSON 아닌 오류 응답(4xx/5xx text/html)과 빈 200 을 어떻게 다루는지, 서비스 워커 쪽 업로드 코드와 화면 쪽 규칙이 어긋나는지.\n\n/tmp 를 쓸 수 있으면 /tmp 에 프로젝트 복사본을 만들어 고친 코드를 일부러 되돌리거나 틀리게 바꿔(변이) 새 검사가 잡는지 직접 본다(복사본은 끝나면 지운다). /tmp 를 쓸 수 없거나 어떤 도구가 거절되면 멈추지 말고 그 시험만 건너뛰어, 코드 읽기와 검사 실행으로 판정하고 건너뛴 것을 보고에 적는다. 운영 서버에는 접속하지 않는다.\n\n읽기 전용 검수다. 프로젝트 파일은 하나도 만들거나 고치지 않는다(쓰기 경로 없음). 검사는 돌려도 된다: `python3 -m unittest discover -s projects/VoxLog/tests`, `python3 projects/VoxLog/tests/browser_voxlog.py`.\n\n각 발견마다 **파일:행**, 무엇이 틀렸는지, **재현할 구체적인 입력이나 상황(또는 변이)**, 심각도(상/중/하)를 적는다. 직접 재현하지 못한 것은 '추정' 이라고 적는다. 발견이 없으면 없다고 적는다 - 억지로 채우지 않는다. `rounds/R41/REVIEW-r41-s6.md` 에 있는 R41-N1~N12(문서 대조 검수 결과)는 다시 적지 않는다.\n\n보고는 응답 본문에 쓴다. 첫 줄은 판정(통과 / 조건부 통과 / 불합격), 이어서 6건마다 닫힘/안 닫힘 한 줄, 발견 목록(심각도 순), 변이 시험 결과, 돌린 검사의 결과 줄. 답의 마지막은 반드시 글(보고)로 끝낸다."
+ }
+]

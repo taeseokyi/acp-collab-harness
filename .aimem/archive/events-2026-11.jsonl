@@ -46,3 +46,86 @@
 {"seq": 60, "at": "2026-11-09T21:48:19", "actor": "관리자", "rev": 113, "kind": "task", "body": "T-070 REVIEW"}
 {"seq": 63, "at": "2026-11-09T21:49:41", "actor": "관리자(R5)", "rev": 114, "kind": "note", "body": "migrate 가 AIMEM.md 서문에서 REV 를 매번 덮어써 114->113 으로 되돌렸다. 서문은 DB 에 REV 가 없을 때만 씨앗으로 읽도록 고쳤다 (정본은 DB, 서문 동기는 render 가 한다)."}
 {"seq": 64, "at": "2026-11-09T21:51:20", "actor": "관리자", "rev": 114, "kind": "queue", "body": "queue +24 `state_dict()` 이벤트 합집합 질의와 `migrate` 의 REV 씨앗 규칙 테스트"}
+{"seq": 65, "at": "2026-11-10T09:13:35", "actor": "클로드 코드(태석님 지시)", "rev": 114, "kind": "ownership", "body": "tests/test_aimem_lint.py -> S2"}
+{"seq": 66, "at": "2026-11-10T09:13:35", "actor": "클로드 코드(태석님 지시)", "rev": 114, "kind": "ownership", "body": "tests/test_aimem_monitor*.py -> S2"}
+{"seq": 67, "at": "2026-11-10T09:24:52", "actor": "관리자(R6)", "rev": 114, "kind": "ownership", "body": "tests/test_fleet*.py -> S2"}
+{"seq": 68, "at": "2026-11-10T09:24:52", "actor": "관리자(R6)", "rev": 114, "kind": "ownership", "body": "tools/fleet_graph.py -> S1"}
+{"seq": 69, "at": "2026-11-10T09:28:18", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-080 ASSIGNED S2 `fleet.py` DB 우선·마크다운 폴백 회귀 테스트 (큐 15·23)"}
+{"seq": 70, "at": "2026-11-10T09:28:18", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-081 ASSIGNED S1 `fleet_graph` 단일 실행자 잠금 · 노드 타임아웃 · 보고 BLOCKED 파싱 (큐 7·8·9)"}
+{"seq": 71, "at": "2026-11-10T09:28:18", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-082 ASSIGNED S3 상세 패널 진입점 - 보드 행·요청 서브태스크 클릭 + 404/400 이유 표시 + DEMO_STATE 정리 (큐 18·19·21)"}
+{"seq": 72, "at": "2026-11-10T09:28:18", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-083 ASSIGNED S3 KISTI 카드 pending/stale 구분 + 상세 다이얼로그 포커스 가둠·복귀 (큐 20·22)"}
+{"seq": 73, "at": "2026-11-10T09:28:18", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-084 ASSIGNED S4 T-081 적대적 검수 (읽기 전용) - 잠금·타임아웃·BLOCKED 판정"}
+{"seq": 74, "at": "2026-11-10T09:28:18", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-085 ASSIGNED S2 `requests[].detail` 절단 + 토큰 파일 O_NOFOLLOW 읽기 계약 테스트"}
+{"seq": 75, "at": "2026-11-10T09:28:18", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-086 DONE 관리자 `/api/state` requests[].detail 절단 + 접근 토큰 읽기 O_NOFOLLOW (큐 13·3)"}
+{"seq": 78, "at": "2026-11-10T09:57:39", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-087 ASSIGNED S1 fleet_graph S4 검수 결함 5건 수정 (killpg·pid 신원·단어경계·timeout 범위·validate 범위)"}
+{"seq": 79, "at": "2026-11-10T09:57:39", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-088 ASSIGNED S2 `fleet_graph` 계약 테스트 (잠금·BLOCKED 판정·타임아웃·시작 전 검증)"}
+{"seq": 80, "at": "2026-11-10T09:57:39", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-089 ASSIGNED S3 모니터 UI 탭 구조 (함대 / 보드·큐 / 요청 트리, 요청 폼은 상시)"}
+{"seq": 81, "at": "2026-11-10T09:57:39", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-090 ASSIGNED S4 T-087 재검수 + 새 구멍 탐색 (읽기 전용)"}
+{"seq": 82, "at": "2026-11-10T09:57:39", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-091 ASSIGNED S3 요청 본문 줄바꿈 유지 + 잘린 본문 전체 보기"}
+{"seq": 87, "at": "2026-11-10T10:14:36", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-092 ASSIGNED S1 fleet_graph 재검수 결함 7·8 수정 (refused 시 blocked · tz astimezone)"}
+{"seq": 88, "at": "2026-11-10T10:14:36", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-093 ASSIGNED S2 test_fleet_graph 계약 표 1행 정정 + 경계 2행 추가"}
+{"seq": 89, "at": "2026-11-10T10:14:36", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-094 ASSIGNED S3 모니터 UI 탭 구조 (3차 - 읽을 것을 못박은 좁힌 브리프)"}
+{"seq": 90, "at": "2026-11-10T10:14:36", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-089 BLOCKED"}
+{"seq": 91, "at": "2026-11-10T10:14:36", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-088 REVIEW"}
+{"seq": 93, "at": "2026-11-10T10:21:21", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-095 ASSIGNED S4 T-092 3차 검수 + 테스트 커버리지 표 (읽기 전용)"}
+{"seq": 94, "at": "2026-11-10T10:21:21", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-091 ASSIGNED S3 요청 본문 줄바꿈 유지 + 잘린 본문 전체 보기"}
+{"seq": 95, "at": "2026-11-10T10:22:22", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue -23 `db_state()` 캐시 TTL 과 실패 비캐시의 테스트"}
+{"seq": 96, "at": "2026-11-10T10:22:22", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue -22 상세 다이얼로그 포커스 이동·가둠·복귀"}
+{"seq": 97, "at": "2026-11-10T10:22:22", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue -21 app.js 의 DEMO_STATE 에서 `root`·`kisti.url` 두 줄 제거"}
+{"seq": 98, "at": "2026-11-10T10:22:22", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue -20 KISTI 카드가 `pending`/`stale` 을 구분해 표시하게"}
+{"seq": 99, "at": "2026-11-10T10:22:22", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue -19 상세 패널이 404·400 본문의 이유를 화면에 쓰게"}
+{"seq": 100, "at": "2026-11-10T10:22:22", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue -18 보드 행·요청 서브태스크 클릭으로 상세 패널 열기"}
+{"seq": 101, "at": "2026-11-10T10:22:22", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue -16 S2 복구 시 테스트 소유권을 S4 -> S2 로 되돌리기"}
+{"seq": 102, "at": "2026-11-10T10:22:22", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue -15 `fleet.py` 의 DB 우선·마크다운 폴백 테스트"}
+{"seq": 103, "at": "2026-11-10T10:22:23", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue -13 `/api/state` 의 `requests[].detail` 잘라 보내기"}
+{"seq": 104, "at": "2026-11-10T10:22:23", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue -9 작업자가 `rc=0` 으로 끝나면 보고가 `BLOCKED` 여도 `done` 이 된다"}
+{"seq": 105, "at": "2026-11-10T10:22:23", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue -8 `fleet_graph` 모양 검증 재사용 + 노드별 타임아웃"}
+{"seq": 106, "at": "2026-11-10T10:22:23", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue -7 `fleet_graph` 단일 실행자 잠금 (`O_EXCL` + pid, 죽은 pid 회수)"}
+{"seq": 107, "at": "2026-11-10T10:22:23", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue -3 접근 토큰 파일이 **심볼릭 링크면 읽기 경로는 따라간다**"}
+{"seq": 108, "at": "2026-11-10T10:22:35", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue +12 DONE 태스크 14일 아카이브 도구 (`aimem_db.py archive` - 보드 → `.aimem/archive/board-<YYYY-MM>.md`)"}
+{"seq": 109, "at": "2026-11-10T10:22:35", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue +13 요청 분담 트리에서 `DONE` 요청·태스크를 기본 접힘으로"}
+{"seq": 110, "at": "2026-11-10T10:22:35", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue +14 `fleet_graph.step()` - `running` 인데 `attempts` 가 빈 노드에서 `IndexError`"}
+{"seq": 111, "at": "2026-11-10T10:22:35", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue +15 `fleet.roster()` 마크다운 폴백의 셋째 칸이 세션키가 아니라 **역할** 이다 (docstring 불일치)"}
+{"seq": 112, "at": "2026-11-10T10:22:35", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue +16 `aimem_monitor` HTTP 테스트가 샌드박스(codex/S2)에서 소켓 금지로 22건 error - TCP 불가 시 폴백 `PipeConnection` 에 `settimeout` 없음"}
+{"seq": 113, "at": "2026-11-10T10:40:39", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue +17 `fleet_graph` 결함 11 - `refused` 로 `blocked` 가 된 노드를 아무도 거두지 않는다 (`unblock`/`reset` 명령 없음)"}
+{"seq": 114, "at": "2026-11-10T10:40:39", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue +18 `fleet_graph.harness_durations()` - 깨진 run 메타(`pid` 가 문자열) 하나로 `progress`/`status`/`list` 가 TypeError"}
+{"seq": 115, "at": "2026-11-10T10:40:39", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue +19 `report_block_reason` 소문자 평문 거짓 양성 (`blocked: none`·`reject: no`·`needs-review: none`)"}
+{"seq": 116, "at": "2026-11-10T10:40:39", "actor": "관리자(R6)", "rev": 114, "kind": "queue", "body": "queue +20 `tests/test_fleet_graph.py` 커버리지 구멍 - 결함 1·2·7·8·10 을 막는 테스트가 없다"}
+{"seq": 117, "at": "2026-11-10T10:41:22", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-080 REVIEW"}
+{"seq": 118, "at": "2026-11-10T10:41:22", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-081 REVIEW"}
+{"seq": 119, "at": "2026-11-10T10:41:22", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-082 REVIEW"}
+{"seq": 120, "at": "2026-11-10T10:41:22", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-083 REVIEW"}
+{"seq": 121, "at": "2026-11-10T10:41:22", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-085 REVIEW"}
+{"seq": 122, "at": "2026-11-10T10:41:22", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-087 REVIEW"}
+{"seq": 123, "at": "2026-11-10T10:41:22", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-091 REVIEW"}
+{"seq": 124, "at": "2026-11-10T10:41:22", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-092 REVIEW"}
+{"seq": 125, "at": "2026-11-10T10:41:22", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-093 REVIEW"}
+{"seq": 126, "at": "2026-11-10T10:41:22", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-094 REVIEW"}
+{"seq": 127, "at": "2026-11-10T10:41:22", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-084 DONE"}
+{"seq": 128, "at": "2026-11-10T10:41:22", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-086 DONE"}
+{"seq": 129, "at": "2026-11-10T10:41:23", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-090 DONE"}
+{"seq": 130, "at": "2026-11-10T10:41:23", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-095 DONE"}
+{"seq": 131, "at": "2026-11-10T10:41:23", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-089 DONE"}
+{"seq": 132, "at": "2026-11-10T10:41:23", "actor": "관리자(R6)", "rev": 114, "kind": "task", "body": "T-088 REVIEW"}
+{"seq": 136, "at": "2026-11-10T10:41:53", "actor": "관리자(R6)", "rev": 115, "kind": "ownership", "body": "tools/fleet_graph.py -> 관리자"}
+{"seq": 137, "at": "2026-11-10T11:01:52", "actor": "클로드 코드(태석 지시)", "rev": 115, "kind": "queue", "body": "queue -13 요청 분담 트리에서 `DONE` 요청·태스크를 기본 접힘으로"}
+{"seq": 138, "at": "2026-11-10T11:01:52", "actor": "클로드 코드(태석 지시)", "rev": 115, "kind": "queue", "body": "queue -12 DONE 태스크 14일 아카이브 도구 (`aimem_db.py archive` - 보드 → `.aimem/archive/board-<YYYY-MM>.md`)"}
+{"seq": 139, "at": "2026-11-10T11:01:53", "actor": "클로드 코드(태석 지시)", "rev": 115, "kind": "queue", "body": "queue -7 참조 토큰 원본 `.aimem/briefs/strata-tokens.css` 의 `--st-accent-text` 가 틀렸다"}
+{"seq": 140, "at": "2026-11-10T11:01:53", "actor": "클로드 코드(태석 지시)", "rev": 115, "kind": "queue", "body": "queue -6 라이트 모드 `--st-accent-ink`(#fff) on `--st-accent` = **2.54:1**"}
+{"seq": 141, "at": "2026-11-10T11:01:53", "actor": "클로드 코드(태석 지시)", "rev": 115, "kind": "queue", "body": "queue -5 밝은 모드 스크린샷 검증 (Playwright)"}
+{"seq": 142, "at": "2026-11-10T11:01:53", "actor": "클로드 코드(태석 지시)", "rev": 115, "kind": "queue", "body": "queue -2 쿠키 로그인 흐름 브라우저 확인 (Playwright)"}
+{"seq": 146, "at": "2026-11-10T11:02:22", "actor": "클로드 코드(태석 지시 2026-11-10, 브라우저 실측 검수)", "rev": 115, "kind": "task", "body": "T-038 DONE"}
+{"seq": 147, "at": "2026-11-10T11:02:22", "actor": "클로드 코드(태석 지시 2026-11-10, 브라우저 실측 검수)", "rev": 115, "kind": "task", "body": "T-041 DONE"}
+{"seq": 148, "at": "2026-11-10T11:02:22", "actor": "클로드 코드(태석 지시 2026-11-10, 브라우저 실측 검수)", "rev": 115, "kind": "task", "body": "T-042 DONE"}
+{"seq": 149, "at": "2026-11-10T11:02:22", "actor": "클로드 코드(태석 지시 2026-11-10, 브라우저 실측 검수)", "rev": 115, "kind": "task", "body": "T-047 DONE"}
+{"seq": 150, "at": "2026-11-10T11:02:22", "actor": "클로드 코드(태석 지시 2026-11-10, 브라우저 실측 검수)", "rev": 115, "kind": "task", "body": "T-053 DONE"}
+{"seq": 151, "at": "2026-11-10T11:02:22", "actor": "클로드 코드(태석 지시 2026-11-10, 브라우저 실측 검수)", "rev": 115, "kind": "task", "body": "T-062 DONE"}
+{"seq": 152, "at": "2026-11-10T11:02:22", "actor": "클로드 코드(태석 지시 2026-11-10, 브라우저 실측 검수)", "rev": 115, "kind": "task", "body": "T-074 DONE"}
+{"seq": 153, "at": "2026-11-10T11:02:22", "actor": "클로드 코드(태석 지시 2026-11-10, 브라우저 실측 검수)", "rev": 115, "kind": "task", "body": "T-082 DONE"}
+{"seq": 154, "at": "2026-11-10T11:02:22", "actor": "클로드 코드(태석 지시 2026-11-10, 브라우저 실측 검수)", "rev": 115, "kind": "task", "body": "T-083 DONE"}
+{"seq": 155, "at": "2026-11-10T11:02:22", "actor": "클로드 코드(태석 지시 2026-11-10, 브라우저 실측 검수)", "rev": 115, "kind": "task", "body": "T-091 DONE"}
+{"seq": 156, "at": "2026-11-10T11:02:22", "actor": "클로드 코드(태석 지시 2026-11-10, 브라우저 실측 검수)", "rev": 115, "kind": "task", "body": "T-094 DONE"}
+{"seq": 157, "at": "2026-11-10T11:02:48", "actor": "클로드 코드(태석 지시)", "rev": 116, "kind": "cleanup", "body": "REV 116: 모니터 UI 직접 정비 + 큐 6건·요청 3건·화면 태스크 11건·그래프 R-002 정리, aimem_db archive 구현"}
+{"seq": 159, "at": "2026-11-10T11:21:31", "actor": "클로드 코드(태석 10:35 일시 중지 지시)", "rev": 116, "kind": "fleet-mode", "body": "running -> paused (일시 중지) 새 작업자 투입 보류, 돌고 있는 작업자는 끝까지"}
+{"seq": 160, "at": "2026-11-10T11:22:48", "actor": "웹(웹)", "rev": 116, "kind": "fleet-mode", "body": "paused -> running (실행) 진행 중 라운드 재개"}
+{"seq": 161, "at": "2026-11-10T11:22:56", "actor": "웹(웹)", "rev": 116, "kind": "fleet-mode", "body": "running -> paused (일시 중지) 새 작업자 투입 보류, 돌고 있는 작업자는 끝까지"}

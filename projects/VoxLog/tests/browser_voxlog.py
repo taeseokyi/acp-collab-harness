@@ -378,6 +378,21 @@ def run_all(browser, base, data, tmp, procs):
     def server_items(b):
         return api_get(b, "/api/recordings?limit=50")["items"]
 
+    def db_drafts(pg):
+        """IndexedDB 의 [초안 수, 조각 수]"""
+        return pg.evaluate(
+            "new Promise(function (res) { var r = indexedDB.open('voxlog', 2);"
+            " r.onsuccess = function () { var db = r.result;"
+            " var tx = db.transaction(['drafts', 'chunks'], 'readonly');"
+            " var d = tx.objectStore('drafts').count(), c = tx.objectStore('chunks').count();"
+            " tx.oncomplete = function () { res([d.result, c.result]); };"
+            " tx.onerror = function () { res([-1, -1]); }; };"
+            " r.onerror = function () { res([-1, -1]); }; })")
+
+    def draft_recover_done(pg):
+        """탭의 draftRecover 가 실제로 끝날 때까지 기다릴 때 쓴다."""
+        return pg.evaluate("window.VoxQueue.draftRecover().then(function () { return true; })")
+
     def t12():
         b, _ = new_server("d12")
         c = new_ctx()
@@ -876,6 +891,173 @@ def run_all(browser, base, data, tmp, procs):
         need(len(server_items(b)) == 1, "녹취까지 지워짐")
         c.close()
     check("26 묻기 결과 복사·공유·지우기: 원문이 나가고, 지우면 목록·펼친 답에서 사라지고 녹취는 남음", t26)
+
+
+    def t27():
+        # R40-N1: 탭1 이 녹음 중일 때 탭2 를 열어도 그 초안을 가져가지 않고, 탭1 의 녹음이 온전히 한 건 올라간다
+        b, _ = new_server("d27")
+        c = new_ctx()
+        try:
+            p1 = c.new_page()
+            p1.goto(b + "/")
+            p1.wait_for_selector("#rec")
+            p1.click("#rec")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", 5, pg=p1), "탭1 녹음이 켜지지 않음")
+            time.sleep(7)
+            need(db_drafts(p1)[1] >= 1, "녹음 중 조각이 초안에 쌓이지 않음: %s" % db_drafts(p1))
+            p2 = c.new_page()
+            p2.goto(b + "/")
+            p2.wait_for_selector("#rec")
+            need(wait_for(lambda: draft_recover_done(p2), 10, pg=p2), "탭2 의 draftRecover 가 끝나지 않음")
+            left = db_drafts(p1)
+            need(left[0] == 1, "탭2 가 녹음 중인 초안을 가져감 [초안, 조각]=%s" % left)
+            need(queue_n(p2) == 0, "탭2 가 녹음 중인 초안을 대기열에 넣음")
+            need("끝나지 않은 녹음" not in p2.inner_text("#toast"), "탭2 가 살렸다고 알림: " + p2.inner_text("#toast"))
+            p1.click("#rec")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "false", 5, pg=p1), "탭1 녹음이 꺼지지 않음")
+            need(wait_for(lambda: len(server_items(b)) == 1, 30, pg=p1), "탭1 녹음이 서버에 올라가지 않음")
+            it = server_items(b)[0]
+            need((it.get("duration_ms") or 0) >= 6000, "녹음이 잘려 올라감: %s ms" % it.get("duration_ms"))
+            need(wait_for(lambda: db_drafts(p1) == [0, 0], 10, pg=p1), "고아 초안·조각이 남음: %s" % db_drafts(p1))
+            need(wait_for(lambda: queue_n(p1) == 0, 10, pg=p1), "대기열이 비지 않음")
+        finally:
+            c.close()
+    check("27 녹음 중 새 탭이 초안을 가져가지 않음 → 녹음 온전히 1건·고아 조각 없음", t27)
+
+    def t28():
+        # R40-N2: 업로드가 늦는 동안 넣은 두 번째 녹음도 첫 업로드가 끝난 뒤 올라간다
+        b, _ = new_server("d28")
+        c = new_ctx(service_workers="block")
+        try:
+            pg = c.new_page()
+
+            def slow(route):
+                if route.request.method == "POST" and route.request.url.endswith("/api/recordings"):
+                    time.sleep(3)
+                route.continue_()
+            pg.route("**/api/recordings", slow)
+            pg.goto(b + "/")
+            pg.wait_for_selector("#rec")
+            pg.evaluate("""() => {
+                function blob() { return new Blob([new Uint8Array(64)], { type: 'audio/wav' }); }
+                window.VoxQueue.enqueue({ blob: blob(), mime: 'audio/wav', clientId: 'n2-a' }).catch(() => {});
+                setTimeout(function () {
+                    window.VoxQueue.enqueue({ blob: blob(), mime: 'audio/wav', clientId: 'n2-b' }).catch(() => {});
+                }, 1000);
+            }""")
+            need(wait_for(lambda: len(server_items(b)) == 2, 30, pg=pg),
+                 "두 건이 다 올라가지 않음: 서버 %d건 · 대기 %s" % (len(server_items(b)), queue_n(pg)))
+            need(wait_for(lambda: queue_n(pg) == 0, 10, pg=pg), "대기열이 비지 않음")
+        finally:
+            c.close()
+    check("28 업로드 진행 중 넣은 두 번째 녹음도 올라감", t28)
+
+    def t29():
+        # R40-N3/R41: 200 이지만 JSON 이 아닌 응답(캐티브 포털·프록시), 빈 200, 500 text/html 을 '연결됨' 으로 받지 않는다
+        b, _ = new_server("d29")
+        c = new_ctx(service_workers="block")
+        try:
+            cases = [
+                (200, "<html><body>로그인이 필요합니다</body></html>"),
+                (200, ""),
+                (500, "<html><body>서버 오류</body></html>"),
+            ]
+            for status, body in cases:
+                pg = c.new_page()
+                pg.route("**/api/**", lambda route, _req=None, st=status, bd=body: route.fulfill(
+                    status=st, content_type="text/html", body=bd))
+                pg.goto(b + "/")
+                pg.wait_for_selector("#rec")
+                label = "status %d body %r" % (status, body[:24])
+                need(wait_for(lambda: pg.inner_text("#conn").strip() != "연결됨", 10, pg=pg),
+                     label + " 인데 '연결됨' 으로 표시: " + pg.inner_text("#conn"))
+                open_tab(pg, "list")
+                need(wait_for(lambda: pg.is_visible("#toast") and pg.inner_text("#toast").strip(), 8, pg=pg),
+                     label + " 오류 토스트가 보이지 않음")
+                need(pg.inner_text("#conn").strip() != "연결됨",
+                     label + " 목록을 열어도 '연결됨' 그대로: " + pg.inner_text("#conn"))
+                need(list_count(pg) == 0, label + " 인데 목록 항목이 생김")
+                pg.close()
+        finally:
+            c.close()
+    check("29 JSON 아닌 200·빈 200·500 text/html → '연결됨' 아님·오류 표시", t29)
+
+    def t30():
+        # R41: BroadcastChannel 이 없는 탭1 녹음 중 탭2 를 열어도 aliveAt lease 로 초안을 가져가지 않는다
+        b, _ = new_server("d30")
+        c = new_ctx()
+        try:
+            p1 = c.new_page()
+            p1.add_init_script("Object.defineProperty(window, 'BroadcastChannel', { configurable: true, value: undefined });")
+            p1.goto(b + "/")
+            p1.wait_for_selector("#rec")
+            need(p1.evaluate("typeof window.BroadcastChannel") != "function", "탭1 BroadcastChannel 이 꺼지지 않음")
+            p1.click("#rec")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", 5, pg=p1), "탭1 녹음이 켜지지 않음")
+            time.sleep(7)
+            need(db_drafts(p1)[1] >= 1, "녹음 중 조각이 초안에 쌓이지 않음: %s" % db_drafts(p1))
+            p2 = c.new_page()
+            p2.goto(b + "/")
+            p2.wait_for_selector("#rec")
+            need(wait_for(lambda: draft_recover_done(p2), 10, pg=p2), "탭2 의 draftRecover 가 끝나지 않음")
+            left = db_drafts(p1)
+            need(left[0] == 1, "탭2 가 녹음 중인 초안을 가져감 [초안, 조각]=%s" % left)
+            need(queue_n(p2) == 0, "탭2 가 녹음 중인 초안을 대기열에 넣음")
+            need("끝나지 않은 녹음" not in p2.inner_text("#toast"), "탭2 가 살렸다고 알림: " + p2.inner_text("#toast"))
+            p1.click("#rec")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "false", 5, pg=p1), "탭1 녹음이 꺼지지 않음")
+            need(wait_for(lambda: len(server_items(b)) == 1, 30, pg=p1), "탭1 녹음이 서버에 올라가지 않음")
+            it = server_items(b)[0]
+            need(it.get("duration_ms") is not None, "duration_ms 없음: %s" % it)
+            need((it.get("duration_ms") or 0) >= 6000, "녹음이 잘려 올라감: %s ms" % it.get("duration_ms"))
+            need(wait_for(lambda: db_drafts(p1) == [0, 0], 10, pg=p1), "고아 초안·조각이 남음: %s" % db_drafts(p1))
+            need(wait_for(lambda: queue_n(p1) == 0, 10, pg=p1), "대기열이 비지 않음")
+        finally:
+            c.close()
+    check("30 BroadcastChannel 없는 탭에서 녹음 중 초안 안 가져감 → 온전한 1건(duration_ms 있음)", t30)
+
+    def t31():
+        # R41: 200 text/html·id 없는 JSON 은 업로드 성공이 아니다 - 대기열에 남고 정상 응답에서 올라간다
+        b, _ = new_server("d31")
+        c = new_ctx(service_workers="block")
+        try:
+            pg = c.new_page()
+            state = {"mode": "html"}
+
+            def rec(route):
+                if state["mode"] == "html":
+                    route.fulfill(status=200, content_type="text/html",
+                                  body="<html><body>로그인이 필요합니다</body></html>")
+                elif state["mode"] == "no-id":
+                    route.fulfill(status=200, content_type="application/json", body=json.dumps({"ok": True}))
+                else:
+                    route.continue_()
+
+            pg.route("**/api/recordings", rec)
+            pg.goto(b + "/")
+            pg.wait_for_selector("#rec")
+            pg.evaluate("""() => {
+                window.VoxQueue.enqueue({
+                    blob: new Blob([new Uint8Array(20000)], { type: 'audio/wav' }),
+                    mime: 'audio/wav', clientId: 'bad-resp-a'
+                }).catch(() => {});
+            }""")
+            need(wait_for(lambda: queue_n(pg) == 1, 15, pg=pg), "200 text/html 뒤 대기열이 비었음")
+            need(len(server_items(b)) == 0, "200 text/html 인데 서버에 기록이 생김")
+            need(wait_for(lambda: pg.evaluate(
+                "window.VoxQueue.pending().then(a => a[0] && a[0].lastError === '서버 응답이 올바르지 않음')"),
+                15, pg=pg), "lastError 가 '서버 응답이 올바르지 않음' 이 아님")
+            state["mode"] = "no-id"
+            pg.evaluate("window.VoxQueue.flush().then(() => true)")
+            need(wait_for(lambda: queue_n(pg) == 1, 10, pg=pg), "200 JSON id 없음 뒤 대기열이 비었음")
+            need(len(server_items(b)) == 0, "200 JSON id 없음 인데 서버에 기록이 생김")
+            state["mode"] = "ok"
+            pg.evaluate("window.VoxQueue.flush().then(() => true)")
+            need(wait_for(lambda: len(server_items(b)) == 1, 20, pg=pg), "정상 응답 뒤 올라가지 않음")
+            need(wait_for(lambda: queue_n(pg) == 0, 10, pg=pg), "정상 응답 뒤 대기열이 남음")
+        finally:
+            c.close()
+    check("31 200 text/html·id 없는 JSON 은 대기열에 남고 정상 응답에서 올라감", t31)
 
 
 if __name__ == "__main__":

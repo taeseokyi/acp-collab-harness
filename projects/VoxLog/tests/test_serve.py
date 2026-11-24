@@ -163,8 +163,22 @@ class TestServe(Base):
         self.assertEqual(status, 201)
         self.assertEqual(meta["recorded_at"], "2026-11-16T09:00:00+09:00")
 
+    def test_recorded_at_timezone_overflow_uses_server_time(self):
+        # R39-N2: 범위 끝 + 시간대 변환이 OverflowError 를 내도 업로드는 201, 서버 시각으로 기록된다.
+        bads = ("0001-01-01T00:00:00+14:00", "9999-12-31T23:59:59-14:00")
+        for i, bad in enumerate(bads):
+            today = datetime.datetime.now().astimezone().strftime("%Y-%m-%d")
+            status, meta = self.req_upload(bytes([i]) + b"ovf", {"X-Recorded-At": bad})
+            self.assertEqual(status, 201, bad)
+            self.assertEqual(meta["recorded_at"], meta["created"], bad)
+            self.assertEqual(meta["recorded_at"][:10], today, bad)
+            self.wait_done(meta["id"])
+
     def test_bad_date_filter_is_400(self):
-        for q in ("from=2026-13-40", "to=2026-13-40", "from=2026-02-30", "from=2026-1-1"):
+        # R39-N1: fromisoformat 이 받아 주는 기본형(20261123)·ISO 주(2026-W48-1)는 400 이어야 한다
+        # (정규식 없이는 200 + store 의 문자열 비교로 틀린 목록이 나왔다).
+        for q in ("from=2026-13-40", "to=2026-13-40", "from=2026-02-30", "from=2026-1-1",
+                  "from=20261123", "to=20261123", "from=2026-W48-1", "to=2026-W48-1"):
             status, body = self.jreq("GET", "/api/recordings?" + q)
             self.assertEqual(status, 400, q)
             self.assertIn("error", body)

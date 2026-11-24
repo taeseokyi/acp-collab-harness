@@ -1,0 +1,44 @@
+[
+ {
+  "id": "T-382",
+  "title": "[VoxLog] 문서 대조 검수: INTERFACE.md ↔ serve.py·voxlog/·tests/ (S6 1/3, 큐 6)",
+  "slot": "S6",
+  "project": "VoxLog",
+  "write": [],
+  "deps": [],
+  "max_attempts": 1,
+  "task": "요지: VoxLog docs/INTERFACE.md 의 약속을 serve.py·voxlog/·tests/ 와 하나씩 대조해 문서와 다른 코드·검사 없는 동작·느슨한 검사를 읽기 전용으로 찾고, 발견을 파일:행·재현·심각도로 보고하면 끝\n\nVoxLog 서버 쪽 약속과 검사를 대조 검수한다. 기준은 `projects/VoxLog/docs/INTERFACE.md`. 대상은 `projects/VoxLog/serve.py`, `projects/VoxLog/voxlog/`(store.py·ask.py·stt.py 등), `projects/VoxLog/tests/`(test_serve.py·test_store.py·test_ask.py·test_stt.py·browser_voxlog.py).\n\nINTERFACE.md 의 항목(엔드포인트·헤더·상태 코드·응답 모양·환경 변수·제한값)마다 세 가지를 확인한다: (1) 코드가 문서대로 동작하는가 - 다르면 결함, (2) 그 동작을 검사하는 테스트가 있는가 - 없으면 '검사 없음', (3) 있는 검사가 틀린 코드도 통과시킬 만큼 느슨한가(상태 코드만 보고 본문을 안 봄, assertIn 이 너무 넓음 등). 가능하면 /tmp 에 프로젝트 복사본을 만들어 코드를 일부러 틀리게 바꿔(변이) 검사가 잡는지 직접 본다. 끝나면 /tmp 복사본은 지운다. 운영 서버에는 접속하지 않는다.\n\n읽기 전용 검수다. 프로젝트 파일은 하나도 만들거나 고치지 않는다(쓰기 경로 없음). 테스트는 돌려도 된다 (`python3 -m unittest discover -s projects/VoxLog/tests`).\n\n이미 큐에 있어 다시 적지 않을 것: R39-N1(from/to 가 20261123·2026-W48-1 을 200 으로 받음), R39-N2(X-Recorded-At 0001-01-01T00:00:00+14:00 OverflowError), R39-N4(INTERFACE.md health 행에 llm_error 없음), R40-N1·N2·N3(web/ 쪽 - rounds/R40/REVIEW-r40-s6.md). 참고: `projects/VoxLog/README.md`, `PROGRESS.md` 위쪽, `rounds/R39/REVIEW-r39.md`.\n\n각 발견마다 **파일:행**, 무엇이 틀렸는지(문서 문장 인용), **재현할 구체적인 입력이나 변이**, 심각도(상/중/하)를 적는다. 직접 재현하지 못한 것은 '추정' 이라고 적는다. 발견이 없으면 없다고 적는다 - 억지로 채우지 않는다.\n\n보고는 응답 본문에 쓴다. 첫 줄은 상태(DONE 등), 이어서 발견 목록(심각도 순), 그다음 변이 시험 결과(무엇을 바꿨고 잡혔는지), '확인했고 문제 없다고 본 곳' 짧게, 마지막에 읽은 파일 목록. 답의 마지막은 반드시 글(보고)로 끝낸다."
+ },
+ {
+  "id": "T-383",
+  "title": "[VoxLog] R39-N1·N2·N4 고치기: 날짜 검사 회귀·X-Recorded-At Overflow·health 문서 (S6 2/3, 큐 2)",
+  "slot": "S6",
+  "project": "VoxLog",
+  "write": [
+   "projects/VoxLog/serve.py",
+   "projects/VoxLog/docs/INTERFACE.md",
+   "projects/VoxLog/tests/test_serve.py"
+  ],
+  "deps": [],
+  "max_attempts": 2,
+  "verify": "python3 -m unittest discover -s projects/VoxLog/tests",
+  "task": "요지: VoxLog serve.py 의 날짜 검사 회귀(R39-N1)·X-Recorded-At OverflowError(R39-N2)와 INTERFACE.md health 행 llm_error 누락(R39-N4)을 고치고 검사를 더해 VoxLog 단위 검사 전체가 통과하면 끝\n\n자세한 재현과 고칠 방향은 `rounds/R39/REVIEW-r39.md` 의 R39-N1·N2·N4 행(70~73행 근처)에 있다. 쓰는 파일은 `projects/VoxLog/serve.py`, `projects/VoxLog/docs/INTERFACE.md`, `projects/VoxLog/tests/test_serve.py` 셋뿐이다. web/ 아래와 다른 tests 파일은 건드리지 않는다(다른 노드 몫).\n\n1. R39-N1(하, 회귀): `serve.py` `_valid_date`(약 92행)가 `datetime.date.fromisoformat` 만 봐서 `from=20261123`·`to=2026-W48-1` 이 400 대신 200 이다. 정규식 `^\\d{4}-\\d{2}-\\d{2}$` 와 `fromisoformat` 을 둘 다 통과해야 받게 고친다. `test_bad_date_filter_is_400`(test_serve.py) 에 `20261123`·`2026-W48-1` 을 더한다.\n2. R39-N2(하): `_valid_recorded_at` 의 `dt.astimezone(...)` 이 날짜 범위 끝(`0001-01-01T00:00:00+14:00`, `9999-12-31T23:59:59-14:00`)에서 OverflowError 를 내 업로드가 응답 없이 끊긴다. `astimezone` 까지 try 안에 넣고 `except (ValueError, OverflowError)` 로 넓혀 '못 쓰는 값이면 서버 시각'(업로드는 201) 규칙을 따르게 한다. 두 값으로 업로드가 201 이고 서버 시각으로 기록되는지 보는 검사를 더한다.\n3. R39-N4(하, 문서): `docs/INTERFACE.md` health 행(약 142행)에 `(+ \"llm_error\": str, VOXLOG_LLM_CMD 가 비었거나 따옴표가 안 맞을 때)` 를 더한다. ask 의 `kind` 가 문자열이 아니면 400 이라는 것도 ask 행에 적는다.\n\n바로 파일을 고친다. 끝나면 `python3 -m unittest discover -s projects/VoxLog/tests` 를 돌려 전부 통과하는지 확인한다(지금 136개 OK, 더한 만큼 늘어야 함).\n\n보고는 응답 본문에 쓴다. 첫 줄 상태(DONE 등), 고친 것마다 파일:행과 더한 검사 이름, 검사 결과 줄(Ran N tests / OK), 바꾼 파일 목록. 답의 마지막은 반드시 글(보고)로 끝낸다."
+ },
+ {
+  "id": "T-384",
+  "title": "[VoxLog] R40-N1(중)·N2·N3 고치기: 녹음 중 초안 살리기·올리는 중 끝난 녹음·JSON 아닌 200 (S6 3/3, 큐 4·5)",
+  "slot": "S6",
+  "project": "VoxLog",
+  "write": [
+   "projects/VoxLog/web/app.js",
+   "projects/VoxLog/web/queue.js",
+   "projects/VoxLog/web/api.js",
+   "projects/VoxLog/web/sw.js",
+   "projects/VoxLog/tests/browser_voxlog.py"
+  ],
+  "deps": [],
+  "max_attempts": 2,
+  "verify": "python3 projects/VoxLog/tests/browser_voxlog.py",
+  "task": "요지: VoxLog web/ 의 R40-N1(녹음 중인 초안을 다른 탭이 살려 녹음을 잃음)·R40-N2(올리는 중 끝난 녹음이 다시 안 올라감)·R40-N3(JSON 아닌 200 을 빈 성공으로 받음)을 고치고 각각 브라우저 검사 시나리오를 더해 VoxLog 검사 전체가 통과하면 끝\n\n재현과 고칠 방향은 `rounds/R40/REVIEW-r40-s6.md` 의 '발견' 절에 있다. 쓰는 파일은 `projects/VoxLog/web/app.js`, `web/queue.js`, `web/api.js`, `web/sw.js`(캐시 버전을 올려야 할 때만), `tests/browser_voxlog.py` 다섯뿐이다. serve.py·docs/·다른 tests 파일은 건드리지 않는다(다른 노드 몫).\n\n1. R40-N1(중): `web/app.js:1060` 이 `rq.draftRecover()` 를 인자 없이 불러, 다른 탭이 지금 녹음 중인 초안까지 마감해 대기열에 넣고 지운다(`web/queue.js:392-405`). 원래 탭이 멈추면 `draftFinish` 가 초안을 못 찾고 조용히 끝나(`queue.js:376-379`) 녹음을 잃는데 화면은 '저장됨'(`app.js:442-448`). 고칠 방향: 지금 녹음 중인(살아 있는) 초안은 `draftRecover` 에서 빼고(예: 초안에 마지막 조각 시각이나 탭 표지를 두고 최근 것은 건너뜀), `draftFinish` 가 초안을 못 찾으면 그 사실을 돌려줘 메모리의 조각으로 `enqueue` 하고, 초안 없는 `draftAppend` 는 고아 조각을 만들지 않게 한다. 브라우저 검사에 '탭1 녹음 중 → 같은 주소로 탭2 열기 → 탭1 멈춤 → 서버(또는 대기열)에 탭1 녹음이 온전히 한 건, 고아 조각 없음' 시나리오를 더한다.\n2. R40-N2(하): `queue.js:180` `enqueue` 가 부른 `flush()` 가 진행 중인 promise 를 그대로 돌려주고(`queue.js:278-283`), 진행 중인 flush 는 시작 때 목록(`queue.js:216`)만 돌아 그 사이 넣은 녹음은 다시 안 올라간다. 진행 중이면 끝난 뒤 한 번 더 돌게 고친다(예약 표시 또는 `flushing.then(flush)`). 브라우저 검사: 업로드를 늦춘 상태에서 두 건을 연달아 넣고 둘 다 올라가는지.\n3. R40-N3(하): `web/api.js:67` 이 JSON 파싱 실패를 `{}` 로 바꿔, 200 text/html(캡티브 포털·프록시) 응답이 '연결됨 · 0건' 으로 보인다(`app.js:605-606`, `app.js:115-131`). JSON 이 아니거나 본문이 비었으면 오류로 올려 `onApiError` 경로로 가게 고친다(204 처럼 본문이 원래 없는 응답은 그대로 둔다). 브라우저 검사: `/api/**` 를 200 text/html 로 바꿔 응답하면 '연결됨' 이 아니고 오류 표시가 나오는지.\n\nweb 파일을 바꿨으니 서비스 워커 캐시가 옛 파일을 주지 않게 `sw.js` 의 캐시 버전을 필요하면 올린다. 화면 검사는 보이는 것(is_visible·글자)을 묻는다. 검사 서버는 테스트가 임시 포트로 띄우는 것만 쓴다(운영 서버 접속 금지).\n\n바로 파일을 고친다. 끝나면 `python3 projects/VoxLog/tests/browser_voxlog.py`(지금 26개, 더한 만큼 늘어야 함)와 `python3 -m unittest discover -s projects/VoxLog/tests` 를 둘 다 돌려 통과하는지 확인한다. 셋 다 고치고 셋 다 검사를 더할 때까지 줄이거나 건너뛰지 않는다.\n\n보고는 응답 본문에 쓴다. 첫 줄 상태(DONE 등), 고친 것마다 파일:행과 더한 검사 시나리오 이름, 두 검사의 결과 줄, 바꾼 파일 목록. 답의 마지막은 반드시 글(보고)로 끝낸다."
+ }
+]

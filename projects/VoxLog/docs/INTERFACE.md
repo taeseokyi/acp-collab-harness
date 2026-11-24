@@ -139,7 +139,7 @@ API (JSON, 오류는 `{"error": "한국어 까닭"}` + 4xx/5xx). 토큰이 있�
 
 | 요청 | 답 |
 | ---- | -- |
-| `GET /api/health` | `{"ok":true,"auth":bool,"stt":backend_name,"llm":bool(명령 있음),"version":"0.1"}` |
+| `GET /api/health` | `{"ok":true,"auth":bool,"stt":backend_name,"llm":bool(명령 있음),"version":"0.1"}` (+ `"llm_error": str`, `VOXLOG_LLM_CMD` 가 비었거나 따옴표가 안 맞을 때) |
 | `POST /api/recordings` 본문=오디오 그대로, 머리 `Content-Type`, `X-Recorded-At`, `X-Duration-Ms`, `X-Client-Id` | 201 메타(새 것) / 200 메타(duplicate) / 400 / 408(업로드 마감 넘김) / 413 / 500(저장 실패) / 503(동시 업로드 2개 넘음, `Retry-After: 5`) / 507(디스크 여유 부족) |
 | `GET /api/recordings?q=&from=&to=&status=&limit=` | `{"items":[…],"stats":{…}}` / 400(`from`·`to` 가 실제 날짜가 아님) |
 | `GET /api/recordings/<id>` | 메타+transcript / 404 |
@@ -147,7 +147,7 @@ API (JSON, 오류는 `{"error": "한국어 까닭"}` + 4xx/5xx). 토큰이 있�
 | `POST /api/recordings/<id>/retry` | 음성인식 다시 넣음 → 200 메타 / 404 / 409(이미 큐에 있거나 받아쓰는 중) |
 | `DELETE /api/recordings/<id>` | `{"ok":true}` |
 | `DELETE /api/answers/<id>` | `{"ok":true}` · 없으면 404 · 아직 묻는 중이면 409 |
-| `POST /api/ask` `{"kind","prompt","ids":[…]}` | 202 답 메타 |
+| `POST /api/ask` `{"kind","prompt","ids":[…]}` | 202 답 메타 / 400(본문이 JSON 객체가 아님·`prompt` 나 `kind` 가 문자열이 아님·`ids` 가 비었거나 받아 적은 글이 없음) |
 | `GET /api/answers` · `GET /api/answers/<aid>` | 목록 `{"items":[…]}` · 답 하나 |
 
 업로드 본문은 메모리에 모으지 않고 `Store.incoming_path()` 의 `incoming/` 파일에 조각씩 흘려 쓴 뒤(fsync) `Store.add_recording_file` 로

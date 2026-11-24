@@ -1,17 +1,17 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-24T00:20:12 / REV 195
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-24T12:22:50 / REV 196
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | `a41f0c` | claude | opus | R39 끝 적대적 검수 (S6 수정분) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
-| S2 | `d27e93` | codex | kisti/kistillm | R38 대기 (이번 라운드는 S6 시험만) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
-| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R38 대기 (이번 라운드는 S6 시험만) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
-| S4 | `6cd650` | claude | sonnet | R38 대기 (이번 라운드는 S6 시험만) | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
-| S5 | `61dfcc` | claude | sonnet | R38 대기 (이번 라운드는 S6 시험만) |  |
-| S6 | `47764b` | freebuff | (하네스 기본) | R40 VoxLog 읽기 전용 검수 2건 (세션 끝 넘겨 이어 가기 시험) |  |
+| S1 | `a41f0c` | claude | opus | R41 대기 (이번 라운드는 S6 시험) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S2 | `d27e93` | codex | kisti/kistillm | R41 검수 결함 수정 (무료) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
+| S3 | `5b8c1e` | opencode | opencode/deepseek-v4.1-flash-free | R41 재검수 (무료, /tmp 없이) | 11-13 태석님 배정. 무료 작업자(오픈코드 자체 공급, 키 없음) |
+| S4 | `6cd650` | claude | sonnet | R41 대기 (이번 라운드는 S6 시험) | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
+| S5 | `61dfcc` | claude | sonnet | R41 대기 (이번 라운드는 S6 시험) |  |
+| S6 | `47764b` | freebuff | (하네스 기본) | R41 VoxLog 검수 1·고치기 2 (세션 풀림 이어 가기 시험, 새 보내기 방식) |  |
 
 ## 3. 작업 보드
 
@@ -302,18 +302,25 @@
 | T-378 | Q-261123-6bf6 | [자모맞히기] R37-N5~N9 Origin 없는 GET·verify opener·출처 안내·'네'·화면 복잡도 | S6 | DONE |  |
 | T-379 | Q-261123-6bf6 | [VoxLog·자모맞히기] R39 적대적 검수 (S6 수정 7건) | S1 | DONE |  |
 | T-380 | Q-261123-7d3e | [VoxLog] 화면 쪽 검수: web/ 6파일 (S6 세션 이어 가기 시험 1/2) | S6 | DONE |  |
-| T-381 | Q-261123-7d3e | [VoxLog] 검사·문서 대조 검수: INTERFACE.md ↔ serve.py·voxlog/·tests/ (S6 세션 이어 가기 시험 2/2) | S6 | BLOCKED |  |
+| T-381 | Q-261123-7d3e | [VoxLog] 검사·문서 대조 검수: INTERFACE.md ↔ serve.py·voxlog/·tests/ (S6 세션 이어 가기 시험 2/2) | S6 | DONE | 실행 안 됨 - 일은 R41 T-382 로 다시 냄(큐 6) |
+| T-382 | Q-261124-9281 | [VoxLog] 문서 대조 검수: INTERFACE.md ↔ serve.py·voxlog/·tests/ (S6 1/3, 큐 6) | S6 | DONE |  |
+| T-383 | Q-261124-9281 | [VoxLog] R39-N1·N2·N4 고치기 (S6 2/3, 큐 2) | S6 | DONE |  |
+| T-384 | Q-261124-9281 | [VoxLog] R40-N1·N2·N3 고치기 (S6 3/3, 큐 4·5) | S6 | DONE |  |
+| T-385 | Q-261124-9281 | [VoxLog] R41 적대적 검수 (S3 빈손 - /tmp 권한 거절) | S3 | DONE |  |
+| T-386 | Q-261124-9281 | [VoxLog] R41 적대적 검수 재시도 (불합격) | S2 | DONE |  |
+| T-387 | Q-261124-9281 | [VoxLog] R41 검수 수정: 초안 lease·업로드 엄격 판정·검사 | S2 | DONE |  |
+| T-388 | Q-261124-9281 | [VoxLog] R41 재검수 (조건부 통과) | S3 | DONE |  |
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
-| 1 | [함대] R39-P1(중) freebuff 가 자동 전송한 지시를 '사용 정책 위반(Scripted or automated use - 같은 메시지 반복·자동 사용)' 으로 막았는데(T-377 18:22:54) 하네스가 이를 '멈춤 → 같은 대화에 이어 보내기' 로 다뤄 16초 뒤 자동으로 다시 보냄. 정책 거절은 BLOCKED 로 멈추고 사람에게 알리게(자동 재전송 금지). 자동 전송 옵션을 계속 쓸지는 태석님 결정. rounds/R39/REPORT.md (3) |  |  |
-| 2 | [VoxLog] R39-N1·N2(하) T-374 회귀: from/to 가 date.fromisoformat 만 봐서 20261123·2026-W48-1 이 400 대신 200(DATE_RE 와 둘 다 검사), X-Recorded-At 0001-01-01T00:00:00+14:00 이면 OverflowError 로 업로드가 끊김(OverflowError 도 잡아 서버 시각). R39-N4(하) INTERFACE.md health 행에 llm_error 빠짐. serve.py 몇 줄+검사. rounds/R39/REVIEW-r39.md |  |  |
-| 3 | [자모맞히기] R39-N3(하) tests/README.md 기대 검사 수가 낡음(107·132·81 → 109·144·85). 덧: trend.txt 2026-11-29~12-05 일곱 줄은 정답 고르기 경로를 거치지 않고 들어옴 - 출처를 태석님께 확인. rounds/R39/REVIEW-r39.md |  |  |
-| 4 | [VoxLog] R40-N1(중) 두 번째 탭이 녹음 중인 초안을 살리면서 그 녹음을 잃고 '저장됨' 표시(app.js:1060 draftRecover 인자 없음, queue.js:376-405 draftFinish 조용히 끝남·고아 조각). 고칠 방향과 재현은 rounds/R40/REVIEW-r40-s6.md, 브라우저 검사 시나리오 추가 |  |  |
-| 5 | [VoxLog] R40-N2·N3(하) 올리는 중 끝난 녹음이 다시 안 올라감(queue.js:180·278 flush 진행 중 promise 반환), 200 인데 JSON 아닌 응답을 빈 성공으로 받아 '연결됨 0건'(api.js:67). rounds/R40/REVIEW-r40-s6.md |  |  |
-| 6 | [VoxLog] R40 노드 2(T-381) 못 한 일: docs/INTERFACE.md 약속을 serve.py·voxlog/·tests/ 와 하나씩 대조(문서와 다른 코드·검사 없는 동작·느슨한 검사, 가능하면 /tmp 변이 시험). 읽기 전용 검수. 지시문은 .aimem/graph/G-082.json T-381. 엔진이 1차 지시 답 도중 끊어 blocked(엔진은 고침) |  |  |
+| 1 | [자모맞히기] R39-N3(하) tests/README.md 기대 검사 수가 낡음(107·132·81 → 109·144·85). 덧: trend.txt 2026-11-29~12-05 일곱 줄은 정답 고르기 경로를 거치지 않고 들어옴 - 출처를 태석님께 확인. rounds/R39/REVIEW-r39.md |  |  |
+| 2 | [VoxLog] R41-N13(중)·R41-N14·R41-N15·R41-N16·R41-N17·R41-N18(하) 초안 회수: 다른 탭이 열린 채 녹음 탭이 22초 재시도 뒤 죽으면 앱을 다시 열 때까지 회수 안 됨(app.js:1073 주기적/visibility 재검사), 20초 넘는 프리즈 때 lease 만료, 빠른 새로고침 회수 22초 지연(문서화), 조각 0개 초안도 '살렸습니다', draftOk=false 때 activeDraft 누수, lease 만료 회수·sw.js 업로드 엄격 판정 검사 없음. rounds/R41/REVIEW-r41-s6.md 'T-388' |  |  |
+| 3 | [VoxLog] R41-N1(중)·R41-N5(하) 코드 결함: stt.py:229 작업 id 를 isalnum 만 받음(UUID·job_1 이면 받아쓰기 실패 - 실제 KISTI id 형식 확인 뒤 완화 또는 문서화), POST /api/ask 본문이 덜 오고 연결이 살아 있으면 timeout 을 안 잡아 응답 없이 끊김(serve.py:333 → 400). rounds/R41/REVIEW-r41-s6.md |  |  |
+| 4 | [VoxLog] R41-N2·R41-N3(중)·R41-N6·R41-N7(하) 검사 빈틈: store 검색(대소문자 무시·title 일치·snippet 40자), GET /api/recordings status·limit(+limit 규칙 문서화), DELETE answers 묻는 중 409, health llm 참 경로 - 변이가 통과함. rounds/R41/REVIEW-r41-s6.md |  |  |
+| 5 | [VoxLog] R41-N4·R41-N8·R41-N9·R41-N10·R41-N11·R41-N12(하, 문서) INTERFACE.md 를 코드에 맞춤: llm 기본 명령 인자, Origin null 403·루프백 아닌 Host 403, title 공백 접기, Store.delete_answer·잘못된 id False, ask 의 2000자·running→failed·ids 1~200, backend_name 값, 503/507 본문 버리기, draftFinish -> Promise<boolean>. rounds/R41/REVIEW-r41-s6.md |  |  |
+| 6 | [함대] R41-P1(중) opencode 슬롯(S3)이 저장소 밖(/tmp) 쓰기 권한(external_directory)을 자동 거절당하면 그대로 끝나는데 엔진이 빈 보고(첫 줄 한 줄)를 done 으로 받음(T-385). 빈 보고는 done 아님 규칙이 opencode 하네스에도 걸리는지, 검수 브리프의 '/tmp 사본' 지시와 슬롯 권한이 맞는지. rounds/R41/REPORT.md (6) |  |  |
 
 ## 6. 파일 소유권
 
@@ -338,11 +345,11 @@
 | `README.md` | 관리자 | 저장소 소개 |
 | `projects/**` | 관리자 | 프로젝트 결과물 projects/<이름>/ - 여러 라운드에 걸쳐 쌓임 (REV 142). 관리자가 하위 경로를 슬롯에 배정 |
 | `projects/VoxLog/docs/**` | S6 | R39 |
-| `projects/VoxLog/docs/INTERFACE.md` | S3 | R36 |
+| `projects/VoxLog/docs/INTERFACE.md` | S6 | R41 |
 | `projects/VoxLog/serve.py` | S6 | R39 |
 | `projects/VoxLog/tests/**` | S6 | R39 |
-| `projects/VoxLog/tests/browser_voxlog.py` | S5 | R36 |
-| `projects/VoxLog/tests/test_serve.py` | S4 | R36 |
+| `projects/VoxLog/tests/browser_voxlog.py` | S2 | R41 검수 수정 |
+| `projects/VoxLog/tests/test_serve.py` | S2 | R41 검수 수정 |
 | `projects/VoxLog/tests/test_store.py` | S4 | R34 |
 | `projects/VoxLog/tests/test_stt.py` | S5 | R34 |
 | `projects/VoxLog/voxlog/**` | S6 | R39 |
@@ -350,14 +357,14 @@
 | `projects/VoxLog/voxlog/store.py` | S4 | R34 |
 | `projects/VoxLog/voxlog/stt.py` | S5 | R34 |
 | `projects/VoxLog/web/**` | S4 | R34 |
-| `projects/VoxLog/web/api.js` | S4 | R33 |
-| `projects/VoxLog/web/app.js` | S4 | R33 |
+| `projects/VoxLog/web/api.js` | S6 | R41 |
+| `projects/VoxLog/web/app.js` | S2 | R41 검수 수정 |
 | `projects/VoxLog/web/icons/**` | S5 | R33 |
 | `projects/VoxLog/web/index.html` | S4 | R33 |
 | `projects/VoxLog/web/manifest.webmanifest` | S5 | R33 |
-| `projects/VoxLog/web/queue.js` | S5 | R36 |
+| `projects/VoxLog/web/queue.js` | S2 | R41 검수 수정 |
 | `projects/VoxLog/web/style.css` | S4 | R33 |
-| `projects/VoxLog/web/sw.js` | S5 | R36 |
+| `projects/VoxLog/web/sw.js` | S2 | R41 검수 수정 |
 | `projects/웹워들/README.md` | S3 | R10 |
 | `projects/웹워들/app.json` | S3 | R10 |
 | `projects/웹워들/docs/**` | S1 | R12 T-152 미리보기 기록 저장 설계 문서 (새 경로) |
@@ -568,3 +575,4 @@
 | Q-261123-018e | [VoxLog] 시험 라운드: freebuff 세션이 도중에 끝날 때 이어 가기(S6) | 태석 (클로드 코드 전달) | DONE | 2026-11-23T16:50:49 |
 | Q-261123-6bf6 | 대기 큐 7건 처리 - S6(freebuff)에 맡기는 시험 라운드 (세션 도중 끊김 보기) | 태석 (클로드 코드 전달) | DONE | 2026-11-23T17:42:01 |
 | Q-261123-7d3e | [VoxLog] 시험 라운드: freebuff 세션이 일하는 도중 풀릴 때 이어 가기 (S6 노드 둘) | 태석 (클로드 코드 전달) | DONE | 2026-11-23T22:33:35 |
+| Q-261124-9281 | [VoxLog] 시험 라운드: 새 보내기 방식(1차 지시를 줄 앞에 붙여 한 번에)으로 freebuff 세션 풀림 이어 가기 - 대기 큐 VoxLog 4건 (S6 노드 셋) | 태석 (클로드 코드 전달) | DONE | 2026-11-24T09:56:42 |

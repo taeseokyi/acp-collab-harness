@@ -322,7 +322,7 @@
       }
       var rc = { // 녹음마다 자기 상태 - 멈춘 녹음의 저장이 다음 녹음과 섞이지 않게
         mr: mr, stream: stream, chunks: [], mime: mr.mimeType || mime || 'audio/webm',
-        startedAt: Date.now(), draftId: uuid(), draftOk: false, chain: Promise.resolve(), locDone: null, loc: null, timer: 0
+        startedAt: Date.now(), draftId: uuid(), draftOk: false, chain: Promise.resolve(), locDone: null, loc: null, timer: 0, touchTimer: 0
       };
       rc.startedIso = localIso(new Date(rc.startedAt));
       state.rc = rc;
@@ -359,6 +359,11 @@
       rc.timer = setInterval(function () {
         $('rec-time').textContent = fmtClock(Date.now() - rc.startedAt);
       }, 500);
+      // 초안 lease: 조각(5초) 사이에도 살아 있음을 알린다. 다른 탭의 draftRecover 가 이 초안을 가져가지 않게.
+      rc.touchTimer = setInterval(function () {
+        if (!dq || !rc.draftOk) return;
+        try { Promise.resolve(dq.draftTouch(rc.draftId)).catch(function () {}); } catch (e) { /* 무시 */ }
+      }, 5000);
       $('rec-result').textContent = '녹음 중…';
       lockScreen();
     }, function (e) {
@@ -423,6 +428,7 @@
     rc.finished = true;
     var durationMs = Date.now() - rc.startedAt;
     clearInterval(rc.timer);
+    clearInterval(rc.touchTimer);
     if (rc.stream) rc.stream.getTracks().forEach(function (t) { t.stop(); });
     if (state.rc === rc) { state.rc = null; state.rec = null; }
     unlockScreen();
@@ -440,7 +446,10 @@
     var p = rc.locDone.then(function () { return rc.chain; }).then(function () {
       var item = { blob: blob, mime: type, recordedAt: rc.startedIso, durationMs: durationMs, clientId: draftId, location: rc.loc };
       if (rc.draftOk) {
-        return Promise.resolve(q.draftFinish(draftId, durationMs, rc.loc)).catch(function () { return q.enqueue(item); });
+        // 초안이 없으면(다른 탭이 가져갔거나 지워졌으면) 메모리의 조각으로 올린다 - 녹음을 버리지 않는다
+        return Promise.resolve(q.draftFinish(draftId, durationMs, rc.loc)).then(function (done) {
+          if (done === false) return q.enqueue(item);
+        }).catch(function () { return q.enqueue(item); });
       }
       return q.enqueue(item);
     });
@@ -1060,6 +1069,15 @@
       try { rec = Promise.resolve(rq.draftRecover()); } catch (e) { rec = Promise.resolve(0); }
       return rec.catch(function () { return 0; }).then(function (n) {
         if (n > 0) { toast('끝나지 않은 녹음 ' + n + '건을 살렸습니다'); updateQueue(); }
+        // lease 가 최근이라 건너뛴 초안이 정말 버려진 탭의 것이면, 몇십 초 뒤 한 번 더 본다.
+        setTimeout(function () {
+          var lq = queueApi();
+          try {
+            Promise.resolve(lq.draftRecover()).then(function (n2) {
+              if (n2 > 0) { toast('끝나지 않은 녹음 ' + n2 + '건을 살렸습니다'); updateQueue(); }
+            }).catch(function () {});
+          } catch (e) { /* 무시 */ }
+        }, 22000);
         return initOpen();
       });
     }).catch(function (e) { toast((e && e.message) || '시작 중 오류'); });
