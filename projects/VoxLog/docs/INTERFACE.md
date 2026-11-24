@@ -237,7 +237,8 @@ VoxQueue.draftRecover(exceptDraftId?)            -> Promise<number>
   //   못 얻으면(주인이 쥐고 있음) 새 세대(lock: true) 초안에 한해 기다리는 요청을 걸어, 주인이 놓을 때 회수한다.
   // 구세대 초안(lock !== true)은 aliveAt 이 숫자이고 20초 안이면 건너뛴다(OLD_DRAFT_FRESH_MS - 구버전 탭이 녹음 중일 수 있음),
   // 아니면 위 즉시 판정. 구세대에는 기다리는 요청을 걸지 않는다. 기다리는 요청은 freeze·pagehide 에서 abort 하고,
-  // resume·pageshow 에서 draftRecover 를 다시 불러 새로 건다. 이 탭이 쥔 잠금은 freeze·pagehide 에서 놓지 않는다.
+  // resume 과 bfcache 복원(pageshow 의 persisted 가 참일 때)에서만 draftRecover 를 다시 불러 새로 건다
+  // (첫 로드 회수는 app.js init 이 한 번 부른다). 이 탭이 쥔 잠금은 freeze·pagehide 에서 놓지 않는다.
   // 기다리는 동안 draftRecover 의 Promise 는 그 요청을 기다리지 않는다.
 VoxQueue.draftSetLocation(draftId, location)     -> Promise<void>   // 녹음 중 위치를 얻으면 초안에 적음(R33-N18) - 살린 녹음도 위치를 가짐
 VoxQueue.onrecover(cb)                           // 기다리던 회수가 나중에 끝나면 cb(살린 수); onchange 도 알림

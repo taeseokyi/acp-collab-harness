@@ -1,17 +1,17 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-24T23:55:56 / REV 203
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-25T00:21:35 / REV 204
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | `a41f0c` | claude | opus | R46 대기 | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
-| S2 | `d27e93` | codex | kisti/kistillm | R46 VoxLog _read_body 검사 보강·조사 문서 한 줄 (무료) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
-| S3 | `5b8c1e` | opencode | kisti/kistillm | R46 VoxLog 녹음 시작 실패 정리·pageshow 회수 (무료) | 11-24 태석님: 오픈코드 + kistillm (aida:10430). 그 전은 nvidia/z-ai/glm-5.3-flash |
-| S4 | `6cd650` | claude | sonnet | R46 VoxLog 적대적 검수 (유료·판단만) | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
-| S5 | `61dfcc` | claude | sonnet | R46 대기 |  |
-| S6 | `47764b` | freebuff | (하네스 기본) | R46 대기 |  |
+| S1 | `a41f0c` | claude | opus | R47 대기 | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S2 | `d27e93` | codex | kisti/kistillm | R47 VoxLog 문서 R46-N1 (무료) | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
+| S3 | `5b8c1e` | opencode | kisti/kistillm | R47 대기 | 11-24 태석님: 오픈코드 + kistillm (aida:10430). 그 전은 nvidia/z-ai/glm-5.3-flash |
+| S4 | `6cd650` | claude | sonnet | R47 VoxLog 적대적 검수 (유료·판단만) | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
+| S5 | `61dfcc` | claude | sonnet | R47 대기 |  |
+| S6 | `47764b` | freebuff | (하네스 기본) | R47 대기 |  |
 
 ## 3. 작업 보드
 
@@ -329,12 +329,14 @@
 | T-416 | Q-261124-f310 | [VoxLog] R43-N5 _read_body 두 분기 검사 보강 + R44-N2 조사 문서 옛 문장 | S2 | DONE | projects/VoxLog/tests/test_serve_ask_body.py, projects/VoxLog/docs/RESEARCH-draft-owner.md |
 | T-417 | Q-261124-f310 | [VoxLog] R44-N1 녹음 시작 실패 때 초안 잠금 정리 + R44-N3 pageshow 는 bfcache 복원 때만 회수 | S3 | DONE | projects/VoxLog/web/app.js, projects/VoxLog/web/queue.js, projects/VoxLog/tests/browser_voxlog.py |
 | T-418 | Q-261124-f310 | [VoxLog] R46 적대적 검수 (부작용 중심) - T-416·T-417 | S4 | DONE | .aimem/sessions/T-418-S4-a1-233913/report.md |
+| T-419 | Q-261125-f9f0 | [VoxLog] R46-N1 문서의 'resume·pageshow 에서 회수' 서술을 지금 코드(pageshow 는 persisted 일 때만)에 맞추기 | S2 | DONE | projects/VoxLog/docs/INTERFACE.md, projects/VoxLog/docs/RESEARCH-draft-owner.md |
+| T-420 | Q-261125-f9f0 | [VoxLog] R47 적대적 검수 - T-419 문서 + R46-N2 추정 독립 확인 | S4 | DONE | .aimem/sessions/T-420-S4-a1-001546/report.md |
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
-| 1 | [VoxLog] R46-N1·R46-N2(하) 웹 잠금 마무리 검수 남은 지적: R46-N1 docs/INTERFACE.md:240 이 'resume·pageshow 에서 draftRecover 를 다시 부른다' 고 적음 - 이제 pageshow 는 persisted(bfcache 복원)일 때만(RESEARCH-draft-owner.md 7·74·76·148·172 의 일반 서술도 같은 결); R46-N2(추정) app.js init 의 첫 로드 회수가 getConfig 성공 뒤에만 돌아, getConfig 가 거절되면 그 방문엔 회수가 없음(전엔 첫 로드 pageshow 가 안전망, 다음 방문·resume 에 다시 시도라 소실 없음). 검수 보고 .aimem/sessions/T-418-S4-a1-233913/report.md |  |  |
+| 1 | [VoxLog] R47-N1·R47-N2(하) R47 검수 남은 지적: R47-N1 docs/RESEARCH-draft-owner.md:148 (f) 검사 항목의 'resume/pageshow 에서 다시 걸어' 에 persisted 단서가 빠짐(요약·§4.2·§6 에는 붙음); R47-N2(추정, 지금 코드에선 안 일어남) app.js init 의 첫 로드 회수와 initOpen 이 getConfig.then 안의 fillSettings·applyRecSupport·updateQueue·checkHealth 가 동기로 던지지 않아야만 돎 - 회수를 그 앞으로 빼거나 감싸면 독립. 검수 보고 .aimem/sessions/T-420-S4-a1-001546/report.md |  |  |
 
 ## 6. 파일 소유권
 
@@ -605,3 +607,4 @@
 | Q-261124-b4ad | [VoxLog] 녹음 초안의 주인 판정을 웹 잠금(navigator.locks)으로 바꾸기 | 태석 (클로드 코드 전달) | DONE | 2026-11-24T16:17:54 |
 | Q-261124-ba96 | [주보알림] 새 주보 확인하고 카톡으로 보내는 웹 앱 (시제품) | 태석 (클로드 코드 전달) | DONE | 2026-11-24T18:31:06 |
 | Q-261124-f310 | [VoxLog] 대기 큐의 VoxLog 항목 둘 처리 (R43-N5, R44-N1~N3) | 태석 (클로드 코드 전달) | DONE | 2026-11-24T23:08:57 |
+| Q-261125-f9f0 | [VoxLog] 대기 큐의 VoxLog 항목 처리 (R46-N1, R46-N2) | 태석 (클로드 코드 전달) | DONE | 2026-11-25T00:08:19 |

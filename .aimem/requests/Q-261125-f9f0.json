@@ -1,0 +1,10 @@
+{
+ "id": "Q-261125-f9f0",
+ "created": "2026-11-25T00:08:19",
+ "requester": "태석 (클로드 코드 전달)",
+ "project": "VoxLog",
+ "title": "[VoxLog] 대기 큐의 VoxLog 항목 처리 (R46-N1, R46-N2)",
+ "detail": "대기 큐에 남은 VoxLog 항목 하나(R46-N1·N2, 하)를 이번 라운드에 처리합니다. 본문은 큐(`aimem_db.py queue list`)와 검수 보고 `.aimem/sessions/T-418-S4-a1-233913/report.md` 에 있습니다.\n1) R46-N1: docs/INTERFACE.md:240 이 'resume·pageshow 에서 draftRecover 를 다시 부른다' 고 적음 - 지금 코드(pageshow 는 persisted, 곧 bfcache 복원일 때만)에 맞게 고칩니다. RESEARCH-draft-owner.md 의 같은 결 일반 서술도 함께 봅니다.\n2) R46-N2(추정): app.js init 의 첫 로드 회수가 getConfig 성공 뒤에만 돌아, getConfig 가 거절되면 그 방문엔 회수가 없음. 먼저 실제로 그런지 확인하고, 맞으면 getConfig 가 실패해도 첫 로드 회수가 돌게 고칩니다(태석님: 큐에 있는 것 처리). 추정이 틀렸으면 고치지 않고 근거를 보고에 적습니다.\n끝나면 큐에서 항목을 내립니다. 배포(운영 서버 재시작)는 하지 않습니다.",
+ "status": "DONE",
+ "subtasks": []
+}

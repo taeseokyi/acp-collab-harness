@@ -4,7 +4,7 @@
 
 ## 요약과 권고
 
-바꿀 만하다. 표준 방식은 **Web Locks API의 같은 출처 배타 잠금**이다. 녹음 탭은 초안을 만들기 전부터 `voxlog-draft-<draftId>` 잠금을 쥐고, 저장·정리·폐기가 끝날 때 놓는다. 다른 탭은 `navigator.locks.request(name, {ifAvailable:true}, ...)`로 즉시 판정하고, 주인이 나중에 죽는 경우를 위해 같은 이름의 대기 요청을 건다. 이 대기 요청에는 `AbortSignal`을 달아 자기 탭이 `freeze`/`pagehide`에 들어갈 때 abort하고, `resume`/`pageshow`에서 다시 건다. 그러면 얼어붙은 대기 탭이 FIFO 대기 줄 전체를 막는 경로를 거의 없앤다.
+바꿀 만하다. 표준 방식은 **Web Locks API의 같은 출처 배타 잠금**이다. 녹음 탭은 초안을 만들기 전부터 `voxlog-draft-<draftId>` 잠금을 쥐고, 저장·정리·폐기가 끝날 때 놓는다. 다른 탭은 `navigator.locks.request(name, {ifAvailable:true}, ...)`로 즉시 판정하고, 주인이 나중에 죽는 경우를 위해 같은 이름의 대기 요청을 건다. 이 대기 요청에는 `AbortSignal`을 달아 자기 탭이 `freeze`/`pagehide`에 들어갈 때 abort하고, `resume`/`pageshow`에서 다시 건다(`pageshow` 는 bfcache 복원, 곧 `persisted` 일 때만). 그러면 얼어붙은 대기 탭이 FIFO 대기 줄 전체를 막는 경로를 거의 없앤다.
 
 배포 전환기(R43-N6)는 세대로 가른다. 새 코드가 만든 초안에는 `lock: true`(새 세대 표식)와 `aliveAt: Infinity`를 함께 저장한다. 구버전 탭의 회수 필터는 `now - aliveAt < 20000`이면 그 초안을 녹음 중으로 보고 건너뛰는데, `Infinity`는 이 식을 항상 참으로 만들어 새 초안을 구탭의 회수 대상에서 영영 빼놓는다. 20초 신선도 규칙은 표식이 없는 구세대 초안에만 적용하고, 새 세대 초안은 잠금만으로 판정한다. 그래서 새 코드끼리는 잠금을 얻는 즉시 회수되고, 새 코드는 5초 heartbeat와 BroadcastChannel을 두지 않는다. Web Locks가 없는 브라우저에서는 지금의 `aliveAt` lease를 열화 경로로 남기지 않는다. 초안 자체를 만들지 않고 '끊긴 녹음 되살리기'만 꺼 두며, 녹음과 올리기는 그대로 된다(녹음은 끝날 때 메모리의 조각으로 `enqueue`).
 
@@ -71,7 +71,7 @@ Web Locks는 `LockManager` IDL이 `[SecureContext, Exposed=(Window, Worker)]`이
 - 새 탭은 `draftRecover()`에서 IndexedDB의 `drafts`를 읽고, 자기 `draftId`는 제외한다.
 - 각 초안에 대해 `navigator.locks.request(name, {ifAvailable:true}, async lock => { if (!lock) return false; return draftFinish(...); })`를 호출한다. `lock`이 `null`이면 주인 탭이 잠금을 쥐고 있으므로 건드리지 않는다. 잠금을 얻으면 그 안에서 `draftFinish`를 실행해, 회수 경쟁 중 다른 탭이 같은 초안을 가져가지 못하게 한다.
 - `ifAvailable`만으로 끝내면 R41-N13(다른 탭이 이미 열린 뒤 녹음 탭이 늦게 죽는 경우)은 남는다. 그래서 새 탭은 잠금이 잡혀 있는 초안에 대해 **대기 요청**도 하나 건다. 다만 timeout 없는 요청을 그대로 두면 얼어붙은 탭이 FIFO 대기 줄의 머리를 잡고 콜백을 못 돌려 뒤의 탭과 새 탭의 `ifAvailable`을 막을 수 있다. 다음 두 보완을 비교한다.
-  - (A) `AbortSignal`을 단 대기 요청. `const ac = new AbortController(); navigator.locks.request(name, {signal: ac.signal}, async lock => { ... draftFinish ... })`를 건다. `freeze`·`pagehide`에서 `ac.abort()`로 대기 요청을 줄에서 빼고, `resume`·`pageshow`에서 새 `AbortController`로 다시 건다. 주인이 살아 있으면 여전히 pending이고, 주인이 죽으면 잠금을 받아 회수한다. 이 abort는 줄 막힘을 거의 없애지만, 완전히 없애지는 않는다. 대기 요청이 이미 잠금을 받았는데 콜백을 돌리는 태스크가 아직 돌지 않았을 때 `freeze`가 오면, abort해도 잠금은 해동 뒤에야 풀려 그동안 뒤의 요청이 막힌다. `freeze`도 `pagehide`도 없이 정지되는 브라우저(iOS Safari 백그라운드 등)에서는 abort가 아예 걸리지 않는다. 이 두 경우를 §6의 기기 검증 항목에 이름으로 적어 두었다(R43-N7).
+  - (A) `AbortSignal`을 단 대기 요청. `const ac = new AbortController(); navigator.locks.request(name, {signal: ac.signal}, async lock => { ... draftFinish ... })`를 건다. `freeze`·`pagehide`에서 `ac.abort()`로 대기 요청을 줄에서 빼고, `resume`·`pageshow`에서 새 `AbortController`로 다시 건다(`pageshow` 는 bfcache 복원, 곧 `persisted` 일 때만). 주인이 살아 있으면 여전히 pending이고, 주인이 죽으면 잠금을 받아 회수한다. 이 abort는 줄 막힘을 거의 없애지만, 완전히 없애지는 않는다. 대기 요청이 이미 잠금을 받았는데 콜백을 돌리는 태스크가 아직 돌지 않았을 때 `freeze`가 오면, abort해도 잠금은 해동 뒤에야 풀려 그동안 뒤의 요청이 막힌다. `freeze`도 `pagehide`도 없이 정지되는 브라우저(iOS Safari 백그라운드 등)에서는 abort가 아예 걸리지 않는다. 이 두 경우를 §6의 기기 검증 항목에 이름으로 적어 두었다(R43-N7).
   - (B) 대기 요청을 쓰지 않고 사건 때 다시 묻기. `visibilitychange`와 `pageshow`에서 `ifAvailable`을 다시 호출한다. 구현이 더 단순하고 얼어붙은 대기자 문제가 원천적으로 없다. 대신 회수 탭이 계속 visible인 채 주인 탭이 죽으면 다음 `visibilitychange`/`pageshow`까지 회수가 늦어지고, R41-N13의 즉시 회수는 보장되지 않는다.
 - 권고: (A)를 쓴다. R41-N13의 “주인이 나중에 죽는 경우”를 실제로 회수하면서, 대기 줄 막힘은 abort/re-arm으로 거의 없앨 수 있다(남는 두 틈은 위와 §6). (B)는 더 단순하지만 회수 지연을 감수해야 하므로 주 경로로 권하지 않는다. `freeze` 이벤트를 못 받는 브라우저에서는 `pagehide`와 `pageshow`를 최소한의 경계로 쓰고, 그래도 대기 요청을 건다. 이 보완은 Web Locks 규격의 signal·pending request 의미와 Page Lifecycle 문서의 frozen 정의(콜백·타이머가 멈춘다)를 합친 추론이며, 직접 실행해 보지 않았다.
 - 대기 요청은 페이지가 살아 있는 동안 pending promise로 남을 수 있다. 페이지가 navigation/close로 사라지면 그 요청도 context와 함께 사라진다. 앱의 다른 작업을 막지는 않는다.
@@ -169,7 +169,7 @@ Web Locks는 `LockManager` IDL이 `[SecureContext, Exposed=(Window, Worker)]`이
 - **bfcache와 Web Locks의 상호작용.** web.dev는 open IndexedDB가 bfcache를 막을 수 있다고 하고 Web Locks를 다른 탭에 영향을 줄 수 있는 API의 예로 든다. held Web Locks를 frozen에서 놓으라는 권고는 Chrome Page Lifecycle 문서의 것이다. VoxLog는 녹음 중 그 권고를 일부러 따르지 않으므로, bfcache에 들어가는지와 잠금이 restore까지 유지되는지는 실제 Chrome/Safari에서 확인해야 한다.
 - **서비스 워커에서 `navigator.locks` 사용.** 규격상 WorkerNavigator에 `locks`가 있지만, 이 앱의 서비스 워커에서 실제로 쓸 수 있는지와 서비스 워커 종료 뒤 상태가 어떤지는 실행 검증이 필요하다.
 - **background/hidden 탭의 대기 요청이 언제 실행되는지.** 잠금이 풀려도 회수 탭이 백그라운드에서 throttling되면 회수가 늦을 수 있다. 대기 요청이 즉시 콜백을 받는지는 브라우저별 검증이 필요하다.
-- **얼어붙은 대기 탭과 abort/re-arm.** `freeze`/`pagehide`에서 대기 요청을 abort하고 `resume`/`pageshow`에서 다시 거는 설계가 실제 Chrome·Safari·iOS에서 이벤트 순서와 잠금 승계대로 동작하는지는 기기 검증이 필요하다. 규격의 FIFO 큐와 Page Lifecycle의 frozen 정의를 합친 추론이다.
+- **얼어붙은 대기 탭과 abort/re-arm.** `freeze`/`pagehide`에서 대기 요청을 abort하고 `resume`/`pageshow`에서 다시 거는 설계(`pageshow` 는 bfcache 복원, 곧 `persisted` 일 때만)가 실제 Chrome·Safari·iOS에서 이벤트 순서와 잠금 승계대로 동작하는지는 기기 검증이 필요하다. 규격의 FIFO 큐와 Page Lifecycle의 frozen 정의를 합친 추론이다.
 - **대기 요청이 잠금을 받은 직후 `freeze`(R43-N7 첫 경우).** 대기 요청이 잠금을 받았지만 콜백을 돌리는 태스크가 아직 돌지 않았을 때 `freeze`가 오면, abort해도 잠금은 해동 뒤에야 풀린다. 그동안 뒤의 `ifAvailable`과 대기 요청이 막히는지, 막히는 시간이 실제로 얼마나 되는지 확인이 필요하다. 틈은 좁을 것으로 추론한다.
 - **`freeze`·`pagehide` 없이 정지하는 브라우저(R43-N7 둘째 경우).** iOS Safari가 백그라운드로 갈 때 `freeze`도 `pagehide`도 주지 않으면 abort가 걸리지 않아, 얼어붙은 탭의 대기 요청이 줄을 잡고 남을 수 있다. 실제 iPhone/iPad에서 이벤트가 오는지, 오지 않을 때 줄이 얼마나 막히는지 확인해야 한다.
 - **iPadOS와 Edge의 정확한 최소 버전.** iPadOS는 별도 BCD 항목이 없어 iOS Safari 15.4를 따르는 것으로 적었다. Edge는 BCD가 mirror라 Chromium 기반 Edge 첫 버전 79로 추정했다. 실제 배포 대상의 최소 버전은 별도 확인이 필요하다.
@@ -215,6 +215,7 @@ Web Locks는 `LockManager` IDL이 `[SecureContext, Exposed=(Window, Worker)]`이
 - R44 구현 결정 반영: R43-N7 — §4.2의 '얼어도 줄을 막지 않는다' 단정을 좁히고, §6에 두 경우(잠금을 받은 직후 freeze, freeze/pagehide 없이 정지하는 iOS Safari)를 이름으로 넣었다.
 - R44 구현 결정 반영: R43-N8 — §5.5 R41-N14 행에 전환기 단서(구세대 초안의 20초 규칙)를 붙였다.
 - R44 구현 결정 반영: §4.3·요약 — 웹 잠금이 없으면 초안을 만들지 않고 되살리기만 끈다. 옛 lease 열화 경로를 남기지 않는다.
+- R47: R46-N1 — pageshow 회수는 bfcache 복원(persisted)일 때만이라는 구현(R44-N3)을 요약·§4.2(A)·§6 에 단서로 붙였다.
 
 
 
