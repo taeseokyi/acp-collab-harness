@@ -1,0 +1,8 @@
+2026-11-10T23:17:00 created 4 nodes, request='웹워들 브라우저 검증 (Q-261110-c450)'
+2026-11-10T23:17:11 spawn T-105 attempt 1 -> T-105-S2-a1-231711 (S2)
+2026-11-10T23:38:32 retry-queued T-105 rc=0 verify_rc=4
+2026-11-10T23:38:32 spawn T-105 attempt 2 -> T-105-S2-a2-233832 (S2)
+2026-11-10T23:48:22 FAILED T-105 after 2 attempts
+2026-11-10T23:48:22 blocked T-106 (의존 실패)
+2026-11-10T23:48:22 blocked T-107 (의존 실패)
+2026-11-10T23:48:22 blocked T-108 (의존 실패)

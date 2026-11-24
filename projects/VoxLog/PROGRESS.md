@@ -17,9 +17,23 @@
 - [x] 묻기 - 요약·핵심어·할 일·직접 묻기를 claude CLI 로(도구·MCP·설정 끔, 빈 임시 폴더), 답을 앱에 보이고 쌓음 (가짜 LLM 으로 확인)
 - [x] 보안 - 토큰·HTTPS·경로 탈출·남의 출처·DNS 리바인딩·프롬프트 감쌈, ffmpeg 입력 형식 강제·protocol_whitelist, 업로드 흘려 쓰기·동시 2개·디스크 여유·업로드 마감(받은 만큼으로 재서 넘기면 408)·저장 OSError 500/507 (R36 에서 R35-N1·N2·N3 닫힘, 하 R36-N1·N2·N3 는 큐)
 - [x] 폰(320~430px)·데스크톱에서 겹침·넘침 없음, 어두운 모드
-- [x] 검사 - 단위 153·끝에서 끝 브라우저 38/38, 적대적 검수 13회(R33 2회·R34·R35·R36·R39 1회씩·R41 2회·R42 2회·R43 2회·R44 1회)
+- [x] 검사 - 단위 155·끝에서 끝 브라우저 40/40, 적대적 검수 14회(R33 2회·R34·R35·R36·R39 1회씩·R41 2회·R42 2회·R43 2회·R44·R46 1회씩)
 - [x] 실제 폰에서 동작 확인 - 태석님이 폰에서 써 보고 "모두 잘됩니다" 라고 확인(2026-11-17). 항목별(측면 버튼·오프라인 올리기·위치 권한·사파리 mp4) 결과는 따로 받지 않음
 - [x] 실제 음성인식 백엔드 연결 - KISTI Qwen3-ASR(`VOXLOG_STT_URL`, 화자 구분 `diarized_json`)로 받아쓰기, 태석님이 폰 녹음으로 확인(2026-11-17). 실제 `claude` 묻기는 배포본에서 답 2건 완료(2026-11-16)
+
+## R46 (2026-11-24)
+
+요청 `Q-261124-f310`(대기 큐 VoxLog 둘: R43-N5, R44-N1~N3). 운영 방식 무료 중심·관리 방식 품질 우선. 그래프 G-098 하나(만들기는 무료 S2·S3, 검수만 유료 S4). 목표 체크는 바뀐 것 없음(검사 줄만 갱신).
+
+- **한 일**
+  - R43-N5(T-416, S2 codex): `tests/test_serve_ask_body.py` 에 `_read_body` 분기별 검사 둘 - `test_zero_grace_whole_body_gets_400`(`body_grace=0` → `left <= 0` 분기), `test_short_body_write_closed_gets_400_before_grace`(짧은 본문+쓰기 닫음 → `got != length` 분기, GRACE/2 안에 답)
+  - R44-N2(T-416): `docs/RESEARCH-draft-owner.md:147` 옛 계획 문장을 R44 실제 결정(t30 = 웹 잠금 없는 탭 검사)으로
+  - R44-N1(T-417, S3 opencode): `web/app.js` startRec 에서 `mr.start(5000)` 를 try/catch - 실패면 rc.finished·state.rc/rec 비움·마이크 끔·`rc.chain` 뒤에 draftOk 일 때만 `draftDiscard`(잠금 놓음)·토스트 '녹음을 시작하지 못했습니다.'
+  - R44-N3(T-417): `web/queue.js` 의 pageshow 회수는 `ev.persisted`(bfcache 복원)일 때만 - 첫 로드 회수는 app.js init 한 곳. `resume` 은 그대로
+  - 새 브라우저 검사 t39(녹음 시작 실패 때 초안·잠금 정리·다시 녹음 가능), t40(pageshow 는 persisted 일 때만 회수)
+- **바뀐 파일**: `tests/test_serve_ask_body.py`(+41), `docs/RESEARCH-draft-owner.md`(1줄), `web/app.js`(+14/−1), `web/queue.js`(2줄), `tests/browser_voxlog.py`(+77/−1)
+- **검증**: 엔진 verify 셋 rc 0. S4(Sonnet) 적대적 검수 T-418 **통과**(상·중 0, 하 2) - /tmp 사본 변이 4/4 가 의도한 검사 하나씩에만 걸림(serve.py 362·382행 400→500, app.js catch 의 draftDiscard 삭제, queue.js persisted 조건 삭제). 관리자 재현: 단위 155 OK·브라우저 40/40
+- **남은 일**: 큐 R46-N1·N2(하) - `docs/INTERFACE.md:240` 등의 'resume·pageshow 에서 회수' 서술이 낡음, init 의 첫 로드 회수가 getConfig 성공 뒤에만 돌아 getConfig 거절 때 그 방문엔 회수 없음(추정, 소실 없음). 배포는 하지 않음(요청대로)
 
 ## R44 (2026-11-24)
 

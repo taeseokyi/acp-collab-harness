@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/a
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 202** (workers: if your brief's REV differs, stop and ask - `0.1`)
-- Last updated: 2026-11-24 22:59 KST
+- **REV: 203** (workers: if your brief's REV differs, stop and ask - `0.1`)
+- Last updated: 2026-11-24 23:51 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **the `role=manager` session the engine starts for a round**, identified by its session id `M-R<N>-<HHMMSS>` (form pinned in the linter). `tools/fleet_ctl.py
@@ -352,7 +352,7 @@ nothing to do the Manager reports and ends.
 - **Parallel graphs:** a `deps` edge only where a node reads another's output. Fix the interface (file and function
   names, input/output shapes) first and put it in each brief, so logic, UI, styles and tests (written against the
   interface, not the implementation) can sit side by side;
-  spread one level over different slots (different providers run at the same time); reviews go last.
+  spread one level over different slots; reviews go last.
   `fleet_graph.py new` prints the graph's shape and notes a single-file chain or a crowded slot
 - **Small nodes:** one new file, about 200 lines, about 10 checks. Split larger work; split a file two slots
   would both write. Do not tell a worker to "plan first" - have it edit files right away. Workers can run a browser

@@ -144,7 +144,7 @@ Web Locks는 `LockManager` IDL이 `[SecureContext, Exposed=(Window, Worker)]`이
 
 바꿀 것:
 
-- `t30`은 현재 “BroadcastChannel이 없는 탭” 열화 검사다. Web Locks가 primary가 되면 `t30`은 **fallback 검사**로 이름/전제를 바꾸거나, Web Locks가 없는 환경을 강제하는 새 검사로 대체한다.
+- `t30`은 R44 에서 웹 잠금이 없는 탭 검사로 바꿨다 - 그런 탭은 초안을 만들지 않고 녹음·올리기만 한다.
 - 새 검사가 필요하다: (a) 녹음 탭이 잠금을 쥐는 동안 두 번째 탭의 `ifAvailable`이 `null`이고 초안을 가져가지 않음, (b) 녹음 탭 `page.close()` 뒤 대기 요청이 잠금을 얻어 초안을 회수함, (c) 빠른 새로고침 뒤 회수가 22초 지연 없이 됨, (d) 조각 0개 초안은 회수 수에 세지 않음, (e) `draftOk=false` 뒤 DB 초안이 정리됨, (f) 대기 탭이 `freeze`/`pagehide`에서 요청을 abort하고 `resume`/`pageshow`에서 다시 걸어 뒤의 `ifAvailable`을 막지 않음, (g) 전환기에 잠금이 비어 있지만 `aliveAt`이 신선한 구세대 초안(`lock !== true`)은 새 코드가 회수하지 않음, (h) 새 세대 초안(`lock: true`)은 `aliveAt`과 무관하게 잠금만으로 즉시 회수됨.
 
 ### 5.5 R41-N13~N18 판정

@@ -5,6 +5,7 @@ const ACTION_LABELS = {
 };
 
 let busy = null;
+let lastState = null;
 
 function $(id) {
   return document.getElementById(id);
@@ -206,6 +207,13 @@ function renderPreview(state) {
     img.src = "api/preview/" + encodeURIComponent(image.name);
     img.alt = name + " 주보 " + image.seq + "번째 그림 (" + image.name + ")";
     img.loading = "lazy";
+    let retries = 0;
+    img.addEventListener("error", () => {
+      if (retries >= 3) return;
+      retries += 1;
+      const src = "api/preview/" + encodeURIComponent(image.name) + "?r=" + retries;
+      setTimeout(() => { img.src = src; }, 800 * retries);
+    });
     link.appendChild(img);
     thumbs.appendChild(link);
   }
@@ -215,6 +223,7 @@ function renderPreview(state) {
 }
 
 function renderState(state) {
+  lastState = state;
   busy = state.busy || null;
   updateButtons();
   renderLatest(state);
@@ -255,6 +264,12 @@ async function loadState() {
 }
 
 async function runAction(action) {
+  const prev = lastState || {};
+  const before = {
+    sendAt: ((prev.history || [])[0] || {}).at,
+    checkAt: (prev.last_check || {}).at,
+    previewAt: (prev.preview || {}).at,
+  };
   busy = action;
   updateButtons();
   setMsg("", "");
@@ -286,9 +301,55 @@ async function runAction(action) {
       }
     }
   } catch (error) {
+    // 응답만 못 받았을 수 있다(화면을 잠깐 떠나면 브라우저가 기다리던 요청을 끊는다). 일은 서버에서 계속되므로
+    // 서버 상태를 다시 읽어 실제 결과를 보인다.
+    await settle(action, before, error);
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function settle(action, before, error) {
+  setMsg("응답을 받지 못해 결과를 다시 확인하는 중…", "");
+  let state = null;
+  for (let miss = 0; miss < 5;) {
+    try {
+      state = await request("api/state");
+      renderState(state);
+      if (!state.busy) break;
+      miss = 0;
+    } catch (again) {
+      state = null;
+      miss += 1;
+    }
+    await sleep(3000);
+  }
+  if (!state || state.busy) {
     busy = null;
     updateButtons();
+    setMsg("요청을 끝내지 못했습니다: " + error.message + " - 결과는 새로 고쳐 확인하십시오", "error");
+    return;
+  }
+  if (action === "send") {
+    const entry = (state.history || [])[0];
+    if (!entry || entry.at === before.sendAt) {
+      setMsg("전송이 시작되지 않았습니다: " + error.message, "error");
+    } else if (entry.ok) {
+      setMsg("카톡으로 보냈습니다: " + (entry.date || "?") + " · " + (entry.title || "(제목 없음)"), "ok");
+    } else {
+      setMsg("전송 실패: " + (entry.reason || "까닭 없음"), "error");
+    }
+    return;
+  }
+  const done = action === "check" ? state.last_check : state.preview;
+  if (!done || done.at === before[action + "At"]) {
     setMsg("요청을 끝내지 못했습니다: " + error.message, "error");
+  } else if (done.ok) {
+    setMsg(action === "check" ? "확인했습니다" : "미리 보기를 만들었습니다", "ok");
+  } else {
+    setMsg((action === "check" ? "확인 실패: " : "미리 보기 실패: ") + (done.error || "까닭 없음"), "error");
   }
 }
 

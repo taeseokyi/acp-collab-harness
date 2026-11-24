@@ -205,3 +205,49 @@
 {"seq": 267, "at": "2026-11-10T18:50:59", "actor": "Claude Code", "rev": 138, "kind": "ownership", "body": "rounds/** -> 관리자"}
 {"seq": 271, "at": "2026-11-10T20:08:35", "actor": "Claude Code", "rev": 141, "kind": "ownership", "body": "projects/** -> 관리자"}
 {"seq": 272, "at": "2026-11-10T20:08:35", "actor": "Claude Code", "rev": 141, "kind": "ownership", "body": "rounds/** -> 관리자"}
+{"seq": 280, "at": "2026-11-10T22:23:27", "actor": "관리자", "rev": 148, "kind": "ownership", "body": "projects/웹워들/web/js/game.js -> S1"}
+{"seq": 281, "at": "2026-11-10T22:23:27", "actor": "관리자", "rev": 148, "kind": "ownership", "body": "projects/웹워들/tests/smoke_integration.mjs -> S1"}
+{"seq": 282, "at": "2026-11-10T22:23:27", "actor": "관리자", "rev": 148, "kind": "ownership", "body": "projects/웹워들/tools/** -> S2"}
+{"seq": 283, "at": "2026-11-10T22:23:27", "actor": "관리자", "rev": 148, "kind": "ownership", "body": "projects/웹워들/web/js/words.js -> S2"}
+{"seq": 284, "at": "2026-11-10T22:23:27", "actor": "관리자", "rev": 148, "kind": "ownership", "body": "projects/웹워들/tests/test_words.py -> S2"}
+{"seq": 285, "at": "2026-11-10T22:23:27", "actor": "관리자", "rev": 148, "kind": "ownership", "body": "projects/웹워들/tests/test_game.mjs -> S3"}
+{"seq": 286, "at": "2026-11-10T22:23:27", "actor": "관리자", "rev": 148, "kind": "ownership", "body": "projects/웹워들/web/index.html -> S4"}
+{"seq": 287, "at": "2026-11-10T22:23:28", "actor": "관리자", "rev": 148, "kind": "ownership", "body": "projects/웹워들/web/css/** -> S4"}
+{"seq": 288, "at": "2026-11-10T22:23:28", "actor": "관리자", "rev": 148, "kind": "ownership", "body": "projects/웹워들/web/js/ui.js -> S4"}
+{"seq": 289, "at": "2026-11-10T22:23:28", "actor": "관리자", "rev": 148, "kind": "ownership", "body": "projects/웹워들/web/js/storage.js -> S4"}
+{"seq": 290, "at": "2026-11-10T22:28:00", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-096 ASSIGNED S1 웹워들 핵심 판정 로직 (game.js)"}
+{"seq": 291, "at": "2026-11-10T22:28:00", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-097 ASSIGNED S2 웹워들 단어 목록 생성기와 생성물"}
+{"seq": 292, "at": "2026-11-10T22:28:00", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-098 ASSIGNED S4 웹워들 화면 (보드·키보드·통계)"}
+{"seq": 293, "at": "2026-11-10T22:28:00", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-099 ASSIGNED S3 웹워들 로직 테스트 (다른 슬롯이 검증)"}
+{"seq": 294, "at": "2026-11-10T22:28:01", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-100 ASSIGNED S1 웹워들 통합 연기 테스트 + 적대적 검수"}
+{"seq": 295, "at": "2026-11-10T22:28:01", "actor": "관리자", "rev": 148, "kind": "request", "body": "Q-261110-0437 PLANNED"}
+{"seq": 296, "at": "2026-11-10T22:56:07", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-101 ASSIGNED S4 웹워들 화면 결함 7건 수정 (검수)"}
+{"seq": 297, "at": "2026-11-10T22:56:07", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-102 ASSIGNED S1 웹워들 fromJSON 손상 저장값 방어 (검수)"}
+{"seq": 298, "at": "2026-11-10T22:56:07", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-103 ASSIGNED S1 웹워들 수정 재검수 + 회귀 테스트"}
+{"seq": 299, "at": "2026-11-10T22:56:17", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-096 DONE"}
+{"seq": 300, "at": "2026-11-10T22:56:17", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-097 DONE"}
+{"seq": 301, "at": "2026-11-10T22:56:17", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-098 DONE"}
+{"seq": 302, "at": "2026-11-10T22:56:17", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-099 DONE"}
+{"seq": 303, "at": "2026-11-10T22:56:17", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-100 DONE"}
+{"seq": 304, "at": "2026-11-10T22:56:17", "actor": "관리자", "rev": 148, "kind": "graph", "body": "G-008 끝: T-096~T-100 전부 done(rc 0/0). 웹워들 1차 - game.js(판정·오늘의 단어·하드모드·공유), words.js(정답 2,488 / 허용 5,641, 시스템 사전에서 생성), 화면(index.html·style.css·ui.js·storage.js), 테스트 21개 통과. T-099 는 S3 1차에서 기대값을 뒤집어 써 실패했고 2차에서 통과(기대표가 옳았고 구현은 맞았음). T-100 적대적 검수가 결함 8건을 찾음 - G-009 로 반영."}
+{"seq": 305, "at": "2026-11-10T23:00:51", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-104 ASSIGNED S4 웹워들 남은 결함 3건 (키보드 접근성·연승·모달 높이)"}
+{"seq": 306, "at": "2026-11-10T23:00:52", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-101 DONE"}
+{"seq": 307, "at": "2026-11-10T23:00:52", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-102 DONE"}
+{"seq": 308, "at": "2026-11-10T23:00:52", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-103 DONE"}
+{"seq": 309, "at": "2026-11-10T23:00:52", "actor": "관리자", "rev": 148, "kind": "graph", "body": "G-009 끝: T-101~T-103 done(rc 0/0). 적대적 검수 8건 중 7건 반영(알림 잔류·연승 날짜·대비 4.5:1·dvh 대비책·포커스·하드모드·fromJSON 손상값 방어). 재검수가 남은 3건을 찾음(화면 키 Tab+Enter, 같은 날 재기록 연승, 모달 90dvh) -> G-010."}
+{"seq": 310, "at": "2026-11-10T23:03:27", "actor": "관리자", "rev": 148, "kind": "task", "body": "T-104 DONE"}
+{"seq": 311, "at": "2026-11-10T23:03:27", "actor": "관리자", "rev": 148, "kind": "graph", "body": "G-010 끝: T-104 done(rc 0/0). 남은 결함 3건 반영(화면 키 Tab+Enter 접근성, 같은 날 재기록 연승, 모달 90dvh 대비책). 관리자 확인: 프로젝트 테스트 31개(node 25 + unittest 6) 통과, serve.py 로 6개 자산 200 응답, 함대 테스트 428 OK, 린터 위반 없음."}
+{"seq": 312, "at": "2026-11-10T23:03:27", "actor": "관리자", "rev": 148, "kind": "request", "body": "Q-261110-0437 DONE"}
+{"seq": 314, "at": "2026-11-10T23:13:48", "actor": "관리자", "rev": 149, "kind": "request", "body": "Q-261110-c450 PLANNED"}
+{"seq": 319, "at": "2026-11-10T23:13:49", "actor": "관리자", "rev": 149, "kind": "ownership", "body": "projects/웹워들/tests/browser_harness.py -> S2"}
+{"seq": 320, "at": "2026-11-10T23:13:49", "actor": "관리자", "rev": 149, "kind": "ownership", "body": "projects/웹워들/tests/browser_core.py -> S2"}
+{"seq": 321, "at": "2026-11-10T23:13:49", "actor": "관리자", "rev": 149, "kind": "ownership", "body": "projects/웹워들/tests/browser_ui.py -> S2"}
+{"seq": 322, "at": "2026-11-10T23:13:49", "actor": "관리자", "rev": 149, "kind": "ownership", "body": "projects/웹워들/tests/screenshots/core/** -> S2"}
+{"seq": 323, "at": "2026-11-10T23:13:49", "actor": "관리자", "rev": 149, "kind": "ownership", "body": "projects/웹워들/tests/screenshots/ui/** -> S2"}
+{"seq": 324, "at": "2026-11-10T23:13:49", "actor": "관리자", "rev": 149, "kind": "ownership", "body": "projects/웹워들/tests/browser_layout.py -> S3"}
+{"seq": 325, "at": "2026-11-10T23:13:49", "actor": "관리자", "rev": 149, "kind": "ownership", "body": "projects/웹워들/tests/screenshots/layout/** -> S3"}
+{"seq": 326, "at": "2026-11-10T23:13:49", "actor": "관리자", "rev": 149, "kind": "ownership", "body": "projects/웹워들/tests/README.md -> S1"}
+{"seq": 330, "at": "2026-11-10T23:49:50", "actor": "관리자", "rev": 149, "kind": "ownership", "body": "projects/웹워들/tests/browser_core.py -> S3"}
+{"seq": 331, "at": "2026-11-10T23:49:50", "actor": "관리자", "rev": 149, "kind": "request", "body": "Q-261110-c450 IN-PROGRESS"}
+{"seq": 332, "at": "2026-11-10T23:50:27", "actor": "관리자", "rev": 149, "kind": "ownership", "body": "projects/웹워들/tests/screenshots/core/** -> S3"}
+{"seq": 358, "at": "2026-11-11T01:57:57", "actor": "관리자", "rev": 149, "kind": "request", "body": "Q-261110-c450 DONE"}

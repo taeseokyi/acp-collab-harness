@@ -354,7 +354,20 @@
       };
       mr.onerror = function () { toast('녹음 중 오류가 났습니다.'); };
       mr.onstop = function () { finishRec(rc); };
-      mr.start(5000);
+      try {
+        mr.start(5000);
+      } catch (e) {
+        rc.finished = true;
+        if (state.rc === rc) { state.rc = null; state.rec = null; }
+        rc.stream.getTracks().forEach(function (t) { t.stop(); });
+        rc.chain = rc.chain.then(function () {
+          if (!rc.draftOk) return;
+          rc.draftOk = false;
+          return Promise.resolve(dq.draftDiscard(rc.draftId)).catch(function () {});
+        });
+        toast('녹음을 시작하지 못했습니다.');
+        return;
+      }
       setRecUI(true);
       $('rec-time').textContent = '00:00';
       rc.timer = setInterval(function () {

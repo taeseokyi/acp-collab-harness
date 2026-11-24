@@ -1,0 +1,5 @@
+G-011: 0.0%  남은 ETA 2364s  상태 {'failed': 1, 'blocked': 3}
+  T-105  failed   S2  시도 2  run T-105-S2-a2-233832  rc 0/1  웹워들 브라우저 검증 1: 하네스 + 보드·키보드·없는 단어·판 끝
+  T-106  blocked  S3  시도 0  run -  rc -/-  웹워들 브라우저 검증 2: 좁은 폭·낮은 창 레이아웃
+  T-107  blocked  S2  시도 0  run -  rc -/-  웹워들 브라우저 검증 3: 통계·공유·테마·접근성·도움말
+  T-108  blocked  S1  시도 0  run -  rc -/-  웹워들 브라우저 검증 적대적 검수 + tests/README.md

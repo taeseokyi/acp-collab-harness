@@ -625,12 +625,12 @@
     });
   } catch (e) { /* 무시 */ }
 
-  // 페이지 수명(한 번만 등록): 얼어붙은 대기 요청을 줄에서 빼고, 다시 보이면 회수를 다시 건다.
+  // 페이지 수명(한 번만 등록): 얼어붙은 대기 요청을 줄에서 빼고, resume 과 bfcache 복원(pageshow persisted)에서만 회수를 다시 건다. 첫 로드 회수는 app.js 의 init 이 한다.
   try {
     document.addEventListener('freeze', abortWaits);
     window.addEventListener('pagehide', abortWaits);
     document.addEventListener('resume', resumeRecover);
-    window.addEventListener('pageshow', resumeRecover);
+    window.addEventListener('pageshow', function (ev) { if (ev && ev.persisted) resumeRecover(); });
   } catch (e) { /* 무시 */ }
 
   // 격리된 출처면 여기서 idbOk 가 false 로 바뀜

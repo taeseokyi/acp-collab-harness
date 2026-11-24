@@ -1,0 +1,10 @@
+{
+ "id": "Q-261124-f310",
+ "created": "2026-11-24T23:08:57",
+ "requester": "태석 (클로드 코드 전달)",
+ "project": "VoxLog",
+ "title": "[VoxLog] 대기 큐의 VoxLog 항목 둘 처리 (R43-N5, R44-N1~N3)",
+ "detail": "대기 큐에 남은 VoxLog 항목 둘을 이번 라운드에 처리합니다. 본문은 큐(`aimem_db.py queue list`)와 각 출처 보고에 있습니다.\n1) R43-N5(하): tests/test_serve_ask_body.py 가 serve.py _read_body 의 두 분기 변이를 못 잡음 - 검사를 보강.\n2) R44-N1·N2·N3(하): 웹 잠금 전환 검수에서 남은 지적 셋(rounds/R44/REPORT.md, 검수 보고).\n끝나면 큐에서 두 항목을 내립니다. 배포는 하지 않습니다. 자모맞히기 큐 항목(태석님께 묻는 것)은 이번 일이 아닙니다.",
+ "status": "DONE",
+ "subtasks": []
+}

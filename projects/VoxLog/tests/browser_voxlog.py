@@ -3,7 +3,7 @@
 
 실행: python3 projects/VoxLog/tests/browser_voxlog.py
 서버는 이 검사가 임시 data 폴더로 직접 띄우고(subprocess) 끝나면 내린다.
-검사는 모두 38개입니다.
+검사는 모두 40개입니다.
 마지막 줄 `N/M 통과`, 하나라도 실패면 종료 코드 1.
 """
 import json
@@ -1298,6 +1298,82 @@ def run_all(browser, base, data, tmp, procs):
         finally:
             c.close()
     check("38 기다리는 요청: freeze abort→resume 재요청·녹음 탭 정상 저장", t38)
+
+    def t39():
+        # R44-N1: mr.start 예외 때 초안·잠금·녹음 상태를 정리하고 다시 녹음할 수 있다
+        b, _ = new_server("d39")
+        c = new_ctx()
+        try:
+            p = c.new_page()
+            p.goto(b + "/")
+            p.wait_for_selector("#rec")
+            p.evaluate("() => { window.__mrStart = MediaRecorder.prototype.start;"
+                       " MediaRecorder.prototype.start = function () { throw new Error('start 실패'); }; }")
+            p.click("#rec")
+            need(wait_for(lambda: "녹음을 시작하지 못했습니다" in p.inner_text("#toast"), 5, pg=p),
+                 "녹음 시작 실패 토스트가 없음: " + p.inner_text("#toast"))
+            need(p.get_attribute("#rec", "aria-pressed") == "false", "녹음 시작 실패 뒤 녹음 중으로 보임")
+            need(not p.evaluate("document.getElementById('rec').classList.contains('recording')"),
+                 "녹음 단추가 recording 상태임")
+            need(p.inner_text("#rec-result") != "녹음 중…", "녹음 중 안내가 남음")
+            need(wait_for(lambda: db_drafts(p) == [0, 0], 10, pg=p), "실패 뒤 초안·조각이 남음: %s" % db_drafts(p))
+            held = lock_names(p, "held")
+            need(not any(name.startswith("voxlog-draft-") for name in held),
+                 "실패 뒤 초안 잠금이 남음: %s" % held)
+            time.sleep(0.5)
+            p.evaluate("() => { MediaRecorder.prototype.start = window.__mrStart; }")
+            p.click("#rec")
+            need(wait_for(lambda: p.get_attribute("#rec", "aria-pressed") == "true", 5, pg=p),
+                 "원래 start 복원 뒤 다시 녹음이 시작되지 않음")
+            p.click("#rec")
+            need(wait_for(lambda: p.get_attribute("#rec", "aria-pressed") == "false", 5, pg=p),
+                 "다시 시작한 녹음이 멈추지 않음")
+        finally:
+            c.close()
+    check("39 녹음 시작 실패 때 초안·잠금 정리·다시 녹음 가능", t39)
+
+    def t40():
+        # R44-N3: pageshow 회수는 bfcache 복원(persisted)일 때만 - 첫 로드 회수는 app.js init 이 한다
+        b, _ = new_server("d40")
+        c = new_ctx()
+        try:
+            p = c.new_page()
+            p.goto(b + "/")
+            p.wait_for_selector("#rec")
+            time.sleep(2)  # 첫 로드의 draftRecover 가 끝난 뒤
+            p.evaluate("""async () => {
+                await new Promise((resolve, reject) => {
+                    var req = indexedDB.open('voxlog', 2);
+                    req.onsuccess = () => {
+                        var db = req.result;
+                        var tx = db.transaction(['drafts', 'chunks'], 'readwrite');
+                        tx.objectStore('drafts').put({
+                            draftId: 'orphan-1', lock: true, aliveAt: Infinity,
+                            mime: 'audio/webm', recordedAt: new Date().toISOString()
+                        });
+                        tx.objectStore('chunks').add({
+                            draftId: 'orphan-1', seq: 0,
+                            blob: new Blob([new Uint8Array(4096)], { type: 'audio/webm' })
+                        });
+                        tx.oncomplete = resolve;
+                        tx.onerror = () => reject(tx.error);
+                    };
+                    req.onerror = () => reject(req.error);
+                });
+            }""")
+            need(db_drafts(p) == [1, 1], "넣은 초안·조각이 없음: %s" % db_drafts(p))
+            p.evaluate("window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: false }))")
+            time.sleep(1.5)
+            need(db_drafts(p) == [1, 1], "persisted:false pageshow 가 초안을 회수함: %s" % db_drafts(p))
+            p.evaluate("window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))")
+            need(wait_for(lambda: db_drafts(p) == [0, 0], 10, pg=p),
+                 "persisted:true pageshow 가 초안을 회수하지 않음: %s" % db_drafts(p))
+            need(wait_for(lambda: p.is_visible("#toast") and
+                           "끝나지 않은 녹음 1건을 살렸습니다" in p.inner_text("#toast"), 5, pg=p),
+                 "회수 토스트가 보이지 않음: " + p.inner_text("#toast"))
+        finally:
+            c.close()
+    check("40 pageshow 는 bfcache 복원(persisted)일 때만 초안 회수", t40)
 
 
 if __name__ == "__main__":

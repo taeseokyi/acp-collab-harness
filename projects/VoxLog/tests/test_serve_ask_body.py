@@ -112,6 +112,47 @@ class AskBodyTimeoutTest(unittest.TestCase):
         self.assertTrue(head.startswith(b"HTTP/1.1 400"), head)
         self.assertIn(REASON, json.loads(response_body.decode("utf-8"))["error"])
 
+    def test_zero_grace_whole_body_gets_400(self):
+        # body_grace=0 이면 받기 시작한 때의 마감이 이미 지났다 - 본문을 한 번에 다 보내도 left <= 0 으로 400
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        server = serve.make_server(
+            "127.0.0.1", 0, tmp.name, env={},
+            stt_fn=lambda path, mime, env: "", llm_run=lambda prompt, env=None: "가짜 답",
+            body_grace=0)
+        self.addCleanup(server.server_close)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 5)
+        self.addCleanup(server.shutdown)
+        rid = server.store.add_recording(b"fake-audio", "audio/webm")["id"]
+        body = json.dumps({"kind": "summary", "prompt": "", "ids": [rid]},
+                          ensure_ascii=False).encode("utf-8")
+        sock = socket.create_connection(("127.0.0.1", server.server_address[1]), timeout=5)
+        self.addCleanup(sock.close)
+        self._post_head(sock, len(body))
+        sock.sendall(body)                          # 한 번에 다 보낸다
+        sock.settimeout(GRACE + 3)
+        head, response_body = self._read_response(sock)
+        self.assertTrue(head.startswith(b"HTTP/1.1 400"), head)
+        self.assertIn(REASON, json.loads(response_body.decode("utf-8"))["error"])
+
+    def test_short_body_write_closed_gets_400_before_grace(self):
+        # 상대가 본문을 덜 보내고 쓰기만 닫으면 read1 이 빈 바이트를 돌려 got != length 로 400 - 마감보다 빨리
+        body = self._ask_body()
+        sock = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        self.addCleanup(sock.close)
+        started = time.monotonic()
+        self._post_head(sock, len(body))
+        sock.sendall(body[:7])
+        sock.shutdown(socket.SHUT_WR)
+        sock.settimeout(GRACE + 3)
+        head, response_body = self._read_response(sock)
+        elapsed = time.monotonic() - started
+        self.assertTrue(head.startswith(b"HTTP/1.1 400"), head)
+        self.assertIn(REASON, json.loads(response_body.decode("utf-8"))["error"])
+        self.assertLess(elapsed, GRACE / 2)        # (b) timeout 이 아니라 (c) 빈 바이트 경로로 갔음
+
     def _wait_answer(self, aid, timeout=10):
         end = time.time() + timeout
         got = None

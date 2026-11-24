@@ -1,0 +1,40 @@
+{
+ "id": "G-010",
+ "request": "웹워들 3차: 재검수에서 남은 결함 3건 (Q-261110-0437)",
+ "created": "2026-11-10T23:00:52",
+ "rev": 148,
+ "round": 7,
+ "concurrency": 1,
+ "nodes": [
+  {
+   "id": "T-104",
+   "title": "웹워들 남은 결함 3건 (키보드 접근성·연승·모달 높이)",
+   "slot": "S4",
+   "project": "웹워들",
+   "write": [
+    "projects/웹워들/web/js/ui.js",
+    "projects/웹워들/web/js/storage.js",
+    "projects/웹워들/web/css/style.css"
+   ],
+   "deps": [],
+   "timeout_sec": 1500,
+   "task": "# T-104 웹워들 남은 결함 3건 (재검수에서 나온 것)\n\n## 배경\n\n같은 라운드에 결함 여덟 개를 고쳤고, 다시 검수했더니 세 개가 남았습니다 (하나는 고치는 과정에서\n새로 생긴 것입니다). **아래 셋만** 고치십시오. 새 기능을 만들지 마십시오.\n\n고칠 파일 (이 셋만):\n\n- `projects/웹워들/web/js/ui.js`\n- `projects/웹워들/web/js/storage.js`\n- `projects/웹워들/web/css/style.css`\n\n`web/js/game.js`, `web/js/words.js`, `tests/` 아래는 **다른 슬롯 소유이니 고치지 마십시오.**\n\n## 고칠 것\n\n### 1. `Tab` 으로 화면 키에 가서 `Enter` 를 누르면 그 글자가 아니라 제출이 됩니다 (`ui.js:258~262`)\n\n쪽 전체에 걸린 `keydown` 처리가 `Enter` 를 가로채 `preventDefault` 하고 제출해 버려서, 버튼 자신의\n기본 동작(눌림)이 취소됩니다. 그래서 `Tab` 으로 `Q` 키에 가서 `Enter` 를 눌러도 `Q` 가 입력되지 않고\n제출됩니다. 키보드만으로 플레이할 수 있어야 하므로 고쳐야 합니다.\n\n→ 포커스가 **화면 키보드 버튼 안에 있을 때**는 `Enter` 와 `Space` 를 가로채지 말고 버튼 자신의\n   기본 동작(click)에 맡기십시오 (`document.activeElement` 가 그 버튼인지로 가릅니다).\n   포커스가 보드나 바탕에 있을 때는 지금처럼 `Enter` 가 제출, `Backspace` 가 삭제여야 합니다.\n   창(모달)이 열려 있을 때의 지금 동작은 그대로 두십시오.\n\n### 2. 같은 날 두 번째로 기록하면 연승이 0 이 됩니다 (`storage.js:84`)\n\n`lastDay === dayKey` 인데 `recordResult` 가 또 불리면 \"어제가 아니다\" 로 보고 연승을 다시 시작합니다.\n오늘 저장이 날아가고 새로 고친 경우에 일어납니다.\n\n→ **어제도 아니고 오늘도 아닐 때만** 연승을 다시 시작하십시오. 같은 날 두 번째 기록이면 연승을\n   건드리지 마십시오 (나머지 통계는 지금 하던 대로).\n\n### 3. 창(모달)이 화면 밖으로 넘칠 수 있습니다 (`style.css:212`)\n\n`.modal-box` 의 `max-height: 90dvh` 에 대비책이 없습니다. `dvh` 를 모르는 브라우저는 이 선언을 통째로\n버려 높이 상한이 사라집니다. 보드(90~91행)에는 이미 같은 대비책이 들어가 있습니다.\n\n→ 바로 앞 줄에 `max-height: 90vh;` 를 두고, 그 뒤에 지금의 `90dvh` 줄을 남기십시오.\n   `style.css` 안에 같은 문제가 있는 다른 `dvh` 선언이 있으면 같은 방식으로 함께 고치십시오.\n\n## 검증 (이 명령이 통과해야 합니다)\n\n```bash\nnode --check projects/웹워들/web/js/ui.js && node --test projects/웹워들/tests/*.mjs && python3 -m unittest discover -s projects/웹워들/tests -p \"test_*.py\" && grep -q '90vh' projects/웹워들/web/css/style.css\n```\n\n## 읽지 말 것\n\n`AIMEM.md`, 저장소 최상위 `tools/`·`tests/`, 다른 프로젝트 폴더.\n\n## 보고\n\n첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` 중 하나만. 그 아래 네 줄 이내로 번호별로 무엇을 어떻게 고쳤는지와\n검증 명령의 마지막 줄을 적으십시오. 코드를 붙이지 마십시오.\n",
+   "verify": "node --check projects/웹워들/web/js/ui.js && node --test projects/웹워들/tests/*.mjs && python3 -m unittest discover -s projects/웹워들/tests -p \"test_*.py\" && grep -q '90vh' projects/웹워들/web/css/style.css",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-104-S4-a1-230052",
+     "started": "2026-11-10T23:00:52",
+     "ended": "2026-11-10T23:01:22",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n1. `ui.js`: 화면 키보드(`#keyboard`) 안의 버튼에 포커스가 있으면 `Enter` 를 가로채지 않고 버튼 자신의 click 에 맡깁니다. 보드나 바탕에서는 `Enter` 제출과 `Backspace` 삭제가 그대로이고, 모달 분기도 건드리지 않았습니다. `Space` 는 원래 가로채지 않아서 바꿀 게 없었습니다.\n2. `storage.js`: 연승 초기화 조건을 \"어제도 아니고 오늘도 아닐 때\"로 좁혔습니다. 같은 날 두 번째 기록이면 연승을 건드리지 않고, 나머지 통계는 전과 같습니다.\n3. `style.css`: `.modal-box` 의 `max-height: 90dvh` 앞에 `max-height: 90vh` 를 넣었습니다. 같은 문제가 있던 `dvh` 선언은 보드(90~91행)뿐이었고 거기엔 이미 대비책이 있었습니다.\n\n검증 명령 마지막 줄: 전체 명령이 통과했고 `OK` 가 출력됐습니다. node 테스트는 25건 모두 통과했고, `python3 -m unittest` 는 6건이 통과했습니다.\n\n참고: 실제 브라우저에서 `Tab` 으로 `Q` 키에 가서 `Enter` 를 누르는 동작은 돌려 보지 못했습니다. 코드와 기존 테스트로만 확인했습니다.",
+     "verify_rc": 0,
+     "verify_tail": "✔ ANSWERS 의 모든 낱말이 ALLOWED 안에 있다 (2.778103ms)\n✔ ANSWERS·ALLOWED 의 모든 낱말이 a-z 다섯 글자 (3.213103ms)\n✔ answerForDate(오늘) 은 ANSWERS 안의 낱말 (0.520801ms)\n✔ 독립 대조: 고정 시드 1,000쌍에서 scoreGuess 와 참조 구현이 같다 (23.544225ms)\n✔ 진짜 한 판: 틀린 추측 다섯 번 + 정답 → won, 공유 마지막 줄 🟩🟩🟩🟩🟩 (4.461604ms)\n✔ 저장·복원: 두 줄 둔 판을 toJSON → fromJSON 하면 이어서 둘 수 있다 (3.852904ms)\n✔ fromJSON: maxGuesses 99 는 6 으로 잡힌다 (7.953509ms)\n✔ fromJSON: answer 가 다섯 글자가 아니면 예외 (6.431807ms)\n✔ fromJSON: rows 의 한 줄이 모양에 안 맞으면 예외 (2.093302ms)\n✔ fromJSON: rows.length 가 maxGuesses 를 넘으면 예외 (1.373702ms)\n✔ fromJSON: 저장 status 를 믿지 않는다 - 이긴 rows + status:playing → won (4.445405ms)\n✔ fromJSON: current 에 이상한 글자가 있으면 빈 문자열 (6.904007ms)\n✔ recordResult: lastDay 로 끊긴 연승을 다시 시작하고, lastDay 없는 예전 값은 깎지 않는다 (2.837003ms)\n✔ 계약: ui.js 가 import 하는 game.js·storage.js 이름이 모두 export 되어 있다 (1.827502ms)\n✔ ui.js: 새 판에 알림을 비우고 하드 모드를 맞추며, 화면 키는 mousedown 으로만 포커스를 막는다 (1.033401ms)\n✔ style.css: 칸·키 글자색 열 조합과 dvh 대비 선언 (1.306301ms)\n✔ 상수: WORD_LENGTH === 5, MAX_GUESSES === 6 (2.898303ms)\n✔ scoreGuess 표 (1.772302ms)\n✔ keyboardState (0.764401ms)\n✔ hardModeViolation (0.656901ms)\n✔ 판 진행 (0.936801ms)\n✔ 지는 판 (0.708601ms)\n✔ shareText (0.761601ms)\n✔ 저장과 복원 (0.943201ms)\n✔ 날짜 (0.943901ms)\nℹ tests 25\nℹ suites 0\nℹ pass 25\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 183.102198\n......\n----------------------------------------------------------------------\nRan 6 tests in 0.009s\n\nOK\n"
+    }
+   ],
+   "max_attempts": 2
+  }
+ ],
+ "updated": "2026-11-10T23:01:24"
+}
