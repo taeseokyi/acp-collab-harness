@@ -3,7 +3,7 @@
 
 실행: python3 projects/VoxLog/tests/browser_voxlog.py
 서버는 이 검사가 임시 data 폴더로 직접 띄우고(subprocess) 끝나면 내린다.
-검사는 모두 40개입니다.
+검사는 모두 44개입니다.
 마지막 줄 `N/M 통과`, 하나라도 실패면 종료 코드 1.
 """
 import json
@@ -31,12 +31,14 @@ def free_port():
     return port
 
 
-def start_server(data_dir, token=None, stt_cmd=None):
+def start_server(data_dir, token=None, stt_cmd=None, llm_cmd=None, env_extra=None):
     port = free_port()
     env = dict(os.environ)
     env["VOXLOG_STT"] = "command"
     env["VOXLOG_STT_CMD"] = stt_cmd or "%s %s {wav}" % (sys.executable, HERE / "fake_stt.py")
-    env["VOXLOG_LLM_CMD"] = "%s %s" % (sys.executable, HERE / "fake_llm.py")
+    env["VOXLOG_LLM_CMD"] = llm_cmd or "%s %s" % (sys.executable, HERE / "fake_llm.py")
+    if env_extra:
+        env.update(env_extra)
     env.pop("VOXLOG_TOKEN", None)
     cmd = [sys.executable, str(ROOT / "serve.py"), "--host", "127.0.0.1", "--port", str(port),
            "--data", str(data_dir)]
@@ -70,6 +72,19 @@ def api_get(base, path, token=None):
     req = urllib.request.Request(base + path)
     if token:
         req.add_header("Authorization", "Bearer " + token)
+    return json.loads(urllib.request.urlopen(req, timeout=5).read().decode("utf-8"))
+
+
+def api_patch(base, rid, body):
+    req = urllib.request.Request(base + "/api/recordings/" + rid,
+                                 data=json.dumps(body).encode("utf-8"), method="PATCH")
+    req.add_header("Content-Type", "application/json")
+    return json.loads(urllib.request.urlopen(req, timeout=5).read().decode("utf-8"))
+
+
+def api_post_wav(base, path):
+    req = urllib.request.Request(base + "/api/recordings", data=Path(path).read_bytes(), method="POST")
+    req.add_header("Content-Type", "audio/wav")
     return json.loads(urllib.request.urlopen(req, timeout=5).read().decode("utf-8"))
 
 
@@ -123,6 +138,14 @@ def rec_cycle(page, seconds=2):
 
 def list_count(page):
     return page.locator("#list .rec-item").count()
+
+
+def detail_ready(page):
+    """상세의 첫 GET 이 끝나 편집 칸이 서버 값으로 채워졌는가(그 전에 타이프하면 덮어쓴다)."""
+    try:
+        return page.is_visible("#detail") and "불러오는 중" not in page.inner_text("#detail-meta")
+    except Exception:  # noqa: BLE001 - 아직 없으면 아직 아님
+        return False
 
 
 def open_tab(page, name):
@@ -1374,6 +1397,444 @@ def run_all(browser, base, data, tmp, procs):
         finally:
             c.close()
     check("40 pageshow 는 bfcache 복원(persisted)일 때만 초안 회수", t40)
+
+    def t42():
+        # 이름·태그 저장 → 목록 이름·칩 2개+`+N`, 칩 거르기·풀기, 이름 검색, 다시 받아쓰기 뒤 이름 유지,
+        # 320px 넘침·겹침, 받아쓰는 중 폴링이 쓰던 입력 보존, 격리 출처에서 편집 칸 숨김
+        stt_file = tmp / "t42-stt.txt"
+        stt_file.write_text("첫 받아쓰기", encoding="utf-8")
+        stt_py = "print(open(%r, encoding='utf-8').read(), end='')" % str(stt_file)
+        b, _ = new_server("d42", stt_cmd="%s -c %s" % (sys.executable, shlex.quote(stt_py)))
+        c = new_ctx()
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        rec_cycle(pg)
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 20, pg=pg), "목록 항목이 생기지 않음")
+        need(wait_for(lambda: pg.locator("#list .rec-item .status").first.inner_text().strip() == "완료", 20, pg=pg),
+             "받아쓰기가 끝나지 않음")
+        rid = server_items(b)[0]["id"]
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["autotag"] == "done", 20),
+             "자동 태그가 끝나기 전이라 사람 편집이 자동 태그에 덮일 수 있음")
+        label = "가" * 40
+        tags = ["태그%02d" % i for i in range(1, 11)]
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.is_visible("#detail-edit") and detail_ready(pg), 10, pg=pg),
+             "상세 편집 칸이 보이지 않거나 첫 읽기가 끝나지 않음")
+        pg.fill("#detail-label", label)
+        pg.fill("#detail-tags", ", ".join(tags))
+        pg.click("#detail-save")
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["label"] == label, 10, pg=pg),
+             "이름이 저장되지 않음: %r" % api_get(b, "/api/recordings/" + rid)["label"])
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["tags"] == tags, 10, pg=pg),
+             "태그가 저장되지 않음: %r" % api_get(b, "/api/recordings/" + rid)["tags"])
+
+        # 거르기가 실제로 거르는지 보려면 태그가 다른 녹취가 하나 더 있어야 한다
+        wav = tmp / "t42-second.wav"
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+                        "-i", "sine=frequency=440:duration=1", "-c:a", "pcm_s16le", str(wav)],
+                       check=True, capture_output=True)
+        rid2 = api_post_wav(b, wav)["id"]
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid2)["status"] == "done", 20),
+             "두 번째 녹취가 받아쓰기되지 않음")
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid2)["autotag"] == "done", 20),
+             "두 번째 녹취의 자동 태그가 끝나지 않음")
+        api_patch(b, rid2, {"label": "다른 녹취", "tags": ["다른태그"]})
+        pg.click("#detail-close")
+        open_tab(pg, "rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 2, 10, pg=pg), "목록이 2개가 아님: %d" % list_count(pg))
+
+        item = pg.locator("#list .rec-item[data-id='%s']" % rid)
+        got_text = item.locator(".rec-text").inner_text().strip()
+        need(got_text == label, "목록 제목이 이름이 아님: %r" % got_text)
+        chips = item.locator(".rec-tags .tag-chip")
+        need(chips.count() == 3, "목록 칩 %d개 (칩 2개+`+N` 기대)" % chips.count())
+        got_chips = [chips.nth(i).inner_text() for i in range(3)]
+        need(got_chips == [tags[0], tags[1], "+8"], "목록 칩 글자가 다름: %r" % got_chips)
+
+        chips.first.click()
+        need(wait_for(lambda: pg.is_visible("#tag-filter-row"), 5, pg=pg), "칩 클릭 뒤 #tag-filter-row 가 보이지 않음")
+        need(wait_for(lambda: list_count(pg) == 1, 10, pg=pg), "칩 거르기 뒤 목록 %d개 (기대 1)" % list_count(pg))
+        need(pg.locator("#list .rec-item").first.get_attribute("data-id") == rid,
+             "거른 목록이 그 태그 녹취가 아님")
+        need(pg.is_hidden("#detail"), "목록 칩 클릭이 상세를 엶")
+        need(tags[0] in pg.inner_text("#tag-filter-label"),
+             "#tag-filter-label 에 태그가 없음: " + pg.inner_text("#tag-filter-label"))
+        pg.click("#tag-filter-clear")
+        need(wait_for(lambda: pg.is_hidden("#tag-filter-row"), 5, pg=pg), "거르기 풀기 뒤 #tag-filter-row 가 숨지 않음")
+        need(wait_for(lambda: list_count(pg) == 2, 10, pg=pg), "거르기 푼 뒤 목록 %d개 (기대 2)" % list_count(pg))
+
+        pg.fill("#search", label)
+        need(wait_for(lambda: list_count(pg) == 1, 10, pg=pg), "이름 검색 결과 %d개 (기대 1)" % list_count(pg))
+        match = pg.locator("#list .rec-item .rec-match").first.inner_text().strip()
+        need(match == "이름에서 맞음", "이름에서 맞음 표시가 없음: %r" % match)
+        pg.fill("#search", "")
+        need(wait_for(lambda: list_count(pg) == 2, 10, pg=pg), "검색을 지운 뒤 목록이 2개가 아님")
+
+        # 다시 받아쓰기: 글은 바뀌고 이름·태그는 남아야 한다
+        stt_file.write_text("두번째 받아쓰기", encoding="utf-8")
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid).click()
+        need(wait_for(lambda: pg.is_visible("#detail-edit") and detail_ready(pg), 10, pg=pg),
+             "상세 편집 칸이 보이지 않거나 첫 읽기가 끝나지 않음(다시 받아쓰기)")
+        pg.click("#detail-retry")
+        need(wait_for(lambda: "두번째 받아쓰기" in pg.inner_text("#transcript"), 30, pg=pg),
+             "다시 받아쓰기 결과가 글에 반영되지 않음: " + pg.inner_text("#transcript")[:60])
+        need(wait_for(lambda: pg.inner_text("#detail-title").strip() == label, 10, pg=pg),
+             "다시 받아쓰기 뒤 상세 제목이 이름이 아님: " + pg.inner_text("#detail-title"))
+        got = api_get(b, "/api/recordings/" + rid)
+        need(got["label"] == label and got["tags"] == tags,
+             "다시 받아쓰기 뒤 이름·태그가 바뀜: %r / %r" % (got["label"], got["tags"]))
+
+        # 받아쓰는 중 폴링이 쓰던 입력칸을 지우지 않아야 한다
+        slow = "%s -c %s" % (sys.executable, shlex.quote("import time; time.sleep(6); print('느린 받아쓰기')"))
+        b2, _ = new_server("d42b", stt_cmd=slow)
+        c2 = new_ctx()
+        pg2 = c2.new_page()
+        detail_hits = {"n": 0}
+
+        def count_detail_get(r):
+            if "/api/recordings/r-" in r.url and "?" not in r.url:
+                detail_hits["n"] += 1
+        pg2.on("request", count_detail_get)
+        pg2.goto(b2 + "/")
+        pg2.wait_for_selector("#rec")
+        rec_cycle(pg2)
+        open_tab(pg2, "list")
+        need(wait_for(lambda: list_count(pg2) == 1, 15, pg=pg2), "느린 서버에서 목록 항목이 없음")
+        pg2.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg2.is_visible("#detail-edit") and detail_ready(pg2), 10, pg=pg2),
+             "느린 서버 상세 편집 칸이 보이지 않거나 첫 읽기가 끝나지 않음")
+        pg2.fill("#detail-label", "쓰던 이름")
+        pg2.fill("#detail-tags", "쓰던, 태그")
+        pg2.evaluate("document.activeElement && document.activeElement.blur()")
+        start_hits = detail_hits["n"]
+        need(wait_for(lambda: detail_hits["n"] > start_hits, 15, pg=pg2),
+             "받아쓰는 동안 상세를 다시 읽지 않아(폴링 없음) 입력 보존을 잴 수 없음")
+        need(pg2.input_value("#detail-label") == "쓰던 이름",
+             "폴링이 쓰던 이름을 지움: %r" % pg2.input_value("#detail-label"))
+        need(pg2.input_value("#detail-tags") == "쓰던, 태그",
+             "폴링이 쓰던 태그를 지움: %r" % pg2.input_value("#detail-tags"))
+        c2.close()
+
+        # 320px: 이름 40자·태그 10개 표본에서 칩이 컨테이너를 넘지 않고, 편집 칸이 오디오·글과 겹치지 않는다
+        c3 = new_ctx(viewport={"width": 320, "height": 800})
+        p3 = c3.new_page()
+        p3.goto(b + "/")
+        p3.wait_for_selector("#rec")
+        open_tab(p3, "list")
+        need(wait_for(lambda: p3.locator("#list .rec-item").count() == 2, 10, pg=p3), "320px 목록이 2개가 아님")
+        sw, iw = p3.evaluate("[document.documentElement.scrollWidth, window.innerWidth]")
+        need(sw <= iw + 1, "320px 목록에서 가로 넘침 %d>%d" % (sw, iw))
+        lboxes = p3.evaluate("""(rid) => {
+            var li = document.querySelector("#list .rec-item[data-id='" + rid + "'] .rec-tags");
+            return {box: li.getBoundingClientRect().toJSON(),
+                    chips: Array.from(li.querySelectorAll('.tag-chip')).map(function (e) {
+                        return e.getBoundingClientRect().toJSON(); }) };
+        }""", rid)
+        for i, box in enumerate(lboxes["chips"]):
+            need(box["right"] <= lboxes["box"]["right"] + 1, "320px 목록 칩 %d 가 컨테이너 밖: %r" % (i, lboxes))
+            need(box["left"] >= lboxes["box"]["left"] - 1, "320px 목록 칩 %d 가 컨테이너 왼쪽 밖" % i)
+        p3.locator("#list .rec-item[data-id='%s'] .rec-main" % rid).click()
+        need(wait_for(lambda: p3.is_visible("#detail-edit") and p3.locator("#detail-chips .tag-chip").count() == 10, 10, pg=p3),
+             "320px 상세 편집 칸이 보이지 않거나 칩 10개가 그려지지 않음: %d" % p3.locator("#detail-chips .tag-chip").count())
+        boxes = p3.evaluate("""() => {
+            var r = function (sel) { var e = document.querySelector(sel); return e ? e.getBoundingClientRect().toJSON() : null; };
+            return {edit: r('#detail-edit'), audio: r('#detail-audio'), tr: r('#transcript'),
+                    chipsBox: r('#detail-chips'), labelW: r('#detail-label').width, editW: r('#detail-edit').width,
+                    chips: Array.from(document.querySelectorAll('#detail-chips .tag-chip')).map(function (e) {
+                        return e.getBoundingClientRect().toJSON(); }) };
+        }""")
+        need(len(boxes["chips"]) == 10, "320px 상세 칩 %d개 (기대 10)" % len(boxes["chips"]))
+        for i, box in enumerate(boxes["chips"]):
+            need(box["right"] <= boxes["chipsBox"]["right"] + 1,
+                 "320px 상세 칩 %d 가 컨테이너 밖: right %s > %s" % (i, box["right"], boxes["chipsBox"]["right"]))
+        need(boxes["labelW"] <= boxes["editW"] + 1, "320px 이름 입력칸이 편집 칸보다 넓음")
+        need(not overlap(boxes["edit"], boxes["audio"]), "320px #detail-edit 과 #detail-audio 가 겹침")
+        need(not overlap(boxes["edit"], boxes["tr"]), "320px #detail-edit 과 #transcript 가 겹침")
+        sw, iw = p3.evaluate("[document.documentElement.scrollWidth, window.innerWidth]")
+        need(sw <= iw + 1, "320px 상세에서 가로 넘침 %d>%d" % (sw, iw))
+        c3.close()
+
+        # 격리된 출처 흉내: 편집 칸은 숨고 칩은 그대로 보인다
+        c4 = new_ctx()
+        c4.add_init_script("Object.defineProperty(window, 'indexedDB', {configurable: true, get() { throw new Error('denied'); }})")
+        p4 = c4.new_page()
+        p4.goto(b + "/")
+        p4.wait_for_selector("#rec")
+        open_tab(p4, "list")
+        need(wait_for(lambda: p4.locator("#list .rec-item").count() == 2, 10, pg=p4), "격리 출처에서 목록이 읽히지 않음")
+        p4.locator("#list .rec-item[data-id='%s'] .rec-main" % rid).click()
+        need(wait_for(lambda: p4.is_visible("#detail"), 5, pg=p4), "격리 출처에서 상세가 열리지 않음")
+        time.sleep(0.5)
+        need(p4.is_hidden("#detail-edit"), "격리 출처인데 #detail-edit 이 보임")
+        need(p4.locator("#detail-chips .tag-chip").count() == 10, "격리 출처에서 칩이 보이지 않음")
+        c4.close()
+        c.close()
+    check("42 이름·태그 저장·칩·거르기·이름 검색·다시 받아쓰기·320px·폴링 입력·격리 편집 숨김", t42)
+
+    def t43():
+        # 자동 태그: 점선 AI 칩, 사람이 지운 태그 보호, '태그 다시 달기', LLM 실패 때 조용한 표시
+        stt_file = tmp / "t43-stt.txt"
+        stt_file.write_text("회의 녹취", encoding="utf-8")
+        stt_py = "print(open(%r, encoding='utf-8').read(), end='')" % str(stt_file)
+        stt_cmd = "%s -c %s" % (sys.executable, shlex.quote(stt_py))
+        llm_py = ("import sys, time; sys.stdin.read(); time.sleep(1.5); "
+                  "sys.stdout.write('회의\\n가짜 태그\\n- 세번째')")
+        llm_cmd = "%s -c %s" % (sys.executable, shlex.quote(llm_py))
+        b, _ = new_server("d43", stt_cmd=stt_cmd, llm_cmd=llm_cmd)
+        c = new_ctx()
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        rec_cycle(pg)
+        open_tab(pg, "list")
+        need(wait_for(lambda: len(server_items(b)) == 1, 25, pg=pg),
+             "녹음이 서버에 올라가지 않음(대기 %s, 실패 칸 %r)" % (queue_n(pg), pg.inner_text("#failed-list")))
+        need(wait_for(lambda: list_count(pg) == 1, 15, pg=pg), "목록 항목이 생기지 않음")
+        rid = server_items(b)[0]["id"]
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["autotag"] == "pending", 20),
+             "받아쓰기 뒤 자동 태그가 pending 이 되지 않음")
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["autotag"] == "done", 20),
+             "자동 태그가 끝나지 않음")
+        it = api_get(b, "/api/recordings/" + rid)
+        need(it["status"] == "done", "자동 태그가 받아쓰기 상태를 바꿈: " + it["status"])
+        need(it["tags"] == ["회의", "가짜 태그", "세번째"], "자동 태그가 아님: %r" % it["tags"])
+        need(it["tags_auto"] == it["tags"], "자동 태그가 tags_auto 에 없음: %r" % it["tags_auto"])
+
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.locator("#detail-chips .tag-chip").count() == 3 and detail_ready(pg), 10, pg=pg),
+             "상세 칩이 3개가 아니거나 첫 읽기가 끝나지 않음: %d" % pg.locator("#detail-chips .tag-chip").count())
+        ai = pg.evaluate("""() => Array.from(document.querySelectorAll('#detail-chips .tag-chip')).map(function (e) {
+            return {text: e.textContent, auto: e.classList.contains('tag-auto'), title: e.title,
+                    style: getComputedStyle(e).borderTopStyle, visible: e.getBoundingClientRect().width > 0};
+        })""")
+        need([x["text"] for x in ai] == ["회의", "가짜 태그", "세번째"], "상세 칩 글자가 다름: %r" % ai)
+        need(all(x["auto"] and x["style"] == "dashed" and x["title"] == "AI 가 단 태그" and x["visible"] for x in ai),
+             "AI 칩이 점선·title·보임이 아님: %r" % ai)
+
+        # 사람이 '회의' 를 지우고 저장하면 tags_human=true, 남긴 AI 태그 표시는 유지
+        pg.fill("#detail-tags", "가짜 태그, 세번째, 사람태그")
+        pg.click("#detail-save")
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["tags"] == ["가짜 태그", "세번째", "사람태그"], 10, pg=pg),
+             "사람이 고친 태그가 저장되지 않음: %r" % api_get(b, "/api/recordings/" + rid)["tags"])
+        it = api_get(b, "/api/recordings/" + rid)
+        need(it["tags_human"] is True, "태그를 고쳤는데 tags_human 이 아님")
+        need(it["tags_auto"] == ["가짜 태그", "세번째"], "남긴 AI 태그 표시가 아님: %r" % it["tags_auto"])
+
+        # 다시 받아쓰기 뒤에도 사람이 지운 '회의' 가 돌아오지 않는다.
+        # 자동 태그는 상세 폴링보다 먼저 끝나므로 pending 은 재받아쓰기 직후에 잡는다.
+        stt_file.write_text("다시 받아쓴 회의", encoding="utf-8")
+        pg.click("#detail-retry")
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["autotag"] == "pending", 15),
+             "다시 받아쓰기 뒤 자동 태그가 다시 돌지 않음")
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["autotag"] == "done", 20),
+             "다시 받아쓰기 뒤 자동 태그가 끝나지 않음")
+        need(wait_for(lambda: "다시 받아쓴 회의" in pg.inner_text("#transcript"), 30, pg=pg),
+             "다시 받아쓰기 결과가 글에 반영되지 않음")
+        it = api_get(b, "/api/recordings/" + rid)
+        need(it["status"] == "done", "다시 받아쓰기 뒤 상태가 완료가 아님: " + it["status"])
+        need(it["tags"] == ["가짜 태그", "세번째", "사람태그"],
+             "사람 손댐 뒤 자동 태그가 태그를 바꿈: %r" % it["tags"])
+        need("회의" not in it["tags"], "사람이 지운 '회의' 가 다시 붙음: %r" % it["tags"])
+        need(wait_for(lambda: "회의" not in pg.evaluate("document.querySelector('#detail-chips').innerText"), 10, pg=pg),
+             "상세 칩에 지운 '회의' 가 남음")
+
+        # '태그 다시 달기': 사람 태그는 남고 예전 AI 태그만 새 AI 태그로
+        need(wait_for(lambda: pg.is_visible("#detail-retag"), 10, pg=pg), "'태그 다시 달기' 가 보이지 않음")
+        pg.click("#detail-retag")
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["autotag"] == "pending", 15),
+             "'태그 다시 달기' 가 pending 을 만들지 않음")
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["autotag"] == "done", 20),
+             "'태그 다시 달기' 가 끝나지 않음")
+        it = api_get(b, "/api/recordings/" + rid)
+        need(it["tags"] == ["사람태그", "회의", "가짜 태그", "세번째"],
+             "다시 달기 결과가 사람 태그 먼저 + 새 AI 태그가 아님: %r" % it["tags"])
+        need(it["tags_auto"] == ["회의", "가짜 태그", "세번째"], "다시 달기 AI 표시가 아님: %r" % it["tags_auto"])
+        need(it["tags_human"] is True, "'태그 다시 달기' 가 tags_human 을 바꿈")
+        need(wait_for(lambda: "회의" in pg.evaluate("document.querySelector('#detail-chips').innerText"), 10, pg=pg),
+             "다시 달기 뒤 상세 칩에 '회의' 가 없음")
+        auto = pg.evaluate("""() => Array.from(document.querySelectorAll('#detail-chips .tag-chip'))
+            .filter(function (e) { return e.classList.contains('tag-auto'); }).map(function (e) { return e.textContent; })""")
+        need(auto == ["회의", "가짜 태그", "세번째"], "다시 달기 뒤 AI 칩 표시가 다름: %r" % auto)
+        c.close()
+
+        # LLM 실패: 녹취는 done, 태그 없음, 상세에 작은 실패 안내만
+        b2, _ = new_server("d43b", env_extra={"FAKE_LLM_FAIL": "1"})
+        c2 = new_ctx()
+        p2 = c2.new_page()
+        p2.goto(b2 + "/")
+        p2.wait_for_selector("#rec")
+        rec_cycle(p2)
+        open_tab(p2, "list")
+        need(wait_for(lambda: len(server_items(b2)) == 1, 25, pg=p2),
+             "실패 LLM 서버에 녹음이 올라가지 않음(대기 %s)" % queue_n(p2))
+        need(wait_for(lambda: p2.locator("#list .rec-item").count() == 1, 15, pg=p2), "실패 LLM 서버에서 목록 항목이 없음")
+        rid2 = server_items(b2)[0]["id"]
+        need(wait_for(lambda: api_get(b2, "/api/recordings/" + rid2)["status"] == "done", 20),
+             "LLM 실패가 받아쓰기 상태를 바꿈: " + api_get(b2, "/api/recordings/" + rid2)["status"])
+        need(wait_for(lambda: api_get(b2, "/api/recordings/" + rid2)["autotag"] == "failed", 20),
+             "자동 태그가 failed 가 아님: %r" % api_get(b2, "/api/recordings/" + rid2)["autotag"])
+        it2 = api_get(b2, "/api/recordings/" + rid2)
+        need(it2["tags"] == [], "자동 태그 실패인데 태그가 생김: %r" % it2["tags"])
+        p2.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: p2.inner_text("#detail-tag-state").strip() == "자동 태그를 달지 못했습니다", 10, pg=p2),
+             "실패 안내가 없음: %r" % p2.inner_text("#detail-tag-state"))
+        need(p2.locator("#detail-chips .tag-chip").count() == 0, "자동 태그 실패인데 상세에 칩이 있음")
+        c2.close()
+    check("43 자동 태그 점선 칩·사람 손댐 보호·태그 다시 달기·LLM 실패 표시", t43)
+
+    def t44():
+        # LLM 없음: 자동 태그 칩 없음·'태그 다시 달기' 숨김, 손 이름·태그·검색·거르기는 그대로
+        missing = str(tmp / "no-such-llm-command")
+        b, _ = new_server("d44", llm_cmd=missing)
+        health = api_get(b, "/api/health")
+        need(health["llm"] is False, "LLM 없는 서버인데 health llm 이 참: %r" % health)
+        c = new_ctx()
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        rec_cycle(pg)
+        open_tab(pg, "list")
+        need(wait_for(lambda: len(server_items(b)) == 1, 25, pg=pg),
+             "LLM 없는 서버에 녹음이 올라가지 않음(대기 %s)" % queue_n(pg))
+        need(wait_for(lambda: list_count(pg) == 1, 15, pg=pg), "LLM 없는 서버에서 목록 항목이 없음")
+        need(wait_for(lambda: pg.locator("#list .rec-item .status").first.inner_text().strip() == "완료", 20, pg=pg),
+             "LLM 없는 서버에서 받아쓰기가 끝나지 않음")
+        rid = server_items(b)[0]["id"]
+        time.sleep(1.0)
+        it = api_get(b, "/api/recordings/" + rid)
+        need(it["tags"] == [] and it["tags_auto"] == [] and it["autotag"] is None,
+             "LLM 없이 자동 태그가 생김: %r" % it)
+        need(pg.locator("#list .rec-tags .tag-chip").count() == 0, "LLM 없이 목록에 태그 칩이 생김")
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.is_visible("#detail-edit") and detail_ready(pg), 10, pg=pg),
+             "LLM 없이 편집 칸이 숨거나 첫 읽기가 끝나지 않음")
+        need(pg.locator("#detail-chips .tag-chip").count() == 0, "LLM 없이 상세에 자동 태그 칩이 생김")
+        need(pg.is_hidden("#detail-retag"), "LLM 없는데 '태그 다시 달기' 가 보임")
+
+        pg.fill("#detail-label", "손으로 붙인 이름")
+        pg.fill("#detail-tags", "손태그, 둘째")
+        pg.click("#detail-save")
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["label"] == "손으로 붙인 이름", 10, pg=pg),
+             "LLM 없이 손 이름이 저장되지 않음")
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["tags"] == ["손태그", "둘째"], 10, pg=pg),
+             "LLM 없이 손 태그가 저장되지 않음: %r" % api_get(b, "/api/recordings/" + rid)["tags"])
+        pg.click("#detail-close")
+        need(wait_for(lambda: pg.locator("#list .rec-item .rec-text").first.inner_text().strip() == "손으로 붙인 이름", 10, pg=pg),
+             "LLM 없이 목록 제목이 손 이름이 아님")
+
+        pg.fill("#search", "손으로 붙인")
+        need(wait_for(lambda: list_count(pg) == 1 and
+                      pg.locator("#list .rec-item .rec-match").first.inner_text().strip() == "이름에서 맞음", 10, pg=pg),
+             "LLM 없이 이름 검색이 안 됨")
+        pg.fill("#search", "")
+        need(wait_for(lambda: list_count(pg) == 1, 10, pg=pg), "검색을 지운 뒤 목록이 1개가 아님")
+        pg.locator("#list .rec-item .rec-tags .tag-chip").first.click()
+        need(wait_for(lambda: pg.is_visible("#tag-filter-row"), 5, pg=pg), "LLM 없이 태그 거르기가 안 됨")
+        need(wait_for(lambda: list_count(pg) == 1, 10, pg=pg), "거른 목록이 1개가 아님")
+        need(pg.locator("#list .rec-item .rec-tags .tag-chip").count() == 2, "LLM 없이 손 태그 칩이 2개가 아님")
+        pg.click("#tag-filter-clear")
+        need(wait_for(lambda: pg.is_hidden("#tag-filter-row"), 5, pg=pg), "거르기 풀기가 안 됨")
+        c.close()
+    check("44 LLM 없음: 자동 태그 칩·다시 달기 숨김, 손 편집·검색·거르기는 그대로", t44)
+
+    def t45():
+        # R49-N1: 이름만 저장해도 자동 태그가 이어짐(태그를 사람 손댐으로 치지 않음)·pending 중 이름 저장에도 AI 태그가 붙음
+        def chips_of(pg):
+            return pg.evaluate("""() => Array.from(document.querySelectorAll('#detail-chips .tag-chip'))
+                .map(function (e) { return {text: e.textContent, auto: e.classList.contains('tag-auto')}; })""")
+
+        b, _ = new_server("d45", env_extra={"FAKE_LLM_TAG_DELAY": "1.5"})
+        c = new_ctx()
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        rec_cycle(pg)
+        open_tab(pg, "list")
+        need(wait_for(lambda: len(server_items(b)) == 1, 25, pg=pg),
+             "녹음이 서버에 올라가지 않음(대기 %s, 실패 칸 %r)" % (queue_n(pg), pg.inner_text("#failed-list")))
+        need(wait_for(lambda: list_count(pg) == 1, 15, pg=pg), "목록 항목이 생기지 않음")
+        rid = server_items(b)[0]["id"]
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["autotag"] == "done", 25),
+             "자동 태그가 끝나지 않음")
+        it = api_get(b, "/api/recordings/" + rid)
+        need(it["tags"] == ["회의", "가짜 태그", "세번째"], "처음 자동 태그가 아님: %r" % it["tags"])
+        need(it["tags_auto"] == it["tags"] and it["tags_human"] is False, "처음 태그 상태가 다름: %r" % it)
+
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.locator("#detail-chips .tag-chip").count() == 3 and detail_ready(pg), 10, pg=pg),
+             "상세 칩이 3개가 아니거나 첫 읽기가 끝나지 않음: %d" % pg.locator("#detail-chips .tag-chip").count())
+        chips = chips_of(pg)
+        need([x["text"] for x in chips] == ["회의", "가짜 태그", "세번째"] and all(x["auto"] for x in chips),
+             "처음 AI 칩 표시가 아님: %r" % chips)
+
+        # (1) 이름만 바꿔 저장: 서버 태그 상태는 그대로(tags_human=false), 칩은 여전히 AI 표시
+        pg.fill("#detail-label", "이름만 바꾼 녹취")
+        pg.click("#detail-save")
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["label"] == "이름만 바꾼 녹취", 10, pg=pg),
+             "이름이 저장되지 않음")
+        it = api_get(b, "/api/recordings/" + rid)
+        need(it["tags_human"] is False, "이름만 고쳤는데 tags_human 이 참이 됨: %r" % it)
+        need(it["tags"] == ["회의", "가짜 태그", "세번째"] and it["tags_auto"] == it["tags"],
+             "이름만 고쳤는데 태그가 바뀜: %r" % it)
+        chips = chips_of(pg)
+        need([x["text"] for x in chips] == ["회의", "가짜 태그", "세번째"] and all(x["auto"] for x in chips),
+             "이름만 저장한 뒤 AI 칩 표시가 사라짐: %r" % chips)
+
+        # 그 뒤 다시 받아쓰기 → 자동 태그가 다시 돌고 AI 칩이 유지된다
+        pg.click("#detail-retry")
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["autotag"] == "pending", 15),
+             "다시 받아쓰기 뒤 자동 태그가 다시 돌지 않음")
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["autotag"] == "done", 25),
+             "다시 받아쓰기 뒤 자동 태그가 끝나지 않음")
+        it = api_get(b, "/api/recordings/" + rid)
+        need(it["status"] == "done", "다시 받아쓰기 뒤 상태가 완료가 아님: " + it["status"])
+        need(it["tags_human"] is False, "다시 받아쓰기 뒤 tags_human 이 참: %r" % it)
+        need(it["tags"] == ["회의", "가짜 태그", "세번째"] and it["tags_auto"] == it["tags"],
+             "다시 받아쓰기 뒤 AI 태그가 아님: %r" % it)
+        need(wait_for(lambda: pg.locator("#detail-chips .tag-chip.tag-auto").count() == 3, 15, pg=pg),
+             "다시 받아쓰기 뒤 AI 칩이 3개가 아님: %r" % chips_of(pg))
+        c.close()
+
+        # (2) 자동 태그가 pending 인 동안 이름만 저장: 곧 도착할 AI 태그가 버려지지 않는다
+        b2, _ = new_server("d45b", env_extra={"FAKE_LLM_TAG_DELAY": "4"})
+        c2 = new_ctx()
+        p2 = c2.new_page()
+        p2.goto(b2 + "/")
+        p2.wait_for_selector("#rec")
+        rec_cycle(p2)
+        open_tab(p2, "list")
+        need(wait_for(lambda: len(server_items(b2)) == 1, 25, pg=p2),
+             "pending 서버에 녹음이 올라가지 않음(대기 %s)" % queue_n(p2))
+        rid2 = server_items(b2)[0]["id"]
+        need(wait_for(lambda: api_get(b2, "/api/recordings/" + rid2)["autotag"] == "pending", 20, pg=p2),
+             "자동 태그가 pending 이 되지 않음")
+        need(wait_for(lambda: list_count(p2) == 1, 10, pg=p2), "pending 서버에서 목록 항목이 없음")
+        p2.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: detail_ready(p2), 10, pg=p2), "상세 첫 읽기가 끝나지 않음")
+        need(p2.locator("#detail-chips .tag-chip").count() == 0,
+             "pending 인데 상세에 칩이 있음: %r" % chips_of(p2))
+        p2.fill("#detail-label", "기다리며 붙인 이름")
+        p2.click("#detail-save")
+        need(wait_for(lambda: api_get(b2, "/api/recordings/" + rid2)["label"] == "기다리며 붙인 이름", 10, pg=p2),
+             "pending 중 이름이 저장되지 않음")
+        it2 = api_get(b2, "/api/recordings/" + rid2)
+        need(it2["tags_human"] is False, "pending 중 이름만 저장했는데 tags_human 이 참: %r" % it2)
+        need(it2["tags"] == [] and it2["tags_auto"] == [], "pending 중 이름만 저장했는데 태그가 생김: %r" % it2)
+        need(wait_for(lambda: api_get(b2, "/api/recordings/" + rid2)["autotag"] == "done", 25, pg=p2),
+             "지연 뒤 자동 태그가 끝나지 않음")
+        it2 = api_get(b2, "/api/recordings/" + rid2)
+        need(it2["tags"] == ["회의", "가짜 태그", "세번째"], "pending 중 저장한 뒤 AI 태그가 버려짐: %r" % it2["tags"])
+        need(it2["tags_auto"] == it2["tags"], "pending 중 저장한 뒤 AI 표시가 없음: %r" % it2["tags_auto"])
+        need(wait_for(lambda: p2.locator("#detail-chips .tag-chip.tag-auto").count() == 3, 25, pg=p2),
+             "pending 중 저장한 뒤 AI 칩이 보이지 않음: %r" % chips_of(p2))
+        chips = chips_of(p2)
+        need([x["text"] for x in chips] == ["회의", "가짜 태그", "세번째"] and all(x["auto"] for x in chips),
+             "pending 중 저장한 뒤 AI 칩 글자·표시가 다름: %r" % chips)
+        c2.close()
+    check("45 이름만 저장해도 자동 태그가 이어짐 · pending 중 이름 저장에도 AI 태그가 붙음", t45)
 
 
 if __name__ == "__main__":

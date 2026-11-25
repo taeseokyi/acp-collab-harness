@@ -331,10 +331,11 @@ class _JobRef:
 class Transcriber:
     """데몬 스레드 하나로 큐를 차례로 처리한다."""
 
-    def __init__(self, store, env=None, transcribe_fn=transcribe):
+    def __init__(self, store, env=None, transcribe_fn=transcribe, on_done=None):
         self.store = store
         self.env = env
         self.transcribe_fn = transcribe_fn
+        self.on_done = on_done
         self._queue = queue.Queue()
         self._seen = set()
         self._active = set()
@@ -429,3 +430,8 @@ class Transcriber:
             self.store.set_status(rid, "failed", _short(exc))
         else:
             self.store.set_transcript(rid, text)
+            if (text or "").strip() and self.on_done is not None:
+                try:
+                    self.on_done(rid)
+                except Exception:  # noqa: BLE001 - 받아쓰기 결과에는 영향이 없다
+                    pass

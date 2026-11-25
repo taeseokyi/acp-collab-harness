@@ -1,0 +1,4 @@
+G-017: 100.0%  남은 ETA 0s  상태 {'done': 3}
+  T-121  done     S2  시도 2  run T-121-S2-a2-040506  rc 0/0  browser_core: 뒤집기를 animationstart 로 진짜 증명 + 빈 all()·0.5s 박기 제거
+  T-122  done     S2  시도 1  run T-122-S2-a1-041145  rc 0/0  browser_ui: n번째 줄 승리 분포·통계 이름표·색약 hue·새로 고침 뒤 칠해진 색
+  T-123  done     S1  시도 1  run T-123-S1-a1-041737  rc 0/0  보드·통계·보기 설정 재검수 + tests/README.md 갱신

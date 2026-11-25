@@ -15,6 +15,8 @@ import secrets
 import tempfile
 import threading
 
+from .tags import tag_key, merge_tags
+
 MAX_AUDIO_BYTES = 50 * 1024 * 1024
 ALLOWED_MIME = {
     "audio/webm": "webm",
@@ -33,6 +35,21 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 _RECORD_STATUS = {"pending", "transcribing", "done", "failed", "no-stt"}
 _ANSWER_STATUS = {"done", "failed"}
+_AUTOTAG_STATES = {None, "pending", "done", "failed"}
+
+
+def _fill_meta_defaults(meta):
+    if "label" not in meta:
+        meta["label"] = ""
+    if "tags" not in meta:
+        meta["tags"] = []
+    if "tags_auto" not in meta:
+        meta["tags_auto"] = []
+    if "tags_human" not in meta:
+        meta["tags_human"] = False
+    if "autotag" not in meta:
+        meta["autotag"] = None
+    return meta
 
 
 def _now_iso():
@@ -348,6 +365,11 @@ class Store:
                 "title": "",
                 "chars": 0,
                 "location": _clean_location(location),
+                "label": "",
+                "tags": [],
+                "tags_auto": [],
+                "tags_human": False,
+                "autotag": None,
             }
             # 3) 잠금 안: 메타 쓰기만
             with self._lock:
@@ -374,13 +396,15 @@ class Store:
             if not isinstance(meta, dict):
                 return None
             out = dict(meta)
+            _fill_meta_defaults(out)
             if "location" not in out:
                 out["location"] = None
             out["transcript"] = self._read_transcript(meta)
             return out
 
-    def list(self, q=None, date_from=None, date_to=None, status=None, limit=200):
+    def list(self, q=None, date_from=None, date_to=None, status=None, limit=200, tag=None):
         ql = q.lower() if q else None
+        wanted_tag = tag_key(tag) if tag else None
         with self._lock:
             metas = list(self._iter_meta())
         # 글 읽기는 잠금 밖에서 (캐시가 (경로, mtime_ns, size) 로 새로 읽을지 정한다)
@@ -393,25 +417,41 @@ class Store:
                 continue
             if status and meta.get("status") != status:
                 continue
+            tags = meta.get("tags") or []
+            if wanted_tag is not None and not any(tag_key(t) == wanted_tag for t in tags):
+                continue
             text = self._cached_transcript(meta)
+            label = meta.get("label") or ""
+            title = meta.get("title") or ""
+            match = None
             if ql is not None:
-                title = meta.get("title") or ""
                 lowered = text.lower()
-                if ql not in lowered and ql not in title.lower():
-                    continue
-                idx = lowered.find(ql)
-                if idx >= 0:
-                    start = max(0, idx - 40)
-                    end = min(len(text), idx + len(q) + 40)
-                    snippet = text[start:end]
-                else:
+                if ql in lowered or ql in title.lower():
+                    match = "text"
+                    idx = lowered.find(ql)
+                    if idx >= 0:
+                        start = max(0, idx - 40)
+                        end = min(len(text), idx + len(q) + 40)
+                        snippet = text[start:end]
+                    else:
+                        snippet = text[:80]
+                elif ql in label.lower():
+                    match = "label"
                     snippet = text[:80]
+                elif any(ql in t.lower() for t in tags):
+                    match = "tag"
+                    snippet = text[:80]
+                else:
+                    continue
             else:
                 snippet = text[:80]
             item = dict(meta)
+            _fill_meta_defaults(item)
             if "location" not in item:
                 item["location"] = None
             item["snippet"] = snippet
+            if match is not None:
+                item["match"] = match
             items.append(item)
         items.sort(key=_sort_key, reverse=True)
         if limit is not None:
@@ -468,6 +508,61 @@ class Store:
             meta["status"] = "done"
             meta["error"] = None
             self._write_json(self._meta_path(rid), meta)
+
+    def set_label_tags(self, rid, patch):
+        with self._lock:
+            meta = self._load_meta(rid)
+            if "label" in patch:
+                meta["label"] = patch["label"]
+            if "tags" in patch:
+                new_tags = patch["tags"]
+                current = meta.get("tags") or []
+                if [tag_key(t) for t in new_tags] == [tag_key(t) for t in current]:
+                    pass                      # 태그가 그대로면 사람이 고친 것으로 치지 않는다
+                else:
+                    old_auto_keys = {tag_key(t) for t in (meta.get("tags_auto") or [])}
+                    meta["tags"] = new_tags
+                    meta["tags_auto"] = [t for t in new_tags if tag_key(t) in old_auto_keys]
+                    meta["tags_human"] = True
+            self._write_json(self._meta_path(rid), meta)
+
+    def set_auto_tags(self, rid, tags, manual=False):
+        with self._lock:
+            meta = self._load_meta(rid)
+            current = meta.get("tags") or []
+            old_auto = meta.get("tags_auto") or []
+            if not manual and meta.get("tags_human"):
+                meta["autotag"] = "done"
+                self._write_json(self._meta_path(rid), meta)
+                return False
+            if not manual:
+                tags = tags[:10]
+                meta["tags"] = tags
+                meta["tags_auto"] = tags
+            else:
+                old_auto_keys = {tag_key(t) for t in old_auto}
+                human = [t for t in current if tag_key(t) not in old_auto_keys]
+                human_keys = {tag_key(t) for t in human}
+                new_ai_keys = {tag_key(t) for t in tags}
+                merged = merge_tags(human, tags)
+                meta["tags"] = merged
+                meta["tags_auto"] = [t for t in merged
+                                     if tag_key(t) in new_ai_keys and tag_key(t) not in human_keys]
+            meta["autotag"] = "done"
+            self._write_json(self._meta_path(rid), meta)
+            return True
+
+    def set_autotag(self, rid, state):
+        if state not in _AUTOTAG_STATES:
+            raise ValueError("알 수 없는 자동 태그 상태입니다: " + str(state))
+        with self._lock:
+            meta = self._load_meta(rid)
+            meta["autotag"] = state
+            self._write_json(self._meta_path(rid), meta)
+
+    def autotag_pending_ids(self):
+        with self._lock:
+            return [m["id"] for m in self._iter_meta() if m.get("autotag") == "pending"]
 
     def pending_ids(self):
         with self._lock:

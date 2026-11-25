@@ -510,6 +510,100 @@ class TranscriberTest(unittest.TestCase):
         self.assertEqual(store.status_of(rid), "done")
         self.assertEqual(store.transcripts.get(rid), "받아 적음")
 
+    def test_on_done_called_only_after_successful_nonempty_save(self):
+        rid = "r-20260101-000000-onok"
+        store = self._store(rid)
+        done = []
+
+        def fake(path, mime, env):
+            return "받아 적음"
+
+        tr = stt.Transcriber(
+            store, env={}, transcribe_fn=fake, on_done=done.append
+        )
+        tr.start()
+        try:
+            self.assertTrue(wait_idle(tr))
+        finally:
+            tr.stop()
+        self.assertEqual(done, [rid])
+        self.assertEqual(store.status_of(rid), "done")
+        self.assertEqual(store.transcripts.get(rid), "받아 적음")
+
+    def test_on_done_not_called_for_empty_text(self):
+        rid = "r-20260101-000000-one0"
+        store = self._store(rid)
+        done = []
+        tr = stt.Transcriber(
+            store, env={}, transcribe_fn=lambda p, m, e: "", on_done=done.append
+        )
+        tr.start()
+        try:
+            self.assertTrue(wait_idle(tr))
+        finally:
+            tr.stop()
+        self.assertEqual(done, [])
+        self.assertEqual(store.status_of(rid), "done")
+        self.assertEqual(store.transcripts.get(rid), "")
+
+    def test_on_done_not_called_for_failed(self):
+        rid = "r-20260101-000000-onfl"
+        store = self._store(rid)
+        done = []
+
+        def fake(path, mime, env):
+            raise stt.SttError("변환 실패")
+
+        tr = stt.Transcriber(
+            store, env={}, transcribe_fn=fake, on_done=done.append
+        )
+        tr.start()
+        try:
+            self.assertTrue(wait_idle(tr))
+        finally:
+            tr.stop()
+        self.assertEqual(done, [])
+        self.assertEqual(store.status_of(rid), "failed")
+
+    def test_on_done_not_called_for_no_stt(self):
+        rid = "r-20260101-000000-onns"
+        store = self._store(rid)
+        done = []
+
+        def fake(path, mime, env):
+            raise stt.SttUnavailable("백엔드 없음")
+
+        tr = stt.Transcriber(
+            store, env={}, transcribe_fn=fake, on_done=done.append
+        )
+        tr.start()
+        try:
+            self.assertTrue(wait_idle(tr))
+        finally:
+            tr.stop()
+        self.assertEqual(done, [])
+        self.assertEqual(store.status_of(rid), "no-stt")
+
+    def test_on_done_exception_does_not_change_result(self):
+        rid = "r-20260101-000000-onrx"
+        store = self._store(rid)
+
+        def fake(path, mime, env):
+            return "받아 적음"
+
+        def boom(rid):
+            raise RuntimeError("콜백 실패")
+
+        tr = stt.Transcriber(store, env={}, transcribe_fn=fake, on_done=boom)
+        tr.start()
+        try:
+            self.assertTrue(wait_idle(tr))
+        finally:
+            tr.stop()
+        self.assertEqual(store.status_of(rid), "done")
+        self.assertEqual(store.transcripts.get(rid), "받아 적음")
+        self.assertIsNone(store.error_of(rid)[1])
+
     def test_marks_no_stt_when_unavailable(self):
         rid = "r-20260101-000000-bbbb"
         store = self._store(rid)

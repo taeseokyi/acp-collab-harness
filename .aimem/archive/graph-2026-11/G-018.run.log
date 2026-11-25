@@ -1,0 +1,3 @@
+G-018: 100.0%  남은 ETA 0s  상태 {'done': 2}
+  T-124  done     S2  시도 1  run T-124-S2-a1-042703  rc 0/0  browser_core: animationstart 기록에서 pop 거르기 + 옛 검사 이름 정직하게
+  T-125  done     S1  시도 1  run T-125-S1-a1-043311  rc 0/0  보드 목표 최종 확인 + tests/README.md 마무리

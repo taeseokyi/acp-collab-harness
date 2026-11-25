@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 
 def main():
@@ -9,6 +10,13 @@ def main():
     if os.environ.get("FAKE_LLM_FAIL") == "1":
         sys.stderr.write("가짜 실패")
         return 2
+    if data.startswith("이 녹취에 붙일 주제 태그"):
+        try:
+            time.sleep(float(os.environ.get("FAKE_LLM_TAG_DELAY", "0")))
+        except (ValueError, OverflowError):
+            pass
+        sys.stdout.write(os.environ.get("FAKE_LLM_TAGS", "회의\n가짜 태그\n- 세번째"))
+        return 0
     n = sum(1 for line in data.splitlines() if line.startswith("<녹취 "))
     sys.stdout.write("가짜 답: %d자를 읽었습니다 녹취 %d건\n" % (len(data), n))
     # 화면이 마크다운으로 그리는지 보는 본문 (HTML 은 글자로 남아야 한다)

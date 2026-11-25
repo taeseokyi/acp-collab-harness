@@ -287,3 +287,84 @@
 {"seq": 361, "at": "2026-11-11T02:06:10", "actor": "관리자", "rev": 150, "kind": "request", "body": "Q-261111-f77f PLANNED"}
 {"seq": 366, "at": "2026-11-11T02:08:36", "actor": "관리자", "rev": 150, "kind": "ownership", "body": "projects/웹워들/tests/browser_harness.py -> S3"}
 {"seq": 391, "at": "2026-11-11T04:43:30", "actor": "관리자", "rev": 150, "kind": "request", "body": "Q-261111-f77f DONE"}
+{"seq": 362, "at": "2026-11-11T02:06:10", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-115 ASSIGNED S2 browser_harness: shot() 뷰포트 스크린샷 선택지"}
+{"seq": 363, "at": "2026-11-11T02:06:10", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-116 ASSIGNED S2 browser_ui: 통계 목표 구멍 메우기 (서로 다른 네 값·진 판·끝난 판 새로 고침)"}
+{"seq": 364, "at": "2026-11-11T02:06:11", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-117 ASSIGNED S2 browser_ui: 보기 설정(색약 present 파랑·저장)과 접근성(대비 전면·어두움+색약·키보드 완주·aria-live)"}
+{"seq": 365, "at": "2026-11-11T02:06:11", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-118 ASSIGNED S3 browser_core: 뒤집기 애니메이션 실측·화면 ENTER/⌫ 누르기·키 색 안 내려감"}
+{"seq": 367, "at": "2026-11-11T02:36:52", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-119 ASSIGNED S1 웹워들 목표 넷 적대적 검수 + tests/README.md 갱신"}
+{"seq": 368, "at": "2026-11-11T03:30:03", "actor": "관리자", "rev": 150, "kind": "ownership", "body": "projects/웹워들/tests/browser_core.py -> S2"}
+{"seq": 369, "at": "2026-11-11T03:30:03", "actor": "관리자", "rev": 150, "kind": "ownership", "body": "projects/웹워들/tests/screenshots/core/** -> S2"}
+{"seq": 370, "at": "2026-11-11T03:30:03", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-118  S2"}
+{"seq": 371, "at": "2026-11-11T03:30:03", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-120 ASSIGNED S2 browser_ui 새 검사 둘의 결함 수정 (공유 단추는 창 안·busy 빈틈)"}
+{"seq": 372, "at": "2026-11-11T03:30:10", "actor": "관리자", "rev": 150, "kind": "graph", "body": "G-014/G-015 끝: T-115 done(shot 뷰포트). G-014 의 T-116·T-117·T-118 은 rc 0 이었으나 파일 미변경 - verify 가 느슨해 done 으로 샜다. G-015 재시도로 T-116(ui 59→75)·T-117(ui→133) 성공, T-118 은 S3 가 두 번 더 빈손 종료해 failed. 남은 일: 새 검사 둘 수정(T-120), T-118 S2 이관 재시도, T-119 검수."}
+{"seq": 373, "at": "2026-11-11T04:00:04", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-115 DONE"}
+{"seq": 374, "at": "2026-11-11T04:00:04", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-116 DONE"}
+{"seq": 375, "at": "2026-11-11T04:00:04", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-117 DONE"}
+{"seq": 376, "at": "2026-11-11T04:00:04", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-118 DONE"}
+{"seq": 377, "at": "2026-11-11T04:00:04", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-119 DONE"}
+{"seq": 378, "at": "2026-11-11T04:00:04", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-120 DONE"}
+{"seq": 379, "at": "2026-11-11T04:00:04", "actor": "관리자", "rev": 150, "kind": "graph", "body": "G-016 끝: T-120(ui 결함 둘 수정, 146/146 전부 초록)·T-118(S2 이관 성공, core 48→64)·T-119(S1 적대적 검수). 검수 판정: 접근성 닫힘, 보드·통계·보기 설정은 아직(목표 12/15). 남은 결함 셋 - animationName 은 키프레임 없어도 flip 으로 나옴 / 분포는 1줄 승리만 / 주황 r>g>b 가 노랑도 통과."}
+{"seq": 380, "at": "2026-11-11T04:02:32", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-121 ASSIGNED S2 browser_core: 뒤집기를 animationstart 로 진짜 증명 + 빈 all()·0.5s 박기 제거"}
+{"seq": 381, "at": "2026-11-11T04:02:32", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-122 ASSIGNED S2 browser_ui: n번째 줄 승리 분포·통계 이름표·색약 hue·새로 고침 뒤 칠해진 색"}
+{"seq": 382, "at": "2026-11-11T04:02:32", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-123 ASSIGNED S1 보드·통계·보기 설정 재검수 + tests/README.md 갱신"}
+{"seq": 383, "at": "2026-11-11T04:27:00", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-121 DONE"}
+{"seq": 384, "at": "2026-11-11T04:27:00", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-122 DONE"}
+{"seq": 385, "at": "2026-11-11T04:27:00", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-123 DONE"}
+{"seq": 386, "at": "2026-11-11T04:27:00", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-124 ASSIGNED S2 browser_core: animationstart 기록에서 pop 거르기 + 옛 검사 이름 정직하게"}
+{"seq": 387, "at": "2026-11-11T04:27:00", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-125 ASSIGNED S1 보드 목표 최종 확인 + tests/README.md 마무리"}
+{"seq": 388, "at": "2026-11-11T04:27:00", "actor": "관리자", "rev": 150, "kind": "graph", "body": "G-017 끝: T-121(core 뒤집기 animationstart)·T-122(ui 155/155)·T-123(S1 재검수). 통계·보기 설정·접근성 닫힘, 목표 14/15. 보드만 남음 - animationstart 기록이 pop 까지 세어 core 64/67. G-018 로 거르기만 고치면 끝."}
+{"seq": 389, "at": "2026-11-11T04:43:30", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-124 DONE"}
+{"seq": 390, "at": "2026-11-11T04:43:30", "actor": "관리자", "rev": 150, "kind": "task", "body": "T-125 DONE"}
+{"seq": 394, "at": "2026-11-11T06:18:54", "actor": "관리자 R10", "rev": 152, "kind": "request", "body": "Q-261111-5593 PLANNED"}
+{"seq": 395, "at": "2026-11-11T06:18:59", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-126 ASSIGNED S2 모니터: /app/<프로젝트>/ 정적 실행 경로 + app.json 선언 + 단위 시험"}
+{"seq": 396, "at": "2026-11-11T06:18:59", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-127 ASSIGNED S2 모니터 화면: 프로젝트 칸의 '실행' 단추 + 격리 iframe 패널 (sw v12)"}
+{"seq": 397, "at": "2026-11-11T06:18:59", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-128 ASSIGNED S2 브라우저 검증 스크립트 tests/browser_monitor_app.py"}
+{"seq": 398, "at": "2026-11-11T06:18:59", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-129 ASSIGNED S3 웹워들: app.json 선언 + README 실행 안내"}
+{"seq": 399, "at": "2026-11-11T06:18:59", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-130 ASSIGNED S1 적대적 검수: 경로 탈출·인증·CSP/sandbox·증거의 진위"}
+{"seq": 400, "at": "2026-11-11T06:19:04", "actor": "관리자 R10", "rev": 152, "kind": "ownership", "body": "tools/aimem_monitor/server.py -> S2"}
+{"seq": 401, "at": "2026-11-11T06:19:04", "actor": "관리자 R10", "rev": 152, "kind": "ownership", "body": "tools/aimem_monitor/__init__.py -> S2"}
+{"seq": 402, "at": "2026-11-11T06:19:05", "actor": "관리자 R10", "rev": 152, "kind": "ownership", "body": "tests/test_aimem_monitor_app.py -> S2"}
+{"seq": 403, "at": "2026-11-11T06:19:05", "actor": "관리자 R10", "rev": 152, "kind": "ownership", "body": "tools/aimem_monitor/static/app.js -> S2"}
+{"seq": 404, "at": "2026-11-11T06:19:05", "actor": "관리자 R10", "rev": 152, "kind": "ownership", "body": "tools/aimem_monitor/static/style.css -> S2"}
+{"seq": 405, "at": "2026-11-11T06:19:05", "actor": "관리자 R10", "rev": 152, "kind": "ownership", "body": "tools/aimem_monitor/static/sw.js -> S2"}
+{"seq": 406, "at": "2026-11-11T06:19:05", "actor": "관리자 R10", "rev": 152, "kind": "ownership", "body": "tests/browser_monitor_app.py -> S2"}
+{"seq": 407, "at": "2026-11-11T06:19:05", "actor": "관리자 R10", "rev": 152, "kind": "ownership", "body": "projects/웹워들/app.json -> S3"}
+{"seq": 408, "at": "2026-11-11T06:19:05", "actor": "관리자 R10", "rev": 152, "kind": "ownership", "body": "projects/웹워들/README.md -> S3"}
+{"seq": 409, "at": "2026-11-11T06:19:05", "actor": "관리자 R10", "rev": 152, "kind": "ownership", "body": "rounds/R10/REVIEW.md -> S1"}
+{"seq": 410, "at": "2026-11-11T06:24:21", "actor": "관리자 R10", "rev": 152, "kind": "request", "body": "Q-261111-5593 IN-PROGRESS"}
+{"seq": 411, "at": "2026-11-11T07:06:19", "actor": "관리자 R10", "rev": 152, "kind": "ownership", "body": "tests/browser_monitor_app.py -> S3"}
+{"seq": 412, "at": "2026-11-11T07:06:19", "actor": "관리자 R10", "rev": 152, "kind": "ownership", "body": "tests/browser_monitor_ui.py -> S2"}
+{"seq": 413, "at": "2026-11-11T07:06:19", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-131 ASSIGNED S3 브라우저 실측 A: /app/웹워들/ 이 그려지는가 (8개)"}
+{"seq": 414, "at": "2026-11-11T07:06:19", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-132 ASSIGNED S2 브라우저 실측 B: 모니터 '실행' → 격리 iframe 안에 결과물 (6개)"}
+{"seq": 415, "at": "2026-11-11T07:06:19", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-133 ASSIGNED S1 적대적 검수: 경로 탈출·인증·CSP/sandbox·변이 시험"}
+{"seq": 416, "at": "2026-11-11T07:06:27", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-128 BLOCKED"}
+{"seq": 417, "at": "2026-11-11T07:06:27", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-130 BLOCKED"}
+{"seq": 418, "at": "2026-11-11T07:06:27", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-126 DONE"}
+{"seq": 419, "at": "2026-11-11T07:06:27", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-127 DONE"}
+{"seq": 420, "at": "2026-11-11T07:06:27", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-129 DONE"}
+{"seq": 421, "at": "2026-11-11T07:06:27", "actor": "관리자 R10", "rev": 152, "kind": "graph", "body": "G-019 끝: T-126(뒷단 /app/ 경로+단위시험 16개) T-127(화면 실행 단추+sandbox iframe, sw v12) T-129(웹워들 app.json+README) done. T-128(브라우저 실측 스크립트)은 S2(codex)가 두 시도 모두 패치를 글자로만 찍고 파일을 만들지 않아 failed → T-130(S1 검수)이 blocked. 남은 일은 G-020 으로 다시 짬: T-131(S3 결과물 직접 열기 8검사) T-132(S2 모니터 실행 iframe 6검사) T-133(S1 검수)."}
+{"seq": 422, "at": "2026-11-11T07:38:08", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-131 DONE"}
+{"seq": 423, "at": "2026-11-11T07:38:08", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-132 DONE"}
+{"seq": 424, "at": "2026-11-11T07:38:08", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-133 DONE"}
+{"seq": 425, "at": "2026-11-11T07:38:08", "actor": "관리자 R10", "rev": 152, "kind": "graph", "body": "G-020 끝(3/3 done). S1 적대적 검수(T-133)가 중대 결함 넷을 찾음: (1) sandbox iframe 은 불투명 출처라 type=module 스크립트가 CORS 로 막히고, 인증을 켜면 SameSite=Strict 쿠키가 안 실려 CSS 까지 302 - 미리보기가 실제로는 안 뜬다(관리자 재확인: browser_monitor_ui 4/6). (2) '새 탭'은 같은 출처라 결과물 JS 가 사람의 세션으로 /api/* 를 호출할 수 있다. (3) iframe 이 패널 밖으로 34px 잘린다. (4) 좁은 화면 높이 규칙이 캐스케이드로 죽어 있다. 저장소 유출은 없음(경로 탈출 61가지 전부 차단). 단위 450 OK."}
+{"seq": 426, "at": "2026-11-11T07:40:09", "actor": "관리자 R10", "rev": 152, "kind": "ownership", "body": "tests/browser_monitor_auth.py -> S3"}
+{"seq": 427, "at": "2026-11-11T07:40:09", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-134 ASSIGNED S2 검수 결함 1~4 수정: /app/ 경로 티켓 + ACAO null + CSP sandbox + 패널 높이"}
+{"seq": 428, "at": "2026-11-11T07:40:09", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-135 ASSIGNED S3 브라우저 실측 C: 인증을 켠 채로 미리보기가 뜨는가 (6개)"}
+{"seq": 429, "at": "2026-11-11T08:13:23", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-134 DONE"}
+{"seq": 430, "at": "2026-11-11T08:13:23", "actor": "관리자 R10", "rev": 152, "kind": "task", "body": "T-135 DONE"}
+{"seq": 431, "at": "2026-11-11T08:13:23", "actor": "관리자 R10", "rev": 152, "kind": "request", "body": "Q-261111-5593 DONE"}
+{"seq": 432, "at": "2026-11-11T08:13:23", "actor": "관리자 R10", "rev": 152, "kind": "graph", "body": "G-021 끝(2/2 done). T-134(S2): /app/ 인가를 세션 쿠키에서 경로 티켓(/app/~<만료>.<hmac32>/<이름>/)으로 바꾸고 ACAO:null + CSP sandbox 지시어를 더해 검수 결함 1·2 를 닫음. 패널 높이(3)·미디어 쿼리 순서(4)도 수정. T-135(S3): 인증 켠 브라우저 검사 6개 신규. 관리자 재현: 단위 456 OK, browser app 8/8 ui 6/6 auth 6/6, 무인증 302, 위조 티켓 403, CSP 헤더 1개."}
+{"seq": 435, "at": "2026-11-11T15:44:04", "actor": "관리자 R11", "rev": 154, "kind": "request", "body": "Q-261111-8481 PLANNED"}
+{"seq": 436, "at": "2026-11-11T15:44:04", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-136 ASSIGNED S1 적대적 검수 A: /app/ 경로 티켓 인가·유출·격리(새 탭·팝업)"}
+{"seq": 437, "at": "2026-11-11T15:44:04", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-137 ASSIGNED S4 적대적 검수 B: TLS·프록시 Host·좁은 화면(720px)·검사의 진위(변이 시험)"}
+{"seq": 438, "at": "2026-11-11T15:44:04", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-138 ASSIGNED S3 browser_monitor_auth.py 를 임시 루트에서 돌리기 (운영 .aimem/access.log 오염 제거)"}
+{"seq": 439, "at": "2026-11-11T15:44:08", "actor": "관리자 R11", "rev": 154, "kind": "ownership", "body": "rounds/R11/REVIEW-A.md -> S1"}
+{"seq": 440, "at": "2026-11-11T15:44:08", "actor": "관리자 R11", "rev": 154, "kind": "ownership", "body": "rounds/R11/REVIEW-B.md -> S4"}
+{"seq": 441, "at": "2026-11-11T16:02:05", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-136 DONE"}
+{"seq": 442, "at": "2026-11-11T16:02:05", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-137 DONE"}
+{"seq": 443, "at": "2026-11-11T16:02:05", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-138 DONE"}
+{"seq": 444, "at": "2026-11-11T16:02:05", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-128 DONE"}
+{"seq": 445, "at": "2026-11-11T16:02:05", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-130 DONE"}
+{"seq": 447, "at": "2026-11-11T16:08:35", "actor": "관리자 R11", "rev": 154, "kind": "ownership", "body": "tests/browser_monitor_ui.py -> S3"}
+{"seq": 448, "at": "2026-11-11T16:08:35", "actor": "관리자 R11", "rev": 154, "kind": "ownership", "body": "rounds/R11/REVIEW-C.md -> S1"}
+{"seq": 468, "at": "2026-11-11T17:13:06", "actor": "관리자 R11", "rev": 154, "kind": "request", "body": "Q-261111-8481 DONE"}

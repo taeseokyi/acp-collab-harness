@@ -111,6 +111,29 @@ textarea { resize: vertical; }
 .detail { margin-top: 12px; padding: 12px; background: var(--card); border: 1px solid var(--accent); border-radius: var(--radius); }
 .detail h2 { margin: 0; min-width: 0; }
 .detail audio { width: 100%; margin: 10px 0; }
+
+/* 태그 칩 (목록 항목·상세) */
+.rec-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 0; min-width: 0; }
+.tag-chip {
+  min-height: 44px; max-width: 100%; padding: 4px 10px; font-size: 13px; line-height: 1.4;
+  border: 1px solid var(--line); border-radius: 99px; background: var(--card); color: var(--fg);
+  overflow-wrap: anywhere; word-break: break-word; text-align: left;
+}
+.tag-chip.tag-auto { border-style: dashed; border-color: var(--muted); }
+.tag-chip.tag-more { color: var(--muted); font-weight: 600; }
+.rec-match { font-size: 12px; color: var(--muted); }
+#detail-chips { margin: 6px 0; }
+
+/* 태그 거르기 */
+#tag-filter-row { margin: 0 0 8px; }
+#tag-filter-label { min-width: 0; overflow-wrap: anywhere; }
+
+/* 상세 편집 (이름·태그) */
+.detail-edit { display: grid; gap: 4px; margin: 10px 0; min-width: 0; }
+.detail-edit .field { margin: 4px 0; min-width: 0; }
+.detail-edit input { width: 100%; }
+.detail-edit .row { margin: 4px 0 0; }
+#detail-tag-state { min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
 .transcript, .answer {
   white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
   margin: 8px 0; padding: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px;

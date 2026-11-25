@@ -78,7 +78,7 @@
         <div><b id="stat-today">0</b><span>오늘</span></div>
       </div>
       <div class="filters">
-        <input id="search" type="search" placeholder="글에서 찾기" aria-label="검색" autocomplete="off">
+        <input id="search" type="search" placeholder="글·이름·태그에서 찾기" aria-label="검색" autocomplete="off">
         <div class="row">
           <label class="field half">부터 <input id="date-from" type="date"></label>
           <label class="field half">까지 <input id="date-to" type="date"></label>
@@ -91,6 +91,10 @@
           <option value="failed">실패</option>
           <option value="no-stt">음성인식 없음</option>
         </select>
+        <div id="tag-filter-row" class="row" hidden>
+          <span id="tag-filter-label" class="muted"></span>
+          <button id="tag-filter-clear" type="button" class="small">거르기 풀기</button>
+        </div>
       </div>
       <div class="row between">
         <span id="sel-count" class="muted">고른 것 0건</span>
@@ -105,6 +109,20 @@
           <button id="detail-close" type="button" class="small">닫기</button>
         </div>
         <div id="detail-meta" class="muted"></div>
+        <div id="detail-chips" class="rec-tags"></div>
+        <div id="detail-edit" class="detail-edit" hidden>
+          <label class="field">이름
+            <input id="detail-label" type="text" maxlength="40" autocomplete="off">
+          </label>
+          <label class="field">태그
+            <input id="detail-tags" type="text" placeholder="쉼표로 나눔" autocomplete="off">
+          </label>
+          <div class="row">
+            <button id="detail-save" type="button">저장</button>
+            <button id="detail-retag" type="button" class="small" hidden>태그 다시 달기</button>
+            <span id="detail-tag-state" class="muted" role="status"></span>
+          </div>
+        </div>
         <audio id="detail-audio" controls preload="none"></audio>
         <div id="detail-loc" class="muted" hidden></div>
         <p id="audio-note" class="notice" hidden>음성은 VoxLog 자체 주소에서 들으십시오.</p>

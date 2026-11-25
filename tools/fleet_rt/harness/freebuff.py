@@ -277,6 +277,13 @@ def pane_status(pane):
         m = _MODEL_RE.match(ln)
         if m:
             out["model"] = m.group(1).strip()
+    if not out["model"]:        # 팬이 좁으면 상태 줄이 접혀 '/model to change' 가 두 줄에 걸친다 - 이어 붙여 다시 본다
+        flat = [ln.strip(" │") for ln in tail if not set(ln.strip()) <= set("╭╮╰╯│─┌┐└┘ ")]
+        for i in range(len(flat) - 1):
+            m = _MODEL_RE.match(" ".join(flat[i:i + 3])) if "·" in flat[i] else None   # 상태 줄은 '·' 로 나뉜다
+            if m:
+                out["model"] = m.group(1).strip()
+                break
     if not out["model"]:
         out["why"] = f"팬 {pane} 에 freebuff 화면이 보이지 않습니다"
     elif not out["input_empty"]:

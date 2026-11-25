@@ -507,5 +507,206 @@ class StoreTest(unittest.TestCase):
         self.assertFalse([p for p in opened if p.endswith(".txt")])
 
 
+    # ---- R49: 이름·태그·자동 태그 ----
+
+    def test_new_meta_has_label_tag_fields(self):
+        meta = self.add()
+        self.assertEqual(meta["label"], "")
+        self.assertEqual(meta["tags"], [])
+        self.assertEqual(meta["tags_auto"], [])
+        self.assertIs(meta["tags_human"], False)
+        self.assertIsNone(meta["autotag"])
+        got = self.store.get(meta["id"])
+        self.assertEqual(got["label"], "")
+        self.assertEqual(got["tags"], [])
+        self.assertEqual(got["tags_auto"], [])
+        self.assertIs(got["tags_human"], False)
+        self.assertIsNone(got["autotag"])
+        item = self.store.list()[0]
+        self.assertEqual(item["label"], "")
+        self.assertEqual(item["tags"], [])
+        self.assertEqual(item["tags_auto"], [])
+        self.assertIs(item["tags_human"], False)
+        self.assertIsNone(item["autotag"])
+
+    def test_old_meta_without_tag_fields_gets_defaults(self):
+        meta = self.add(recorded_at="2026-01-01T10:00:00")
+        path = self.root / "meta" / (meta["id"] + ".json")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for key in ("label", "tags", "tags_auto", "tags_human", "autotag"):
+            data.pop(key, None)
+        path.write_text(json.dumps(data), encoding="utf-8")
+        got = self.store.get(meta["id"])
+        self.assertEqual(got["label"], "")
+        self.assertEqual(got["tags"], [])
+        self.assertEqual(got["tags_auto"], [])
+        self.assertIs(got["tags_human"], False)
+        self.assertIsNone(got["autotag"])
+        item = self.store.list()[0]
+        self.assertEqual(item["label"], "")
+        self.assertEqual(item["tags"], [])
+        self.assertEqual(item["tags_auto"], [])
+        self.assertIs(item["tags_human"], False)
+        self.assertIsNone(item["autotag"])
+
+    def test_set_transcript_keeps_tag_fields(self):
+        rid = self.add()["id"]
+        self.store.set_label_tags(rid, {"label": "이름", "tags": ["사람", "AI"]})
+        self.store.set_autotag(rid, "done")
+        self.store.set_transcript(rid, "받아 적은 글")
+        got = self.store.get(rid)
+        self.assertEqual(got["label"], "이름")
+        self.assertEqual(got["tags"], ["사람", "AI"])
+        self.assertEqual(got["tags_auto"], [])
+        self.assertIs(got["tags_human"], True)
+        self.assertEqual(got["autotag"], "done")
+        self.assertEqual(got["transcript"], "받아 적은 글")
+
+    def test_set_label_tags_label_only_keeps_tags_and_human(self):
+        rid = self.add()["id"]
+        self.store.set_auto_tags(rid, ["회의", "업무"])
+        self.store.set_label_tags(rid, {"label": "새 이름"})
+        got = self.store.get(rid)
+        self.assertEqual(got["label"], "새 이름")
+        self.assertEqual(got["tags"], ["회의", "업무"])
+        self.assertEqual(got["tags_auto"], ["회의", "업무"])
+        self.assertIs(got["tags_human"], False)
+        self.assertEqual(got["autotag"], "done")
+
+    def test_set_label_tags_tags_keeps_only_surviving_auto(self):
+        rid = self.add()["id"]
+        self.store.set_auto_tags(rid, ["회의", "업무", "AI3"])
+        self.store.set_label_tags(rid, {"tags": ["회의", "사람", "ai3"]})
+        got = self.store.get(rid)
+        self.assertEqual(got["tags"], ["회의", "사람", "ai3"])
+        self.assertEqual(got["tags_auto"], ["회의", "ai3"])   # 남은 AI 태그는 새 표기로
+        self.assertIs(got["tags_human"], True)
+        self.assertEqual(got["label"], "")
+
+    def test_set_label_tags_empty_tags(self):
+        rid = self.add()["id"]
+        self.store.set_auto_tags(rid, ["회의", "업무"])
+        self.store.set_label_tags(rid, {"tags": []})
+        got = self.store.get(rid)
+        self.assertEqual(got["tags"], [])
+        self.assertEqual(got["tags_auto"], [])
+        self.assertIs(got["tags_human"], True)
+
+    def test_set_label_tags_same_tags_keeps_auto_and_human(self):
+        rid = self.add()["id"]
+        self.store.set_auto_tags(rid, ["회의", "업무"])
+        before = self.store.get(rid)
+        self.store.set_label_tags(rid, {"label": "이름", "tags": ["회의", "업무"]})
+        got = self.store.get(rid)
+        self.assertEqual(got["label"], "이름")
+        self.assertEqual(got["tags"], before["tags"])
+        self.assertEqual(got["tags_auto"], before["tags_auto"])
+        self.assertIs(got["tags_human"], False)
+        self.assertEqual(got["autotag"], "done")
+        self.assertTrue(self.store.set_auto_tags(rid, ["새AI"]))
+        got = self.store.get(rid)
+        self.assertEqual(got["tags"], ["새AI"])
+        self.assertEqual(got["tags_auto"], ["새AI"])
+        self.assertIs(got["tags_human"], False)
+
+    def test_set_label_tags_different_tags_marks_human(self):
+        rid = self.add()["id"]
+        self.store.set_auto_tags(rid, ["회의", "업무"])
+        self.store.set_label_tags(rid, {"label": "이름", "tags": ["업무", "회의"]})
+        got = self.store.get(rid)
+        self.assertEqual(got["tags"], ["업무", "회의"])
+        self.assertEqual(got["tags_auto"], ["업무", "회의"])
+        self.assertIs(got["tags_human"], True)
+
+    def test_set_auto_tags_does_not_change_human_tags(self):
+        rid = self.add()["id"]
+        self.store.set_label_tags(rid, {"tags": ["사람", "AI"]})
+        before = self.store.get(rid)
+        self.assertFalse(self.store.set_auto_tags(rid, ["새AI"]))
+        got = self.store.get(rid)
+        self.assertEqual(got["tags"], before["tags"])
+        self.assertEqual(got["tags_auto"], before["tags_auto"])
+        self.assertIs(got["tags_human"], True)
+        self.assertEqual(got["autotag"], "done")
+
+    def test_set_auto_tags_auto_false_writes_tags(self):
+        rid = self.add()["id"]
+        tags = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"]
+        self.assertTrue(self.store.set_auto_tags(rid, tags))
+        got = self.store.get(rid)
+        self.assertEqual(got["tags"], tags[:10])
+        self.assertEqual(got["tags_auto"], tags[:10])
+        self.assertIs(got["tags_human"], False)
+        self.assertEqual(got["autotag"], "done")
+
+    def test_set_auto_tags_manual_keeps_human_replaces_old_auto(self):
+        rid = self.add()["id"]
+        self.store.set_auto_tags(rid, ["AI1", "AI2", "공통"])
+        self.store.set_label_tags(rid, {"tags": ["사람1", "ai2"]})
+        self.assertIs(self.store.get(rid)["tags_human"], True)
+        self.assertTrue(self.store.set_auto_tags(rid, ["새AI", "공통"], manual=True))
+        got = self.store.get(rid)
+        self.assertEqual(got["tags"], ["사람1", "새AI", "공통"])
+        self.assertEqual(got["tags_auto"], ["새AI", "공통"])
+        self.assertIs(got["tags_human"], True)
+        self.assertEqual(got["autotag"], "done")
+
+    def test_set_autotag_states_and_errors(self):
+        rid = self.add()["id"]
+        for state in (None, "pending", "done", "failed"):
+            self.store.set_autotag(rid, state)
+            self.assertEqual(self.store.get(rid)["autotag"], state)
+        with self.assertRaises(ValueError):
+            self.store.set_autotag(rid, "unknown")
+        with self.assertRaises(ValueError):
+            self.store.set_autotag("r-20200101-000000-abcd", "pending")
+
+    def test_autotag_pending_ids(self):
+        a = self.add()["id"]
+        b = self.add()["id"]
+        c = self.add()["id"]
+        self.store.set_autotag(a, "pending")
+        self.store.set_autotag(b, "done")
+        self.store.set_autotag(c, "failed")
+        self.assertEqual(self.store.autotag_pending_ids(), [a])
+
+    def test_list_tag_filter_case_insensitive_and_and(self):
+        a = self.add(recorded_at="2026-01-01T10:00:00")
+        b = self.add(recorded_at="2026-01-02T10:00:00")
+        c = self.add(recorded_at="2026-01-03T10:00:00")
+        self.store.set_auto_tags(a["id"], ["회의"])
+        self.store.set_auto_tags(b["id"], ["회의", "업무"])
+        self.store.set_auto_tags(c["id"], ["업무"])
+        self.store.set_transcript(a["id"], "사과")
+        self.store.set_transcript(b["id"], "바나나")
+        self.store.set_transcript(c["id"], "사과")
+        self.store.set_status(b["id"], "failed")
+        self.assertEqual({m["id"] for m in self.store.list(tag="회의")}, {a["id"], b["id"]})
+        self.assertEqual({m["id"] for m in self.store.list(tag="회의", q="바나나")}, {b["id"]})
+        self.assertEqual({m["id"] for m in self.store.list(tag="회의", status="done")}, {a["id"]})
+        self.assertEqual({m["id"] for m in self.store.list(tag="업무", date_to="2026-01-02")},
+                         {b["id"]})
+        self.assertEqual(self.store.list(tag="없는태그"), [])
+
+    def test_list_match_text_label_tag_and_no_q(self):
+        a = self.add(recorded_at="2026-01-01T10:00:00")
+        b = self.add(recorded_at="2026-01-02T10:00:00")
+        c = self.add(recorded_at="2026-01-03T10:00:00")
+        self.store.set_transcript(a["id"], "apple pie")
+        self.store.set_transcript(b["id"], "다른 글")
+        self.store.set_transcript(c["id"], "다른 글")
+        self.store.set_label_tags(b["id"], {"label": "Apple 이름"})
+        self.store.set_label_tags(c["id"], {"tags": ["Apple"]})
+        found = {m["id"]: m for m in self.store.list(q="apple")}
+        self.assertEqual(set(found), {a["id"], b["id"], c["id"]})
+        self.assertEqual(found[a["id"]]["match"], "text")
+        self.assertEqual(found[b["id"]]["match"], "label")
+        self.assertEqual(found[c["id"]]["match"], "tag")
+        self.assertEqual(found[b["id"]]["snippet"], "다른 글"[:80])
+        self.assertEqual(found[c["id"]]["snippet"], "다른 글"[:80])
+        for item in self.store.list():
+            self.assertNotIn("match", item)
+
+
 if __name__ == "__main__":
     unittest.main()

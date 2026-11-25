@@ -1,0 +1,68 @@
+{
+ "id": "G-018",
+ "request": "R9 마지막 보드 목표: animationstart 기록 거르기 + 최종 확인 (Q-261111-f77f)",
+ "created": "2026-11-11T04:27:00",
+ "rev": 150,
+ "round": 9,
+ "concurrency": 2,
+ "nodes": [
+  {
+   "id": "T-124",
+   "title": "browser_core: animationstart 기록에서 pop 거르기 + 옛 검사 이름 정직하게",
+   "slot": "S2",
+   "project": "웹워들",
+   "write": [
+    "projects/웹워들/tests/browser_core.py",
+    "projects/웹워들/tests/screenshots/core/**"
+   ],
+   "deps": [],
+   "timeout_sec": 2400,
+   "task": "# T-124 `browser_core.py` 가 빨갛습니다 - `pop` 기록을 거르면 끝납니다\n\n## 고칠 파일 (이 하나뿐입니다)\n\n`projects/웹워들/tests/browser_core.py` - 지금 **`통과 64 / 전체 67`, rc 3** 입니다.\n\n**앱(`web/` 아래)은 건드리지 마십시오.** 빨간 셋은 **제품 결함이 아니라 검사가 틀린 것**이고,\n관리자와 적대적 검수(S1)가 원인을 끝까지 확인했습니다. 나머지 64개는 건드리지 마십시오.\n\n## 지금 무슨 일이 일어나는가\n\n바로 앞 태스크가 넣은 `animationstart` 검사 셋이 **`flip` 말고 `pop` 애니메이션 기록까지 셉니다.**\n`ui.js` 는 글자를 칠 때마다 그 칸에 `pop` 을 겁니다(`popTile`). 그래서 실제로 찍히는 기록은:\n\n```\n[(4, 'pop',  346.3), (0, 'flip', 379.6), (1, 'flip', 463.3), (2, 'flip', 563.3),\n (3, 'flip', 663.4), (4, 'flip', 763.3), (0, 'pop',  879.6)]\n```\n\n**뒤집기 자체는 완벽합니다** - 0·1·2·3·4 번 칸이 차례로 `flip` 으로 시작했고, 시작 순간\n그 칸에서 도는 애니메이션도 `['flip']` 이었습니다. 앞뒤에 낀 `pop` 두 개 때문에\n\n- `\"animationstart가 첫 줄 다섯 칸 모두에서 flip로 시작됨\"` - `pop` 기록의 이름이 `flip` 이 아니라 실패\n- `\"animationstart 순간 해당 칸에 flip 애니메이션이 running\"` - `pop` 기록의 `running` 이 `['pop']` 이라 실패\n- `\"animationstart 기록이 정확히 다섯 칸 분(빈 목록 아님)\"` - 기록 수가 7이라 실패\n\n세 검사가 모두 빨개진 것입니다.\n\n(S1 이 쪽 안에서 `@keyframes flip` 을 `deleteRule` 로 지워 보니 `flip` 기록이 0개가 되어\n이 검사들이 정말 빨개졌습니다. **겨냥은 옳습니다 - 거르기만 빠졌습니다.**)\n\n## 결함 1 - 기록을 `flip` 으로 거르십시오\n\n세 검사 모두, 판정에 쓰는 목록을 **`name == \"flip\"` 인 기록만 남긴 것**으로 바꾸십시오.\n\n- `flip` 기록의 **칸 번호 모음이 정확히 `{0, 1, 2, 3, 4}`**\n- `flip` 기록마다 `running` 안에 `\"flip\"` 이 들어 있음\n- **`flip` 기록이 정확히 다섯 개** (`len(flips) == 5 and all(...)` 꼴을 유지하십시오 -\n  빈 목록이 참이 되는 길을 다시 열지 마십시오)\n\n`pop` 기록은 **버리기만** 하고, 그것 때문에 검사를 무르게 만들지 마십시오.\n`detail` 에는 **거른 뒤의 `flip` 기록**을 찍어 읽기 쉽게 하십시오.\n\n같은 칸에서 `flip` 이 두 번 기록되는 일이 있으면 칸 번호마다 **가장 이른 것 하나만** 쓰십시오.\n\n## 결함 2 - 아무것도 증명하지 못하는 옛 검사를 치우십시오\n\n`\"보드 - 애니메이션이 실제로 걸림\"` 이라는 이름의 **옛 검사**(계산된 `animationName` 이 `flip`\n인지, `animationDuration` 이 0보다 큰지만 보는 것)가 아직 남아 있습니다.\n이 값들은 **`@keyframes flip` 을 통째로 지워도 그대로 나오므로** 그 이름은 거짓말입니다.\n\n→ 검사를 **지우지는 말고**, 무엇을 보는지 그대로 드러나게 **이름을 바꾸십시오.**\n   예: `\"보드 - .flip 에 animation 선언이 걸려 있음(이름·시간)\"`.\n   \"실제로 걸림/돈다\" 는 말은 **`animationstart` 검사 쪽에만** 쓰십시오.\n\n## 하지 말 것\n\n- 제품(`web/` 아래)을 고치지 마십시오\n- 검사를 지우거나, 조건을 무르게 만들거나, `try/except` 로 삼키지 마십시오\n- 이미 초록인 64개의 문구·조건을 바꾸지 마십시오 (위 이름 바꾸기 하나만 예외입니다)\n- **도구 호출 모양의 글자(`<tool_call>`, `<function=…>`, `<parameter=…>`)를 본문에 쓰지 마십시오.**\n  실제 편집 도구를 쓰십시오. 이번 라운드에 그 글자를 찍고 끝나 아무것도 안 바뀐 시도가 다섯 번 있었습니다\n\n## 검증\n\n```bash\npython3 projects/웹워들/tests/browser_core.py | tail -1\n```\n\n마지막 줄이 **`통과 67 / 전체 67`** (실패 0) 이어야 합니다. 검사 수가 줄면 안 됩니다.\n\n당신의 샌드박스에서는 크로미움이 안 뜹니다(`sandbox_host_linux.cc FATAL`). **그래도 멈추지 말고**\n코드를 정확하게 써 놓고 `python3 -m py_compile` 까지 한 뒤 `PARTIAL` 로 보고하십시오 -\n검증은 엔진이 샌드박스 밖에서 돌립니다. 재시도를 받으면 브리프에 붙은 **검증 출력 꼬리**를 보고 고치십시오.\n\n## 읽을 것 (이것만)\n\n`projects/웹워들/tests/browser_core.py` 의 `WATCH_ANIM_JS` · `WATCH_FLIP_JS` · `scenario_board`.\n확인이 필요하면 `projects/웹워들/web/js/ui.js` 의 `submit` 과 `popTile`(70~80·210~235줄).\n**`web/js/words.js`, `AIMEM.md`, 저장소 최상위 `tools/`·`tests/`, `.aimem/` 아래, `rounds/` 는\n읽지 마십시오.**\n\n## 보고 (첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` / `NEEDS-FIX:` 하나만)\n\n그 아래 세 줄 안에: 결함 1·2 를 각각 어떻게 고쳤는지, 검증 명령의 마지막 줄, 막힌 것.\n코드를 붙여 넣지 마십시오.\n",
+   "verify": "python3 projects/웹워들/tests/browser_core.py 2>&1 | tail -1 | python3 -c \"import sys; p=sys.stdin.read().split(); print(p); sys.exit(0 if len(p)==5 and p[0]=='통과' and p[2]=='/' and p[3]=='전체' and p[1]==p[4] and int(p[4])>=67 else 1)\"",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-124-S2-a1-042703",
+     "started": "2026-11-11T04:27:03",
+     "ended": "2026-11-11T04:32:48",
+     "rc": 0,
+     "state": "done",
+     "report": "PARTIAL\n\n- 결함 1: `anim_starts`에서 `name == \"flip\"`인 기록만 남기고, 같은 칸의 중복 `flip`은 가장 이른 기록 하나로 줄였습니다. 세 검사는 `len(flip_starts) == 5`와 정확한 칸 집합 `{0,1,2,3,4}`를 유지하며, `detail`에는 필터링된 `flip` 기록만 표시합니다.\n- 결함 2: 옛 검사 `\"보드 - 뒤집기 애니메이션이 실제로 걸림\"`을 `\"보드 - .flip 에 animation 선언이 걸려 있음(이름·시간)\"`으로改名했고 조건은 바꾸지 않았습니다. 수정 파일은 `projects/웹워들/tests/browser_core.py` 하나뿐이며 검사 수는 그대로 67개입니다.\n- 검증: `python3 -m py_compile projects/웹워들/tests/browser_core.py`는 rc 0·출력 없음. `timeout 30s python3 projects/웹워들/tests/browser_core.py`는 rc 2로 `sandbox_host_linux.cc:41 ... FATAL` 및 `TargetClosedError`를 출력했고, 브리프의 `| tail -1` 형태는 빈 줄만 나왔습니다. 샌드박스 밖에서 같은 명령을 재실행해 마지막 줄 `통과 67 / 전체 67`을 확인해야 합니다.",
+     "verify_rc": 0,
+     "verify_tail": "['통과', '67', '/', '전체', '67']\n"
+    }
+   ],
+   "max_attempts": 2
+  },
+  {
+   "id": "T-125",
+   "title": "보드 목표 최종 확인 + tests/README.md 마무리",
+   "slot": "S1",
+   "project": "웹워들",
+   "write": [
+    "projects/웹워들/tests/README.md"
+   ],
+   "deps": [
+    "T-124"
+   ],
+   "timeout_sec": 2700,
+   "task": "# T-125 \"보드\" 목표 최종 확인 + `tests/README.md` 마무리\n\n## 당신이 하는 일\n\n당신(S1)이 바로 앞에서 `browser_core.py` 가 **64/67 로 빨갛고**, 원인은\n`animationstart` 기록이 `pop` 까지 세는 것이라고 짚었습니다. 그것을 고쳤다고 합니다.\n\n- 코드를 고치지 마십시오. **`projects/웹워들/tests/README.md` 하나만** 씁니다\n- 당신이 쓴 README 가 이미 있습니다. **이어서 고쳐 쓰십시오**\n\n## 1) 돌려 보십시오\n\n```bash\npython3 projects/웹워들/tests/browser_core.py;   echo \"core rc=$?\"\npython3 projects/웹워들/tests/browser_layout.py; echo \"layout rc=$?\"\npython3 projects/웹워들/tests/browser_ui.py;     echo \"ui rc=$?\"\nnode --test projects/웹워들/tests/test_game.mjs projects/웹워들/tests/smoke_integration.mjs 2>&1 | tail -8\npython3 -m unittest discover -s projects/웹워들/tests 2>&1 | tail -3\n```\n\n세 브라우저 스크립트의 `통과 n / 전체 m` 과 rc 를 보고에 그대로 옮기십시오.\n(직전: core **64/67 rc 3** · layout 18/18 · ui 155/155)\n\n## 2) \"보드\" 목표를 끝까지 따지십시오\n\n- `flip` 으로 거른 뒤에도 **다섯 칸·순서·`running` 조건이 그대로 빡빡한지**\n  (`pop` 을 버리면서 조건까지 무르게 만들지 않았는지)\n- **기록이 0개일 때 통과하는 길**이 다시 열리지 않았는지 (`len(...) == 5` 가 남아 있는지)\n- 지난번처럼 **`@keyframes flip` 을 쪽 안에서 지워 보고**(`deleteRule`) 이 검사가\n  정말 빨개지는지 다시 확인하십시오. `web/` 파일은 고치지 마십시오\n- 이름만 보던 옛 검사의 **이름이 정직하게 바뀌었는지**\n\n## 3) 빈 검사를 또 찾으십시오\n\n늘 참인 단언, `try/except` 로 삼켜진 검사, 조용한 `return`, 실제로 나온 값에 맞춰 적은 기대값,\n`sleep`, 날짜·정답·포트 박기.\n\n## 4) `projects/웹워들/tests/README.md` 마무리\n\n- 다섯 벌 표의 **검사 수**와 \"지금 core 가 빨갛다\" 는 경고를 지금 사실에 맞게 고치십시오\n  (초록이 됐으면 경고를 **빼십시오**)\n- `목표 → 그것을 증명하는 검사` 표의 **보드** 줄을 지금 상태로\n- `알고 쓸 약점` 에서 고쳐진 것은 빼고 남은 것은 그대로 두십시오\n  (대비 배경 알파, 주황 범위가 빨강도 받는 것, 이름표 부분 문자열, 색약 파랑이 밝은 테마에서만 등)\n\n## 보고 (첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` 하나만)\n\n둘째 줄부터:\n\n1. 다섯 벌의 결과 (`통과 n / 전체 m` 과 rc, node·unittest 요약)\n2. **보드 `닫힘` / `아직`** 과 근거. 다른 세 목표(통계·보기 설정·접근성)에 **회귀가 없는지**도 한 줄\n3. 번호를 매긴 남은 결함 목록. 없으면 \"결함 없음\" 이라고 분명히\n4. 마지막에 **목표 15개 중 지금 증명된 것이 몇 개인지**\n\n코드를 붙여 넣지 마십시오.\n\n## 읽을 것 (이것만)\n\n`projects/웹워들/PROGRESS.md` 의 `## 목표` 절(맨 위 30줄), `projects/웹워들/tests/README.md`,\n`tests/browser_core.py`(특히 `scenario_board`) · `browser_ui.py` · `browser_layout.py` ·\n`browser_harness.py`. 필요하면 `web/js/ui.js` 와 `web/css/style.css`.\n**`web/js/words.js`, `AIMEM.md`, 저장소 최상위 `tools/`·`tests/`, `.aimem/` 아래, `rounds/` 는\n읽지 마십시오.**\n",
+   "verify": "test -s projects/웹워들/tests/README.md && python3 projects/웹워들/tests/browser_core.py 2>&1 | tail -1 | python3 -c \"import sys; p=sys.stdin.read().split(); print(p); sys.exit(0 if len(p)==5 and p[0]=='통과' and p[2]=='/' and p[3]=='전체' and p[1]==p[4] and int(p[4])>=67 else 1)\" && python3 projects/웹워들/tests/browser_ui.py 2>&1 | tail -1 | python3 -c \"import sys; p=sys.stdin.read().split(); print(p); sys.exit(0 if len(p)==5 and p[0]=='통과' and p[2]=='/' and p[3]=='전체' and int(p[4])>=155 else 1)\"",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-125-S1-a1-043311",
+     "started": "2026-11-11T04:33:11",
+     "ended": "2026-11-11T04:37:41",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n## 1. 다섯 벌 결과 (2026-11-11 실제로 돌린 값)\n\n| 벌 | 결과 | rc |\n|---|---|---|\n| `browser_core.py` | `통과 67 / 전체 67` (두 번 돌려 두 번 다 같음) | 0 |\n| `browser_layout.py` | `통과 18 / 전체 18` | 0 |\n| `browser_ui.py` | `통과 155 / 전체 155` | 0 |\n| node (`test_game.mjs` · `smoke_integration.mjs`) | `ℹ tests 25` · `ℹ pass 25` · `ℹ fail 0` | — |\n| unittest | `Ran 6 tests in 0.009s` · `OK` | — |\n\n- 처음 core 를 돌릴 때는 `| tail` 을 붙여서 거기 찍힌 rc 는 `tail` 의 것이었습니다. 그래서 파이프 없이 다시 돌려 진짜 rc 0 을 확인했습니다.\n- layout 과 ui 도 출력을 `> /dev/null` 로 보내고 따로 돌려 rc 0 을 받았습니다.\n\n## 2. 보드 목표: **닫힘**\n\n- **pop 을 버리면서 조건을 무르게 만들지 않았습니다.** `animationstart` 기록을 `name == 'flip'` 으로만 거릅니다. 그 뒤에도 세 검사 모두 다섯 칸(`{0,1,2,3,4}`)과 `len(flip_starts) == 5` 를 요구하고, running 조건도 그대로입니다.\n- **기록이 0개일 때 통과하는 길은 닫혀 있습니다.** `len(...) == 5` 가 남아 있습니다.\n- **`deleteRule` 변이 시험을 다시 했습니다.** `web/` 파일은 건드리지 않고, `python3 -c` 로 `scenario_board` 를 불러 도움말을 닫은 직후 쪽 안에서 `@keyframes flip` 을 지웠습니다(`deleted keyframes flip: 1`).\n  - 결과 `통과 13 / 전체 16`, `mutant rc=3`.\n  - 빨개진 것은 `animationstart` 세 검사뿐이고, 셋 다 `flip 기록=[]` 이었습니다.\n  - class 붙음·선언·순서·떨어짐 검사는 이때도 초록이었습니다. 즉 **애니메이션이 실제로 돈다는 증명은 이 세 검사가 혼자 집니다.**\n- **옛 검사의 이름이 정직해졌습니다.** 지금 이름은 \"`.flip` 에 animation 선언이 걸려 있음(이름·시간)\" 이고, 계산된 값만 본다는 것을 이름이 그대로 말합니다.\n- **다른 세 목표(통계·보기 설정·접근성)에 회귀는 없습니다.** ui 155/155 로 직전 값과 같습니다.\n\n## 3. 남은 결함 (모두 검사 쪽 헐거움 또는 이미 알려진 것, 빨간 것은 없음)\n\n1. 칸마다 가장 이른 `flip` 하나만 남기므로, 한 칸에서 `flip` 이 두 번 시작해도 잡지 못합니다.\n2. \"…flip로 시작됨\" 검사의 `all(name == \"flip\")` 부분은 이미 걸렀으니 늘 참입니다. 또 \"정확히 다섯 칸 분\" 검사는 앞 두 검사의 조건을 되풀이하므로, 결함 하나가 FAIL 셋으로 셉니다.\n3. 왼쪽부터 차례인지는 `animationstart` 시각이 아니라 `MutationObserver` 의 class 시각으로만 봅니다.\n4. 제품 쪽 문제가 아직 있습니다. `ui.js:75` 가 `animationend` 때만 `pop` 을 떼므로, `flip` 이 `pop` 을 끊으면 `pop` 이 다시 돕니다. 마지막 글자 뒤 100ms 안에 Enter 를 눌러야 생기는 일입니다. 내 쓰기 범위가 아니라 고치지 않았습니다.\n5. 이전 README 에 있던 약점은 그대로 남겼습니다: 대비 배경 알파·`opacity` 무시, 주황 범위가 빨강·회색도 받는 것(`r>g>b` 가 막는 중), 이름표 부분 문자열 비교, 색약 파랑을 밝은 테마에서만 보는 것, 흔들림 두 번째 검사, 느슨한 하한, 자정 근처 날짜 문제, 레이아웃 공백, 스크립트끼리 복사된 상수.\n\n빈 검사 점검: `sleep` 과 박힌 포트·날짜·정답은 없습니다. 이른 `return` 11곳(core 2, ui 9)은 모두 바로 앞에 `False` 검사를 남기고 나갑니다. `try/except` 는 시나리오 전체를 감싸 \"시나리오 실행\" FAIL 을 남기는 것과 context 닫기뿐입니다.\n\n## 고친 파일\n\n`projects/웹워들/tests/README.md` 하나만 고쳤습니다.\n- \"core 가 빨갛다\" 경고를 빼고 T-125 의 다섯 벌 값으로 바꿨습니다.\n- 보드 줄을 `증명됨 (T-125)` 로 바꾸고 변이 시험 결과를 적었습니다.\n- 약점에서 고쳐진 \"pop 까지 셈\" 항목을 빼고, 옛 검사 항목은 이름이 바뀐 사실에 맞게 고쳤습니다. 위 1~2번 헐거움과 중간 `return` 항목을 새로 적었습니다.\n\n`projects/` 가 git 에서 통째로 추적되지 않아 `git diff` 로는 변경을 볼 수 없습니다.\n\n## 다음 담당자가 알 것\n\n- `PROGRESS.md` 의 체크박스는 아직 11/15 이고, 보드·통계·보기 설정·접근성이 비어 있습니다. 나는 그 파일을 쓸 수 없습니다.\n- 넷 가운데 이번에 직접 확인한 것은 보드뿐입니다. 나머지 셋은 README 표에 지난 라운드부터 `증명됨` 으로 적혀 있고, 이번에는 ui 155/155 초록으로 회귀가 없다는 것만 확인했습니다.\n\n**목표 15개 중 지금 증명된 것: 15개** (README 표 기준). PROGRESS.md 체크박스는 11개 그대로라 Manager 가 갱신해야 합니다.",
+     "verify_rc": 0,
+     "verify_tail": "['통과', '67', '/', '전체', '67']\n['통과', '155', '/', '전체', '155']\n"
+    }
+   ],
+   "max_attempts": 2
+  }
+ ],
+ "updated": "2026-11-11T04:38:54"
+}

@@ -1,0 +1,4 @@
+G-016: 100.0%  남은 ETA 0s  상태 {'done': 3}
+  T-120  done     S2  시도 1  run T-120-S2-a1-033010  rc 0/0  browser_ui 새 검사 둘의 결함 수정 (공유 단추는 창 안·busy 빈틈)
+  T-118  done     S2  시도 1  run T-118-S2-a1-034111  rc 0/0  browser_core: 뒤집기 애니메이션 실측·화면 ENTER/⌫ 누르기·키 색 안 내려감
+  T-119  done     S1  시도 1  run T-119-S1-a1-035235  rc 0/0  웹워들 목표 적대적 검수 + tests/README.md 갱신

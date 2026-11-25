@@ -9,11 +9,12 @@ projects/VoxLog/
   serve.py                 HTTP 서버(정적 web/ + /api/*)            - T-342
   voxlog/__init__.py       (빈 파일)                                - T-338
   voxlog/store.py          저장소                                   - T-338
+  voxlog/tags.py           이름·태그 정규화와 모델 출력에서 태그 뽑기 - R49
   voxlog/stt.py            음성인식(백엔드 고르기 + 배경 작업자)     - T-339
   voxlog/ask.py            클로드 CLI 로 묻기(배경 작업자)           - T-340
   web/index.html web/style.css web/app.js web/api.js   화면         - T-341
   web/sw.js web/queue.js web/manifest.webmanifest web/icons/*       - T-343
-  tests/test_store.py tests/test_stt.py tests/test_ask.py tests/test_serve.py
+  tests/test_store.py tests/test_stt.py tests/test_ask.py tests/test_serve.py tests/test_tags.py
   tests/fake_stt.py tests/fake_llm.py   (가짜 명령 - 각 노드가 필요한 쪽이 씀, 아래 형식)
   tests/browser_voxlog.py  끝에서 끝 브라우저 검사                   - T-344
   data/                    실행 데이터(git 제외). 환경 변수 VOXLOG_DATA 로 바꿈
@@ -37,8 +38,32 @@ id 형식: 녹음 `r-YYYYMMDD-HHMMSS-xxxx`, 답 `a-YYYYMMDD-HHMMSS-xxxx` (xxxx �
 {"id", "client_id": str|None, "created": 서버 ISO 시각, "recorded_at": 클라이언트 ISO 시각(쓸 수 없으면 created),
  "duration_ms": int|None, "mime": "audio/webm" 꼴(매개변수 뗀 것), "size": int,
  "status": "pending"|"transcribing"|"done"|"failed"|"no-stt", "error": str|None,
- "title": 받아 적은 글에서 공백을 접은(줄바꿈·연속 공백을 한 칸으로) 앞 40자(없으면 ""), "chars": int}
+ "title": 받아 적은 글에서 공백을 접은(줄바꿈·연속 공백을 한 칸으로) 앞 40자(없으면 ""), "chars": int,
+ "label": 사람이 붙인 이름(str, 기본 ""), "tags": 보이는 태그 전부(list[str], 사람+AI, 최대 10, 기본 []),
+ "tags_auto": tags 가운데 AI 가 단 것(list[str], 대소문자 무시 부분집합, 기본 []),
+ "tags_human": 사람이 태그를 고친 적이 있음(bool, 기본 false),
+ "autotag": null | "pending" | "done" | "failed" (자동 태그 진행 상태, 기본 null)}
 ```
+옛 meta 에 뒤 다섯 필드가 없으면 `Store.get`·`Store.list` 가 읽을 때 기본값으로 채운다.
+
+## 녹취 이름·태그 (F2)
+
+meta 의 `label`/`tags`/`tags_auto`/`tags_human`/`autotag` 로 이름·태그·자동 태그를 저장한다.
+`PATCH /api/recordings/<id>` 본문 `{label?, tags?}` → 200 메타+transcript. 서버가 앞뒤·연속 공백을 접고
+`label` 40자·태그 하나 20자·태그 10개·대소문자 무시 중복을 정규화하며 넘치면 400.
+`tags` 가 오면 `tags_human` 이 참이 되고(그 녹취의 자동 태그 끝), `tags_auto` 는 새 `tags` 에 남은 것만 남는다.
+`label` 만 고친 PATCH 는 `tags_human` 을 바꾸지 않는다. `Store.set_transcript` 는 이 필드를 건드리지 않는다.
+`GET /api/recordings?tag=<태그>` 는 `q`·`from`·`to`·`status` 와 AND 로 거르고(20자 넘으면 400),
+`q` 는 `label`·`tags` 도 찾아 항목에 `match`(`"text"`|`"label"`|`"tag"`)를 준다.
+
+자동 태그: 받아쓰기가 성공해 글이 저장된 뒤에만 `Transcriber` 가 `on_done(rid)` 를 부르고, `serve` 가
+`Asker.submit_tag(rid)` 로 Asker 큐에 넣는다. 모델 출력은 `voxlog/tags.py` 의 `parse_tag_output` 으로 태그만
+뽑아(최대 5개) `Store.set_auto_tags` 로 바로 저장한다. `tags_human` 이 참이면 자동 태그는 태그를 바꾸지 않는다.
+`POST /api/recordings/<id>/autotag` 는 사람이 부른 '태그 다시 달기'다(사람 태그는 두고 예전 AI 태그만 교체).
+`server.llm_ready()` 가 거짓이면(LLM 없음) 맡기지 않고 503이며 화면은 단추를 숨긴다. 실패는 받아쓰기·올리기
+결과와 `status` 에 영향이 없고 `autotag="failed"` 와 상세의 `자동 태그를 달지 못했습니다` 만 남는다.
+서버 재시작 때 `autotag="pending"` 은 `failed` 로 바뀐다. 화면 요소 id·문구의 정본은
+`docs/DESIGN-next-features.md` F2 절이다.
 
 ## voxlog/store.py
 
@@ -59,13 +84,25 @@ class Store:
         # incoming_path() 에 흘려 쓴 파일을 검사(mime·빈 파일·크기)하고 audio/ 로 옮김(복사 아님). 같은 인자·같은 오류(ValueError)·
         # 같은 duplicate 규칙. 실패·중복이면 그 파일은 지움. Store 를 만들 때 incoming/ 에 남은 찌꺼기는 치움
     def get(self, rid) -> dict|None                      # 메타 + "transcript": 글(없으면 "")
-    def list(self, q=None, date_from=None, date_to=None, status=None, limit=200) -> list[dict]
-        # recorded_at 최신순. q 는 받아 적은 글·title 에서 대소문자 무시 부분 일치. date_* 는 "YYYY-MM-DD"(포함).
-        # 항목은 메타 + "snippet"(q 가 있으면 맞은 곳 앞뒤 40자, 없으면 글 앞 80자)
+    def list(self, q=None, date_from=None, date_to=None, status=None, limit=200, tag=None) -> list[dict]
+        # recorded_at 최신순. q 는 받아 적은 글·title·label·tags 에서 대소문자 무시 부분 일치. date_* 는 "YYYY-MM-DD"(포함).
+        # tag 는 tag_key(t) 가 같은 태그가 있는 것만, 다른 거르기와 AND.
+        # 항목은 메타 + "snippet"(q 가 있으면 맞은 곳 앞뒤 40자, 없으면 글 앞 80자).
+        # q 가 있으면 "match" = "text"(글·title) | "label" | "tag" 를 넣고, q 가 없으면 넣지 않는다.
     def audio_path(self, rid) -> pathlib.Path|None
     def set_status(self, rid, status, error=None) -> None
     def set_job(self, rid, jid) -> None                  # 받아쓰기 서버에 맡긴 작업 id 를 메타 stt_job 에(None 이면 지움)
     def set_transcript(self, rid, text) -> None          # txt 쓰기, status "done", title·chars 갱신, error None
+                                                        #   label·tags·tags_auto·tags_human·autotag 는 건드리지 않음
+    def set_label_tags(self, rid, patch) -> None
+        # patch 는 서버가 정규화한 {"label": str} / {"tags": [str]} 중 온 키만. 잠금 안 read-modify-write.
+        # "tags" 가 있으면 tags=patch["tags"], tags_auto=옛 tags_auto 중 새 tags 에 남은 것(새 표기), tags_human=True.
+    def set_auto_tags(self, rid, tags, manual=False) -> bool
+        # tags 는 tags.parse_tag_output 결과. tags_human 이고 manual=False 면 태그를 두고 autotag="done"·False.
+        # 아니면 tags=tags_auto=tags[:10]. manual=True 면 사람 태그를 앞에 두고(merge_tags) AI 태그만 교체하며
+        # tags_human 은 그대로. 끝에 autotag="done"·True. AI 태그가 남지 않아도 done.
+    def set_autotag(self, rid, state) -> None             # state 는 None|"pending"|"done"|"failed" (아니면 ValueError)
+    def autotag_pending_ids(self) -> list[str]            # meta 만 훑어 autotag=="pending" 인 id (재시작 때 failed 로)
     def pending_ids(self) -> list[str]                   # status 가 pending 또는 transcribing 인 것 (재시작 때 다시 넣기)
     def delete(self, rid) -> bool                         # 오디오·메타·글 지움
     def stats(self) -> dict  # {"count","done","pending","failed","chars","by_date": {"YYYY-MM-DD": n}}
@@ -75,7 +112,7 @@ class Store:
     def delete_answer(self, aid) -> bool|"running"   # 지웠으면 True, 없거나 잘못된 id 면 False, 아직 status "running" 이면 "running"(지우지 않음)
     def list_answers(self, limit=50) -> list[dict]       # 최신순. 항목마다 about = 첫 녹취의 {recorded_at, title} (지워졌으면 None)
 ```
-잘못된 id 는 get/audio_path/get_answer 가 None, delete_answer 가 False, set_*(set_status·set_job·set_transcript·set_answer) 와 삭제 delete(녹음) 는 `ValueError`.
+잘못된 id 는 get/audio_path/get_answer 가 None, delete_answer 가 False, set_*(set_status·set_job·set_transcript·set_answer·set_label_tags·set_auto_tags·set_autotag) 와 삭제 delete(녹음) 는 `ValueError`. 옛 meta 에 `label`·`tags`·`tags_auto`·`tags_human`·`autotag` 가 없으면 `get`·`list` 가 `""`/`[]`/`[]`/`false`/`null` 로 채운다.
 
 ## voxlog/stt.py
 
@@ -98,7 +135,9 @@ def transcribe(path: pathlib.Path, mime: str, env=None, opener=None, job=None) -
     #   (같은 화자가 이어지면 한 줄, 번호는 처음 나온 차례, 서버가 정하지 못한 "?" 는 "화자 ?"). segments 가 없으면 text 그대로
     #   job(get()·set(id)) 을 주면 맡긴 id 를 적어 두고, 적힌 id 가 있으면 다시 맡기지 않고 이어 기다림(서버에 없으면 새로 맡김)
 class Transcriber:
-    def __init__(self, store, env=None, transcribe_fn=transcribe)
+    def __init__(self, store, env=None, transcribe_fn=transcribe, on_done=None)
+        # on_done(rid) 는 set_transcript 가 성공하고 글이 비지 않았을 때만 부름(no-stt·failed·빈 글에는 없음).
+        # on_done 이 던진 예외는 삼켜 받아쓰기 결과·상태에 영향을 주지 않는다. serve 는 자동 태그용으로 넘긴다.
     def start(self)            # 데몬 스레드 하나, store.pending_ids() 를 먼저 넣음
     def submit(self, rid)      # 큐에 넣음 (같은 id 중복 무시)
     def busy(self, rid) -> bool      # 그 id 가 큐에 있거나 지금 받아쓰는 중
@@ -126,14 +165,26 @@ def llm_command(env=None) -> list[str]
     # VOXLOG_LLM_CMD 가 있으면 shlex.split, 없으면 ["claude","-p","--tools","","--strict-mcp-config","--setting-sources","",
     #   "--no-session-persistence","--output-format","text"] (사용자 설정 파일·MCP 서버를 읽지 않게 고정)
 def run_llm(prompt, env=None, timeout=300) -> str   # 프롬프트는 stdin 으로, 코드 0 이 아니면 AskError(stderr 끝 300자), 실행 파일 없음 → AskUnavailable
+TAG_HEAD = "이 녹취에 붙일 주제 태그를 3~5개 골라라. 한 줄에 태그 하나, 태그만 쓰고 다른 말은 쓰지 마라. 태그는 20자 이하의 짧은 명사구."
+TAG_TEXT_MAX = 20_000
+def build_tag_prompt(text) -> str   # TAG_HEAD + "\n" + _GUARD + "\n<녹취>\n" + text[:TAG_TEXT_MAX] + "\n</녹취>"
+                                    # </녹취> 이스케이프는 build_prompt 와 같음
+def llm_status(env=None) -> tuple[bool, str|None]   # (명령을 쓸 수 있음, 오류 글). 설정 오류면 (False, "LLM 명령 설정 오류: …")
 class Asker:
     def __init__(self, store, env=None, run=run_llm)
     def start(self)   # 데몬 스레드 하나. 시작할 때 저장된 답 중 status "running" 인 것을 모두 "failed" 로 바꿈
                       #   (error "서버가 다시 시작되어 끊겼습니다 - 다시 물어 주십시오") - 화면에서 다시 물어야 함
-    def stop(self, timeout=5) ; def idle(self) -> bool
+                      #   store.autotag_pending_ids() 도 모두 set_autotag(rid, "failed") 로 바꿈(다시 달기는 단추)
+    def stop(self, timeout=5) ; def idle(self) -> bool     # idle 은 태그 일까지 포함해 큐가 비고 도는 것이 없을 때 True
     def submit(self, kind, prompt, ids) -> dict
         # kind 검사(ValueError), ids 는 문자열 1~200개의 목록(아니면 ValueError), 받아 적은 글이 하나도 없으면 ValueError
         # store.add_answer → 큐(한 번에 하나) → build_prompt → run → set_answer(done|failed)
+    def submit_tag(self, rid, manual=False) -> bool
+        # 같은 rid 가 이미 큐에 있으면 False(manual=True 면 그 일을 manual 로 올림). store.set_autotag(rid,"pending")
+        # 뒤 큐에 넣고 True. 없는 id(ValueError)는 False. 처리: 글을 build_tag_prompt 로 모델에 보내고
+        # tags.parse_tag_output 결과가 비면 "failed", 아니면 store.set_auto_tags(rid, tags, manual). 예외는 삼키고 "failed".
+    # 큐는 queue.PriorityQueue: (우선순위, 순번, 일). 사용자 묻기 0, 태그 1, 멈춤(None) 2 - 같은 우선순위는 들어온 순서.
+    # 그래서 태그 일이 쌓여 있어도 새 사용자 묻기가 먼저 돈다(지금 도는 태그 하나는 끝까지 감), idle 도 둘을 함께 본다.
 ```
 
 ## serve.py
@@ -148,16 +199,29 @@ API (JSON, 오류는 `{"error": "한국어 까닭"}` + 4xx/5xx). 토큰이 있�
 
 | 요청 | 답 |
 | ---- | -- |
-| `GET /api/health` | `{"ok":true,"auth":bool,"stt":backend_name,"llm":bool(명령 있음),"version":"0.1"}` (+ `"llm_error": str`, `VOXLOG_LLM_CMD` 가 비었거나 따옴표가 안 맞을 때) |
+| `GET /api/health` | `{"ok":true,"auth":bool,"stt":backend_name,"llm":bool(명령 있음),"version":"0.1"}` (+ `"llm_error": str`, `VOXLOG_LLM_CMD` 가 비었거나 따옴표가 안 맞을 때) — 판정은 `ask.llm_status(env)` |
 | `POST /api/recordings` 본문=오디오 그대로, 머리 `Content-Type`, `X-Recorded-At`, `X-Duration-Ms`, `X-Client-Id` | 201 메타(새 것) / 200 메타(duplicate) / 400 / 408(업로드 마감 넘김) / 413 / 500(저장 실패) / 503(동시 업로드 2개 넘음, `Retry-After: 5`) / 507(디스크 여유 부족) |
-| `GET /api/recordings?q=&from=&to=&status=&limit=` | `{"items":[…],"stats":{…}}` / 400(`from`·`to` 가 실제 날짜가 아님·`limit` 가 정수가 아님) |
+| `GET /api/recordings?q=&from=&to=&status=&limit=&tag=` | `{"items":[…],"stats":{…}}` / 400(`from`·`to` 가 실제 날짜가 아님·`limit` 가 정수가 아님·`tag` 가 20자 초과) |
 | `GET /api/recordings/<id>` | 메타+transcript / 404 |
+| `PATCH /api/recordings/<id>` 본문 `{"label"?, "tags"?}` | 200 메타+transcript / 400(본문·타입·40자·20자·10개) / 404 / 413(6 KiB 초과) |
+| `POST /api/recordings/<id>/autotag` (본문 없음) | 202 `{"ok":true,"autotag":"pending"}` / 404 / 409(글이 없음) / 503(LLM 없음) |
 | `GET /api/recordings/<id>/audio` | 오디오 바이트(그 mime) |
 | `POST /api/recordings/<id>/retry` | 음성인식 다시 넣음 → 200 메타 / 404 / 409(이미 큐에 있거나 받아쓰는 중) |
 | `DELETE /api/recordings/<id>` | `{"ok":true}` |
 | `DELETE /api/answers/<id>` | `{"ok":true}` · 없으면 404 · 아직 묻는 중이면 409 |
 | `POST /api/ask` `{"kind","prompt","ids":[…]}` | 202 답 메타 / 400(본문이 JSON 객체가 아님·`prompt` 나 `kind` 가 문자열이 아님·`ids` 가 1~200개 문자열이 아님·받아 적은 글이 없음·본문이 `Content-Length` 보다 덜 옴) |
 | `GET /api/answers` · `GET /api/answers/<aid>` | 목록 `{"items":[…]}` · 답 하나 |
+
+`GET /api/recordings`·`GET /api/recordings/<id>` 의 항목에는 `label`·`tags`·`tags_auto`·`tags_human`·`autotag` 가
+붙고(`q` 가 있으면 `match` 도), `tag` 는 `q`·날짜·`status` 와 AND 로 거른다. `PATCH` 는 `PATCH_JSON_MAX = 6 * 1024` 로
+`_read_body` 를 직접 불러 `Content-Length`·본문 마감·413 이 같이 걸리고, 정규화(`voxlog/tags.py`) 뒤 `Store.set_label_tags`
+로 쓴 뒤 `Store.get` 꼴로 답한다. `Store.get` 과 `set_label_tags` 사이에 지워져 `ValueError` 가 나도 404 `없는 녹음입니다`.
+오류 글은 설계 문서 F2 '인터페이스' 와 같다(400 `본문은 JSON 객체여야 합니다`·`label 은 문자열이어야 합니다`·
+`tags 는 문자열 목록이어야 합니다`·`이름은 40자 이하여야 합니다`·`태그는 하나당 20자 이하여야 합니다`·
+`태그는 최대 10개입니다`·`바꿀 이름이나 태그가 없습니다`, 413 `본문이 너무 큽니다 (최대 6144 바이트)`).
+`autotag` 는 `Asker.submit_tag(rid, manual=True)` 뒤 202 이고, `server.llm_ready()` 가 거짓이면 503
+`묻기(LLM)가 준비되지 않았습니다`, 글이 비면 409 `받아 적은 글이 없습니다`. 토큰·출처 검사는 다른 쓰기와 같다.
+`make_server(..., llm_ready=None)` 로 검사가 LLM 있음/없음을 바꾼다(기본 `ask.llm_status(env)[0]`).
 
 업로드 본문은 메모리에 모으지 않고 `Store.incoming_path()` 의 `incoming/` 파일에 조각씩 흘려 쓴 뒤(fsync) `Store.add_recording_file` 로
 `audio/` 로 옮깁니다. `X-Recorded-At` 은 `datetime.fromisoformat` 으로 읽히고 시간대가 붙어 있으며 서버 시계보다 하루 넘게

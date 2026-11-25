@@ -1,46 +1,22 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-25T02:11:17 / REV 205
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-25T16:41:29 / REV 206
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | `a41f0c` | claude | opus | R47 대기 | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
-| S2 | `d27e93` | codex | kisti/kistillm | R48 대기 | 11-13 태석님 배정. 무료 작업자(공급자 kisti) |
-| S3 | `5b8c1e` | opencode | kisti/kistillm | R48 대기 | 11-24 태석님: 오픈코드 + kistillm (aida:10430). 그 전은 nvidia/z-ai/glm-5.3-flash |
-| S4 | `6cd650` | claude | sonnet | R48 대기 | 11-09 17:30 태석님 배정. `claude -p --model sonnet`(=sonnet-5.5). 소유 경로는 태스크마다 6절에 등재 |
-| S5 | `61dfcc` | claude | sonnet | R47 대기 |  |
-| S6 | `47764b` | freebuff | (하네스 기본) | R48 대기 |  |
+| S1 | `a41f0c` | claude | opus | R49 쉼 (무료 중심) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S2 | `d27e93` | codex | kisti/kistillm | R49 VoxLog F2 만들기: tags.py·ask/stt 자동 태그·app.js | 무료 |
+| S3 | `5b8c1e` | opencode | kisti/kistillm | R49 VoxLog F2 만들기: store.py·serve.py PATCH/autotag | 무료 |
+| S4 | `6cd650` | claude | sonnet | R49 VoxLog F2 적대적 검수(부작용 중심) | 유료, 검수만 |
+| S5 | `61dfcc` | claude | sonnet | R49 쉼 (무료 중심) |  |
+| S6 | `47764b` | freebuff | (하네스 기본) | R49 VoxLog F2 만들기: index.html·style.css·브라우저 검사·문서 | 무료 |
 
 ## 3. 작업 보드
 
 | ID | 요청 | 태스크 | 담당 | 상태 | 산출물 |
 | --- | --- | --- | --- | --- | --- |
-| T-115 | Q-261111-f77f | browser_harness: shot() 뷰포트 스크린샷 선택지 | S2 | DONE |  |
-| T-116 | Q-261111-f77f | browser_ui: 통계 목표 구멍 메우기 (서로 다른 네 값·진 판·끝난 판 새로 고침) | S2 | DONE |  |
-| T-117 | Q-261111-f77f | browser_ui: 보기 설정(색약 present 파랑·저장)과 접근성(대비 전면·어두움+색약·키보드 완주·aria-live) | S2 | DONE |  |
-| T-118 | Q-261111-f77f | browser_core: 뒤집기 애니메이션 실측·화면 ENTER/⌫ 누르기·키 색 안 내려감 | S2 | DONE |  |
-| T-119 | Q-261111-f77f | 웹워들 목표 넷 적대적 검수 + tests/README.md 갱신 | S1 | DONE |  |
-| T-120 | Q-261111-f77f | browser_ui 새 검사 둘의 결함 수정 (공유 단추는 창 안·busy 빈틈) | S2 | DONE |  |
-| T-121 | Q-261111-f77f | browser_core: 뒤집기를 animationstart 로 진짜 증명 + 빈 all()·0.5s 박기 제거 | S2 | DONE |  |
-| T-122 | Q-261111-f77f | browser_ui: n번째 줄 승리 분포·통계 이름표·색약 hue·새로 고침 뒤 칠해진 색 | S2 | DONE |  |
-| T-123 | Q-261111-f77f | 보드·통계·보기 설정 재검수 + tests/README.md 갱신 | S1 | DONE |  |
-| T-124 | Q-261111-f77f | browser_core: animationstart 기록에서 pop 거르기 + 옛 검사 이름 정직하게 | S2 | DONE |  |
-| T-125 | Q-261111-f77f | 보드 목표 최종 확인 + tests/README.md 마무리 | S1 | DONE |  |
-| T-126 | Q-261111-5593 | 모니터: /app/<프로젝트>/ 정적 실행 경로 + app.json 선언 + 단위 시험 | S2 | DONE |  |
-| T-127 | Q-261111-5593 | 모니터 화면: 프로젝트 칸의 '실행' 단추 + 격리 iframe 패널 (sw v12) | S2 | DONE |  |
-| T-128 | Q-261111-5593 | 브라우저 검증 스크립트 tests/browser_monitor_app.py | S2 | DONE | R10 에서 실패 - T-131·T-132 로 나눠 대체됨(결과물 있음). 보드 정리 2026-11-11 R11 |
-| T-129 | Q-261111-5593 | 웹워들: app.json 선언 + README 실행 안내 | S3 | DONE |  |
-| T-130 | Q-261111-5593 | 적대적 검수: 경로 탈출·인증·CSP/sandbox·증거의 진위 | S1 | DONE | R10 에서 T-128 실패로 막힘 - T-133 으로 대체됨(rounds/R10/REVIEW.md). 보드 정리 2026-11-11 R11 |
-| T-131 | Q-261111-5593 | 브라우저 실측 A: /app/웹워들/ 이 그려지는가 (8개) | S3 | DONE |  |
-| T-132 | Q-261111-5593 | 브라우저 실측 B: 모니터 '실행' → 격리 iframe 안에 결과물 (6개) | S2 | DONE |  |
-| T-133 | Q-261111-5593 | 적대적 검수: 경로 탈출·인증·CSP/sandbox·변이 시험 | S1 | DONE |  |
-| T-134 | Q-261111-5593 | 검수 결함 1~4 수정: /app/ 경로 티켓 + ACAO null + CSP sandbox + 패널 높이 | S2 | DONE |  |
-| T-135 | Q-261111-5593 | 브라우저 실측 C: 인증을 켠 채로 미리보기가 뜨는가 (6개) | S3 | DONE |  |
-| T-136 | Q-261111-8481 | 적대적 검수 A: /app/ 경로 티켓 인가·유출·격리(새 탭·팝업) | S1 | DONE |  |
-| T-137 | Q-261111-8481 | 적대적 검수 B: TLS·프록시 Host·좁은 화면(720px)·검사의 진위(변이 시험) | S4 | DONE |  |
-| T-138 | Q-261111-8481 | browser_monitor_auth.py 를 임시 루트에서 돌리기 (운영 .aimem/access.log 오염 제거) | S3 | DONE |  |
 | T-139 | Q-261111-8481 | 검수 결함 수정: 티켓 로그 가리기 + Host 허용 목록 + 미리보기 최소 높이 | S2 | DONE | tools/aimem_monitor/server.py, tools/aimem_monitor/static/style.css |
 | T-140 | Q-261111-8481 | 단위 검사 6개 추가: TLS 쿠키·TLS/Host CSP 출처·티켓 수명·sw.js | S2 | DONE |  |
 | T-141 | Q-261111-8481 | browser_monitor_ui: 폰 폭 미리보기 높이·잘림·가로 스크롤 검사 3개 | S3 | DONE |  |
@@ -333,14 +309,30 @@
 | T-430 | Q-261125-5fa4 | [VoxLog] R48 재검수 - R48-N1~N8 반영이 맞는지와 고치며 생긴 새 문제 | S4 | DONE | .aimem/sessions/T-430-S4-a1-014911/report.md |
 | T-431 | Q-261125-5fa4 | [VoxLog] 설계 문서에 재검수 지적 중 3건(R48-N15~N17) 반영 | S2 | DONE | projects/VoxLog/docs/DESIGN-next-features.md |
 | T-432 | Q-261125-5fa4 | [VoxLog] R48 재검수 2 - R48-N15~N17 반영과 새 문제 | S4 | DONE | .aimem/sessions/T-432-S4-a1-015855/report.md |
+| T-433 | Q-261125-76c8 | [VoxLog] F2 voxlog/tags.py - 이름·태그 정규화와 모델 출력에서 태그 뽑기 + tests/test_tags.py | S2 | DONE |  |
+| T-434 | Q-261125-76c8 | [VoxLog] F2 store.py - label·tags·tags_auto·tags_human·autotag 저장, set_label_tags·set_auto_tags·set_autotag, list(tag, q 확장, match) + test_store.py | S3 | DONE |  |
+| T-435 | Q-261125-76c8 | [VoxLog] F2 자동 태그 일꾼 - ask.py build_tag_prompt·llm_status·Asker 우선순위 큐·submit_tag, stt.py on_done + 검사 | S2 | DONE |  |
+| T-436 | Q-261125-76c8 | [VoxLog] F2 serve.py - PATCH /api/recordings/<id>, POST …/autotag, ?tag=, 받아쓰기 뒤 자동 태그 연결 + test_serve.py·fake_llm.py | S3 | DONE |  |
+| T-437 | Q-261125-76c8 | [VoxLog] F2 화면 뼈대 - index.html 요소·style.css 칩과 편집 블록(폰 320px·어두운 모드)·sw.js VERSION | S6 | DONE |  |
+| T-438 | Q-261125-76c8 | [VoxLog] F2 app.js - 목록 이름·칩·태그 거르기, 상세 이름·태그 편집·저장·태그 다시 달기·자동 태그 상태 | S2 | DONE |  |
+| T-439 | Q-261125-76c8 | [VoxLog] F2 브라우저 검사 t42(손 편집·칩·거르기·검색·넘침) t43(자동 태그·사람 손댐 보호·다시 달기) t44(LLM 없음) | S6 | DONE |  |
+| T-440 | Q-261125-76c8 | [VoxLog] F2 문서 - 설계 문서 F2 절·'보류한 것' I3 를 결정대로, INTERFACE.md·README 맞추기 | S6 | DONE |  |
+| T-441 | Q-261125-76c8 | [VoxLog] R49 적대적 검수 (부작용 중심) - F2 이름·태그·자동 태그 T-433~T-440 | S4 | DONE | .aimem/sessions/T-441-S4-a1-135833/report.md |
+| T-442 | Q-261125-76c8 | [VoxLog] R49-N2·N3·N4 고치기 - 태그 뽑기가 사과·머리말을 거름, 태그 호출 60초 상한, 도는 중 다시 받아쓰기면 한 번 더 | S2 | DONE |  |
+| T-443 | Q-261125-76c8 | [VoxLog] R49-N1 서버 쪽 - set_label_tags 가 태그가 그대로면 tags_human 을 켜지 않음 + 느린 가짜 LLM | S3 | DONE |  |
+| T-444 | Q-261125-76c8 | [VoxLog] R49-N1 화면 쪽 - saveLabels 가 태그 입력이 바뀌었을 때만 tags 를 보냄 | S2 | DONE |  |
+| T-445 | Q-261125-76c8 | [VoxLog] R49-N1 브라우저 검사 - 이름만 저장해도 자동 태그가 이어짐, 자동 태그 기다리는 중 저장해도 AI 태그가 붙음 | S6 | DONE |  |
+| T-446 | Q-261125-76c8 | [VoxLog] R49 재검수 - R49-N1~N4 고침이 맞는지, 고치며 생긴 새 문제, 변이 검사 | S4 | DONE | .aimem/sessions/T-446-S4-a1-163102/report.md |
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
 | 1 | [VoxLog] R47-N1·R47-N2(하) R47 검수 남은 지적: R47-N1 docs/RESEARCH-draft-owner.md:148 (f) 검사 항목의 'resume/pageshow 에서 다시 걸어' 에 persisted 단서가 빠짐(요약·§4.2·§6 에는 붙음); R47-N2(추정, 지금 코드에선 안 일어남) app.js init 의 첫 로드 회수와 initOpen 이 getConfig.then 안의 fillSettings·applyRecSupport·updateQueue·checkHealth 가 동기로 던지지 않아야만 돎 - 회수를 그 앞으로 빼거나 감싸면 독립. 검수 보고 .aimem/sessions/T-420-S4-a1-001546/report.md |  |  |
-| 2 | [VoxLog] R48-N9·R48-N10·R48-N11·R48-N12·R48-N13·R48-N14·R48-N18·R48-N19·R48-N20·R48-N21·R48-N22(하) 설계 문서 DESIGN-next-features.md 의 남은 검수 지적 - 다음 기능 구현 요청 때 함께 반영: R48-N9 <앞답> 은 prefix 에(녹취만 빠지게)·앞답 안 녹취 태그 이스케이프, R48-N10 INTERFACE.md 노드·시그니처 갱신, R48-N11 실 깊이·50건 한도·기존 선택자 유지·태그 입력 구분자(쉼표)·칩 stopPropagation·검색칸 placeholder, R48-N12 의견 절 S2 요약 세 줄, R48-N13 출처 되돌림 검사 근거, R48-N14 펼치기는 details 로·부모 해석을 Asker.submit 한 곳에, R48-N18 askFollowUp 이중 전송·토큰, R48-N19 FakeStore.answer_states, R48-N20 isolated() 범위, R48-N21 부모 확인은 stat 만(answer_exists), R48-N22 한도 밖 부모 표시 한 줄. 원문 .aimem/sessions/T-428-S4-a1-012943·T-430-S4-a1-014911·T-432-S4-a1-015855/report.md |  | VoxLog 설계 문서 하 등급 묶음 |
+| 2 | [VoxLog] R48-N9·R48-N10·R48-N11·R48-N12·R48-N13·R48-N14·R48-N18·R48-N19·R48-N21·R48-N22(하) 설계 문서 DESIGN-next-features.md 의 남은 검수 지적(이름·태그 몫과 R48-N20 은 R49 에서 반영) - 출처·이어 묻기 구현 요청 때 함께: R48-N9 <앞답> 은 prefix 에(녹취만 빠지게)·앞답 안 녹취 태그 이스케이프, R48-N10 INTERFACE.md 의 출처 노드·이어 묻기 시그니처 갱신, R48-N11 실 깊이·50건 한도·기존 답 선택자 유지, R48-N12 의견 절 이어 묻기 아이디어 둘의 S2 요약, R48-N13 출처 되돌림 검사 근거, R48-N14 펼치기는 details 로·부모 해석을 Asker.submit 한 곳에, R48-N18 askFollowUp 이중 전송·토큰, R48-N19 FakeStore.answer_states, R48-N21 부모 확인은 stat 만(answer_exists), R48-N22 한도 밖 부모 표시 한 줄. 원문 .aimem/sessions/T-428-S4-a1-012943·T-430-S4-a1-014911·T-432-S4-a1-015855/report.md |  | VoxLog 설계 문서 하 등급 묶음 |
 | 3 | [VoxLog] R48-N23·R48-N24(하, 확인 필요 - 써 보다 본 것) R48-N23 날짜 거르기 뒤 목록은 1건인데 현황(stats)은 전체 수·글자(S3 관찰, 뜻한 것인지 확인), R48-N24 짧은 webm 녹음의 audio.duration 이 Infinity(S2 관찰, 넘기기는 됨). 출처 rounds/R48/decision.md '써 보다 본 다른 것' |  | VoxLog 관찰 둘 |
+| 4 | [VoxLog] R49-N5·R49-N6·R49-N7·R49-N8(하) 이름·태그 검수 남은 지적: R49-N5 app.js loadDetail 폴링이 받아쓰기 done 순간 autotag 가 아직 null 이면 멈춰 열린 상세에 AI 태그가 안 뜸(새로고침하면 보임 - done 직후 한 번 더 읽거나 pending 을 set_transcript 와 같은 잠금에서), R49-N6 폴링 중 네트워크 오류 한 번이면 detailTimer 가 다시 안 서 '다는 중…' 이 굳음(loadList 와 같은 약점), R49-N7 TAG_TEXT_MAX 20000자 - 긴 녹취는 앞만 보고 태그(INTERFACE 에 한 줄), R49-N8 서버 casefold·화면 toLowerCase 차이(ß 등, 기록만). 원문 .aimem/sessions/T-441-S4-a1-135833/report.md |  |  |
+| 5 | [VoxLog] R49-N9·R49-N10·R49-N11(하) 이름·태그 재검수 남은 지적: R49-N9 tests/test_ask.py:449 태그 호출 상한 검사가 ask.TAG_TIMEOUT 을 자기와 비교하는 항등식이라 300 으로 되돌려도 통과 - [60] 으로 박기(한 줄), R49-N10 문장부호 없는 안내 문장(예: 죄송합니다 요약할 수 없습니다)은 아직 태그가 됨(기록만), R49-N11 store.set_label_tags 가 대소문자만 바뀐 같은 태그(python→Python)면 조기 반환해 표기가 안 바뀜 - 표기만 갱신하고 tags_human 은 그대로. 원문 .aimem/sessions/T-446-S4-a1-163102/report.md |  |  |
 
 ## 6. 파일 소유권
 
@@ -364,32 +356,38 @@
 | `CLAUDE.md` | 관리자 | 부트스트랩. 자동 주입되는 유일한 파일 |
 | `README.md` | 관리자 | 저장소 소개 |
 | `projects/**` | 관리자 | 프로젝트 결과물 projects/<이름>/ - 여러 라운드에 걸쳐 쌓임 (REV 142). 관리자가 하위 경로를 슬롯에 배정 |
-| `projects/VoxLog/README.md` | S2 | R44 |
+| `projects/VoxLog/README.md` | S6 | R49 |
 | `projects/VoxLog/docs/**` | S6 | R39 |
-| `projects/VoxLog/docs/DESIGN-next-features.md` | S2 | R48 |
-| `projects/VoxLog/docs/INTERFACE.md` | S2 | R44 |
+| `projects/VoxLog/docs/DESIGN-next-features.md` | S6 | R49 |
+| `projects/VoxLog/docs/INTERFACE.md` | S6 | R49 |
 | `projects/VoxLog/docs/RESEARCH-draft-owner.md` | S2 | R46 |
-| `projects/VoxLog/serve.py` | S2 | R42 F1 |
+| `projects/VoxLog/serve.py` | S3 | R49 |
+| `projects/VoxLog/settings.example.json` | S2 | R44 |
 | `projects/VoxLog/tests/**` | S6 | R39 |
-| `projects/VoxLog/tests/browser_voxlog.py` | S3 | R46 |
-| `projects/VoxLog/tests/test_ask.py` | S6 | R42 |
-| `projects/VoxLog/tests/test_serve.py` | S6 | R42 |
+| `projects/VoxLog/tests/browser_voxlog.py` | S6 | R49 |
+| `projects/VoxLog/tests/fake_llm.py` | S3 | R49 |
+| `projects/VoxLog/tests/fake_tag_llm.py` | S2 | R49 |
+| `projects/VoxLog/tests/test_ask.py` | S2 | R49 |
+| `projects/VoxLog/tests/test_serve.py` | S3 | R49 |
 | `projects/VoxLog/tests/test_serve_ask_body.py` | S2 | R46 |
 | `projects/VoxLog/tests/test_store.py` | S3 | R43 |
-| `projects/VoxLog/tests/test_stt.py` | S6 | R42 |
+| `projects/VoxLog/tests/test_stt.py` | S2 | R49 |
+| `projects/VoxLog/tests/test_tags.py` | S2 | R49 |
 | `projects/VoxLog/voxlog/**` | S6 | R39 |
 | `projects/VoxLog/voxlog/__init__.py` | S3 | R33 |
+| `projects/VoxLog/voxlog/ask.py` | S2 | R49 |
 | `projects/VoxLog/voxlog/store.py` | S3 | R43 |
-| `projects/VoxLog/voxlog/stt.py` | S6 | R42 |
+| `projects/VoxLog/voxlog/stt.py` | S2 | R49 |
+| `projects/VoxLog/voxlog/tags.py` | S2 | R49 |
 | `projects/VoxLog/web/**` | S4 | R34 |
 | `projects/VoxLog/web/api.js` | S6 | R41 |
-| `projects/VoxLog/web/app.js` | S3 | R46 |
+| `projects/VoxLog/web/app.js` | S2 | R49 |
 | `projects/VoxLog/web/icons/**` | S5 | R33 |
-| `projects/VoxLog/web/index.html` | S4 | R33 |
+| `projects/VoxLog/web/index.html` | S6 | R49 |
 | `projects/VoxLog/web/manifest.webmanifest` | S5 | R33 |
 | `projects/VoxLog/web/queue.js` | S3 | R46 |
-| `projects/VoxLog/web/style.css` | S4 | R33 |
-| `projects/VoxLog/web/sw.js` | S6 | R42 |
+| `projects/VoxLog/web/style.css` | S6 | R49 |
+| `projects/VoxLog/web/sw.js` | S6 | R49 |
 | `projects/웹워들/README.md` | S3 | R10 |
 | `projects/웹워들/app.json` | S3 | R10 |
 | `projects/웹워들/docs/**` | S1 | R12 T-152 미리보기 기록 저장 설계 문서 (새 경로) |
@@ -614,3 +612,4 @@
 | Q-261124-f310 | [VoxLog] 대기 큐의 VoxLog 항목 둘 처리 (R43-N5, R44-N1~N3) | 태석 (클로드 코드 전달) | DONE | 2026-11-24T23:08:57 |
 | Q-261125-f9f0 | [VoxLog] 대기 큐의 VoxLog 항목 처리 (R46-N1, R46-N2) | 태석 (클로드 코드 전달) | DONE | 2026-11-25T00:08:19 |
 | Q-261125-5fa4 | [VoxLog] 작업자마다 써 보고 추가 기능 아이디어 둘씩 → 관리자가 검토·확정 → 설계 문서 (구현하지 않음) | 태석 (클로드 코드 전달) | DONE | 2026-11-25T00:31:34 |
+| Q-261125-76c8 | [VoxLog] F2 녹취 이름·태그 구현 - AI 가 자동으로 태그를 달고 사람이 고치거나 더함 | 태석 (클로드 코드 전달) | DONE | 2026-11-25T11:21:26 |

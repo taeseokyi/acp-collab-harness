@@ -3137,7 +3137,8 @@ function renderSlots(data) {
     runIds.push(r ? r.id : (last ? last.id : null));   // 대기 중이면 마지막 실행 상세로
     const now = document.createElement('div');
     now.className = 'slot-state';
-    now.appendChild(r ? badge('실행 중', 'running') : (s.paused ? badge('일시 중지', 'blocked') : badge('쉬는 중', 'idle')));
+    // 지시가 아직 안 나간 실행(승인 대기)은 '실행 중' 이 아니다 - 작업자는 아무것도 받지 못했다
+    now.appendChild(r ? (runAwaitsSend(r) ? runStatusBadge(r) : badge('실행 중', 'running')) : (s.paused ? badge('일시 중지', 'blocked') : badge('쉬는 중', 'idle')));
     if (s.paused) {
       const sub = document.createElement('span');
       sub.className = 'sub';
@@ -3551,7 +3552,9 @@ function renderBoard(data) {
       const verdictOnly = String(run.state || '').toLowerCase() === 'done' && reportStatus(run.report_head);   // 끝난 실행은 보고 판정만 (done · DONE 이 겹쳐 보였다)
       // 상태 칸이 이미 같은 말('진행 중')을 하고 있으면 여기서는 되풀이하지 않는다 - 칩 둘이 나란히 찍혔다 (2026-11-12 태석님)
       const sameAsStatus = statusLabel(run.state) === statusLabel(b.status, BOARD_LABEL);
-      if (!verdictOnly && !sameAsStatus) { line.appendChild(statusBadge(run.state)); line.appendChild(document.createTextNode(' ')); }
+      if (runAwaitsSend(run)) { line.appendChild(runStatusBadge(run)); line.appendChild(document.createTextNode(' ')); }   // 지시가 아직 안 나갔다
+      else if (runningNodeById(b.id) && nodeAfterRunBadge(runningNodeById(b.id))) { line.appendChild(nodeAfterRunBadge(runningNodeById(b.id))); line.appendChild(document.createTextNode(' ')); }   // 작업자는 끝났고 확인 중이거나 실행기가 없다
+      else if (!verdictOnly && !sameAsStatus) { line.appendChild(statusBadge(run.state)); line.appendChild(document.createTextNode(' ')); }
       if (reportStatus(run.report_head)) line.appendChild(reportBadge(run.report_head));
       if (line.childNodes.length) last.appendChild(line);
       const sub = document.createElement('span');
@@ -3690,7 +3693,40 @@ function nodeStatusBadge(n) {
     b.title = INFRA_HINT;
     return b;
   }
-  return statusBadge(n.status);
+  const r = nodeRun(n);
+  if (r && runAwaitsSend(r)) return runStatusBadge(r);   // 노드는 running 이어도 지시가 아직 안 나갔다
+  return nodeAfterRunBadge(n) || statusBadge(n.status);
+}
+// 작업자는 끝났는데 노드가 아직 running 인 사이 - 실행기가 검증 명령을 돌리는 중이거나, 실행기가 없어 멈춰 있다.
+// 이때 '실행 중' 이라고 하면 함대 상태(일하는 작업자 0)와 어긋난다. 해당 없으면 null
+function nodeAfterRunBadge(n) {
+  const r = nodeRun(n);
+  const st = r ? String(r.state || '').toLowerCase() : '';
+  if (!r || st === 'running' || st === 'starting') return null;
+  const graphs = state.data && Array.isArray(state.data.graphs) ? state.data.graphs : [];
+  const g = graphs.find((x) => x && Array.isArray(x.nodes) && x.nodes.includes(n));
+  const live = graphRunning(g);
+  const b = live ? badge('결과 확인 중', 'running') : badge('실행기 없음', 'blocked');
+  b.dataset.status = live ? 'verify' : 'norunner';
+  b.title = live ? '작업자는 끝났고, 실행기가 검증 명령으로 결과를 확인하는 중입니다'
+    : '작업자는 끝났는데 이 그래프를 잡은 실행기가 없습니다 - 관리자가 실행기를 다시 띄우면 이어집니다';
+  return b;
+}
+// 보드 줄(태스크 번호)에 해당하는 도는 노드 - 없으면 null
+function runningNodeById(id) {
+  const graphs = state.data && Array.isArray(state.data.graphs) ? state.data.graphs : [];
+  for (let i = graphs.length - 1; i >= 0; i--) {
+    const n = (graphs[i].nodes || []).find((x) => x && x.id === id);
+    if (n) return String(n.status || '').toLowerCase() === 'running' ? n : null;
+  }
+  return null;
+}
+// 도는 노드의 지금 실행(마지막 시도) - 없으면 null
+function nodeRun(n) {
+  if (!n || String(n.status || '').toLowerCase() !== 'running') return null;
+  const id = n.last_run;
+  const runs = state.data && Array.isArray(state.data.runs) ? state.data.runs : [];
+  return id ? (runs.find((x) => x && x.id === id) || null) : null;
 }
 // 노드 옆 조용한 메모들 (대기 까닭 · 장애 안내 · 장애 재시도 횟수). 없으면 빈 배열
 function nodeNotes(n) {

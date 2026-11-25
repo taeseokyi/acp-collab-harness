@@ -13,6 +13,7 @@ import time
 import unittest
 from pathlib import Path
 from unittest import mock
+from urllib.parse import quote
 
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
@@ -26,14 +27,28 @@ def fake_stt(path, mime, env):
     return "가짜 글 " + path.name
 
 
+FAKE_TAGS = "회의\n가짜 태그\n- 세번째"
+
+
 def fake_llm(prompt, env=None):
+    if prompt.startswith("이 녹취에 붙일 주제 태그"):
+        return FAKE_TAGS
     return "가짜 답"
+
+
+def llm_true():
+    return True
+
+
+def llm_false():
+    return False
 
 
 class Base(unittest.TestCase):
     token = None
     max_uploads = 2
     env = None
+    llm_ready = staticmethod(llm_false)
 
     def make_stt(self):
         return fake_stt
@@ -42,7 +57,7 @@ class Base(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.server = serve.make_server("127.0.0.1", 0, self.tmp.name, token=self.token,
                                         env=dict(self.env or {}), stt_fn=self.make_stt(), llm_run=fake_llm,
-                                        max_uploads=self.max_uploads)
+                                        max_uploads=self.max_uploads, llm_ready=self.llm_ready)
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -90,6 +105,23 @@ class Base(unittest.TestCase):
                 return meta
             time.sleep(0.05)
         self.fail("받아쓰기가 10초 안에 끝나지 않음")
+
+    def wait_asker_idle(self):
+        end = time.time() + 10
+        while time.time() < end:
+            if self.server.asker.idle():
+                return
+            time.sleep(0.05)
+        self.fail("Asker 가 10초 안에 비지 않음")
+
+    def wait_autotag(self, rid, token=None):
+        end = time.time() + 10
+        while time.time() < end:
+            _, meta = self.jreq("GET", "/api/recordings/" + rid, token=token)
+            if meta.get("autotag") in ("done", "failed"):
+                return meta
+            time.sleep(0.05)
+        self.fail("자동 태그가 10초 안에 끝나지 않음")
 
 
 class TestServe(Base):
@@ -829,6 +861,335 @@ class TestServeToken(Base):
             conn.close()
         status, _ = self.upload(token=TOKEN, extra={"Origin": "null"})
         self.assertEqual(status, 201)
+
+
+class TestLabelTags(Base):
+    llm_ready = staticmethod(llm_false)
+
+    def seed(self, label=None, tags=None):
+        status, meta = self.upload()
+        self.assertEqual(status, 201)
+        self.wait_done(meta["id"])
+        if label is not None or tags is not None:
+            body = {}
+            if label is not None:
+                body["label"] = label
+            if tags is not None:
+                body["tags"] = tags
+            st, _ = self.jreq("PATCH", "/api/recordings/" + meta["id"], body)
+            self.assertEqual(st, 200)
+        return meta["id"]
+
+    def test_patch_roundtrip_and_fields(self):
+        rid = self.seed()
+        status, meta = self.jreq("PATCH", "/api/recordings/" + rid,
+                                 {"label": "  주간 회의  ", "tags": [" 회의 ", "A사", "회의", ""]})
+        self.assertEqual(status, 200)
+        self.assertEqual(meta["label"], "주간 회의")
+        self.assertEqual(meta["tags"], ["회의", "A사"])
+        self.assertEqual(meta["tags_auto"], [])
+        self.assertTrue(meta["tags_human"])
+        self.assertIsNone(meta["autotag"])  # llm_ready 거짓이면 자동 태그는 맡기지 않는다
+        self.assertIn("transcript", meta)
+        _, got = self.jreq("GET", "/api/recordings/" + rid)
+        self.assertEqual(got["label"], "주간 회의")
+        self.assertEqual(got["tags"], ["회의", "A사"])
+        self.assertTrue(got["tags_human"])
+        _, lst = self.jreq("GET", "/api/recordings")
+        item = lst["items"][0]
+        for key in ("label", "tags", "tags_auto", "tags_human", "autotag"):
+            self.assertIn(key, item)
+        self.assertEqual(item["label"], "주간 회의")
+
+    def test_label_only_keeps_tags_human(self):
+        rid = self.seed(label="옛 이름", tags=["회의"])
+        status, meta = self.jreq("PATCH", "/api/recordings/" + rid, {"label": "새 이름"})
+        self.assertEqual(status, 200)
+        self.assertEqual(meta["label"], "새 이름")
+        self.assertEqual(meta["tags"], ["회의"])
+        self.assertTrue(meta["tags_human"])  # 앞 PATCH tags 가 세운 것을 유지
+
+    def test_empty_tags_array_clears(self):
+        rid = self.seed(label="이름", tags=["회의", "A사"])
+        status, meta = self.jreq("PATCH", "/api/recordings/" + rid, {"tags": []})
+        self.assertEqual(status, 200)
+        self.assertEqual(meta["tags"], [])
+        self.assertEqual(meta["tags_auto"], [])
+        self.assertTrue(meta["tags_human"])
+
+    def test_patch_400_limits_and_types(self):
+        rid = self.seed()
+        cases = [
+            ({"label": "가" * 41}, "이름은 40자 이하여야 합니다"),
+            ({"tags": ["가" * 21]}, "태그는 하나당 20자 이하여야 합니다"),
+            ({"tags": ["t%d" % i for i in range(11)]}, "태그는 최대 10개입니다"),
+            ({"label": 3}, "label 은 문자열이어야 합니다"),
+            ({"tags": "회의"}, "tags 는 문자열 목록이어야 합니다"),
+            ({"tags": [1]}, "tags 는 문자열 목록이어야 합니다"),
+            ({}, "바꿀 이름이나 태그가 없습니다"),
+            ({"other": 1}, "바꿀 이름이나 태그가 없습니다"),
+        ]
+        for body, msg in cases:
+            status, got = self.jreq("PATCH", "/api/recordings/" + rid, body)
+            self.assertEqual(status, 400, body)
+            self.assertEqual(got["error"], msg, body)
+
+    def test_patch_bad_body_400(self):
+        rid = self.seed()
+        for raw in (b"not json", b"[]", b"null", b"3"):
+            status, _, _ = self.req("PATCH", "/api/recordings/" + rid, raw,
+                                    {"Content-Type": "application/json"})
+            self.assertEqual(status, 400, raw)
+
+    def test_patch_missing_length_400(self):
+        rid = self.seed()
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.putrequest("PATCH", "/api/recordings/" + rid)
+        conn.endheaders()
+        self.assertEqual(conn.getresponse().status, 400)
+        conn.close()
+
+    def test_patch_too_large_413(self):
+        rid = self.seed()
+        status, _, raw = self.req("PATCH", "/api/recordings/" + rid, b"=" * 6145,
+                                  {"Content-Type": "application/json"})
+        self.assertEqual(status, 413)
+        self.assertIn("6144", json.loads(raw.decode("utf-8"))["error"])
+
+    def test_patch_missing_id_404(self):
+        status, body = self.jreq("PATCH", "/api/recordings/r-20200101-000000-abcd",
+                                 {"label": "이름"})
+        self.assertEqual(status, 404)
+        self.assertEqual(body["error"], "없는 녹음입니다")
+
+    def test_patch_deleted_between_get_and_set_404(self):
+        rid = self.seed()
+        with mock.patch.object(self.server.store, "set_label_tags",
+                               side_effect=ValueError("없는 녹음입니다: " + rid)):
+            status, body = self.jreq("PATCH", "/api/recordings/" + rid, {"label": "이름"})
+        self.assertEqual(status, 404)
+        self.assertEqual(body["error"], "없는 녹음입니다")
+
+    def test_patch_405_allow_and_origin(self):
+        rid = self.seed()
+        status, hdr, _ = self.req("PUT", "/api/recordings/" + rid, b"")
+        self.assertEqual(status, 405)
+        self.assertEqual(hdr["Allow"], "GET, PATCH, DELETE")
+        status, _, _ = self.req("PATCH", "/api/recordings/" + rid, b'{"label":"x"}',
+                                {"Content-Type": "application/json", "Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        status, _, _ = self.req("POST", "/api/recordings/%s/autotag" % rid, b"",
+                                {"Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        same = "http://127.0.0.1:%d" % self.port
+        status, _ = self.jreq("PATCH", "/api/recordings/" + rid, {"label": "같은 출처"},
+                              headers={"Origin": same})
+        self.assertEqual(status, 200)
+
+
+class TestTagFilter(Base):
+    llm_ready = staticmethod(llm_false)
+
+    def seed(self, label, tags, status=None):
+        status_code, meta = self.upload()
+        self.assertEqual(status_code, 201)
+        self.wait_done(meta["id"])
+        self.jreq("PATCH", "/api/recordings/" + meta["id"], {"label": label, "tags": tags})
+        if status:
+            self.server.store.set_status(meta["id"], status)
+        return meta["id"]
+
+    def test_tag_filter_and_with_q_and_status(self):
+        a = self.seed("주간회의", ["회의"])
+        b = self.seed("다른 이름", ["회의", "A사"], status="failed")
+        c = self.seed("개인", ["개인"])
+        _, got = self.jreq("GET", "/api/recordings?tag=" + quote("회의"))
+        self.assertEqual({x["id"] for x in got["items"]}, {a, b})
+        _, got = self.jreq("GET", "/api/recordings?tag=%s&q=%s" % (quote("회의"), quote("주간")))
+        self.assertEqual([x["id"] for x in got["items"]], [a])
+        self.assertEqual(got["items"][0]["match"], "label")
+        _, got = self.jreq("GET", "/api/recordings?tag=%s&status=done" % quote("회의"))
+        self.assertEqual([x["id"] for x in got["items"]], [a])
+        _, got = self.jreq("GET", "/api/recordings?tag=%s&status=failed" % quote("회의"))
+        self.assertEqual([x["id"] for x in got["items"]], [b])
+        _, got = self.jreq("GET", "/api/recordings?tag=" + quote("없는태그"))
+        self.assertEqual(got["items"], [])
+
+    def test_tag_filter_casefold(self):
+        self.seed("회의", ["Meeting"])
+        _, got = self.jreq("GET", "/api/recordings?tag=meeting")
+        self.assertEqual(len(got["items"]), 1)
+
+    def test_tag_filter_too_long_400(self):
+        status, body = self.jreq("GET", "/api/recordings?tag=" + "a" * 21)
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], "태그는 하나당 20자 이하여야 합니다")
+        status, _ = self.jreq("GET", "/api/recordings?tag=" + "a" * 20)
+        self.assertEqual(status, 200)
+
+    def test_match_kinds(self):
+        rid = self.seed("주간 모임", ["회의"])
+        _, got = self.jreq("GET", "/api/recordings?q=" + quote("주간"))
+        self.assertEqual(got["items"][0]["match"], "label")
+        _, got = self.jreq("GET", "/api/recordings?q=" + quote("회의"))
+        self.assertEqual(got["items"][0]["match"], "tag")
+        _, got = self.jreq("GET", "/api/recordings?q=" + quote("가짜"))
+        self.assertEqual(got["items"][0]["match"], "text")
+        _, got = self.jreq("GET", "/api/recordings?q=" + quote("없는말"))
+        self.assertEqual(got["items"], [])
+        _, got = self.jreq("GET", "/api/recordings")
+        self.assertNotIn("match", got["items"][0])
+        self.assertEqual(got["items"][0]["id"], rid)
+
+
+class TestAutoTag(Base):
+    llm_ready = staticmethod(llm_true)
+
+    def test_upload_auto_tags(self):
+        status, meta = self.upload()
+        self.assertEqual(status, 201)
+        self.wait_done(meta["id"])
+        self.wait_autotag(meta["id"])
+        self.wait_asker_idle()
+        _, done = self.jreq("GET", "/api/recordings/" + meta["id"])
+        self.assertEqual(done["status"], "done")
+        self.assertEqual(done["tags"], ["회의", "가짜 태그", "세번째"])
+        self.assertEqual(done["tags_auto"], ["회의", "가짜 태그", "세번째"])
+        self.assertFalse(done["tags_human"])
+        self.assertEqual(done["autotag"], "done")
+
+    def test_patch_delete_then_retry_does_not_revive(self):
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.wait_done(rid)
+        self.wait_autotag(rid)
+        status, _ = self.jreq("PATCH", "/api/recordings/" + rid, {"tags": ["가짜 태그"]})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.jreq("POST", "/api/recordings/%s/retry" % rid)[0], 200)
+        self.wait_done(rid)
+        time.sleep(0.3)
+        self.wait_asker_idle()
+        _, got = self.jreq("GET", "/api/recordings/" + rid)
+        self.assertEqual(got["status"], "done")
+        self.assertNotIn("회의", got["tags"])
+        self.assertEqual(got["tags"], ["가짜 태그"])
+        self.assertTrue(got["tags_human"])
+
+    def test_post_autotag_keeps_human_and_replaces_ai(self):
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.wait_done(rid)
+        self.wait_autotag(rid)
+        status, _ = self.jreq("PATCH", "/api/recordings/" + rid, {"tags": ["내 태그", "회의"]})
+        self.assertEqual(status, 200)
+        status, body = self.jreq("POST", "/api/recordings/%s/autotag" % rid)
+        self.assertEqual(status, 202)
+        self.assertEqual(body, {"ok": True, "autotag": "pending"})
+        got = self.wait_autotag(rid)
+        self.assertEqual(got["tags"], ["내 태그", "회의", "가짜 태그", "세번째"])
+        self.assertEqual(got["tags_auto"], ["회의", "가짜 태그", "세번째"])
+        self.assertTrue(got["tags_human"])
+
+    def test_post_autotag_404_409(self):
+        empty = self.server.store.add_recording(b"RIFF", "audio/webm")
+        status, body = self.jreq("POST", "/api/recordings/%s/autotag" % empty["id"])
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"], "받아 적은 글이 없습니다")
+        status, body = self.jreq("POST", "/api/recordings/r-20200101-000000-abcd/autotag")
+        self.assertEqual(status, 404)
+        self.assertEqual(body["error"], "없는 녹음입니다")
+
+    def test_post_autotag_existing_job_still_202(self):
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.wait_done(rid)
+        self.wait_autotag(rid)
+        with mock.patch.object(self.server.asker, "submit_tag", return_value=False):
+            status, body = self.jreq("POST", "/api/recordings/%s/autotag" % rid)
+        self.assertEqual(status, 202)
+        self.assertEqual(body["autotag"], "pending")
+
+    def test_tag_failure_does_not_change_status(self):
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.wait_done(rid)
+        self.wait_autotag(rid)
+        def boom(prompt, env=None):
+            if prompt.startswith("이 녹취에 붙일 주제 태그"):
+                raise RuntimeError("태그 실패")
+            return "가짜 답"
+        self.server.asker.run = boom
+        status = self.jreq("POST", "/api/recordings/%s/retry" % rid)[0]
+        self.assertEqual(status, 200)
+        self.wait_done(rid)
+        end = time.time() + 10
+        while time.time() < end:
+            _, got = self.jreq("GET", "/api/recordings/" + rid)
+            if got["autotag"] != "done":
+                break
+            time.sleep(0.02)
+        self.wait_asker_idle()
+        _, got = self.jreq("GET", "/api/recordings/" + rid)
+        self.assertEqual(got["status"], "done")
+        self.assertEqual(got["autotag"], "failed")
+        self.assertTrue(got["transcript"].startswith("가짜 글 "))
+
+    def test_asker_idle_includes_tag_jobs(self):
+        _, meta = self.upload()
+        self.wait_done(meta["id"])
+        self.wait_autotag(meta["id"])
+        self.wait_asker_idle()
+
+
+class TestAutoTagNoLlm(Base):
+    llm_ready = staticmethod(llm_false)
+
+    def test_upload_has_no_auto_tags_and_retag_503(self):
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.wait_done(rid)
+        time.sleep(0.2)
+        _, got = self.jreq("GET", "/api/recordings/" + rid)
+        self.assertIsNone(got["autotag"])
+        self.assertEqual(got["tags"], [])
+        self.assertEqual(got["tags_auto"], [])
+        self.assertFalse(got["tags_human"])
+        status, body = self.jreq("POST", "/api/recordings/%s/autotag" % rid)
+        self.assertEqual(status, 503)
+        self.assertEqual(body["error"], "묻기(LLM)가 준비되지 않았습니다")
+        status, _ = self.jreq("PATCH", "/api/recordings/" + rid, {"label": "손 이름", "tags": ["손 태그"]})
+        self.assertEqual(status, 200)
+        _, got = self.jreq("GET", "/api/recordings/" + rid)
+        self.assertEqual(got["label"], "손 이름")
+        self.assertEqual(got["tags"], ["손 태그"])
+        self.assertTrue(got["tags_human"])
+
+
+class TestServeTokenPatchAutotag(Base):
+    token = TOKEN
+    llm_ready = staticmethod(llm_true)
+
+    def test_token_required(self):
+        _, meta = self.upload(token=TOKEN)
+        rid = meta["id"]
+        self.wait_done(rid, token=TOKEN)
+        self.wait_autotag(rid, token=TOKEN)
+        self.assertEqual(self.jreq("PATCH", "/api/recordings/" + rid, {"label": "x"})[0], 401)
+        self.assertEqual(self.jreq("POST", "/api/recordings/%s/autotag" % rid)[0], 401)
+        status, _ = self.jreq("PATCH", "/api/recordings/" + rid, {"label": "x"}, token=TOKEN)
+        self.assertEqual(status, 200)
+        status, body = self.jreq("POST", "/api/recordings/%s/autotag" % rid, token=TOKEN)
+        self.assertEqual(status, 202)
+        self.assertEqual(body["autotag"], "pending")
+
+
+class TestHealthUsesLlmStatus(Base):
+    def test_health_llm_status_fields(self):
+        with mock.patch.object(serve.ask_mod, "llm_status", return_value=(False, "LLM 명령 설정 오류: 시험")):
+            status, body = self.jreq("GET", "/api/health")
+        self.assertEqual(status, 200)
+        self.assertFalse(body["llm"])
+        self.assertEqual(body["llm_error"], "LLM 명령 설정 오류: 시험")
 
 
 class TestMain(unittest.TestCase):

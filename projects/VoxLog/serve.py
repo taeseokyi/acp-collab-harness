@@ -34,11 +34,13 @@ if str(HERE) not in sys.path:
 
 from voxlog import ask as ask_mod  # noqa: E402
 from voxlog import stt as stt_mod  # noqa: E402
+from voxlog import tags as tags_mod  # noqa: E402
 from voxlog.store import ALLOWED_MIME, MAX_AUDIO_BYTES, Store  # noqa: E402
 
 WEB = HERE / "web"
 VERSION = "0.1"
 JSON_BODY_MAX = 1024 * 1024
+PATCH_JSON_MAX = 6 * 1024
 DRAIN_MAX = 64 * 1024  # 413 뒤 연결을 깨끗이 닫으려고 버리는(저장 안 함) 작은 본문의 상한
 BODY_GRACE_S = 30  # 본문(JSON) 마감 - 요청 시작부터 이만큼 안에 선언한 길이만큼 다 오지 않으면(느리게라도 계속 오는 경우 포함) 400 (R41-N5)
 CHUNK = 64 * 1024  # 업로드를 디스크로 흘려 쓰는 단위
@@ -286,11 +288,15 @@ class Handler(BaseHTTPRequestHandler):
         elif parts == ["api", "recordings"]:
             route = (("GET", "POST"), self._rec_list if method == "GET" else self._rec_upload, (u,))
         elif n == 3 and parts[1] == "recordings":
-            route = (("GET", "DELETE"), self._rec_get if method == "GET" else self._rec_delete, (parts[2],))
+            allowed = ("GET", "PATCH", "DELETE")
+            fn = {"GET": self._rec_get, "PATCH": self._rec_patch, "DELETE": self._rec_delete}.get(method)
+            route = (allowed, fn, (parts[2],))
         elif n == 4 and parts[1] == "recordings" and parts[3] == "audio":
             route = (("GET",), self._rec_audio, (parts[2],))
         elif n == 4 and parts[1] == "recordings" and parts[3] == "retry":
             route = (("POST",), self._rec_retry, (parts[2],))
+        elif n == 4 and parts[1] == "recordings" and parts[3] == "autotag":
+            route = (("POST",), self._rec_autotag, (parts[2],))
         elif parts == ["api", "ask"]:
             route = (("POST",), self._ask, ())
         elif parts == ["api", "answers"]:
@@ -306,18 +312,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _health(self):
         env = self.server.env
-        # 설정이 틀려도(llm_command 가 ValueError·빈 목록) health 는 200 으로 답하고 llm 칸만 false + 까닭을 준다
-        llm = False
-        llm_error = None
-        try:
-            cmd = ask_mod.llm_command(env)
-        except ValueError as exc:
-            llm_error = "LLM 명령 설정 오류: %s" % exc
-        else:
-            if not cmd:
-                llm_error = "LLM 명령 설정 오류: VOXLOG_LLM_CMD 가 비어 있습니다"
-            else:
-                llm = shutil.which(cmd[0]) is not None
+        # 설정이 틀려도 health 는 200 으로 답하고 llm 칸만 false + 까닭을 준다
+        llm, llm_error = ask_mod.llm_status(env)
         body = {"ok": True, "auth": bool(self.server.token),
                 "stt": stt_mod.backend_name(env), "llm": llm, "version": VERSION}
         if llm_error:
@@ -511,9 +507,12 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 return self._err(400, "limit 는 정수여야 합니다")
             limit = max(1, min(limit, 1000))
+        tag = one("tag")
+        if tag is not None and len(tag) > tags_mod.TAG_MAX:
+            return self._err(400, "태그는 하나당 20자 이하여야 합니다")
         store = self.server.store
         items = store.list(q=one("q"), date_from=date_from, date_to=date_to,
-                           status=one("status"), limit=limit)
+                           status=one("status"), limit=limit, tag=tag)
         self._json(200, {"items": items, "stats": store.stats()})
 
     def _rec_get(self, rid):
@@ -521,6 +520,55 @@ class Handler(BaseHTTPRequestHandler):
         if meta is None:
             return self._err(404, "없는 녹음입니다")
         self._json(200, meta)
+
+    def _rec_patch(self, rid):
+        data = self._read_body(PATCH_JSON_MAX)
+        if data is None:
+            return
+        try:
+            body = json.loads(data.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            body = None
+        if not isinstance(body, dict):
+            return self._err(400, "본문은 JSON 객체여야 합니다")
+        patch = {}
+        if "label" in body:
+            try:
+                patch["label"] = tags_mod.normalize_label(body["label"])
+            except ValueError as exc:
+                return self._err(400, str(exc))
+        if "tags" in body:
+            try:
+                patch["tags"] = tags_mod.normalize_tags(body["tags"])
+            except ValueError as exc:
+                return self._err(400, str(exc))
+        if not patch:
+            return self._err(400, "바꿀 이름이나 태그가 없습니다")
+        store = self.server.store
+        if store.get(rid) is None:
+            return self._err(404, "없는 녹음입니다")
+        try:
+            store.set_label_tags(rid, patch)
+        except ValueError:
+            return self._err(404, "없는 녹음입니다")
+        meta = store.get(rid)
+        if meta is None:
+            return self._err(404, "없는 녹음입니다")
+        self._json(200, meta)
+
+    def _rec_autotag(self, rid):
+        store = self.server.store
+        meta = store.get(rid)
+        if meta is None:
+            return self._err(404, "없는 녹음입니다")
+        if not self.server.llm_ready():
+            return self._err(503, "묻기(LLM)가 준비되지 않았습니다")
+        if not (meta.get("transcript") or "").strip():
+            return self._err(409, "받아 적은 글이 없습니다")
+        if not self.server.asker.submit_tag(rid, manual=True):
+            if store.get(rid) is None:
+                return self._err(404, "없는 녹음입니다")
+        self._json(202, {"ok": True, "autotag": "pending"})
 
     def _rec_audio(self, rid):
         store = self.server.store
@@ -609,7 +657,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def make_server(host, port, data_dir, token=None, env=None, stt_fn=None, llm_run=None,
                 max_uploads=2, upload_grace=UPLOAD_GRACE_S, upload_min_rate=UPLOAD_MIN_RATE,
-                body_grace=BODY_GRACE_S):
+                body_grace=BODY_GRACE_S, llm_ready=None):
     """검사가 임시 포트(0)·임시 폴더·가짜 함수로 띄울 수 있는 서버. 일꾼은 start() 해 둔다.
 
     max_uploads: 동시에 받는 업로드 수(넘으면 503). server.disk_free 는 저장소 디스크 여유
@@ -631,11 +679,13 @@ def make_server(host, port, data_dir, token=None, env=None, stt_fn=None, llm_run
         server.upload_min_rate = upload_min_rate
         server.body_grace = body_grace
         server.disk_free = lambda: shutil.disk_usage(server.store.root).free
-        server.transcriber = stt_mod.Transcriber(
-            server.store, env, transcribe_fn=stt_fn or stt_mod.transcribe)
         server.asker = ask_mod.Asker(server.store, env, run=llm_run or ask_mod.run_llm)
-        server.transcriber.start()
+        server.llm_ready = llm_ready or (lambda: ask_mod.llm_status(env)[0])
+        server.transcriber = stt_mod.Transcriber(
+            server.store, env, transcribe_fn=stt_fn or stt_mod.transcribe,
+            on_done=lambda rid: server.asker.submit_tag(rid) if server.llm_ready() else None)
         server.asker.start()
+        server.transcriber.start()
     except BaseException:
         server.server_close()
         raise

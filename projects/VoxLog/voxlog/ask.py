@@ -3,15 +3,20 @@
 import os
 import queue as _queue
 import shlex
+import shutil
 import subprocess
 import tempfile
 import threading
 
 from .store import _sort_key
+from . import tags
 
 KINDS = {"summary": "요약", "keywords": "핵심어·주제", "todo": "할 일·약속 뽑기", "custom": "직접 묻기"}
 MAX_PROMPT_CHARS = 200_000
 MAX_USER_PROMPT = 2000
+TAG_HEAD = "이 녹취에 붙일 주제 태그를 3~5개 골라라. 한 줄에 태그 하나, 태그만 쓰고 다른 말은 쓰지 마라. 태그는 20자 이하의 짧은 명사구."
+TAG_TEXT_MAX = 20_000
+TAG_TIMEOUT = 60
 
 _KIND_INSTRUCTIONS = {
     "summary": "녹취들을 한국어로 간결히 요약하라. 녹취별 핵심 한두 줄 + 전체 요약",
@@ -76,6 +81,15 @@ def build_prompt(kind, user_prompt, items):
     return prefix + note
 
 
+def _escape_transcript(text):
+    return (text or "").replace("</녹취>", r"<\/녹취>")
+
+
+def build_tag_prompt(text):
+    body = _escape_transcript((text or "")[:TAG_TEXT_MAX])
+    return TAG_HEAD + "\n" + _GUARD + "\n<녹취>\n" + body + "\n</녹취>"
+
+
 def llm_command(env=None):
     env = os.environ if env is None else env
     cmd = env.get("VOXLOG_LLM_CMD")
@@ -84,6 +98,18 @@ def llm_command(env=None):
     return ["claude", "-p", "--tools", "", "--strict-mcp-config",
             "--setting-sources", "", "--no-session-persistence",
             "--output-format", "text"]
+
+
+def llm_status(env=None):
+    """LLM 명령이 쓸 수 있는지 (bool, 까닭|None). serve._health 의 판정을 옮긴 것."""
+    env = os.environ if env is None else env
+    try:
+        cmd = llm_command(env)
+    except ValueError as exc:
+        return False, "LLM 명령 설정 오류: %s" % exc
+    if not cmd:
+        return False, "LLM 명령 설정 오류: VOXLOG_LLM_CMD 가 비어 있습니다"
+    return shutil.which(cmd[0]) is not None, None
 
 
 def run_llm(prompt, env=None, timeout=300):
@@ -119,10 +145,17 @@ class Asker:
         self.store = store
         self.env = env
         self.run = run
-        self._q = _queue.Queue()
+        self._q = _queue.PriorityQueue()
+        self._seq = 0
+        self._tag_queued = {}
         self._thread = None
         self._busy = False
         self._lock = threading.Lock()
+
+    def _put(self, priority, work):
+        with self._lock:
+            self._seq += 1
+            self._q.put((priority, self._seq, work))
 
     def start(self):
         if self._thread is not None and self._thread.is_alive():
@@ -140,17 +173,26 @@ class Asker:
                 )
             except Exception:  # noqa: BLE001
                 pass
+        try:
+            pending = self.store.autotag_pending_ids()
+        except Exception:  # noqa: BLE001 - 시작을 막지 않는다
+            pending = []
+        for rid in pending:
+            try:
+                self.store.set_autotag(rid, "failed")
+            except Exception:  # noqa: BLE001 - 그새 지워졌을 수 있다
+                pass
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
     def stop(self, timeout=5):
-        self._q.put(None)
+        self._put(2, None)
         if self._thread is not None:
             self._thread.join(timeout)
 
     def idle(self):
         with self._lock:
-            return self._q.empty() and not self._busy
+            return self._q.unfinished_tasks == 0 and not self._busy
 
     def submit(self, kind, prompt, ids):
         if kind not in KINDS:
@@ -177,28 +219,96 @@ class Asker:
             raise ValueError("받아 적은 글이 있는 녹취가 없습니다")
 
         meta = self.store.add_answer(kind, prompt, ids)
-        self._q.put({"kind": kind, "prompt": prompt, "items": items, "meta": meta})
+        self._put(0, {"type": "ask", "kind": kind, "prompt": prompt,
+                      "items": items, "meta": meta})
         return meta
+
+    def submit_tag(self, rid, manual=False):
+        """태그 일을 큐에 넣는다. 도는 중이면 끝난 뒤 한 번 더, 기다리는 중이면 False."""
+        with self._lock:
+            work = self._tag_queued.get(rid)
+            if work is not None:
+                if work.get("running"):
+                    if manual:
+                        work["again_manual"] = True
+                    else:
+                        work["again"] = True
+                    return True
+                if manual:
+                    work["manual"] = True
+                return False
+            try:
+                self.store.set_autotag(rid, "pending")
+            except ValueError:
+                return False
+            work = {"type": "tag", "rid": rid, "manual": bool(manual),
+                    "running": False, "again": False, "again_manual": False}
+            self._tag_queued[rid] = work
+            self._seq += 1
+            self._q.put((1, self._seq, work))
+        return True
+
+    def _tag_work(self, work):
+        rid = work["rid"]
+        try:
+            rec = self.store.get(rid)
+            if rec is None:
+                try:
+                    self.store.set_autotag(rid, None)
+                except Exception:  # noqa: BLE001 - 그새 지워졌을 수 있다
+                    pass
+                return
+            text = rec.get("transcript") or ""
+            if not text.strip():
+                self.store.set_autotag(rid, None)
+                return
+            prompt = build_tag_prompt(text)
+            if self.run is run_llm:
+                out = run_llm(prompt, self.env, timeout=TAG_TIMEOUT)
+            else:
+                out = self.run(prompt, self.env)
+            found = tags.parse_tag_output(out)
+            if not found:
+                self.store.set_autotag(rid, "failed")
+            else:
+                self.store.set_auto_tags(rid, found, work.get("manual", False))
+        except Exception:  # noqa: BLE001 - 태그 실패는 조용히, 작업자 스레드는 계속 돈다
+            try:
+                self.store.set_autotag(rid, "failed")
+            except Exception:  # noqa: BLE001
+                pass
 
     def _loop(self):
         while True:
-            item = self._q.get()
+            _, _, item = self._q.get()
             if item is None:
                 self._q.task_done()
                 break
             with self._lock:
                 self._busy = True
-            aid = item["meta"]["id"]
+                if item["type"] == "tag":
+                    item["running"] = True
             try:
-                built = build_prompt(item["kind"], item["prompt"], item["items"])
-                answer = self.run(built, self.env)
-                self.store.set_answer(aid, "done", answer)
-            except Exception as exc:  # noqa: BLE001 - 작업자 스레드는 죽으면 안 됨
-                try:
-                    self.store.set_answer(aid, "failed", error=str(exc))
-                except Exception:  # noqa: BLE001
-                    pass
+                if item["type"] == "tag":
+                    self._tag_work(item)
+                else:
+                    aid = item["meta"]["id"]
+                    try:
+                        built = build_prompt(item["kind"], item["prompt"], item["items"])
+                        answer = self.run(built, self.env)
+                        self.store.set_answer(aid, "done", answer)
+                    except Exception as exc:  # noqa: BLE001 - 작업자 스레드는 죽으면 안 됨
+                        try:
+                            self.store.set_answer(aid, "failed", error=str(exc))
+                        except Exception:  # noqa: BLE001
+                            pass
             finally:
+                if item["type"] == "tag":
+                    with self._lock:
+                        if self._tag_queued.get(item["rid"]) is item:
+                            self._tag_queued.pop(item["rid"], None)
+                    if item.get("again") or item.get("again_manual"):
+                        self.submit_tag(item["rid"], manual=bool(item.get("again_manual")))
                 with self._lock:
                     self._busy = False
                 self._q.task_done()

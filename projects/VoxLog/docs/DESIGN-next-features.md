@@ -1,6 +1,6 @@
 # VoxLog 다음 기능 설계 (R48)
 
-R48 에서 작업자 셋(S2·S3·S6)이 각자 VoxLog 를 임시 사본으로 써 보고 아이디어를 둘씩 냈습니다. 서로의 아이디어는 보지 않고 냈고, 낸 사람이 아닌 둘씩 의견을 냈습니다. 관리자는 겹침·이득·비용·기존 구조와의 맞음을 검토해 F1~F3 를 확정하고 I6 와 I3 의 자동 태그 제안을 보류했습니다. 이 문서는 다음 라운드가 기능마다 바로 구현 요청으로 쓸 수 있는 설계이며, **코드는 아직 고치지 않았습니다**.
+R48 에서 작업자 셋(S2·S3·S6)이 각자 VoxLog 를 임시 사본으로 써 보고 아이디어를 둘씩 냈습니다. 서로의 아이디어는 보지 않고 냈고, 낸 사람이 아닌 둘씩 의견을 냈습니다. 관리자는 겹침·이득·비용·기존 구조와의 맞음을 검토해 F1~F3 를 확정하고 I6 와 I3 의 자동 태그 제안을 보류했습니다(R49 에 태석님 결정으로 I3 자동 태그는 채택 - 아래 `보류한 것`). 이 문서는 다음 라운드가 기능마다 바로 구현 요청으로 쓸 수 있는 설계이며, **코드는 아직 고치지 않았습니다**.
 
 ## 확정한 기능
 
@@ -111,27 +111,126 @@ GET /api/answers
 - 검색(`q`)은 받아쓴 글·`title`에 더해 `label`과 `tags`도 찾습니다. 이름·태그에만 맞은 경우 화면에 `이름에서 맞음` 또는 `태그에서 맞음`을 보입니다.
 - 묻기 범위: `지금 검색 결과`는 `filterParams`를 쓰므로 태그 거르기가 따라옵니다. `오늘`·`최근 7일`은 날짜 범위만 만들므로 태그를 무시합니다. 화면의 범위 아래 한 줄에 이 뜻을 보입니다.
 - 다시 받아쓰기가 `title`을 덮어도 `label`은 남습니다. 사용자가 붙인 이름과 태그가 자동 받아쓰기에 지워지지 않습니다.
-- 자동 태그 제안은 이번 기능에 넣지 않습니다(보류, 아래 `보류한 것`).
+- **AI 자동 태그(2026-11-25 태석님 결정으로 R48 보류를 뒤집음):** 받아쓰기가 **성공해 글이 저장된 뒤에만** 그 글을 모델에 보내 태그를 만들어 바로 저장합니다(제안만 하고 사용자 확인을 기다리지 않음). `no-stt`·`failed` 이거나 글이 비면 맡기지 않습니다. AI 태그는 최대 5개(`AUTO_TAGS_MAX`)이고, 사람 태그와 합쳐 10개까지 남깁니다.
+- **AI 태그와 사람 태그를 구분해 저장합니다.** 화면에는 하나의 태그 줄로 보이되, AI가 단 칩은 점선 테두리(`tag-auto`)와 `title="AI 가 단 태그"`로 구분합니다. 사람이 그대로 둔 AI 태그는 계속 AI 표시를 유지합니다.
+- **사람이 태그를 한 번이라도 고치면(PATCH에 `tags`가 있으면) 그 녹취의 자동 태그는 끝납니다**(`tags_human=true`). 다시 받아쓰기 등 뒤의 자동 태그는 그 녹취의 태그를 바꾸지 않습니다 — 지운 것을 되살리지도, 더한 것을 지우지도 않습니다. 이름(`label`)만 고친 PATCH는 `tags_human`을 바꾸지 않습니다.
+- **이미 있는 녹취에 다는 길을 둡니다:** 상세의 `태그 다시 달기` 단추(`POST /api/recordings/<id>/autotag`). 사람이 누른 것이므로 `tags_human`이어도 돕니다. 이때 사람이 단 태그(= `tags`에서 `tags_auto`를 뺀 것)는 그대로 두고, 예전 AI 태그는 새 AI 태그로 바꿉니다(사람 것 먼저, 합쳐 10개까지).
+- 같은 녹취가 이미 태그 큐에 있으면 다시 넣지 않습니다(`Asker.submit_tag`가 `False`). 다만 `manual=True`로 오면 그 일을 manual로 올립니다.
+- **LLM이 없는 설정(`/api/health`의 `llm=false`)에서는 자동 태그만 빠집니다.** 받아쓰기·올리기·손 이름·태그 편집·검색·태그 거르기는 그대로이고, `태그 다시 달기` 단추도 보이지 않습니다(API는 503).
+- **자동 태그는 사용자의 묻기를 밀지 않습니다.** Asker 큐를 우선순위 큐로 두어 사용자 묻기가 0, 태그가 1, 멈춤이 2입니다. 태그 일이 쌓여 있어도 새 사용자 묻기가 먼저 돌고(지금 도는 태그 하나는 끝까지 감), 같은 우선순위는 들어온 순서입니다.
+- **실패는 조용히:** 받아쓰기·올리기 결과와 상태(`status`)에는 아무 영향이 없고, 상세에 작게 `자동 태그를 달지 못했습니다`만 보입니다. 서버 재시작 때 `autotag="pending"`으로 남은 것은 `failed`로 바꾸며, 다시 달려면 단추를 누릅니다(묻기 답의 `running` 처리와 같은 방식).
+- **모델 출력은 서버가 F2의 태그 정규화 규칙으로 걸러 저장합니다.** 모델 출력에서 태그만 관대하게 뽑고(`parse_tag_output` — 예외 없음: 줄·쉼표로 나누고 글머리·번호·따옴표·끝 구두점을 떼며 20자 넘는 것·`<`/`>`가 든 것·중복은 버림), 앞뒤·연속 공백을 접어 최대 5개를 저장합니다.
 
 ### 화면
 
-- `web/index.html` 상세(102~120행): `#detail-meta` 뒤에 `<div id="detail-edit" class="detail-edit" hidden>`를 더합니다. 안에 `#detail-label`(maxlength 40), `#detail-tags`, `#detail-save`를 둡니다. `isolated()`이 참이면 이 블록을 숨깁니다(모니터의 격리된 출처에서는 쓰기 단추를 숨기는 기존 `#detail-delete`와 같은 경계).
-- 목록 필터(74~100행): `#status-filter` 뒤에 `#tag-filter-row`(hidden)를 더하고 `#tag-filter-label`, `#tag-filter-clear`를 둡니다. 태그 칩 클릭은 `state.tagFilter`를 세우고 `#tag-filter-row`를 보이며 `loadList()`를 부릅니다.
-- `web/app.js`: `renderList(items)`(558~622행)에서 `it.title` 대신 `it.label || it.title`을 쓰고 `renderTags(it)`를 붙입니다. `renderTags`는 `tags` 앞 2개와 `+N`을 만들고 각 칩에 클릭을 겁니다. `loadDetail(id)`(683~708행)는 `#detail-title`을 `r.label || r.title`로, `#detail-meta`·오디오·글 상태를 갱신하지만 `#detail-label`·`#detail-tags`는 채우지 않습니다. 입력칸은 `openDetail` 직후(첫 `loadDetail` 완료 뒤)와 `saveLabels` 성공 직후에만 채웁니다. 받아쓰기 중 5초 폴링의 `loadDetail`은 제목·메타만 갱신합니다. `saveLabels(id)`는 `PATCH /api/recordings/<id>`를 부르고 성공하면 상세와 목록을 다시 읽습니다.
-- `filterParams(limit)`(533~542행)에 `if (state.tagFilter) p.set('tag', state.tagFilter);`를 더합니다. `idsFor(scope)`(769~785행)의 `search` 갈래는 `filterParams`를 그대로 쓰므로 태그가 따라옵니다. `today`·`week` 갈래는 손대지 않습니다.
-- 검색 결과 표시: Store.list 가 준 `match`가 `label` 또는 `tag`이면 `rec-text` 옆에 작은 `이름에서 맞음`/`태그에서 맞음`을 `textContent`로 붙입니다.
-- 폰 320~430px: 태그 칩은 `flex-wrap:wrap`, 칩 하나 `max-width:100%`, `overflow-wrap:anywhere`; 목록은 기존 `.rec-item`의 44px 체크 칸과 `minmax(0,1fr)`을 유지합니다. 이름·태그 입력과 저장 단추는 `width:100%`/`flex-wrap`으로 두고 상세 오디오·글과 겹치지 않게 위에 둡니다. `+N` 칩은 별도 줄이 아니라 같은 칩 줄에서 줄바꿈되게 합니다.
+요소 id는 `index.html`이 만들고 `app.js`가 씁니다. 이름을 바꾸지 않습니다.
+
+| id / class | 자리 | 뜻 |
+| --- | --- | --- |
+| `#search` placeholder | 목록 | `글·이름·태그에서 찾기` |
+| `#tag-filter-row`(hidden) 안 `#tag-filter-label`, `#tag-filter-clear`(button) | `#status-filter` 뒤 | 거르는 태그 표시·풀기 |
+| `#detail-chips` | 상세 `#detail-meta` 뒤 | 그 녹취의 태그 칩 전부 |
+| `#detail-edit`(class `detail-edit`, hidden) 안 `#detail-label`(input, maxlength 40), `#detail-tags`(input, placeholder `쉼표로 나눔`), `#detail-save`(button `저장`), `#detail-retag`(button `태그 다시 달기`, hidden), `#detail-tag-state`(span) | `#detail-chips` 뒤, 오디오·글보다 위 | 편집 |
+| `.rec-tags` 안 `.tag-chip`(button), AI 것은 `.tag-chip.tag-auto` | 목록 항목 | 앞 2개 + `+N`(`.tag-chip.tag-more`, 누르면 상세 열림과 같음) |
+| `.rec-match` | 목록 항목 | `match`가 label/tag일 때 `이름에서 맞음`/`태그에서 맞음` |
+
+`web/app.js` 동작:
+
+- `renderList(items)`에서 제목은 `it.label || it.title`, 칩 글자는 `textContent`로만 만듭니다. 칩 클릭은 `stopPropagation()` 뒤 `applyTagFilter(tag)`(`state.tagFilter`를 세우고 `#tag-filter-row`를 보이고 `loadList()`). `#tag-filter-clear`가 풀고 다시 읽습니다.
+- `filterParams(limit)`에 `if (state.tagFilter) p.set('tag', state.tagFilter);`. 묻기 범위 `search`는 따라오고 `today`·`week`는 무시합니다.
+- 상세: `#detail-title`은 `label || title`. `#detail-chips`는 매번(폴링 포함) 다시 그립니다. 입력칸은 상세를 처음 열 때와 저장 성공 뒤에 채우고, 폴링 때는 **입력칸 값이 마지막으로 채운 값과 같고 포커스가 없을 때만** 다시 채웁니다(쓰던 것을 지우지 않음, AI 태그가 늦게 와도 입력칸에 들어감). `#detail-tags`는 `tags.join(', ')`, 저장 때 쉼표(`,`)로 나눠 보냅니다(정규화는 서버).
+- `saveLabels(id)`: `PATCH` 본문 `{label, tags}`(둘 다 보냄), 실패면 서버의 `error`를 토스트. 성공하면 상세·목록을 다시 읽습니다.
+- `#detail-retag`: `state.llm`(health의 `llm`)이 참이고 글이 있고 격리 출처가 아닐 때만 보입니다. 누르면 POST autotag, 상세 폴링.
+- 상세 폴링은 받아쓰는 중에 더해 `autotag === "pending"`일 때도 돕니다. `#detail-tag-state`: pending → `AI 가 태그를 다는 중…`, failed → `자동 태그를 달지 못했습니다`, 그 밖에는 빈 글.
+- `isolated()`가 참이면 `#detail-edit`을 숨깁니다. 기존 `#detail-delete`와 같은 경계입니다 — 모니터는 PATCH를 이어 주지 않고, IndexedDB가 없는 브라우저에서도 숨는 것은 그 선례를 따른 의도입니다(R48-N20).
+- 오디오·글보다 위, 폰 320~430px: 칩 줄 `flex-wrap:wrap`, 칩 `max-width:100%`·`overflow-wrap:anywhere`, 편집 블록 입력은 `width:100%`, 단추는 줄바꿈. 가로 넘침 없음(`scrollWidth <= innerWidth`), `#detail-edit`이 `#detail-audio`·`#transcript`와 겹치지 않고, 어두운 모드에서도 칩이 보입니다. `+N` 칩은 별도 줄이 아니라 같은 칩 줄에서 줄바꿈됩니다.
+- `web/sw.js`의 `VERSION`을 하나 올립니다(셸 캐시 갱신).
 
 ### 서버·저장
 
-- `Store.add_recording_file`의 meta 생성(338~351행)에 `label: ""`, `tags: []`를 더합니다. `add_recording`(273~287행)은 이 함수로 넘기므로 한 곳만 고치면 됩니다.
-- `Store.get`(369~380행)와 `Store.list`(382~419행)는 옛 meta 에 `label`/`tags`가 없으면 `label=""`, `tags=[]`로 채워 돌려줍니다. `location` 선례(377~378행)와 같은 방식입니다.
-- `Store.set_transcript`(459~470행)는 지금처럼 `title`을 덮어씁니다. `label`·`tags`는 건드리지 않습니다.
-- 새 쓰기 메서드 `Store.set_label_tags(rid, patch)`를 둡니다. `patch`는 이미 서버가 정규화한 `{"label": str}`·`{"tags": [str]}` 중 온 키만 담습니다. `set_status`(436~443행)·`set_job`(445~457행)과 같은 잠금 안 read-modify-write 로 meta 를 다시 씁니다. 잘못된 id 는 기존 `set_*`처럼 `ValueError`.
-- `Store.list` 시그니처를 `list(self, q=None, date_from=None, date_to=None, status=None, limit=200, tag=None)`로 확장합니다. `tag`는 다른 거르기와 AND, 비교는 정규화된 소문자 기준. `q`는 `text`, `title`, `label`, `tags`를 찾고 항목에 `match`를 넣습니다. 텍스트에 맞으면 기존 스니펫 규칙(397~408행), 이름·태그에만 맞으면 `snippet=text[:80]`와 `match="label"|"tag"`.
-- 저장 형식: `meta/<id>.json`에 `label`, `tags` 두 필드만 늘어납니다. `answers` JSON 은 바뀌지 않습니다. 옛 meta 는 읽을 때 기본값을 채우고, PATCH 가 처음 쓰면 그때 파일에 기록됩니다.
-- `serve.py` `_rec_list`(496~517행)는 `tag=one("tag")`를 `Store.list`에 넘깁니다. `_api`의 `recordings/<id>` 갈래(288~289행)는 `GET -> _rec_get`, `PATCH -> _rec_patch`, `DELETE -> _rec_delete` **세 갈래**로 나눕니다. 허용 메서드 튜플은 `("GET","PATCH","DELETE")`이고 405의 `Allow` 머리도 같은 셋으로 갱신합니다. `_rec_get`(519~523행)은 그대로입니다.
-- `_rec_patch`는 `Store.get(rid)`로 404를 내고, `Store.set_label_tags`가 `Store.get`과 사이에 DELETE가 끼어 `_load_meta`에서 `ValueError`를 내면 `_rec_delete`처럼 잡아 404 `{"error":"없는 녹음입니다"}`로 답합니다.
+`meta/<id>.json`에 다섯 필드를 더합니다.
+
+| 필드 | 꼴 | 기본(옛 meta를 읽을 때 채움) | 뜻 |
+| --- | --- | --- | --- |
+| `label` | str | `""` | 사람이 붙인 이름. 화면은 `label \|\| title` |
+| `tags` | list[str] | `[]` | 보이는 태그 전부(사람 + AI), 최대 10 |
+| `tags_auto` | list[str] | `[]` | `tags` 가운데 AI가 단 것(대소문자 무시로 `tags`의 부분집합) |
+| `tags_human` | bool | `false` | 사람이 태그를 고친 적이 있음 → 자동(받아쓰기 뒤) 태그 안 함 |
+| `autotag` | null 또는 `"pending"`·`"done"`·`"failed"` | `null` | 자동 태그 진행 상태 |
+
+- `Store.add_recording_file`의 새 meta에 다섯 필드를 기본값으로 넣습니다. `add_recording`은 이 함수로 넘기므로 한 곳만 고치면 됩니다.
+- `Store.get`·`Store.list`는 옛 meta에 없으면 위 기본값으로 채워 돌려줍니다(`location` 선례). `set_transcript`는 이 다섯 필드를 건드리지 않습니다(`title`은 지금처럼 덮어씀).
+- 새 파일 `voxlog/tags.py`는 표준 라이브러리만 쓰고 다른 voxlog 모듈을 import 하지 않습니다.
+
+```python
+LABEL_MAX = 40; TAG_MAX = 20; TAGS_MAX = 10; AUTO_TAGS_MAX = 5
+def clean(s: str) -> str            # " ".join(s.split()) - 앞뒤 자르고 안쪽 공백(줄바꿈 포함)을 한 칸으로
+def normalize_label(v) -> str       # str 아니면 ValueError("label 은 문자열이어야 합니다"); clean; 40자 넘으면 ValueError("이름은 40자 이하여야 합니다")
+def normalize_tags(v) -> list[str]  # list 이고 원소가 모두 str 아니면 ValueError("tags 는 문자열 목록이어야 합니다");
+                                    # 각각 clean, 빈 것 버림, 20자 넘으면 ValueError("태그는 하나당 20자 이하여야 합니다"),
+                                    # casefold 기준 중복은 첫 표기만, 그 뒤 10개 넘으면 ValueError("태그는 최대 10개입니다")
+def tag_key(t: str) -> str          # t.casefold() - 비교는 언제나 이것으로
+def merge_tags(human, auto) -> list[str]  # human 먼저, auto 에서 key 가 겹치지 않는 것을 이어 붙여 10개까지
+def parse_tag_output(text: str, limit=AUTO_TAGS_MAX) -> list[str]
+    # 모델 출력에서 태그만 관대하게 뽑는다(예외 없음): 줄마다, 그리고 쉼표(,·、)로 나눔 → 앞의 글머리(-*•·#)·번호(1. 1) ①)
+    # 와 감싼 따옴표·백틱·끝 구두점(.。) 떼기 → clean → 빈 것·20자 넘는 것·'<' 또는 '>' 가 든 것 버림 → key 중복 버림 → 앞에서 limit 개
+```
+
+- `Store`의 새 메서드·바뀌는 메서드(잠금 안 read-modify-write는 `set_status`·`set_job`과 같은 방식):
+
+```python
+def set_label_tags(self, rid, patch) -> None
+    # patch 는 서버가 이미 정규화한 {"label": str} / {"tags": [str]} 중 온 키만.
+    # "tags" 가 있으면: tags = patch["tags"]; tags_auto = 옛 tags_auto 가운데 key 가 새 tags 에 남은 것(새 tags 의 표기로);
+    #                   tags_human = True.  없는 id 는 ValueError.
+def set_auto_tags(self, rid, tags, manual=False) -> bool
+    # tags 는 parse_tag_output 결과. 잠금 안에서:
+    #  manual=False 이고 tags_human 이면 태그는 그대로 두고 autotag="done", False 를 돌려줌.
+    #  manual=False 이고 사람 손 안 탐: tags = tags_auto = tags[:10].
+    #  manual=True: human = [t for t in 옛 tags if key 가 옛 tags_auto 에 없음]; tags = merge_tags(human, tags);
+    #               tags_auto = [t for t in tags if key 가 새 AI tags 에 있고 human 에 없음]. tags_human 은 그대로.
+    #  끝에 autotag="done", True. 없는 id 는 ValueError.
+def set_autotag(self, rid, state) -> None   # state ∈ {None,"pending","done","failed"} 아니면 ValueError. 없는 id 는 ValueError
+def autotag_pending_ids(self) -> list[str]  # meta 만 훑어(글 안 읽음) autotag=="pending" 인 id
+def list(self, q=None, date_from=None, date_to=None, status=None, limit=200, tag=None)
+    # tag: tag_key 가 같은 태그가 있는 것만, 다른 거르기와 AND.
+    # q 가 있으면 글·title·label·tags 를 대소문자 무시로 찾고 항목에 match 를 넣는다:
+    #   글 또는 title 에 맞음 → "text"(스니펫은 지금 규칙), 아니고 label → "label", 아니고 태그 → "tag"(스니펫 text[:80]).
+    #   q 가 없으면 match 키를 넣지 않는다.
+```
+
+- `voxlog/ask.py`·`voxlog/stt.py`:
+
+```python
+# ask.py
+TAG_HEAD = "이 녹취에 붙일 주제 태그를 3~5개 골라라. 한 줄에 태그 하나, 태그만 쓰고 다른 말은 쓰지 마라. 태그는 20자 이하의 짧은 명사구."
+TAG_TEXT_MAX = 20_000
+def build_tag_prompt(text) -> str   # TAG_HEAD + "\n" + _GUARD + "\n<녹취>\n" + text[:TAG_TEXT_MAX](</녹취> 이스케이프는 build_prompt 와 같게) + "\n</녹취>"
+def llm_status(env=None) -> (bool, str|None)   # serve._health 에 있던 판정을 옮김(설정 오류면 (False, "LLM 명령 설정 오류: …"))
+class Asker:
+    # 큐를 queue.PriorityQueue 로: 항목 (우선순위, 순번, 일). 사용자 묻기 0, 태그 1, 멈춤(None) 2 - 같은 우선순위는 들어온 순서.
+    def submit_tag(self, rid, manual=False) -> bool
+        # 같은 rid 가 이미 큐에 있으면 False(중복 안 넣음, 단 manual=True 가 오면 그 일을 manual 로 올림).
+        # store.set_autotag(rid, "pending") 뒤 넣고 True. 없는 id(ValueError)는 False.
+    # 태그 일 처리: rec = store.get(rid); 없거나 글이 비면 set_autotag(rid, None) 하고 끝.
+    #   out = self.run(build_tag_prompt(글), self.env); tags = tags.parse_tag_output(out)
+    #   tags 가 비면 set_autotag(rid, "failed"), 아니면 store.set_auto_tags(rid, tags, manual).
+    #   어떤 예외든 set_autotag(rid, "failed") 를 시도하고 삼킨다(지워진 녹취면 그것도 삼킴). 스레드는 죽지 않는다.
+    # start(): 지금처럼 running 답을 failed 로 + store.autotag_pending_ids() 를 set_autotag(rid, "failed").
+    # idle(): 태그 일까지 포함해 큐가 비고 도는 것이 없을 때 True.
+# stt.py
+class Transcriber:
+    def __init__(self, store, env=None, transcribe_fn=transcribe, on_done=None)
+    # _process 에서 set_transcript 가 성공하고 글이 비지 않았으면 on_done(rid) - 예외는 삼킨다(받아쓰기 결과에 영향 없음).
+```
+
+- `serve.py`·HTTP:
+  - `make_server(..., llm_ready=None)`: `server.llm_ready = llm_ready or (lambda: ask_mod.llm_status(env)[0])`. Asker를 먼저 만들고 Transcriber에 `on_done=lambda rid: server.asker.submit_tag(rid) if server.llm_ready() else None`을 줍니다. `_health`는 `ask_mod.llm_status(env)`를 씁니다(응답 꼴은 지금 그대로).
+  - `_api`의 `recordings/<id>` 갈래를 `GET`/`PATCH`/`DELETE` **세 갈래**로 나눕니다. 허용 메서드 튜플과 405의 `Allow` 머리도 `("GET","PATCH","DELETE")`로 갱신합니다. `_rec_get`는 그대로입니다.
+  - `_rec_patch`: `PATCH_JSON_MAX = 6 * 1024`로 `_read_body`를 직접 부르고, 정규화는 `tags.normalize_label`/`normalize_tags`, `Store.get`으로 404, 사이에 지워져 `set_label_tags`가 `ValueError`를 내도 404 `없는 녹음입니다`. 200은 `Store.get` 꼴입니다.
+  - `POST /api/recordings/<id>/autotag`(새, 본문 없음): 없는 id 404 `없는 녹음입니다` · `server.llm_ready()`가 거짓이면 503 `{"error":"묻기(LLM)가 준비되지 않았습니다"}` · 글이 비면 409 `{"error":"받아 적은 글이 없습니다"}` · 아니면 `asker.submit_tag(rid, manual=True)` 뒤 202 `{"ok":true,"autotag":"pending"}`. 토큰·출처 검사는 다른 쓰기와 같습니다.
+  - `_rec_list`는 `tag=one("tag")`를 `Store.list`에 넘깁니다. 20자를 넘으면 400 `태그는 하나당 20자 이하여야 합니다`.
+  - `GET /api/recordings`·`/api/recordings/<id>` 응답 항목에 위 다섯 필드(+ `q`가 있을 때 `match`)가 붙습니다.
 
 ### 인터페이스
 
@@ -139,60 +238,72 @@ GET /api/answers
 PATCH /api/recordings/r-20261125-004100-aaaa
 Content-Type: application/json
 {"label":"주간회의","tags":["회의","A사","회의"]}
-200 {"id":"r-…","label":"주간회의","tags":["회의","A사"],"title":"가짜 받아쓰기 …","transcript":"…"}
+200 {"id":"r-…","label":"주간회의","tags":["회의","A사"],"tags_auto":["회의"],
+     "tags_human":true,"autotag":"done","title":"가짜 받아쓰기 …","transcript":"…"}
 ```
 
-정규화: `label`·태그는 앞뒤 공백을 자르고 안쪽 연속 공백을 한 칸으로 접습니다. `label`은 40자, 태그 하나는 20자, 태그는 최대 10개입니다. 같은 태그는 대소문자 무시 비교로 한 번만 남기고(첫 표기 유지), 정규화 뒤 빈 태그는 버립니다. 넘치면 400.
+정규화: `label`·태그는 앞뒤 공백을 자르고 안쪽 연속 공백을 한 칸으로 접습니다. `label`은 40자, 태그 하나는 20자, 태그는 최대 10개입니다. 같은 태그는 대소문자 무시 비교로 한 번만 남기고(첫 표기 유지), 정규화 뒤 빈 태그는 버립니다. 넘치면 400. `tags`가 오면 `tags_human`이 참이 되고, `tags_auto`는 새 `tags`에 남은 것만 남습니다.
 
 오류:
 
-- `400 {"error":"본문은 JSON 객체여야 합니다"}` — JSON 이 아니거나 객체가 아님.
+- `400 {"error":"본문은 JSON 객체여야 합니다"}` — JSON이 아니거나 객체가 아님.
 - `400 {"error":"label 은 문자열이어야 합니다"}` / `400 {"error":"tags 는 문자열 목록이어야 합니다"}` — 타입 오류.
 - `400 {"error":"이름은 40자 이하여야 합니다"}` / `400 {"error":"태그는 하나당 20자 이하여야 합니다"}` / `400 {"error":"태그는 최대 10개입니다"}` — 상한.
 - `400 {"error":"바꿀 이름이나 태그가 없습니다"}` — 본문에 `label`도 `tags`도 없음.
 - `404 {"error":"없는 녹음입니다"}` — 없는 id, 또는 `Store.get`과 `set_label_tags` 사이에 지워진 녹취.
 - `413 {"error":"본문이 너무 큽니다 (최대 6144 바이트)"}` — PATCH 전용 상한 `PATCH_JSON_MAX=6 KiB`를 넘음.
-- `409` 는 쓰지 않습니다. 이름·태그는 `pending`/`transcribing`/`failed` 어느 상태에서도 바꿀 수 있습니다.
+- `409`는 쓰지 않습니다. 이름·태그는 `pending`/`transcribing`/`failed` 어느 상태에서도 바꿀 수 있습니다.
+
+```http
+POST /api/recordings/r-20261125-004100-aaaa/autotag
+202 {"ok":true,"autotag":"pending"}
+404 {"error":"없는 녹음입니다"}
+409 {"error":"받아 적은 글이 없습니다"}
+503 {"error":"묻기(LLM)가 준비되지 않았습니다"}
+```
+
+`autotag`을 누른 뒤 결과는 `GET /api/recordings/<id>`의 `autotag`·`tags`·`tags_auto`로 확인합니다(`pending` → `done`/`failed`).
 
 ```http
 GET /api/recordings?tag=회의&q=주간&status=done
-200 {"items":[{…,"label":"주간회의","tags":["회의","A사"],"match":"label",…}], "stats":{…}}
+200 {"items":[{…,"label":"주간회의","tags":["회의","A사"],"tags_auto":["회의"],
+              "tags_human":true,"autotag":"done","match":"label",…}], "stats":{…}}
 ```
 
-`tag`가 20자를 넘으면 `400 {"error":"태그는 하나당 20자 이하여야 합니다"}`. `tag`는 `q`·날짜·상태와 AND 입니다. `_api`(268~282행)는 토큰·출처 검사만 하고 본문 상한은 자동으로 걸지 않습니다. 따라서 `_rec_patch`가 `_read_body(PATCH_JSON_MAX)`를 직접 부르며, `PATCH_JSON_MAX = 6 * 1024`(6 KiB, 4~8 KiB 범위 안)로 둡니다. 그 결과 PATCH에도 `Content-Length` 필수·본문 읽기 마감·상한 초과 413이 걸립니다.
-
-`docs/INTERFACE.md` 에 더할 절의 초안:
-
-```md
-### 녹취 이름·태그 (F2)
-meta 에 `label`(str, 기본 "")과 `tags`(list[str], 기본 [])를 더한다. 옛 meta 는 읽을 때 기본값으로 채운다.
-`PATCH /api/recordings/<id>` 본문 `{label?, tags?}` → 200 메타+transcript. 서버가 40자/20자/10개/공백·중복을 정규화하고 넘치면 400.
-`GET /api/recordings?tag=<태그>` 는 q·from·to·status 와 AND 로 거른다. `q` 는 label·tags 도 찾고 항목에 `match`를 준다.
-`label`은 자동 `title`과 분리한다. 다시 받아쓰기가 title 을 덮어도 label 은 남는다.
-```
+`tag`가 20자를 넘으면 `400 {"error":"태그는 하나당 20자 이하여야 합니다"}`. `tag`는 `q`·날짜·상태와 AND입니다. `_api`는 토큰·출처 검사만 하고 본문 상한은 자동으로 걸지 않으므로 `_rec_patch`가 `_read_body(PATCH_JSON_MAX)`를 직접 부릅니다(`Content-Length` 필수·본문 읽기 마감·상한 초과 413).
 
 ### 검사
 
-- `tests/test_store.py`: `test_old_meta_gets_empty_label_tags` — 옛 meta 에 필드가 없을 때 `get`/`list`가 `""`/`[]`. `test_set_transcript_keeps_label_tags` — 재받아쓰기 뒤 `title`은 바뀌고 `label`·`tags`는 남음. `test_set_label_tags_partial_patch` — `label`만, `tags`만, 빈 배열 지우기. `test_list_tag_filter_and_q_label_tags` — tag AND, q가 label/tags에 맞고 `match`가 맞음. `test_list_old_meta_defaults`.
-- `tests/test_serve.py`: `test_patch_recording_label_tags` — PATCH 200·저장·GET 반영. `test_patch_normalization` — 공백 접기·대소문자 중복·빈 태그 버림. `test_patch_limits_400` — label 41자·tag 21자·11개. `test_patch_missing_404`·`test_patch_bad_body_400`. `test_list_tag_filter` — `tag`가 q·status와 AND. `test_patch_requires_token_origin` — 기존 토큰·출처 검사가 PATCH에도 걸리는지. `test_patch_body_limit_413` — 6145바이트 이상 본문이 413이고 `Content-Length` 없는 PATCH는 400. `test_patch_deleted_between_get_and_set_404` — `Store.get` 뒤 `set_label_tags` 전에 DELETE가 끼면 404.
-- `tests/browser_voxlog.py` t42: 상세에서 이름·태그를 저장하면 목록에 `label`과 칩 2개+`+N`이 보이는지, 칩 클릭이 `#tag-filter-row`를 보이고 목록을 거르는지, 이름으로 검색하면 `이름에서 맞음`이 보이는지, 다시 받아쓰기 뒤에도 이름이 남는지. 320px에서 이름 40자·태그 10개 표본으로 `getBoundingClientRect()` 검사: `#detail-edit`이 `#detail-audio`·`#transcript`와 교차하지 않고, 모든 태그 칩의 `right`가 컨테이너의 `getBoundingClientRect().left + clientWidth` 이하이며 페이지 `scrollWidth <= innerWidth`. 받아쓰는 중 5초 폴링이 `#detail-label`·`#detail-tags` 입력을 지우지 않는지, 격리 출처(`origin === 'null'`)에서 `#detail-edit`이 숨는지 잽니다.
-- 되돌리면 실패해야 하는 것: PATCH가 저장하지 않으면 새로고침 뒤 이름이 사라져 t42 실패. 목록이 `title`만 쓰면 이름 검사 실패. `q`/`tag`가 label·tags를 보지 않으면 거르기 검사 실패. `set_transcript`가 `label`을 지우면 재받아쓰기 검사 실패. 옛 meta 기본값이 없으면 목록에서 `undefined`가 보여 실패.
+- `tests/test_tags.py`(새 파일): `normalize_label`·`normalize_tags`의 공백 접기·상한·타입 오류·대소문자 중복·빈 태그 버림. `merge_tags`가 사람 태그를 앞에 두고 key 중복을 빼며 10개에서 자르는지. `parse_tag_output`이 줄·쉼표·글머리·번호·따옴표·끝 구두점을 걷어 내고, 20자 넘는 것·`<`/`>`가 든 것·중복을 버리며, 어떤 입력에도 예외를 내지 않고 `limit`개까지만 주는지.
+- `tests/test_store.py`: 옛 meta에 다섯 필드가 없을 때 `get`/`list`가 기본값을 채우는지. `add_recording_file`의 새 meta 기본값. `set_transcript`가 `label`·`tags`·`tags_auto`·`tags_human`·`autotag`를 건드리지 않는지. `set_label_tags`가 `label`만/`tags`만/빈 배열 지우기를 처리하고, `tags`가 오면 `tags_human=true`·`tags_auto`를 새 `tags`에 남은 것만 남기는지, 없는 id가 `ValueError`인지. `set_auto_tags`가 ① `tags_human=false`면 `tags=tags_auto=tags[:10]` ② `tags_human=true`이고 `manual=False`면 태그를 그대로 두고 `done`·`False` ③ `manual=True`면 사람 태그를 앞에 남기고 AI 태그만 바꾸며 `tags_human`을 유지하는지. `set_autotag` 상태 검사와 `autotag_pending_ids`, `list(tag=…)`의 AND 거르기와 `q`의 `match`(text/label/tag) 규칙.
+- `tests/test_ask.py`: `build_tag_prompt`가 `TAG_HEAD`·`_GUARD`·`<녹취>`로 감싸고 `TAG_TEXT_MAX`에서 자르며 `</녹취>`를 이스케이프하는지. `llm_status`가 명령 있음/없음/설정 오류를 가르는지. Asker 우선순위 큐: 태그 일이 먼저 쌓여 있어도 새 사용자 묻기가 먼저 돌고, 같은 우선순위는 들어온 순서인지(`run`을 막아 두고 넣는 순서로 확인). `submit_tag`의 중복 무시·`manual=True` 승격·없는 id `False`·`pending` 기록. 태그 일이 빈 글/지워진 녹취/모델 예외에서 `failed`(또는 `None`)로 끝나고 스레드가 죽지 않는지.
+- `tests/test_stt.py`: `on_done`이 글이 저장된 성공 뒤에만 불리고, `no-stt`·`failed`·빈 글에는 불리지 않으며, `on_done`이 던진 예외가 받아쓰기 결과·상태를 바꾸지 않는지.
+- `tests/test_serve.py`: `PATCH` 200·저장·GET 반영, 정규화, 41자/21자/11개 400, 본문 형식 400, 없는 녹취 404, `Content-Length` 없는 PATCH 400, 6145바이트 413, 토큰·출처 검사, `Store.get`과 `set_label_tags` 사이 DELETE 404. `autotag` 202·404·409(빈 글)·503(`llm_ready` 거짓)와 `submit_tag(manual=True)` 호출. `tag` 거르기(q·status와 AND, 20자 초과 400). 응답의 다섯 필드와 `match`. `_health`의 `llm`·`llm_error`가 `llm_status`를 쓰는지.
+- `tests/fake_llm.py`: 표준 입력이 `TAG_HEAD`의 앞부분 `이 녹취에 붙일 주제 태그`로 시작하면 `FAKE_LLM_TAGS` 환경 변수(없으면 `회의\n가짜 태그\n- 세번째`)를 그대로 내고 끝냅니다(실패 변수 `FAKE_LLM_FAIL=1`은 지금처럼 먼저 봄). `tests/test_serve.py`의 `fake_llm`도 태그 프롬프트면 태그 줄을 돌려줍니다.
+- `tests/browser_voxlog.py` t42: 상세에서 이름·태그를 저장하면 목록에 `label`과 칩 2개+`+N`이 보이는지, 칩 클릭이 상세를 열지 않고 `#tag-filter-row`를 보이며 목록을 거르고 `#tag-filter-clear`로 풀리는지, 이름으로 검색하면 `이름에서 맞음`이 보이는지, 다시 받아쓰기 뒤에도 이름이 남는지. 320px에서 이름 40자·태그 10개 표본의 `getBoundingClientRect()` 검사(`#detail-edit`과 `#detail-audio`·`#transcript` 교차 없음, 칩 `right`가 컨테이너 안, `scrollWidth <= innerWidth`), 폴링이 쓰던 입력을 지우지 않는지, 격리 출처(`origin === 'null'`)에서 `#detail-edit`이 숨는지.
+- `tests/browser_voxlog.py` t43(자동 태그): 올리면 받아쓰기 뒤 가짜 태그(`회의`·`가짜 태그`·`세번째`)가 `.tag-chip.tag-auto`로 보이고(계산된 `border-style`이 dashed), 상세에서 `회의`를 지우고 저장한 뒤 다시 받아쓰기해도 `회의`가 돌아오지 않는지, `태그 다시 달기`가 보이고 누르면 사람이 더한 태그는 남고 AI 칩이 다시 붙는지, `FAKE_LLM_FAIL` 서버에서는 녹취가 `done`이고 `#detail-tag-state`에 `자동 태그를 달지 못했습니다`만 보이는지.
+- `tests/browser_voxlog.py` t44(LLM 없음): `VOXLOG_LLM_CMD`가 없는 명령인 서버에서 자동 태그 칩이 없고 `태그 다시 달기`가 숨으며, 손 이름·태그 편집·저장·검색·거르기는 그대로 되는지.
+- 되돌리면 실패해야 하는 것: 자동 태그를 받아쓰기 성공 전이나 실패 뒤에 맡기면 t43·`test_stt`가 실패. `set_auto_tags`가 `tags_human`을 무시하면 t43·`test_store` 실패. Asker가 우선순위 큐를 쓰지 않으면 사용자 묻기가 태그 뒤로 밀려 `test_ask` 실패. `llm_ready`가 거짓일 때 맡기거나 단추를 보이면 t44·`test_serve` 실패. `parse_tag_output` 정규화를 건너뛰면 20자·`<`/`>`·중복 검사가 실패. 태그 실패가 `status`나 받아쓰기 응답을 바꾸면 `test_serve` 실패. 재시작 때 `pending`을 `failed`로 바꾸지 않으면 복구 검사가 실패. `label || title` 대신 `title`만 쓰면 t42가 실패.
 
 ### 구현 노드 나누기
 
+노드는 파일 하나를 씁니다. 검사 파일도 별도 노드입니다.
+
 | 노드 | 파일 | 약속·내용 |
 | --- | --- | --- |
-| F2-N1 | `voxlog/store.py` | meta `label`/`tags`, `set_label_tags(rid, patch)`, `list(..., tag=None)`, `q` 확장, `match`. 입력 `patch`는 정규화된 값. |
-| F2-N2 | `tests/test_store.py` | Store 검사. 옛 meta 기본값·재받아쓰기 보존·tag/q. |
-| F2-N3 | `serve.py` | `_api`의 recordings/<id> 갈래를 GET/PATCH/DELETE 3갈래로, 405 `Allow` 갱신, `_rec_patch`가 `_read_body`(PATCH 전용 상한)를 부르고 `Store.get`으로 404, 정규화 뒤 `set_label_tags`, 중간 DELETE로 인한 `_load_meta` `ValueError`도 404, `Store.get` 반환. |
-| F2-N4 | `tests/test_serve.py` | PATCH·정규화·상한·tag·토큰/출처 검사. |
-| F2-N5 | `docs/INTERFACE.md` | 위 초안 절과 API 표에 PATCH·tag 추가. |
-| F2-N6 | `web/index.html` | `#detail-edit`, `#detail-label`, `#detail-tags`, `#detail-save`, `#tag-filter-row`, `#tag-filter-label`, `#tag-filter-clear`, `#ask-scope-note`. |
-| F2-N7 | `web/app.js` | `renderTags(it)`, `applyTagFilter(tag)`, `saveLabels(id)`, `filterParams`의 tag, `loadDetail`/`renderList`의 `label || title`, `match` 표시. `loadDetail`은 입력칸을 채우지 않고 `openDetail`/저장 뒤에만 채움. |
-| F2-N8 | `web/style.css` | `.rec-tags`, `.tag-chip`, `.detail-edit` 반응형. |
-| F2-N9 | `tests/browser_voxlog.py` | t42. 화면 저장·칩·거르기·검색·재받아쓰기·넘침. |
+| F2-N1 | `voxlog/tags.py` | `LABEL_MAX`·`TAG_MAX`·`TAGS_MAX`·`AUTO_TAGS_MAX`, `clean`, `normalize_label`, `normalize_tags`, `tag_key`, `merge_tags`, `parse_tag_output`. |
+| F2-N2 | `tests/test_tags.py` | 정규화·병합·모델 출력 뽑기 검사. 예외 없음·상한 고정. |
+| F2-N3 | `voxlog/store.py` | meta 다섯 필드와 기본값, `set_label_tags(rid, patch)`, `set_auto_tags(rid, tags, manual=False)`, `set_autotag`, `autotag_pending_ids`, `list(..., tag=None)`, `q`의 label·tags·`match`. `patch`는 정규화된 값. |
+| F2-N4 | `tests/test_store.py` | 옛 meta 기본값·재받아쓰기 보존·`set_label_tags`·`set_auto_tags`·`autotag`·tag/q 검사. |
+| F2-N5 | `voxlog/ask.py`·`voxlog/stt.py` | `TAG_HEAD`·`TAG_TEXT_MAX`·`build_tag_prompt`·`llm_status`, Asker 우선순위 큐·`submit_tag`·태그 일 처리·`start` 복구·`idle`, Transcriber `on_done`. |
+| F2-N6 | `tests/test_ask.py`·`tests/test_stt.py` | 태그 프롬프트·우선순위·`submit_tag`·실패 무영향·`on_done` 검사. |
+| F2-N7 | `serve.py` | `llm_ready`·Transcriber 연결, GET/PATCH/DELETE 세 갈래와 405 `Allow`, `_rec_patch`(정규화·404·413), `POST …/autotag`, `?tag=`, 응답 다섯 필드. |
+| F2-N8 | `tests/test_serve.py`·`tests/fake_llm.py` | PATCH·autotag·tag·토큰/출처·상한 검사, 가짜 LLM의 태그 갈래. |
+| F2-N9 | `web/index.html`·`web/app.js`·`web/style.css`·`web/sw.js` | 위 화면 절의 요소·동작·반응형·`VERSION` 갱신. |
+| F2-N10 | `tests/browser_voxlog.py` | t42·t43·t44. 화면 저장·칩·거르기·검색·자동 태그·사람 손댐 보호·다시 달기·LLM 없음·넘침. |
+| F2-N11 | `docs/INTERFACE.md`·`docs/DESIGN-next-features.md`·`README.md` | 이 절과 INTERFACE·README를 같은 이름·문구로 맞춤. |
 
-약속: F2-N1의 `set_label_tags(rid, patch)`는 `None`을 돌려주고 저장만 합니다. F2-N3은 `patch`를 정규화해 넘깁니다. F2-N7은 PATCH 응답을 다시 `Store.get` 꼴(메타+transcript)로 받습니다. `filterParams`의 `tag` 키는 F2-N9와 F3의 `idsFor`가 함께 씁니다.
+약속: `tags_auto`·`tags_human`·`autotag`·`match`·`llm_ready`·`submit_tag`·`on_done` 이름을 그대로 씁니다. F2-N1의 정규화 결과를 F2-N3·F2-N7이 다시 정규화하지 않고, F2-N7은 `set_label_tags`·`set_auto_tags`에 이미 정규화된 값만 넘깁니다. 화면은 PATCH 응답과 `GET /api/recordings/<id>`를 같은 꼴(메타+transcript)로 읽습니다. `filterParams`의 `tag` 키는 F2-N10과 F3의 `idsFor`가 함께 씁니다.
 
 ## F3. 답 이어 묻기
 
@@ -305,10 +416,15 @@ F1 → F2 → F3 순서입니다. F1은 저장 형식 변경 없이 읽기만 �
 - 까닭: 이득은 분명하지만 새 모듈(`voxlog/todos.py`)·새 폴더(`data/todos/`)·새 API(`GET/POST/PATCH /api/todos`)·네 번째 탭이 모두 필요합니다. LLM 추출의 환각·중복·기한 오판, 출처 녹취 삭제 때 고아 항목 문제도 있습니다. 의견 둘 다 조건부였고, S2는 “수동 확인형으로 줄이거나 보류”라고 했습니다.
 - 다시 할 때의 출발점: S2의 수동 확인형 MVP. 기존 `todo` 답에서 `할 일로 저장`을 누르면 LLM이 후보를 JSON으로 제안하고, 사용자가 확인한 항목만 `text`·선택적 `due`·`source_id`·`done`으로 저장합니다. 받아쓰기 완료 때 자동 추출하지 않고, 네 번째 탭이 아니라 기록·묻기 안의 하위 보기로 시작합니다. F1~F3를 쓴 뒤 다시 정합니다. F3(할 일 답에 이어 묻기)와 F1(출처)이 일부를 이미 채웁니다.
 
-### I3 자동 태그 제안 — 보류
+### I3 자동 태그 제안 — R49 에 채택 (태석님 결정)
 
-- 까닭: LLM이 없으면(`/api/health`의 `llm=false`) 기능이 반쪽이 됩니다. 한 번에 하나인 Asker 큐에 태우면 사용자 질문이 밀리고, 글을 모델로 더 보내는 비용·프라이버시 문제가 생깁니다. 손 태그가 실제로 쓰이는 것을 본 뒤 다시 정합니다.
-- 다시 할 때의 출발점: F2의 `tags` 필드를 그대로 쓰고, 자동 제안은 Asker 큐가 아닌 별도 스레드/큐에서 후보만 만들며 저장은 사용자가 확인하는 선택 단추로 둡니다. 실패는 조용히 버립니다.
+- R48 의 보류 까닭: ① LLM이 없으면(`/api/health`의 `llm=false`) 기능이 반쪽이 됩니다. ② 한 번에 하나인 Asker 큐에 태우면 사용자 질문이 밀립니다 — 이 큐 걱정은 S3·S6의 지적이고(`ask.py:117-124`·`ask.py:183-204`), S2 원문이 말한 것은 자동 태그가 **받아쓰기 큐**를 막는다는 점이었습니다(`serve.py:634`·`serve.py:636`). ③ 글을 모델로 더 보내는 비용·프라이버시 문제가 생깁니다. ④ 손 태그가 실제로 쓰이는 것을 본 뒤 다시 정하려 했습니다.
+- R49 결정과 푼 방식(2026-11-25, 태석님):
+  - ① → 자동 태그만 빠지고 나머지는 그대로. `llm_ready()`가 거짓이면 받아쓰기 뒤 태그를 맡기지 않고, 상세의 `태그 다시 달기`도 숨기며, `POST …/autotag`는 503입니다. 받아쓰기·올리기·손 편집·검색·태그 거르기는 그대로 돕니다.
+  - ② → Asker 큐를 `queue.PriorityQueue`로 바꿔 사용자 묻기 0, 태그 1, 멈춤 2 순서로 둡니다. 태그 일이 쌓여 있어도 새 사용자 묻기가 먼저 돌고, 지금 도는 태그 하나는 끝까지 갑니다(같은 우선순위는 들어온 순서).
+  - ③ → 태그에 보내는 글은 `TAG_TEXT_MAX`(20,000자)까지이고 프롬프트는 기존 묻기와 같은 `_GUARD`로 감쌉니다. 모델 출력은 서버가 F2 정규화(`parse_tag_output` → 20자·`<`/`>`·중복 제거, 최대 5개)로 걸러 저장하고, 실패는 조용히 버리며 받아쓰기·올리기 결과와 `status`에 영향이 없습니다.
+  - ④ → 손 태그는 `tags_human`으로 보호합니다(태그를 고친 PATCH 뒤로는 자동 태그가 지운 것을 되살리지도, 더한 것을 지우지도 않음). R48 초안의 "후보만 만들고 저장은 사용자가 확인"과 달리 **바로 저장**하고, 이미 있는 녹취는 `태그 다시 달기` 단추로 사람이 직접 다시 돌립니다(사람 태그는 그대로 두고 AI 태그만 교체).
+- R48 '다시 할 때의 출발점'과 달라진 점: 별도 스레드/큐가 아니라 **Asker 큐에 우선순위로** 태우고, 사용자 확인 단추 대신 **즉시 저장 + 사람 손댐 보호 + 다시 달기 단추**로 되돌릴 길을 둡니다. 저장 꼴은 F2의 `tags`·`tags_auto`·`tags_human`·`autotag` 필드를 그대로 씁니다.
 
 ## 낸 아이디어 전체와 의견
 
@@ -332,9 +448,9 @@ F1 → F2 → F3 순서입니다. F1은 저장 형식 변경 없이 읽기만 �
 
 - 낸 슬롯: S3 (opencode).
 - 원문 요지: 목록의 자동 제목이 받아쓴 글 앞 40자뿐이라 세 녹취가 모두 `가짜 받아쓰기 …` 꼴로 보였고 회의·통화·짧은 생각을 가려낼 표시가 없었습니다. 검색은 글 부분일치뿐이라 주제로 모아 볼 수 없었습니다. 이득은 “그 회의”·“그 통화”를 주제 태그로 찾고 같은 주제 녹취를 묶어 보거나 묻는 것입니다. 범위는 meta `tags`, `list`의 `tag` 필터·묻기 ids 묶음, 목록 태그 칩·상세 편집, 자동 태그는 `run_llm`으로 제안만 하고 저장은 사용자 확인이며 대략 중간입니다.
-- S2 (codex) — **조건부 찬성**: 현재 제목은 받아쓰기 첫 40자로 자동 생성되고 재받아쓰기 때마다 덮어쓰며(`store.py:466`), 검색은 글·`title`만 보고(`store.py:397-400`), 목록 필터도 날짜·상태뿐이라(`serve.py:496-517`) 주제로 묶거나 거르는 기능이 실제로 없습니다. 보완은 meta `tags`, `PATCH /api/recordings/<id>`(`serve.py:288-289`에 GET/DELETE만 있음), `list`의 `tag` 필터, 화면 칩·태그 검색, 자동 태그는 `run_llm` 후보만·사용자 확인입니다. I1과 합칠 때는 **I1의 수동 `label`+`tags`를 기본**으로 하고 I3의 거르기·묶기를 얹는 쪽이 낫다고 했습니다. 우려는 태그 정규화(대소문자·동의어·공백), 폰 칩 과밀, 옛 meta 기본값, 자동 태그의 큐 막힘(`ask.py:117-124`, `ask.py:183-204`)·비용·프라이버시, 재받아쓰기가 label을 덮지 않도록 분리해야 한다는 점입니다.
+- S2 (codex) — **조건부 찬성**: 현재 제목은 받아쓰기 첫 40자로 자동 생성되고 재받아쓰기 때마다 덮어쓰며(`store.py:466`), 검색은 글·`title`만 보고(`store.py:397-400`), 목록 필터도 날짜·상태뿐이라(`serve.py:496-517`) 주제로 묶거나 거르는 기능이 실제로 없습니다. 보완은 meta `tags`, `PATCH /api/recordings/<id>`(`serve.py:288-289`에 GET/DELETE만 있음), `list`의 `tag` 필터, 화면 칩·태그 검색, 자동 태그는 `run_llm` 후보만·사용자 확인입니다. I1과 합칠 때는 **I1의 수동 `label`+`tags`를 기본**으로 하고 I3의 거르기·묶기를 얹는 쪽이 낫다고 했습니다. 우려는 태그 정규화(대소문자·동의어·공백), 폰 칩 과밀, 옛 meta 기본값, 자동 태그가 받아쓰기 큐를 막는 점(`serve.py:634`·`serve.py:636`, Asker 큐 지적은 S3·S6의 것)·비용·프라이버시, 재받아쓰기가 label을 덮지 않도록 분리해야 한다는 점입니다.
 - S6 (freebuff) — **조건부 찬성 (I1과 합치는 조건)**: `tags`를 meta에 넣고 `list`에 tag 필터를 붙이는 것은 기존 q/from/to/status 필터와 같은 자리(`store.py:382-395`)라 값싸고, `idsFor('all')`이 `filterParams(0)`을 그대로 쓰므로(`app.js:779`) `filterParams`에 tag만 더하면 태그 묶어 묻기가 따라옵니다. 보완은 자동 제안을 **Asker 큐에 태우지 말 것**(한 번에 하나, LLM 호출 상한 300초, `ask.py:89`·`ask.py:183-204`), 별도 큐·실패 조용히 버림·저장은 사용자 확인, 필터는 서버에서 meta만 읽고 q와 AND, I1+I3 필드를 `label`+`tags`로 통일하는 것입니다. 우려는 `llm=false`면 자동 태그가 반쪽이라는 점, “회의”/“미팅” 표기 분열, `today`/`week`가 `filterParams`를 쓰지 않고 자체 from/to를 만든다는 점(`app.js:773-777`)입니다.
-- 관리자 결정: **합침 — F2의 태그 거르기만 채택, 자동 제안은 보류**. 의견 셋이 모두 I1의 손 `label`+`tags`를 바탕으로 하자고 했습니다.
+- 관리자 결정: **합침 — F2의 태그 거르기만 채택, 자동 제안은 보류**. 의견 셋이 모두 I1의 손 `label`+`tags`를 바탕으로 하자고 했습니다. (R49 에 태석님 결정으로 자동 제안도 채택 — `보류한 것` I3)
 
 ### I4 — 묻기 답 이어 묻기(대화 실)
 
@@ -378,6 +494,7 @@ F1 → F2 → F3 순서입니다. F1은 저장 형식 변경 없이 읽기만 �
 
 ## 고친 이력
 
+- R49-N1: F2 동작·화면·서버·저장·인터페이스·검사·노드를 자동 태그 결정대로 다시 썼다 — 받아쓰기 성공 뒤 바로 저장, `tags_auto`·`tags_human`으로 AI/사람 구분과 사람 손댐 보호, `POST /api/recordings/<id>/autotag`(태그 다시 달기), `llm=false`면 자동 태그만 빠짐, Asker 우선순위 큐(사용자 0·태그 1), 실패 무영향, 모델 출력 정규화; `보류한 것` I3 를 채택으로 바꾸고 R48 보류 까닭과 푼 방식을 남겼으며 INTERFACE·README도 맞췄다.
 - R48-N1: F1 서버·저장을 `list_answers` 불변, `serve`의 잠금 밖 `answer_sources(..., 3)`·meta `stat` 기반 `dropped`·앞 3개만 읽기·`Asker.start`의 가벼운 상태 조회·답 50개 × ids 200개 잠금/시간 검사로 고쳤다.
 - R48-N2: F3 동작·화면·t43에 자식 답의 `#answer-dropped` 줄과 부모 녹취 삭제 뒤 자식 화면의 빠짐 검사를 더했다.
 - R48-N3: F2 서버·저장을 GET/PATCH/DELETE 세 갈래, 405 `Allow` 갱신, `_rec_patch`의 `_load_meta` `ValueError` 404로 고쳤다.

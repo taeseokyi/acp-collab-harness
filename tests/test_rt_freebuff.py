@@ -496,6 +496,19 @@ class Pieces(Base):
         self.screen("$ ")
         self.assertFalse(fb.pane_status("fb:0.0")["ok"])
 
+    def test_pane_status_reads_a_status_line_folded_by_a_narrow_pane(self):
+        # 좁은 팬(폰 원격 화면)에서는 맨 아래 상태 줄이 접혀 '/model to change' 가 두세 줄에 걸친다
+        tail = ("│  ▍Enter a coding task  │\n"
+                " DeepSeek V4.1 Flash Efficient · ~/work/ai-fleet · /model to\n"
+                " change · Chat: 앞서 한 일 ...\n ← for history · ? for help\n")
+        self.screen(tail)
+        st = fb.pane_status("fb:0.0")
+        self.assertEqual((st["ok"], st["model"]), (True, "DeepSeek V4.1 Flash Efficient"))
+        self.screen(tail.replace("· /model to\n change", "·\n /model\n to change"))
+        self.assertEqual(fb.pane_status("fb:0.0")["model"], "DeepSeek V4.1 Flash Efficient")
+        self.screen("│  ▍Enter a coding task  │\n $ ls\n change log\n")                 # freebuff 가 아닌 화면은 여전히 아니다
+        self.assertFalse(fb.pane_status("fb:0.0")["ok"])
+
     def test_chat_blocks_only_after_our_instruction(self):
         msgs = [{"variant": "user", "content": "다른 말"},
                 {"variant": "ai", "blocks": [{"type": "text", "textType": "text", "content": "남의 답"}], "isComplete": True},

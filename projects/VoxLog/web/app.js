@@ -19,6 +19,12 @@
     searchTimer: 0,
     lastItems: [],
     queueCount: 0,
+    tagFilter: '',
+    llm: false,
+    detailTimer: 0,
+    detailAutotag: null,
+    detailLastLabel: '',
+    detailLastTags: '',
     // 녹음
     rec: null, stream: null, chunks: [], startedAt: 0, startedIso: '', mime: '',
     timer: 0, wake: null, busy: false,
@@ -119,6 +125,8 @@
     var out = $('health-out');
     if (showOut) out.textContent = '확인 중…';
     return api().json('api/health').then(function (h) {
+      state.llm = !!h.llm;
+      updateDetailRetag();
       var stt = { command: '명령', api: '서버', none: '없음' }[h.stt] || String(h.stt);
       var head = '음성인식: ' + stt + ' · 묻기(claude): ' + (h.llm ? '준비됨' : '없음') + ' · 인증: ';
       if (!h.auth) {
@@ -537,8 +545,78 @@
     if ($('date-from').value) p.set('from', $('date-from').value);
     if ($('date-to').value) p.set('to', $('date-to').value);
     if ($('status-filter').value) p.set('status', $('status-filter').value);
+    if (state.tagFilter) p.set('tag', state.tagFilter);
     if (limit) p.set('limit', String(limit));
     return p;
+  }
+
+  function tagKey(t) { return String(t || '').toLowerCase(); }
+  function autoKeysOf(tags) {
+    var keys = new Set();
+    (Array.isArray(tags) ? tags : []).forEach(function (t) { keys.add(tagKey(t)); });
+    return keys;
+  }
+  function makeTagChip(tag, auto, onClick) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'tag-chip' + (auto ? ' tag-auto' : '');
+    b.textContent = tag;
+    if (auto) {
+      b.title = 'AI 가 단 태그';
+      b.setAttribute('aria-label', tag + ' (AI 가 단 태그)');
+    }
+    b.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      onClick();
+    });
+    return b;
+  }
+
+  function applyTagFilter(tag) {
+    state.tagFilter = tag || '';
+    $('tag-filter-row').hidden = !state.tagFilter;
+    $('tag-filter-label').textContent = state.tagFilter ? '태그: ' + state.tagFilter : '';
+    if (state.tagFilter) loadList();
+  }
+
+  function clearTagFilter() {
+    state.tagFilter = '';
+    $('tag-filter-row').hidden = true;
+    $('tag-filter-label').textContent = '';
+    loadList();
+  }
+
+  function renderDetailChips(tags, tagsAuto) {
+    var box = $('detail-chips');
+    clear(box);
+    var auto = autoKeysOf(tagsAuto);
+    (Array.isArray(tags) ? tags : []).forEach(function (tag) {
+      box.appendChild(makeTagChip(tag, auto.has(tagKey(tag)), function () { applyTagFilter(tag); }));
+    });
+  }
+
+  function renderDetailTagState(autotag) {
+    var st = $('detail-tag-state');
+    if (autotag === 'pending') st.textContent = 'AI 가 태그를 다는 중…';
+    else if (autotag === 'failed') st.textContent = '자동 태그를 달지 못했습니다';
+    else st.textContent = '';
+  }
+
+  function updateDetailRetag() {
+    $('detail-retag').hidden = isolated() || !state.llm || !String(state.detailText || '').trim();
+  }
+
+  function fillDetailInputs(label, tagsText, force) {
+    var labelInput = $('detail-label');
+    var tagsInput = $('detail-tags');
+    if (force || (document.activeElement !== labelInput && labelInput.value === state.detailLastLabel)) {
+      labelInput.value = label;
+      state.detailLastLabel = label;
+    }
+    if (force || (document.activeElement !== tagsInput && tagsInput.value === state.detailLastTags)) {
+      tagsInput.value = tagsText;
+      state.detailLastTags = tagsText;
+    }
   }
 
   function renderStats(st) {
@@ -605,10 +683,39 @@
 
       var text = document.createElement('div');
       text.className = 'rec-text';
-      var t = it.title || it.snippet || '';
+      var t = it.label || it.title || it.snippet || '';
       text.textContent = t || (it.status === 'done' ? '(빈 글)' : '(아직 글이 없습니다)');
-
       main.appendChild(head); main.appendChild(text);
+
+      var tags = Array.isArray(it.tags) ? it.tags : [];
+      if (tags.length) {
+        var tagRow = document.createElement('div');
+        tagRow.className = 'rec-tags';
+        var auto = autoKeysOf(it.tags_auto);
+        tags.slice(0, 2).forEach(function (tag) {
+          tagRow.appendChild(makeTagChip(tag, auto.has(tagKey(tag)), function () { applyTagFilter(tag); }));
+        });
+        if (tags.length > 2) {
+          var more = document.createElement('button');
+          more.type = 'button';
+          more.className = 'tag-chip tag-more';
+          more.textContent = '+' + (tags.length - 2);
+          more.title = '나머지 태그 보기';
+          more.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            openDetail(it.id);
+          });
+          tagRow.appendChild(more);
+        }
+        main.appendChild(tagRow);
+      }
+      if (it.match === 'label' || it.match === 'tag') {
+        var match = document.createElement('div');
+        match.className = 'rec-match';
+        match.textContent = it.match === 'label' ? '이름에서 맞음' : '태그에서 맞음';
+        main.appendChild(match);
+      }
+
       li.appendChild(pick); li.appendChild(main);
       li.addEventListener('click', function (ev) {
         if (pick.contains(ev.target)) return;
@@ -634,7 +741,7 @@
       renderList(items);
       var busy = items.some(function (i) { return i.status === 'pending' || i.status === 'transcribing'; });
       if (state.detailId && (state.detailStatus === 'pending' || state.detailStatus === 'transcribing')) {
-        loadDetail(state.detailId, true);
+        loadDetail(state.detailId);
         busy = true;
       }
       if (busy) state.listTimer = setTimeout(loadList, 5000);
@@ -680,11 +787,13 @@
     box.appendChild(a);
   }
 
-  function loadDetail(id, keepAudio) {
+  function loadDetail(id, forceFill) {
     return api().json('api/recordings/' + encodeURIComponent(id)).then(function (r) {
       if (state.detailId !== id) return;
       state.detailStatus = r.status;
-      $('detail-title').textContent = r.title || '녹취';
+      var label = typeof r.label === 'string' ? r.label : '';
+      var tags = Array.isArray(r.tags) ? r.tags : [];
+      $('detail-title').textContent = label || r.title || '녹취';
       var meta = fmtTime(r.recorded_at || r.created) +
         (r.duration_ms != null ? ' · ' + fmtClock(r.duration_ms) : '') +
         ' · ' + (STATUS[r.status] || r.status) +
@@ -694,14 +803,30 @@
       renderLoc(r.location);
       $('detail-delete').hidden = isolated();
       state.detailText = r.transcript || '';
-      state.detailHead = (r.title || '녹취') + ' · ' + fmtTime(r.recorded_at || r.created);
+      state.detailHead = (label || r.title || '녹취') + ' · ' + fmtTime(r.recorded_at || r.created);
       $('detail-export').hidden = !state.detailText;
       $('detail-share').hidden = !canShare();
+      renderDetailChips(tags, r.tags_auto);
+      $('detail-edit').hidden = isolated();
+      fillDetailInputs(label, tags.join(', '), forceFill);
+      renderDetailTagState(r.autotag);
+      updateDetailRetag();
       var tr = $('transcript');
       if (r.transcript) tr.textContent = r.transcript;
       else if (r.status === 'pending' || r.status === 'transcribing') tr.textContent = '받아쓰는 중입니다…';
       else if (r.status === 'no-stt') tr.textContent = '음성인식 백엔드가 없어 글이 없습니다. 서버에 켠 뒤 \'다시 받아쓰기\'를 누르세요.';
       else tr.textContent = '(글이 없습니다)';
+
+      var wasPending = state.detailAutotag === 'pending';
+      state.detailAutotag = r.autotag || null;
+      clearTimeout(state.detailTimer);
+      if (r.autotag === 'pending') {
+        state.detailTimer = setTimeout(function () {
+          if (state.detailId === id) loadDetail(id);
+        }, 2000);
+      } else if (wasPending) {
+        loadList();
+      }
     }, function (e) {
       if (state.detailId === id) onApiError(e);
     });
@@ -710,18 +835,28 @@
   function openDetail(id) {
     state.detailId = id;
     state.detailStatus = null;
+    state.detailAutotag = null;
+    state.detailLastLabel = '';
+    state.detailLastTags = '';
+    clearTimeout(state.detailTimer);
     $('detail').hidden = false;
     $('detail-delete').hidden = isolated();
     $('detail-title').textContent = '녹취';
     $('detail-meta').textContent = '불러오는 중…';
     $('transcript').textContent = '';
     state.detailText = '';
+    clear($('detail-chips'));
+    $('detail-label').value = '';
+    $('detail-tags').value = '';
+    $('detail-edit').hidden = isolated();
+    renderDetailTagState(null);
+    updateDetailRetag();
     $('detail-export').hidden = true;
     Array.prototype.forEach.call($('list').children, function (li) {
       li.classList.toggle('open', li.dataset.id === id);
     });
     setAudio(id);
-    loadDetail(id).then(function () {
+    loadDetail(id, true).then(function () {
       if (state.detailStatus === 'pending' || state.detailStatus === 'transcribing') {
         clearTimeout(state.listTimer);
         state.listTimer = setTimeout(loadList, 5000);
@@ -733,6 +868,8 @@
   function closeDetail() {
     state.detailId = null;
     state.detailStatus = null;
+    state.detailAutotag = null;
+    clearTimeout(state.detailTimer);
     $('detail').hidden = true;
     var audio = $('detail-audio');
     try { audio.pause(); } catch (e) { /* 무시 */ }
@@ -749,6 +886,38 @@
       loadDetail(id);
       loadList();
     }, onApiError);
+  }
+
+  function saveLabels(id) {
+    if (!id) return;
+    var label = $('detail-label').value;
+    var tagsText = $('detail-tags').value;
+    var labelChanged = label !== state.detailLastLabel;
+    var tagsChanged = tagsText !== state.detailLastTags;
+    if (!labelChanged && !tagsChanged) {
+      toast('바뀐 것이 없습니다');
+      return;
+    }
+    var body = { label: label };
+    if (tagsChanged) body.tags = tagsText.split(',');
+    api().json('api/recordings/' + encodeURIComponent(id), { method: 'PATCH', body: body }).then(function () {
+      toast('저장했습니다.');
+      loadDetail(id, true);
+      loadList();
+    }, function (e) {
+      if (e && e.status === 401) setConn('bad', '인증 필요');
+      toast((e && e.message) || '저장하지 못했습니다');
+    });
+  }
+
+  function retagDetail() {
+    var id = state.detailId;
+    if (!id) return;
+    api().json('api/recordings/' + encodeURIComponent(id) + '/autotag', { method: 'POST' }).then(function () {
+      loadDetail(id);
+    }, function (e) {
+      toast((e && e.message) || '태그 다시 달기를 요청하지 못했습니다');
+    });
   }
 
   function deleteDetail() {
@@ -1046,6 +1215,7 @@
     ['date-from', 'date-to', 'status-filter'].forEach(function (id) {
       $(id).addEventListener('change', loadList);
     });
+    $('tag-filter-clear').addEventListener('click', clearTagFilter);
     $('sel-clear').addEventListener('click', function () {
       state.selected.clear();
       Array.prototype.forEach.call(document.querySelectorAll('.rec-check'), function (c) { c.checked = false; });
@@ -1054,6 +1224,8 @@
     $('detail-close').addEventListener('click', closeDetail);
     $('detail-retry').addEventListener('click', retryDetail);
     $('detail-delete').addEventListener('click', deleteDetail);
+    $('detail-save').addEventListener('click', function () { saveLabels(state.detailId); });
+    $('detail-retag').addEventListener('click', retagDetail);
 
     $('ask-go').addEventListener('click', ask);
     $('ask-kind').addEventListener('change', function () {

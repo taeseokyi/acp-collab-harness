@@ -1,0 +1,5 @@
+G-015: 73.6%  남은 ETA 860s  상태 {'done': 2, 'failed': 1, 'blocked': 1}
+  T-116  done     S2  시도 1  run T-116-S2-a1-023655  rc 0/0  browser_ui: 통계 목표 구멍 메우기 (서로 다른 네 값·진 판·끝난 판 새로 고침)
+  T-117  done     S2  시도 2  run T-117-S2-a2-030558  rc 0/0  browser_ui: 보기 설정(색약 present 파랑)과 접근성(대비 전면·어두움+색약·키보드 완주·aria-live)
+  T-118  failed   S3  시도 2  run T-118-S3-a2-024200  rc 0/1  browser_core: 뒤집기 애니메이션 실측·화면 ENTER/⌫ 누르기·키 색 안 내려감
+  T-119  blocked  S1  시도 0  run -  rc -/-  웹워들 목표 넷 적대적 검수 + tests/README.md 갱신
