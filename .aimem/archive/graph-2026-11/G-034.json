@@ -1,0 +1,66 @@
+{
+ "id": "G-034",
+ "request": "R14 후속2: T-191 재검수의 N3(정리가 AIMEM.md 를 씀)·N4(빈 검사 둘)와 시험 없는 수정 메우기",
+ "created": "2026-11-12T01:52:12",
+ "rev": 157,
+ "round": 14,
+ "concurrency": 2,
+ "nodes": [
+  {
+   "id": "T-192",
+   "slot": "S2",
+   "deps": [],
+   "timeout_sec": 1800,
+   "max_attempts": 2,
+   "title": "N3: 웹 '끝난 것 정리' 가 AIMEM.md 를 고쳐 쓰는 길을 막는다",
+   "write": [
+    "tools/aimem_db.py"
+   ],
+   "task": "# T-192 정리가 **`AIMEM.md` 를 건드리는 길**을 막으십시오\n\n고칠 파일은 **`tools/aimem_db.py` 하나**입니다. 다른 파일은 고치지 마십시오.\n\n## 읽을 것 (이것만)\n\n- `tools/aimem_db.py` 의 `render()`(591행 근처) · `sync_rev_in_aimem()`(573행 근처) · `handoff_sync()`\n- `archive_apply` 끝에서 `render()` 를 부르는 자리\n\n**읽지 마십시오:** `AIMEM.md` 본문, `tools/aimem_monitor/**`, `tests/**`, `projects/**`\n\n## 결함 N3 (재검수가 찾음) - 정리 단추가 관리자 전용 파일을 쓴다\n\n`archive_apply` 가 끝에 `render()` 를 부릅니다. 그런데 `render()` 는\n`sync_rev_in_aimem()` 을 부르고, 그 함수는 **`AIMEM.md` 를 고쳐 씁니다**(서문 REV 줄과 '최종 갱신' 줄).\n\n- `AIMEM.md` 는 **관리자만** 쓰는 파일입니다. 웹의 '끝난 것 정리' 단추가 그것을 쓰면 안 됩니다\n- 게다가 `AIMEM` 은 **모듈 상수**라, `ROOT` 만 임시 폴더로 바꾼 시험도 **진짜 `AIMEM.md` 를 씁니다**\n  (같은 꼴의 결함으로 이미 운영 `AIMEM-state.md` 가 한 번 덮어써졌습니다)\n\n## 고칠 것\n\n1. **생성물만 다시 쓰는 길을 따로 만드십시오.** 예: `render(sync_aimem=True)` 로 기본값은 지금 그대로\n   두고, `archive_apply` 는 `render(sync_aimem=False)` 로 부르게 하십시오.\n   `sync_aimem=False` 면 `AIMEM-state.md` 와 `.aimem/handoff.md` 만 쓰고 `sync_rev_in_aimem()` 은\n   **부르지 않습니다.** CLI `aimem_db.py render` 는 지금과 똑같이(서문까지 맞추게) 두십시오\n2. `sync_rev_in_aimem()` 안에서 쓸 경로를 **부를 때** `ROOT / \"AIMEM.md\"` 로 만드십시오\n   (`AIMEM` 상수는 남겨 두되 쓰기는 부를 때 만든 경로로). `handoff_sync()` 쪽도 같은 눈으로 보십시오\n3. `archive_apply` 의 `out[\"render_error\"]` 는 그대로 두되, **render 가 실패했으면 그 사실이\n   `cmd_archive` 출력에도 한 줄 찍히게** 하십시오 (재검수 N3: 지금 조용히 삼켜집니다)\n\n## 하지 말 것\n\n- 앞 노드들(T-187~T-189)이 고친 것을 되돌리지 마십시오\n- `AIMEM.md` 를 열어 고치지 마십시오\n- **기존 시험을 고치지 마십시오.** 빨간 것이 나오면 그 시험이 옳습니다\n\n## 검증\n\n```bash\npython3 -m unittest discover -s tests 2>&1 | tail -3\n```\n\n`Ran 548 tests` 이상에 `OK` 여야 합니다.\n\n## 보고\n\n첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` 중 하나만. 그 아래 세 줄 안쪽으로 바꾼 자리와 `Ran N tests` 줄.\n",
+   "verify": "cp AIMEM.md /tmp/r14_aimem_before.md\npython3 -m unittest discover -s tests > /tmp/v192.txt 2>&1\ntail -3 /tmp/v192.txt\npython3 - <<'PY' >> /tmp/v192.txt 2>&1\nimport contextlib, io, pathlib, sys, tempfile\nfrom unittest import mock\nsys.path.insert(0, \"tools\")\nimport aimem_db as A\ntmp = tempfile.TemporaryDirectory(); root = pathlib.Path(tmp.name).resolve()\n(root / \".aimem\" / \"requests\").mkdir(parents=True)\n(root / \".aimem\" / \"runs\").mkdir()\nfor p in (mock.patch.object(A, \"ROOT\", root), mock.patch.object(A, \"DB\", root / \".aimem\" / \"aimem.db\"),\n          mock.patch.object(A, \"AIMEM\", root / \"AIMEM.md\"), mock.patch.object(A, \"HANDOFF\", root / \".aimem\" / \"handoff.md\")):\n    p.start()\nwith contextlib.redirect_stdout(io.StringIO()):\n    A.cmd_init()\nwith A.connect() as con:\n    con.execute(\"INSERT INTO meta(key,value) VALUES('rev','999')\")\n    con.execute(\"INSERT INTO tasks(id,title,slot,status,updated) VALUES('T-1','끝','S1','DONE','2026-01-01T00:00:00')\")\n    con.commit()\n(root / \"AIMEM.md\").write_text(\"# x\\n\\n- **REV: 1**\\n- 최종 갱신: 2026-01-01 00:00 KST\\n\", encoding=\"utf-8\")\nbefore = (root / \"AIMEM.md\").read_text(encoding=\"utf-8\")\nwith contextlib.redirect_stdout(io.StringIO()):\n    A.archive_apply(A.archive_plan(0), \"t\")\nassert (root / \"AIMEM.md\").read_text(encoding=\"utf-8\") == before, \"정리가 AIMEM.md 를 고쳐 썼습니다\"\nassert (root / \"AIMEM-state.md\").exists(), \"스냅샷은 다시 써야 합니다\"\nwith contextlib.redirect_stdout(io.StringIO()):\n    A.render()\nassert \"REV: 999\" in (root / \"AIMEM.md\").read_text(encoding=\"utf-8\"), \"CLI render 는 서문을 맞춰야 합니다\"\nprint(\"SMOKE-192 OK\")\nPY\ntail -2 /tmp/v192.txt\npython3 - <<'PY'\nimport pathlib, re, sys\nt = pathlib.Path(\"/tmp/v192.txt\").read_text(encoding=\"utf-8\", errors=\"replace\")\nm = re.search(r\"Ran (\\d+) tests\", t)\nn = int(m.group(1)) if m else 0\nsame = pathlib.Path(\"AIMEM.md\").read_text(encoding=\"utf-8\") == pathlib.Path(\"/tmp/r14_aimem_before.md\").read_text(encoding=\"utf-8\")\nprint(\"Ran\", n, \"| OK\", \"\\nOK\" in t, \"| 운영 AIMEM.md 그대로\", same, \"| SMOKE-192\", \"SMOKE-192 OK\" in t)\nsys.exit(0 if n >= 548 and \"\\nOK\" in t and same and \"SMOKE-192 OK\" in t else 1)\nPY\n",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-192-S2-a1-015216",
+     "started": "2026-11-12T01:52:17",
+     "ended": "2026-11-12T01:56:47",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n`tools/aimem_db.py`: `render(sync_aimem=True)` 기본 유지, `archive_apply`는 `render(sync_aimem=False)`로 호출; `sync_rev_in_aimem()`은 호출 시 `ROOT / \"AIMEM.md\"` 경로 사용; `cmd_archive`가 `out[\"render_error\"]`를 한 줄 출력.\n`handoff_sync()`는 이미 `_sync_handoff_files()`에서 호출 시 `ROOT / \".aimem\" / \"handoff.md\"`를 사용하므로 변경 없음; CLI `render`는 서문 REV 동기화 그대로.\n검증: `python3 -m unittest discover -s tests 2>&1 | tail -3` → `OK (skipped=1)`, 재실행 출력 캡처 → `Ran 548 tests in 52.388s` / `OK (skipped=1)`.",
+     "verify_rc": 0,
+     "verify_tail": "OK (skipped=1)\nrender: /tmp/tmph3egwcr0/AIMEM-state.md (37 lines)\nrender: /tmp/tmp1mwy2g4c/AIMEM-state.md (37 lines)\nrender: /tmp/tmp1mwy2g4c/AIMEM-state.md (37 lines)\nSMOKE-192 OK\nRan 548 | OK True | 운영 AIMEM.md 그대로 True | SMOKE-192 True\n"
+    }
+   ]
+  },
+  {
+   "id": "T-193",
+   "slot": "S3",
+   "deps": [
+    "T-192"
+   ],
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "title": "빈 검사 둘(N4)을 메우고, 시험이 없던 수정(결함 2·4·8·9·12)을 검사로 지킨다",
+   "write": [
+    "tests/test_aimem_db_cli.py"
+   ],
+   "task": "# T-193 **아무것도 재지 않는 검사 둘**과 **시험이 없는 수정 다섯**을 메우십시오\n\n고칠 파일은 **`tests/test_aimem_db_cli.py` 하나**입니다. 덧붙이기와 **아래 둘의 수정**만 하십시오.\n**`tools/**` 를 고치면 안 됩니다** - 제품은 다른 슬롯이 고쳤습니다.\n\n## 읽을 것 (이것만)\n\n- `tests/test_aimem_db_cli.py` 의 아카이브 검사 전부\n- `rounds/R14/REVIEW-archive-2.md` 의 **「새 결함」 N4 항목**과 **「시험이 없는 수정」 목록**만\n  (부록의 실행기 코드는 읽지 마십시오)\n- `tools/aimem_db.py` 의 `archive_apply`\n\n**읽지 마십시오:** `AIMEM.md`, `tools/aimem_monitor/**`, `projects/**`\n\n## 1. 빈 검사 둘 (재검수 N4) - **지금 아무것도 재지 않습니다**\n\n- `test_handoff_archive_line_exact_match` - actor 가 `\"t\"` 라 줄 접두가 겹치지 않아,\n  **부분 문자열 확인으로 되돌려도 통과합니다.** `…작업 12` 가 `…작업 1` 의 **접두를 품도록**\n  같은 actor·같은 시각으로 두 줄을 만들어, `작업 1` 줄이 아카이브에 **실제로 적힌 뒤에만**\n  DB 에서 내려가는 것을 재게 고치십시오\n- `test_db_only_open_request_event_stays` - 이벤트가 **열린 요청만** 가리켜서 보호가 없어도 남습니다.\n  본문이 **끝난 태스크와 열린 요청을 함께** 가리키게 바꿔, 보호 집합이 없으면 내려가게 만드십시오\n\n## 2. 되돌리면 잡혀야 하는 수정 다섯\n\n재검수가 \"이 수정들을 통째로 되돌려도 검사 124개가 모두 초록\" 이라고 했습니다. 각각 하나씩 재십시오.\n\n1. **결함 2** - 로그를 같은 inode 에서 자른다. `fleet-mode.log` 를 열어 둔 핸들(`open(…, \"a\")`)을\n   쥔 채 정리하고, 그 핸들로 **정리 뒤에 쓴 줄이 파일에 남는지** 보십시오.\n   `os.stat(...).st_ino` 가 정리 전후로 같은지도 함께 (`os.replace` 로 되돌리면 빨개져야 합니다)\n2. **결함 4** - 실행 파일은 `.json` 을 **맨 마지막**에 옮긴다. 세 번째 `replace` 에서 `OSError` 를\n   `mock.patch(\"pathlib.Path.replace\", side_effect=…)` 로 터뜨린 뒤, `runs/` 에 **`.json` 이 남아 있어**\n   다음 `archive_plan(0)` 이 그 실행을 **다시 찾는지** 보십시오\n3. **결함 8** - 위 1번에서 이미 잽니다\n4. **결함 9** - 계획 뒤에 태스크를 `ASSIGNED` 로 되돌리고 `archive_apply` 를 부르면\n   그 태스크 행이 **DB 에 남는지** 보십시오\n5. **결함 12 / N3** - 정리 뒤 `AIMEM-state.md` 가 다시 쓰이고 **`AIMEM.md` 는 그대로**인지 보십시오\n\n## 주의\n\n- 시각은 고정 문자열(`\"2026-01-01T00:00:00\"`)로 두고 `archive_plan(0)` 을 쓰십시오\n- `setUp` 이 `aimem_db.ROOT`·`DB`·`AIMEM`·`HANDOFF` 를 **모두** 임시 폴더로 바꾸는지 확인하십시오.\n  하나라도 빠지면 **운영 저장소를 건드립니다**\n- **제품을 고치지 마십시오.** 검사가 결함을 찾으면 고치지 말고 첫 줄을 `NEEDS-FIX: <무엇이 어디서>` 로 보고하십시오\n- 덧붙이는 부분은 **200줄 안쪽**\n\n## 검증\n\n```bash\npython3 -m unittest discover -s tests 2>&1 | tail -3\npython3 -m unittest discover -s tests -p \"test_aimem_db_cli.py\" 2>&1 | tail -3\n```\n\n전체가 `OK` 이고, 이 파일만 돌린 것이 **124 이상**에 `OK` 여야 합니다 (지금 118).\n\n## 보고\n\n첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` / `NEEDS-FIX: …` 중 하나만. 그 아래 네 줄 안쪽으로\n빈 검사 둘을 어떻게 고쳤는지, 더한 검사가 무엇을 재는지, 두 `Ran N tests` 줄.\n",
+   "verify": "python3 -m unittest discover -s tests > /tmp/v193.txt 2>&1\ntail -3 /tmp/v193.txt\npython3 -m unittest discover -s tests -p \"test_aimem_db_cli.py\" > /tmp/v193b.txt 2>&1\ntail -3 /tmp/v193b.txt\npython3 - <<'PY'\nimport pathlib, re, sys\nt = pathlib.Path(\"/tmp/v193.txt\").read_text(encoding=\"utf-8\", errors=\"replace\")\nb = pathlib.Path(\"/tmp/v193b.txt\").read_text(encoding=\"utf-8\", errors=\"replace\")\nran = lambda x: int(re.search(r\"Ran (\\d+) tests\", x).group(1)) if re.search(r\"Ran (\\d+) tests\", x) else 0\nprint(\"전체\", ran(t), \"OK\", \"\\nOK\" in t, \"| 이 파일\", ran(b), \"(지금 118, 124 이상이어야)\")\nsys.exit(0 if ran(t) >= 548 and \"\\nOK\" in t and ran(b) >= 124 and \"\\nOK\" in b else 1)\nPY\n",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-193-S3-a1-015742",
+     "started": "2026-11-12T01:57:43",
+     "ended": "2026-11-12T02:11:14",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n`tests/test_aimem_db_cli.py` 만 수정: 빈 검사 둘을 고쳤다 - 핸드오프 검사는 actor `관리자`·같은 시각으로 `작업 1` 줄이 기존 `작업 12` 줄의 접두가 되게 해 **실제 줄로 적힌 뒤에만** DB 행이 내려가는지 재고, DB-only 열린 요청 검사는 끝난 `T-1`과 열린 `Q-OPEN`을 한 이벤트에 함께 넣어 보호 집합이 없으면 내려가게 했다.\n더한 검사 6개: X8(같은 inode·열어 둔 핸들로 정리 뒤 쓴 줄 유지), X9(monitor.log 서버가 쥐면 apply 도 건너뜀), X1(`.json` 맨 마지막 이동 순서와 셋째 replace 실패 뒤 재발견), X2(`.json` 없는 고아 `.rc/.out` 줍기), X7(계획 뒤 `ASSIGNED` 로 되돌린 태스크 행 보존), X10/N3(정리 뒤 `AIMEM-state.md` 갱신·`AIMEM.md` 불변).\n검증: `python3 -m unittest discover -s tests 2>&1 | tail -3` → `OK (skipped=1)` (뒤 두 줄은 버퍼에 있던 render 출력); `python3 -m unittest discover -s tests -p \"test_aimem_db_cli.py\" 2>&1 | tail -3` → `Ran 124 tests in 24.534s` / `OK`.\n다음 담당자: 제품 `tools/**` 는 건드리지 않았다. N1(마지막 `.json` 이동에서 죽어 `.json` 혼자 남는 경우)은 제품에 남아 있고 이 검사는 셋째 replace(rc) 경우만 잰다.",
+     "verify_rc": 0,
+     "verify_tail": "OK (skipped=1)\nrender: /tmp/tmpb7i931z9/AIMEM-state.md (37 lines)\nrender: /tmp/tmp8q5imel3/AIMEM-state.md (37 lines)\nRan 124 tests in 15.402s\n\nOK\n전체 554 OK True | 이 파일 124 (지금 118, 124 이상이어야)\n"
+    }
+   ]
+  }
+ ],
+ "followup": "R14 T-191 재검수가 낸 N3·N4 와 '시험이 없는 수정' 의 후속",
+ "updated": "2026-11-12T02:12:26"
+}

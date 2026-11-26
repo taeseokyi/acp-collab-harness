@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/a
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 206** (workers: if your brief's REV differs, stop and ask - `0.1`)
-- Last updated: 2026-11-25 16:41 KST
+- **REV: 207** (workers: if your brief's REV differs, stop and ask - `0.1`)
+- Last updated: 2026-11-26 11:33 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **the `role=manager` session the engine starts for a round**, identified by its session id `M-R<N>-<HHMMSS>` (form pinned in the linter). `tools/fleet_ctl.py

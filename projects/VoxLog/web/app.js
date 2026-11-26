@@ -398,6 +398,35 @@
   var FILE_MAX = 50 * 1024 * 1024; // 서버 상한(MAX_AUDIO_BYTES)과 같게
   var FILE_MIME = { webm: 'audio/webm', ogg: 'audio/ogg', m4a: 'audio/mp4', mp3: 'audio/mpeg', wav: 'audio/wav' };
 
+  function audioDuration(a) { // 초 - 못 읽으면 null
+    return new Promise(function (resolve) {
+      var done = false, timer;
+      function finish(v) {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        a.onloadedmetadata = null;
+        a.ondurationchange = null;
+        a.onerror = null;
+        resolve(v);
+      }
+      function settle() {
+        if (isFinite(a.duration) && a.duration > 0) { finish(a.duration); return; }
+        try { a.currentTime = 1e7; } catch (e) { finish(null); }
+      }
+      a.onloadedmetadata = settle;
+      a.ondurationchange = function () {
+        if (isFinite(a.duration) && a.duration > 0) {
+          try { a.currentTime = 0; } catch (e) { /* 무시 */ }
+          finish(a.duration);
+        }
+      };
+      a.onerror = function () { finish(null); };
+      timer = setTimeout(function () { finish(null); }, 5000);
+      if (a.readyState >= 1) settle();
+    });
+  }
+
   function fileDuration(file) { // 길이(ms) - 못 읽으면 null
     return new Promise(function (resolve) {
       var url, a, done = false;
@@ -411,9 +440,9 @@
         url = URL.createObjectURL(file);
         a = new Audio();
         a.preload = 'metadata';
-        a.onloadedmetadata = function () { end(isFinite(a.duration) && a.duration > 0 ? Math.round(a.duration * 1000) : null); };
-        a.onerror = function () { end(null); };
-        setTimeout(function () { end(null); }, 5000);
+        audioDuration(a).then(function (sec) {
+          end(sec == null ? null : Math.round(sec * 1000));
+        });
         a.src = url;
       } catch (e) { end(null); }
     });
@@ -731,6 +760,8 @@
   function loadList() {
     var seq = ++state.listSeq;
     clearTimeout(state.listTimer);
+    var wasBusy = state.lastItems.some(function (i) { return i.status === 'pending' || i.status === 'transcribing'; }) ||
+      (state.detailId && (state.detailStatus === 'pending' || state.detailStatus === 'transcribing'));
     var qs = filterParams(200).toString();
     return api().json('api/recordings?' + qs).then(function (data) {
       if (seq !== state.listSeq) return;
@@ -748,6 +779,7 @@
     }, function (e) {
       if (seq !== state.listSeq) return;
       onApiError(e);
+      if (wasBusy && !(e && e.status === 401)) state.listTimer = setTimeout(loadList, 5000);
     });
   }
 
@@ -762,7 +794,9 @@
     return api().audioUrl(id).then(function (url) {
       if (state.detailId !== id) { URL.revokeObjectURL(url); return; }
       state.audioObjectUrl = url;
+      audio.preload = 'metadata';
       audio.src = url;
+      audioDuration(audio);
     }, function (e) {
       if (state.detailId !== id) return;
       $('audio-note').hidden = false;
@@ -790,6 +824,8 @@
   function loadDetail(id, forceFill) {
     return api().json('api/recordings/' + encodeURIComponent(id)).then(function (r) {
       if (state.detailId !== id) return;
+      var prevStatus = state.detailStatus;
+      var wasPending = state.detailAutotag === 'pending';
       state.detailStatus = r.status;
       var label = typeof r.label === 'string' ? r.label : '';
       var tags = Array.isArray(r.tags) ? r.tags : [];
@@ -817,7 +853,6 @@
       else if (r.status === 'no-stt') tr.textContent = '음성인식 백엔드가 없어 글이 없습니다. 서버에 켠 뒤 \'다시 받아쓰기\'를 누르세요.';
       else tr.textContent = '(글이 없습니다)';
 
-      var wasPending = state.detailAutotag === 'pending';
       state.detailAutotag = r.autotag || null;
       clearTimeout(state.detailTimer);
       if (r.autotag === 'pending') {
@@ -827,8 +862,20 @@
       } else if (wasPending) {
         loadList();
       }
+      if (r.autotag == null && r.status === 'done' &&
+          (prevStatus === 'pending' || prevStatus === 'transcribing') && state.llm) {
+        state.detailTimer = setTimeout(function () {
+          if (state.detailId === id) loadDetail(id);
+        }, 2000);
+      }
     }, function (e) {
       if (state.detailId === id) onApiError(e);
+      if (state.detailId === id && state.detailAutotag === 'pending') {
+        clearTimeout(state.detailTimer);
+        state.detailTimer = setTimeout(function () {
+          if (state.detailId === id) loadDetail(id);
+        }, 5000);
+      }
     });
   }
 

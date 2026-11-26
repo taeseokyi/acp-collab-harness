@@ -1,0 +1,38 @@
+{
+ "id": "G-028",
+ "request": "R12 후속3: T-157 재검수가 찾은 검사 구멍(대소문자 방향이 거꾸로) 메우기",
+ "created": "2026-11-11T18:48:02",
+ "rev": 155,
+ "round": 12,
+ "concurrency": 1,
+ "nodes": [
+  {
+   "id": "T-160",
+   "title": "대소문자 검사를 실제 쓰임대로: 쿠키가 gh:TaeSeok, 목록이 taeseok",
+   "slot": "S2",
+   "write": [
+    "tests/test_aimem_monitor_app_gate.py"
+   ],
+   "deps": [],
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "task": "# T-160 대소문자 검사를 **실제 쓰임과 같은 방향**으로 한 벌 더 두십시오\n\n**고칠 파일은 `tests/test_aimem_monitor_app_gate.py` 하나뿐입니다.**\n`tools/` 아래는 **읽기만 하고 한 줄도 고치지 마십시오.** 제품은 지금 맞게 돌아갑니다.\n\n## 왜 (재검수 T-157 이 찾은 구멍)\n\n`_subject()` 는 `gh:` 주체를 요청마다 허용 목록과 맞출 때 **주체를 소문자로 낮춰서** 봅니다.\n지금 그것을 지키는 검사는 153~158행의 하나뿐인데, **방향이 거꾸로**입니다 -\n목록에 `TaeSeok` 을 적고 쿠키를 `gh:taeseok` 로 서명합니다.\n\n**실제로는 반대입니다.** GitHub 가 돌려주는 계정 이름의 대소문자가 그대로 주체에 들어가므로\n쿠키는 `gh:TaeSeok` 이고, 목록 파일에는 사람이 소문자로 적어 둡니다.\n재검수가 변이 시험으로 확인한 것: **`_subject()` 에서 `.lower()` 를 지워도 지금 검사는\n하나도 빨개지지 않습니다**(그런데 실제로는 대문자가 든 계정이 다음 요청마다 쫓겨납니다).\n\n## 할 일 - 검사 둘 더하기\n\n이미 있는 열 개는 **지우거나 고치지 마십시오.** 아래 둘을 더합니다.\n이 파일의 `github_headers(...)` 도우미와 허용 목록 파일을 쓰는 방식(153행 근처)을\n그대로 따라 하십시오.\n\n1. **`test_github_session_mixed_case_login_still_works`**\n   - 허용 목록 파일에 **소문자로** `taeseok` 을 적습니다\n   - 세션 쿠키는 **`gh:TaeSeok`**(대문자가 든 그대로)으로 서명합니다\n   - `GET /app/<이름>/` 이 **302** 이고 `Location` 에 `/app/~` 가 **있다**\n   - 이어서 그 `Location` 을 같은 쿠키로 열면 **200**\n\n2. **`test_github_session_mixed_case_outside_allowlist_is_refused`**\n   - 허용 목록에 `someoneelse` 만 적습니다\n   - 쿠키는 `gh:TaeSeok`\n   - `Location` 에 `/app/~` 가 **없다** (`assertNotIn`)\n\n`github_headers` 가 주체 문자열을 그대로 받지 않고 안에서 소문자로 만들고 있으면,\n**대소문자를 그대로 넘길 수 있게 매개변수 하나를 더하거나** `server.sign_session` 을\n직접 불러 쿠키를 만드십시오. 도우미의 **기존 동작은 바꾸지 마십시오**(다른 검사가 씁니다).\n\n## 확인\n\n```\npython3 -m unittest tests.test_aimem_monitor_app_gate -v 2>&1 | tail -4\npython3 -m unittest discover -s tests -q 2>&1 | tail -3\n```\n\n전체가 **`OK`** 여야 하고 시험 수가 507 보다 커야 합니다.\n\n**이 검사가 빨개지면 제품 결함입니다** - 제품도 검사도 고치지 말고\n첫 줄을 `NEEDS-FIX: <무엇이 어디서>` 로 보고하십시오.\n\n**운영 서버(18799)는 재시작하지 마십시오.**\n\n보고 첫 줄은 `DONE` 또는 `NEEDS-FIX: ...` 또는 `BLOCKED - <이유>` 입니다.",
+   "verify": "python3 -m unittest discover -s tests -q > /tmp/v160.txt 2>&1 && grep -q 'TaeSeok' tests/test_aimem_monitor_app_gate.py && [ $(grep -c 'def test_' tests/test_aimem_monitor_app_gate.py) -ge 12 ] && grep -q 'mixed_case' tests/test_aimem_monitor_app_gate.py && tail -3 /tmp/v160.txt",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-160-S2-a1-184803",
+     "started": "2026-11-11T18:48:03",
+     "ended": "2026-11-11T18:50:03",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n- AIMEM 확인: `python3 tools/aimem_db.py check --slot S2 --token d27e93 --rev 155` → 일치, 소유 범위에 `tests/test_aimem_monitor*.py` 포함.\n- 고친 파일: `tests/test_aimem_monitor_app_gate.py` 하나뿐. 기존 10개 검사와 `github_headers(...)` 동작은 그대로 두었고, `tools/`는 수정하지 않았습니다.\n- 추가한 검사:\n  - `test_github_session_mixed_case_login_still_works` — `tests/test_aimem_monitor_app_gate.py:162`\n  - `test_github_session_mixed_case_outside_allowlist_is_refused` — `tests/test_aimem_monitor_app_gate.py:174`\n- 검증 명령과 출력:\n  - `python3 -m unittest tests.test_aimem_monitor_app_gate -v 2>&1 | tail -4` → `Ran 12 tests in 6.125s`, `OK`\n  - `python3 -m unittest discover -s tests -q 2>&1 | tail -3` → `Ran 509 tests in 44.494s`, `OK (skipped=1)`\n- 다음 담당자가 알아야 할 것: 전체 시험 수 509로 507보다 큽니다. 제품 결함은 나타나지 않았고 운영 서버(18799)는 재시작하지 않았습니다.",
+     "verify_rc": 0,
+     "verify_tail": "Ran 509 tests in 45.741s\n\nOK (skipped=1)\n"
+    }
+   ]
+  }
+ ],
+ "followup": "G-027 T-157 재검수가 찾은 결함 1 (검사 구멍) 의 수정",
+ "updated": "2026-11-11T18:50:51"
+}

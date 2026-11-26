@@ -3,11 +3,12 @@
 
 실행: python3 projects/VoxLog/tests/browser_voxlog.py
 서버는 이 검사가 임시 data 폴더로 직접 띄우고(subprocess) 끝나면 내린다.
-검사는 모두 44개입니다.
+검사는 모두 47개입니다.
 마지막 줄 `N/M 통과`, 하나라도 실패면 종료 코드 1.
 """
 import json
 import os
+import re
 import shlex
 import shutil
 import socket
@@ -1835,6 +1836,150 @@ def run_all(browser, base, data, tmp, procs):
              "pending 중 저장한 뒤 AI 칩 글자·표시가 다름: %r" % chips)
         c2.close()
     check("45 이름만 저장해도 자동 태그가 이어짐 · pending 중 이름 저장에도 AI 태그가 붙음", t45)
+
+    def t46():
+        # R48-N24: 가짜 마이크 3초 webm - 상세의 오디오 길이가 유한(2~5초)이고,
+        # 같은 파일을 '녹음 파일 올리기' 로 올려도 목록에 길이가 보인다
+        b, _ = new_server("d46")
+        c = new_ctx()
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        rec_cycle(pg, seconds=3)
+        need(wait_for(lambda: len(server_items(b)) == 1, 25, pg=pg),
+             "녹음이 서버에 올라가지 않음(대기 %s)" % queue_n(pg))
+        rid = server_items(b)[0]["id"]
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 15, pg=pg), "목록 항목이 생기지 않음")
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.is_visible("#detail-audio"), 10, pg=pg), "상세 오디오가 보이지 않음")
+
+        def audio_seconds():
+            return pg.evaluate("() => { var a = document.getElementById('detail-audio');"
+                               " return isFinite(a.duration) && a.duration > 0 ? a.duration : null; }")
+        need(wait_for(lambda: audio_seconds() is not None, 15, pg=pg),
+             "상세 오디오 길이가 유한값이 되지 않음(Infinity/NaN)")
+        secs = audio_seconds()
+        need(2.0 <= secs <= 5.0, "상세 오디오 길이 %r 초 (기대 2~5)" % secs)
+
+        blob = urllib.request.urlopen(b + "/api/recordings/" + rid + "/audio", timeout=10).read()
+        need(blob[:4] == b"\x1aE\xdf\xa3", "서버 오디오가 webm 이 아님: %r" % blob[:8])
+        same = tmp / "t46-same.webm"
+        same.write_bytes(blob)
+        pg.set_input_files("#file-input", str(same))
+        need(wait_for(lambda: len(server_items(b)) == 2, 20, pg=pg), "같은 webm 파일이 서버에 올라가지 않음")
+        rid2 = [x["id"] for x in server_items(b) if x["id"] != rid][0]
+        it2 = api_get(b, "/api/recordings/" + rid2)
+        need(2000 <= (it2.get("duration_ms") or 0) <= 5000,
+             "올린 webm 의 서버 길이 %r ms (기대 2~5초)" % it2.get("duration_ms"))
+
+        open_tab(pg, "rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 2, 15, pg=pg), "목록이 2개가 되지 않음: %d" % list_count(pg))
+        dur = pg.locator("#list .rec-item[data-id='%s'] .dur" % rid2)
+        need(dur.count() == 1, "올린 파일의 목록 줄이 없음")
+        txt = wait_for(lambda: (dur.inner_text() or "").strip(), 10, pg=pg)
+        need(txt, "올린 webm 의 목록 길이가 비어 있음")
+        m = re.match(r"^(\d+):(\d\d)$", txt)
+        need(m, "목록 길이 표시가 시계 형식이 아님: %r" % txt)
+        need(2 <= int(m.group(1)) * 60 + int(m.group(2)) <= 5, "목록 길이 %r (기대 2~5초)" % txt)
+        box = dur.bounding_box()
+        need(box and box["width"] > 0 and box["height"] > 0, "목록 길이가 화면에 보이지 않음: %r" % box)
+        c.close()
+    check("46 webm 길이: 상세 오디오 유한(2~5초)·올린 같은 파일도 목록에 길이", t46)
+
+    def t47():
+        # R49-N5: 받아쓰기가 끝나는 순간(transcribing→done, autotag null)을 한 번 잘못 받아도
+        # 2초 뒤 상세를 다시 읽어, 곧 도착한 AI 태그가 새로고침 없이 보인다
+        slow = "%s -c %s" % (sys.executable, shlex.quote("import time; time.sleep(6); print('끝난 받아쓰기')"))
+        b, _ = new_server("d47", stt_cmd=slow, env_extra={"FAKE_LLM_TAG_DELAY": "1.5"})
+        c = new_ctx()
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        rec_cycle(pg)
+        open_tab(pg, "list")
+        need(wait_for(lambda: len(server_items(b)) == 1, 25, pg=pg),
+             "녹음이 서버에 올라가지 않음(대기 %s)" % queue_n(pg))
+        rid = server_items(b)[0]["id"]
+        need(wait_for(lambda: list_count(pg) == 1, 15, pg=pg), "목록 항목이 생기지 않음")
+        pg.locator("#list .rec-item .rec-main").first.click()
+        # 실제 응답으로 받아쓰는 중(prevStatus)을 먼저 본다
+        need(wait_for(lambda: "받아쓰는 중" in pg.inner_text("#transcript"), 15, pg=pg),
+             "상세가 받아쓰는 중이 아님: " + pg.inner_text("#transcript")[:40])
+
+        hits = {"n": 0}
+
+        def detail_route(route):
+            req = route.request
+            if req.method != "GET" or "/audio" in req.url or "?" in req.url:
+                route.continue_()
+                return
+            hits["n"] += 1
+            if hits["n"] == 1:  # 받아쓰기가 끝나는 순간: 상태는 done, autotag 는 아직 null
+                route.fulfill(status=200, content_type="application/json", body=json.dumps(
+                    {"id": rid, "status": "done", "autotag": None, "transcript": "끝난 받아쓰기",
+                     "title": "끝난 받아쓰기", "chars": 7, "duration_ms": 2000,
+                     "recorded_at": server_items(b)[0].get("recorded_at")}))
+            else:
+                route.continue_()
+        pg.route("**/api/recordings/r-*", detail_route)
+        need(wait_for(lambda: hits["n"] >= 1, 20, pg=pg), "상세를 다시 읽지 않아 끝나는 순간을 넣지 못함")
+        need(wait_for(lambda: pg.locator("#detail-chips .tag-chip.tag-auto").count() == 3, 25, pg=pg),
+             "새로고침 없이 AI 칩이 보이지 않음 - 칩 %r / 상태 %r" %
+             (pg.inner_text("#detail-chips"), pg.inner_text("#detail-tag-state")))
+        for i in range(3):
+            box = pg.locator("#detail-chips .tag-chip.tag-auto").nth(i).bounding_box()
+            need(box and box["width"] > 0 and box["height"] > 0, "AI 칩 %d 가 화면에 보이지 않음: %r" % (i, box))
+        st = pg.inner_text("#detail-tag-state").strip()
+        need(st == "", "태그가 붙은 뒤에도 상태 글이 남음: %r" % st)
+        pg.unroute("**/api/recordings/r-*", detail_route)
+        c.close()
+    check("47 받아쓰기 끝 순간 상세를 잘못 받아도 새로고침 없이 AI 칩", t47)
+
+    def t48():
+        # R49-N6: 자동 태그가 pending 인 동안 상세 GET 한 번이 실패(abort)해도,
+        # 그 뒤 태그가 붙으면 'AI 가 태그를 다는 중…' 이 사라지고 칩이 보인다
+        b, _ = new_server("d48", env_extra={"FAKE_LLM_TAG_DELAY": "4"})
+        c = new_ctx()
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        rec_cycle(pg)
+        open_tab(pg, "list")
+        need(wait_for(lambda: len(server_items(b)) == 1, 25, pg=pg),
+             "녹음이 서버에 올라가지 않음(대기 %s)" % queue_n(pg))
+        rid = server_items(b)[0]["id"]
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["autotag"] == "pending", 20),
+             "자동 태그가 pending 이 되지 않음")
+        need(wait_for(lambda: list_count(pg) == 1, 15, pg=pg), "목록 항목이 생기지 않음")
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.inner_text("#detail-tag-state").strip() == "AI 가 태그를 다는 중…", 10, pg=pg),
+             "상세에 'AI 가 태그를 다는 중…' 이 보이지 않음: %r" % pg.inner_text("#detail-tag-state"))
+
+        aborted = {"n": 0}
+
+        def detail_route(route):
+            req = route.request
+            if req.method != "GET" or "/audio" in req.url or "?" in req.url:
+                route.continue_()
+                return
+            aborted["n"] += 1
+            if aborted["n"] == 1:
+                route.abort()
+            else:
+                route.continue_()
+        pg.route("**/api/recordings/r-*", detail_route)
+        need(wait_for(lambda: aborted["n"] >= 1, 15, pg=pg), "상세를 다시 읽지 않아 실패를 넣지 못함")
+        need(wait_for(lambda: pg.locator("#detail-chips .tag-chip.tag-auto").count() == 3, 25, pg=pg),
+             "실패 뒤 태그가 붙어도 AI 칩이 보이지 않음: %r" % pg.inner_text("#detail-chips"))
+        st = pg.inner_text("#detail-tag-state").strip()
+        need(st == "", "'AI 가 태그를 다는 중…' 이 사라지지 않음: %r" % st)
+        box = pg.locator("#detail-chips .tag-chip.tag-auto").first.bounding_box()
+        need(box and box["width"] > 0 and box["height"] > 0, "AI 칩이 화면에 보이지 않음: %r" % box)
+        pg.unroute("**/api/recordings/r-*", detail_route)
+        c.close()
+    check("48 폴링 오류(abort) 뒤에도 태그가 붙으면 안내가 사라지고 AI 칩", t48)
 
 
 if __name__ == "__main__":

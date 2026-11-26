@@ -1,0 +1,7 @@
+G-037: 100.0%  남은 ETA 0s  상태 {'done': 6}
+  T-206  done     S2  시도 1  run T-206-S2-a1-081847  rc 0/0  감사: 모든 거절을 남기고 억제 키에서 ip 를 뺀다 (큐 2 D5 · 큐 3 D3·D4)
+  T-207  done     S2  시도 1  run T-207-S2-a1-082710  rc 0/0  티켓 URL 에서 로그인 감추기 (큐 4) + 재등록 TTL 문서화 (큐 9 N5)
+  T-209  done     S3  시도 1  run T-209-S3-a1-081847  rc 0/0  웹워들 tests/README.md 의 기대 검사 수 155→156 (큐 5)
+  T-208  done     S3  시도 1  run T-208-S3-a1-083606  rc 0/0  browser_monitor_auth.py: 회수를 iframe 안에서 옛 티켓으로 재기 (큐 7 N3)
+  T-210  done     S3  시도 1  run T-210-S3-a1-083900  rc 0/None  티켓 회귀 시험 새 파일 (큐 6 N1 · 큐 8 N2·N6·D6)
+  T-211  done     S1  시도 1  run T-211-S1-a1-092002  rc 0/0  적대적 검수: 감사·티켓 변경이 회수와 실제 브라우저 앱을 깨뜨렸는가

@@ -17,13 +17,33 @@
 - [x] 묻기 - 요약·핵심어·할 일·직접 묻기를 claude CLI 로(도구·MCP·설정 끔, 빈 임시 폴더), 답을 앱에 보이고 쌓음 (가짜 LLM 으로 확인)
 - [x] 보안 - 토큰·HTTPS·경로 탈출·남의 출처·DNS 리바인딩·프롬프트 감쌈, ffmpeg 입력 형식 강제·protocol_whitelist, 업로드 흘려 쓰기·동시 2개·디스크 여유·업로드 마감(받은 만큼으로 재서 넘기면 408)·저장 OSError 500/507 (R36 에서 R35-N1·N2·N3 닫힘, 하 R36-N1·N2·N3 는 큐)
 - [x] 폰(320~430px)·데스크톱에서 겹침·넘침 없음, 어두운 모드
-- [x] 검사 - 단위 229·끝에서 끝 브라우저 44/44, 적대적 검수 17회(R33 2회·R34·R35·R36·R39 1회씩·R41 2회·R42 2회·R43 2회·R44·R46·R47 1회씩·R49 2회)
+- [x] 검사 - 단위 230·끝에서 끝 브라우저 47/47, 적대적 검수 17회(R33 2회·R34·R35·R36·R39 1회씩·R41 2회·R42 2회·R43 2회·R44·R46·R47 1회씩·R49 2회)
 - [x] 실제 폰에서 동작 확인 - 태석님이 폰에서 써 보고 "모두 잘됩니다" 라고 확인(2026-11-17). 항목별(측면 버튼·오프라인 올리기·위치 권한·사파리 mp4) 결과는 따로 받지 않음
 - [x] 실제 음성인식 백엔드 연결 - KISTI Qwen3-ASR(`VOXLOG_STT_URL`, 화자 구분 `diarized_json`)로 받아쓰기, 태석님이 폰 녹음으로 확인(2026-11-17). 실제 `claude` 묻기는 배포본에서 답 2건 완료(2026-11-16)
 - [x] 다음 기능 설계 - 작업자 셋이 써 보고 낸 아이디어 6개·서로의 의견·관리자 확정을 `docs/DESIGN-next-features.md` 에 (R48, 검수 2회 재검수 통과)
 - [ ] F1 답의 출처 녹취 - 설계 `docs/DESIGN-next-features.md` F1 절
 - [x] F2 녹취 이름·태그(손으로 붙이기, 태그 거르기) + AI 자동 태그(받아쓰기 뒤 바로, 사람이 고친 것은 덮지 않음) - 같은 문서 F2 절 (R49, 가짜 LLM 으로 확인)
 - [ ] F3 답 이어 묻기 - 같은 문서 F3 절
+
+## R50 (2026-11-26)
+
+요청 `Q-261126-902f`(대기 큐의 VoxLog 항목 다섯 모두 정리). 운영 방식 무료 중심·관리 방식 속도 우선(검수 노드 없음). 요청이 "고친 것은 검사로 받친다" 고 해서 고친 것에만 검사를 더함(새 검사 t46~t48·단위 1). 그래프 G-107 하나, 무료 슬롯만(S2·S3·S6). 목표 체크는 바뀐 것 없음(검사 줄 숫자만).
+
+- **고침**
+  - R49-N5(T-447, S2): `web/app.js` `loadDetail` - 받아쓰기가 막 끝났는데(앞 상태 pending/transcribing → done) `autotag` 가 아직 null 이고 LLM 이 있으면 2초 뒤 한 번 더 읽음
+  - R49-N6(T-447): 상세 폴링 오류 뒤 autotag pending 이면 5초 뒤 다시, `loadList` 도 바쁜 상태였으면 오류 뒤 5초 다시(401 은 안 함)
+  - R48-N24(T-447): **재현됨 - 결함.** 가짜 마이크 3초 webm 이 고치기 전 상세 `duration` Infinity·올리기 `duration_ms` 없음 → `audioDuration`(Infinity 면 `currentTime` 을 크게 두고 `durationchange` 에서 읽는 널리 쓰는 우회, 5초 상한)을 올리기와 상세 플레이어가 같이 씀 → 2.94초
+  - R49-N9(T-447): `tests/test_ask.py` 태그 상한 검사를 `[60]` 으로 박음
+  - R49-N11(T-448, S3): `voxlog/store.py` `set_label_tags` - 대소문자만 바뀐 같은 태그면 `tags`·`tags_auto` 표기만 새 것으로, `tags_human` 그대로 + 단위 검사 하나
+  - 문서(T-449, S3): `docs/DESIGN-next-features.md` 에 R48-N9~N14·N18·N19·N21·N22 반영(F1·F3 는 구현하지 않고 설계만 - 뒤 구현 요청이 이 문서만 보고 가게, N10 시그니처는 문서 안 INTERFACE 초안에만), R48-N23·N24 결론 줄. `docs/RESEARCH-draft-owner.md` 148행 persisted 단서(R47-N1). `docs/INTERFACE.md` 에 20000자 한도(R49-N7)·casefold/toLowerCase 차이(R49-N8) 한 줄씩
+  - 브라우저 검사(T-450, S6): t46(webm 길이 - 상세·올리기·목록), t47(받아쓰기 끝 순간 autotag null 을 `page.route` 로 흉내 → 새로고침 없이 AI 칩), t48(pending 폴링 GET 한 번 abort → 그래도 칩이 뜸). `web/sw.js` 셸 캐시 VERSION 11→12
+- **고치지 않고 닫음**
+  - R47-N2: 지금 코드에선 안 일어남 - `getConfig` 는 언제나 객체로 풀리고(`web/api.js:8-26`), `fillSettings`·`applyRecSupport` 가 만지는 id 는 모두 `index.html` 에 있으며, `updateQueue`·`checkHealth` 는 안에서 예외를 잡아 Promise 로 돌려줌. 관리자가 코드로 판정
+  - R48-N23: 뜻한 동작 - 현황은 거르기와 무관한 전체 요약('총 건수'·'오늘', `Store.stats()` 에 거르기 인자 없음). 거른 결과 수는 목록이 보임
+  - R49-N8·N10: 기록만(요청·검수가 '기록만' 으로 둠). N8 은 INTERFACE 에 적음, N10(문장부호 없는 안내 문장이 태그가 되는 것)은 여기 메모로
+- **바뀐 파일**: `web/app.js`·`sw.js`, `voxlog/store.py`, `tests/test_ask.py`·`test_store.py`·`browser_voxlog.py`, `docs/DESIGN-next-features.md`·`INTERFACE.md`·`RESEARCH-draft-owner.md`
+- **검증**: 엔진 verify 넷 rc 0(코드 노드는 단위+브라우저 전체, 문서 노드는 번호 대조). 관리자 재현: 단위 230 OK. 브라우저 47/47 은 T-450 엔진 verify 결과(관리자 셸에서는 승인이 필요해 돌리지 않음)
+- **남은 일**: 큐 0. F1·F3 구현(설계 문서대로 - T-449 보고: 구현 때 실제 `INTERFACE.md` 의 `Asker.submit`·`build_prompt` 시그니처를 맞추고 F1 검사 절의 '이름 바꾼 뒤 옛 답 출처 칩 이름' 검사를 더할 것). 실제 `claude` 로 자동 태그가 달리는지와 webm 길이 고침은 배포본에서 볼 것(배포·운영 서버 재시작은 하지 않음 - 요청대로)
 
 ## R49 (2026-11-25)
 

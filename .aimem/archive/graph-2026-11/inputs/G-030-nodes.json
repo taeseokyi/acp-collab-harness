@@ -1,0 +1,63 @@
+[
+ {
+  "id": "T-171",
+  "title": "storage.js 결함 2·3: 스냅숏 없으면 메모리 모드, 지우기는 put+null",
+  "slot": "S2",
+  "project": "웹워들",
+  "write": [
+   "projects/웹워들/web/js/storage.js"
+  ],
+  "deps": [],
+  "timeout_sec": 2400,
+  "max_attempts": 2,
+  "task": "# T-171 적대적 검수가 찾은 결함 둘을 고치십시오 (`storage.js` 하나만)\n\n고칠 파일은 **`projects/웹워들/web/js/storage.js` 하나**입니다. 다른 파일은 고치지 마십시오\n(`web/js/ui.js`, `tests/**`, `tools/**` 전부 금지).\n\n## 읽을 것\n\n- `projects/웹워들/web/js/storage.js` **전부**\n- `rounds/R13/REVIEW-preview.md` 의 **결함 표에서 2번과 3번 줄만**\n\n## 결함 3 (먼저 고치십시오 - 지금 단위 시험이 빨갛습니다)\n\n`remove()` 가 부모에게 `{op:'remove', key, value:null}` 을 보냅니다. **규약은 `op:'put'` 에\n`value:null`** 입니다(설계 2절). 모니터는 `op:'remove'` 를 아예 안 보므로 지우기가 한 번도\n반영되지 않았습니다 - 지난 `daily.*` 정리도 안 돼 61일째부터 키 상한에 걸립니다.\n\n→ `remove()` 가 보내는 메시지의 `op` 를 `'put'` 으로 바꾸십시오. 보내기 전 검사가 `value` 의\n길이를 재고 있다면 **`null` 은 통과**시켜야 합니다(길이 검사는 문자열일 때만).\n\n지금 `node --test projects/웹워들/tests/*.mjs` 를 돌리면 `지우기는 value 가 null 이다` 가 빨갛습니다.\n고친 뒤 초록이 되어야 합니다.\n\n## 결함 2\n\n`init()` 에서 스냅숏이 500ms 안에 **안 와도** `parentMode = true` 가 켜집니다. 그러면 그 뒤 첫\n`write()` 가 **빈 메모리에서 계산한 값**을 `put` 으로 보내 모니터 칸에 저장돼 있던 통계·설정을\n덮어씁니다 (`played:50` → `played:1`). 설계 3.2 는 이 경우를 **\"메모리 모드\"** 라고 못박았습니다.\n\n→ **스냅숏을 실제로 받았을 때만** `parentMode = true` 로 하십시오. 시간 초과면 `parentMode` 를\n켜지 말고(= `put` 을 보내지 않고) 지금처럼 메모리로만 돕니다. 판은 그대로 돌아가야 합니다.\n\n지난 `daily.*` 정리(`init` 안)도 **스냅숏을 받았을 때만** 하십시오 - 받지 못했으면 지울 대상이\n무엇인지 모르는 상태이고, 지우기를 보내면 남의 기록을 지우게 됩니다.\n\n## 하지 말 것\n\n- 기존 export 함수의 겉모습(이름·인자·동기 여부)을 바꾸지 마십시오\n- `tests/` 아래 어떤 파일도 고치지 마십시오 - 검사가 빨간 것은 제품이 틀렸기 때문입니다\n- 새 기능을 넣지 마십시오\n\n## 검증 (이 명령이 통과해야 합니다)\n\n```bash\nnode --check projects/웹워들/web/js/storage.js && node --test projects/웹워들/tests/*.mjs\n```\n\n`ℹ fail 0` 이고 `ℹ tests` 가 38 이상이어야 합니다.\n\n## 보고\n\n첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` 중 하나만. 그 아래 네 줄 안쪽으로 둘을 어떻게 고쳤는지와\n`ℹ tests` / `ℹ fail` 줄을 적으십시오.\n",
+  "verify": "node --check projects/웹워들/web/js/storage.js || exit 1\nnode --test projects/웹워들/tests/*.mjs > /tmp/v171.txt 2>&1\ntail -12 /tmp/v171.txt\npython3 - <<'PY'\nimport re, sys, pathlib\nt = pathlib.Path(\"/tmp/v171.txt\").read_text(encoding=\"utf-8\", errors=\"replace\")\ns = pathlib.Path(\"projects/웹워들/web/js/storage.js\").read_text(encoding=\"utf-8\")\ntests = int(re.search(r\"tests (\\d+)\", t).group(1)) if re.search(r\"tests (\\d+)\", t) else 0\nfail = int(re.search(r\"fail (\\d+)\", t).group(1)) if re.search(r\"fail (\\d+)\", t) else 99\nprint(\"tests\", tests, \"fail\", fail, \"| op:'remove' 남음:\", \"'remove'\" in s)\nsys.exit(0 if tests >= 38 and fail == 0 else 1)\nPY"
+ },
+ {
+  "id": "T-172",
+  "title": "app.js 결함 4·5·6: 남는 필드 거름, 굳은 칸 풀기, 정리 훅 구멍",
+  "slot": "S2",
+  "project": "웹워들",
+  "write": [
+   "tools/aimem_monitor/static/app.js"
+  ],
+  "deps": [
+   "T-171"
+  ],
+  "timeout_sec": 2400,
+  "max_attempts": 2,
+  "task": "# T-172 적대적 검수가 찾은 결함 셋을 고치십시오 (`app.js` 하나만)\n\n고칠 파일은 **`tools/aimem_monitor/static/app.js` 하나**입니다. 다른 파일은 고치지 마십시오.\n\n## 읽을 것\n\n- `rounds/R13/REVIEW-preview.md` 의 결함 표에서 **4번·5번·6번 줄**\n- `app.js` 의 **2865~2960행**(보관함 코드)과 **815·973·1551행 근처**(상세 패널을 여는 세 함수)\n\n`app.js` 의 나머지는 읽지 마십시오.\n\n## 결함 4 - 설계에 있는 \"남는 필드는 버림\" 이 빠졌습니다\n\n설계 2절 표: \"메시지 전체 | 평범한 객체 | **위 필드 밖의 키가 있으면 버림**\".\n지금은 `{aimem,op,key,value,part,name}` 같은 메시지도 받아들입니다.\n\n→ `m.aimem !== 'store.v1'` 검사 **바로 뒤**에, 허용 키 집합 밖의 키가 하나라도 있으면\n`return` 하십시오.\n\n```js\nconst ALLOWED_MSG_KEYS = { ready: ['aimem', 'op'], put: ['aimem', 'op', 'key', 'value'] };\nconst allowed = ALLOWED_MSG_KEYS[m.op];\nif (!allowed || Object.keys(m).some((k) => !allowed.includes(k))) return;\n```\n\n`ALLOWED_MSG_KEYS` 는 `openProjectApp` 밖의 모듈 수준에 두어도 되고 안에 두어도 됩니다.\n\n## 결함 5 - 이미 상한을 넘은 칸이 영영 굳습니다\n\n`loadPart` 가 저장된 칸의 **키 수·직렬화 길이를 재지 않습니다.** 옛 버전이나 다른 코드가 남긴\n키 70개짜리 칸을 읽으면, 그 뒤 모든 `put` 이 \"넘침\" 으로 되돌려집니다 - **지우기(`value:null`)까지**\n되돌려져 칸을 줄일 길이 없습니다.\n\n→ `putIfFits` 에서 **칸이 줄어드는 변경은 언제나 받아들이십시오.** 판정을 이렇게 바꾸면 됩니다:\n반영해 본 뒤 `size` 와 직렬화 길이를 재서,\n\n- 둘 다 상한 안이면 받아들임 (지금 동작)\n- 상한을 넘더라도 **반영 전보다 `size` 가 줄었거나 직렬화 길이가 줄었으면** 받아들임\n- 그 밖이면 되돌리고 버림\n\n## 결함 6 - 정리 훅을 건너뛰는 길 둘\n\n(i) `openRequestDetail`·`openDetail`·`openManagerDetail`(815·973·1551행 근처)은 `openPanel` 을\n거치지 않고 `detail-body` 를 비웁니다. 앱 패널이 열린 채 이 셋이 불리면 리스너가 남습니다.\n\n→ **세 함수의 첫 줄**에 `runPanelCleanups();` 를 넣으십시오. (`openPanel`·`closeDetail` 에는 이미 있습니다.)\n\n(ii) 모니터 탭을 닫거나 새로 고치면 250ms 묶음에 남은 쓰기가 사라집니다.\n\n→ 모듈 수준에 한 줄 더하십시오.\n\n```js\nwindow.addEventListener('pagehide', runPanelCleanups);\n```\n\n`runPanelCleanups` 가 정의된 **뒤**에 두십시오.\n\n## 하지 말 것\n\n- `sandbox`·CSP·`ev.source`·`origin` 검사를 건드리지 마십시오\n- 상한 숫자(64키·65,536자·20/초·2회)를 바꾸지 마십시오 - **줄어드는 변경을 허용**하는 것만 고칩니다\n- `tests/**`, `server.py`, `index.html`, `style.css` 를 고치지 마십시오\n\n## 검증 (이 명령이 통과해야 합니다)\n\n```bash\nnode --check tools/aimem_monitor/static/app.js && python3 -m unittest discover -s tests\n```\n\n## 보고\n\n첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` 중 하나만. 그 아래 다섯 줄 안쪽으로 4·5·6 을 각각 어떻게\n고쳤는지와 `Ran N tests` / `OK` 줄을 적으십시오.\n",
+  "verify": "node --check tools/aimem_monitor/static/app.js || exit 1\npython3 -m unittest discover -s tests > /tmp/v172.txt 2>&1 || { tail -30 /tmp/v172.txt; exit 1; }\ntail -3 /tmp/v172.txt\npython3 - <<'PY'\nimport re, sys, pathlib\ns = pathlib.Path(\"tools/aimem_monitor/static/app.js\").read_text(encoding=\"utf-8\")\nneed = {\"허용 키 집합\": (\"ALLOWED_MSG_KEYS\" in s) or (\"Object.keys(m)\" in s),\n        \"pagehide\": \"pagehide\" in s,\n        \"runPanelCleanups 호출 4회 이상\": s.count(\"runPanelCleanups()\") >= 4}\nprint(need, \"| runPanelCleanups() 호출 수:\", s.count(\"runPanelCleanups()\"))\nsys.exit(0 if all(need.values()) else 1)\nPY"
+ },
+ {
+  "id": "T-173",
+  "title": "browser_monitor_ui.py: KISTI 검사가 작업 기록 글자에 걸리던 것",
+  "slot": "S3",
+  "write": [
+   "tests/browser_monitor_ui.py"
+  ],
+  "deps": [],
+  "timeout_sec": 1800,
+  "max_attempts": 2,
+  "task": "# T-173 당신이 쓴 검사 하나가 틀렸습니다 - 조건을 좁히십시오\n\n고칠 파일은 **`tests/browser_monitor_ui.py` 하나**입니다. 다른 파일은 고치지 마십시오.\n\n## 무엇이 틀렸나\n\n`KISTI 카드가 화면에 없다` 검사가 지금 빨갛습니다. 실측값:\n\n```\n[FAIL] KISTI 카드가 화면에 없다 - #kisti-section=None, page.content()의 KISTI=28회\n```\n\n`#kisti-section` 은 **실제로 없습니다**(카드는 제대로 지워졌습니다). 빨간 이유는\n`page.content()` 에 `KISTI` 가 28번 나오기 때문인데, 그것은 **이번 라운드 작업 기록 행의 제목**입니다\n(`server.py·reader.py: KISTI 상태 폴링·준비 점검·aimem.goal 제거` 같은 태스크 이름).\n즉 검사가 **카드가 아니라 글자**를 보고 있습니다.\n\n## 어떻게 고치나\n\n`page.content()` 전체를 보는 조건을 버리고, **KISTI 카드라는 것이 화면에 없다**를 직접 재십시오.\n셋 다 만족해야 합니다.\n\n1. `page.query_selector('#kisti-section')` 가 `None`\n2. `page.query_selector('#kisti-card')` 가 `None`\n3. 함대 탭의 **카드 제목(`h2`)** 가운데 `KISTI` 로 시작하는 것이 하나도 없다 -\n   `page.eval_on_selector_all('.card h2', 'els => els.map(e => e.textContent.trim())')` 로 제목만\n   모아서 확인하십시오\n\n상세에는 **실제로 모은 `h2` 제목 목록**과 두 selector 의 결과를 적으십시오.\n\n**이 검사 하나만 고치십시오.** 나머지 열네 개는 손대지 마십시오.\n\n## 검증\n\n```bash\npython3 tests/browser_monitor_ui.py\n```\n\n`통과 15 / 전체 15` 여야 합니다.\n\n## 보고\n\n첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` 중 하나만. 그 아래 세 줄 안쪽으로 조건을 어떻게 바꿨는지와\n`통과 n / 전체 m` 줄을 그대로 옮기십시오.\n",
+  "verify": "python3 tests/browser_monitor_ui.py > /tmp/v173.txt 2>&1\ntail -20 /tmp/v173.txt\ntail -1 /tmp/v173.txt | python3 -c \"import sys; p=sys.stdin.read().split(); print('요약', p); sys.exit(0 if len(p)==5 and int(p[4])>=15 and p[1]==p[4] else 1)\"\n"
+ },
+ {
+  "id": "T-174",
+  "title": "재검수: 고친 결함 넷의 변이 시험",
+  "slot": "S1",
+  "project": "웹워들",
+  "write": [
+   "rounds/R13/REVIEW-preview-2.md"
+  ],
+  "deps": [
+   "T-171",
+   "T-172",
+   "T-173"
+  ],
+  "timeout_sec": 3600,
+  "max_attempts": 2,
+  "task": "# T-174 재검수 - 앞선 검수가 찾은 결함을 정말 고쳤는가\n\n코드를 고치지 마십시오. **`rounds/R13/REVIEW-preview-2.md` 하나만** 씁니다.\n\n## 배경\n\n`rounds/R13/REVIEW-preview.md` (당신의 앞선 검수, 74줄)가 결함 6건을 냈습니다. 그 뒤:\n\n- **결함 2·3** - `projects/웹워들/web/js/storage.js` (T-171)\n- **결함 4·5·6** - `tools/aimem_monitor/static/app.js` (T-172)\n- **결함 1** - 고치지 **않았습니다.** 브라우저 검사를 쓰려던 태스크(T-164)가 두 번 실패했고,\n  무료 슬롯 실패를 유료 슬롯으로 옮기지 않는 것이 규약이라 다음 라운드로 넘겼습니다.\n  **이 사실을 확인만 하고 결함 1을 다시 파헤치지는 마십시오**\n\n## 읽을 것\n\n- `rounds/R13/REVIEW-preview.md` **전부** (당신이 쓴 것입니다)\n- `projects/웹워들/web/js/storage.js` 전부\n- `tools/aimem_monitor/static/app.js` 의 보관함 코드와 `runPanelCleanups` 호출 자리들\n  (`git diff` 의 해당 hunk 만 보십시오)\n\n## 할 일\n\n1. **고쳤는지 확인** - 결함 2·3·4·5·6 을 하나씩, 앞 검수에서 재현했던 그 방법으로 다시 재십시오.\n   앞번에 쓴 **Node 공격 하네스를 다시 만들어** 쓰는 것이 가장 빠릅니다(`app.js` 를 손으로 옮기지 말고\n   원문을 잘라 내어 돌리십시오)\n2. **고치면서 새로 생긴 것이 없는지** - 특히 (a) 결함 5 수정이 상한 자체를 무르게 만들지 않았는가\n   (키 64개·65,536자가 **늘어나는 쪽으로는** 여전히 막히는가), (b) 결함 4 의 허용 키 검사가\n   정상 메시지를 잘못 버리지 않는가, (c) 결함 2 수정 뒤 **스냅숏이 온 경우**에는 여전히 `put` 이 나가는가\n3. **변이 시험** - 저장소를 `/tmp` 에 복사하되 **`.aimem/tls/` 는 빼고**\n   (`cp -r` 뒤 `rm -rf <복사본>/.aimem/tls`), **다섯 가지 이상** 변이를 넣고\n   `node --test projects/웹워들/tests/*.mjs` 가 빨개지는지 보십시오. 끝나면 **그 `/tmp` 폴더를 `rm -rf`**\n   하십시오(당신이 만든 `/tmp` 폴더 삭제는 금지 대상이 아닙니다).\n   앞 검수에서 **기존 검사가 `app.js` 변이 10개 중 0개를 잡았다**고 했습니다 - 그 숫자가 이번에\n   달라졌는지(달라지지 않았을 것입니다) 분명히 적으십시오\n\n## 쓸 파일 - `rounds/R13/REVIEW-preview-2.md`\n\n- 맨 위 **한 줄 판정**\n- **결함별 표**: `번호 | 앞 검수의 결함 | 고쳐졌나(예/아니오/부분) | 어떻게 확인했나`. 6줄(1~6)\n- **새로 생긴 결함 표** (없으면 \"없음\" 이라고 분명히)\n- **변이 시험 표**: `변이 | 무엇을 망가뜨렸나 | 잡혔나 | 잡은 검사`\n\n## 보고 (첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` 하나만)\n\n둘째 줄부터 번호를 매겨 결함 1~6 의 상태를 한 줄씩 적으십시오. 마지막에 반드시\n**`projects/웹워들/PROGRESS.md` 의 목표 \"모니터 안에서 실행해도 통계·설정이 남는다\" 를 지금 체크해도\n되는가**를 예/아니오와 한 줄 이유로 답하십시오. 코드를 붙여 넣지 마십시오.\n",
+  "verify": "python3 - <<'PY'\nimport sys, pathlib\np = pathlib.Path(\"rounds/R13/REVIEW-preview-2.md\")\nt = p.read_text(encoding=\"utf-8\") if p.is_file() else \"\"\nprint(\"길이\", len(t), \"| 표 칸 구분자\", t.count(\"|\"), \"| 변이:\", \"변이\" in t)\nsys.exit(0 if len(t) >= 1200 and t.count(\"|\") >= 40 and \"변이\" in t else 1)\nPY"
+ }
+]

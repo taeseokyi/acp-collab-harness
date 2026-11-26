@@ -1,96 +1,22 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-25T16:41:29 / REV 206
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-26T11:33:46 / REV 207
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | `a41f0c` | claude | opus | R49 쉼 (무료 중심) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
-| S2 | `d27e93` | codex | kisti/kistillm | R49 VoxLog F2 만들기: tags.py·ask/stt 자동 태그·app.js | 무료 |
-| S3 | `5b8c1e` | opencode | kisti/kistillm | R49 VoxLog F2 만들기: store.py·serve.py PATCH/autotag | 무료 |
-| S4 | `6cd650` | claude | sonnet | R49 VoxLog F2 적대적 검수(부작용 중심) | 유료, 검수만 |
-| S5 | `61dfcc` | claude | sonnet | R49 쉼 (무료 중심) |  |
-| S6 | `47764b` | freebuff | (하네스 기본) | R49 VoxLog F2 만들기: index.html·style.css·브라우저 검사·문서 | 무료 |
+| S1 | `a41f0c` | claude | opus | R50 쉼 (무료 중심) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S2 | `d27e93` | codex | kisti/kistillm | R50 VoxLog 큐: app.js 폴링·webm 길이·test_ask | 무료 |
+| S3 | `5b8c1e` | opencode | kisti/kistillm | R50 VoxLog 큐: store.py 태그 표기·문서 정리 | 무료 |
+| S4 | `6cd650` | claude | sonnet | R50 쉼 (VoxLog 속도 우선 - 검수 없음) | 유료, 검수만 |
+| S5 | `61dfcc` | claude | sonnet | R50 쉼 (무료 중심) |  |
+| S6 | `47764b` | freebuff | (하네스 기본) | R50 VoxLog 큐: 브라우저 검사 t46~t48·sw.js | 무료 |
 
 ## 3. 작업 보드
 
 | ID | 요청 | 태스크 | 담당 | 상태 | 산출물 |
 | --- | --- | --- | --- | --- | --- |
-| T-139 | Q-261111-8481 | 검수 결함 수정: 티켓 로그 가리기 + Host 허용 목록 + 미리보기 최소 높이 | S2 | DONE | tools/aimem_monitor/server.py, tools/aimem_monitor/static/style.css |
-| T-140 | Q-261111-8481 | 단위 검사 6개 추가: TLS 쿠키·TLS/Host CSP 출처·티켓 수명·sw.js | S2 | DONE |  |
-| T-141 | Q-261111-8481 | browser_monitor_ui: 폰 폭 미리보기 높이·잘림·가로 스크롤 검사 3개 | S3 | DONE |  |
-| T-142 | Q-261111-8481 | browser_monitor_auth: 새 탭(최상위) 격리 검사 3개 | S3 | DONE |  |
-| T-143 | Q-261111-8481 | 재검수: 고친 넷 + 새 검사의 변이 시험 | S1 | DONE |  |
-| T-144 | Q-261111-8481 | 남은 결함 둘: Host 꼴 엄격 검사 + 미리보기 최소 높이 428px | S2 | DONE |  |
-| T-145 | Q-261111-8481 | 검사 구멍 셋: 티켓 로그 가리기·발급 갈래 단독·짧은 화면 키 크기 | S2 | DONE |  |
-| T-146 | Q-261111-4e63 | style.css: 화면 키 32px 하한 + 가로로 넓고 낮은 창의 좌우 배치 | S2 | DONE |  |
-| T-147 | Q-261111-4e63 | ui.js: 뒤집기가 pop 을 끊어 class 가 남는 결함 수정 | S3 | DONE |  |
-| T-148 | Q-261111-4e63 | game.js: 하드 모드를 엄하게 (노랑 개수·같은 자리 되놓기) | S2 | DONE |  |
-| T-149 | Q-261111-4e63 | 낱말 거르기: 고유명사·굴절형·고어 꼴을 정답 후보에서 빼기 | S2 | DONE |  |
-| T-150 | Q-261111-4e63 | browser_layout.py: 키 높이·좌우 배치·뒤집기 뒤 칸 크기 실측 검사 | S3 | DONE |  |
-| T-151 | Q-261111-4e63 | test_game.mjs: 엄해진 하드 모드 검사 | S3 | DONE |  |
-| T-152 | Q-261111-4e63 | 설계: 미리보기에서도 기록이 남는 postMessage 길 | S1 | DONE |  |
-| T-153 | Q-261111-4e63 | 적대적 검토: T-152 설계가 보안 경계를 새로 뚫지 않는가 | S4 | DONE |  |
-| T-154 | Q-261111-e1f1 | 모니터 티켓 심층 방어: exp 상한 + %7E 로그 가리기 | S2 | DONE |  |
-| T-155 | Q-261111-e1f1 | GitHub 로그인 세션으로의 실행 티켓 발급 단위 시험 | S2 | DONE |  |
-| T-156 | Q-261111-e1f1 | 허용 목록에서 빠진 GitHub 계정의 옛 세션을 끊기 (_subject 재확인) | S2 | DONE |  |
-| T-157 | Q-261111-e1f1 | 재검수: 허용 목록 재확인 수정 적대적 재검수 (변이 시험) | S1 | DONE |  |
-| T-158 | Q-261111-4e63 | 설계 문서를 T-153 검토 지적대로 고치기 | S1 | DONE |  |
-| T-159 | Q-261111-e1f1 | test_aimem_monitor_auth 픽스처: 임시 루트에 GitHub 허용 목록 만들기 | S2 | DONE |  |
-| T-160 | Q-261111-e1f1 | 대소문자 검사를 실제 쓰임대로 (쿠키 gh:TaeSeok, 목록 taeseok) | S2 | DONE |  |
-| T-161 | Q-261111-663d | 웹워들 storage.js·ui.js: 미리보기(격리 칸) 부모 모드 저장 | S2 | DONE |  |
-| T-162 | Q-261111-663d | test_storage.mjs: 부모 모드 단위 시험 (가짜 parent) | S3 | DONE |  |
-| T-163 | Q-261111-663d | app.js: panelCleanups + openProjectApp 보관함 리스너 | S2 | DONE |  |
-| T-164 | Q-261111-663d | browser_monitor_app.py: 미리보기 기록 유지·칸 격리 실측 | S3 | DONE | tests/browser_monitor_preview.py, tests/browser_monitor_preview_guard.py |
-| T-165 | Q-261111-663d | 적대적 검수: 미리보기 보관함이 새 길을 뚫지 않는가 | S1 | DONE |  |
-| T-166 | Q-261111-2665 | server.py·reader.py: KISTI 상태 폴링·준비 점검·aimem.goal 제거 | S2 | DONE |  |
-| T-167 | Q-261111-2665 | app.js·index.html·style.css: KISTI 카드 제거 + 현재 목표 -> 이번 라운드 | S2 | DONE |  |
-| T-168 | Q-261111-0afe | reader.py·app.js: 분담 전 요청의 ETA 0초 버그와 상태별 표시 | S2 | DONE |  |
-| T-169 | Q-261111-d64b | app.js·style.css: 프로젝트 칸 볼드 기준 + 생략 제목 전문 보기 | S2 | DONE |  |
-| T-170 | Q-261111-2e0f | browser_monitor_ui.py: 바뀐 화면 다섯 가지 실측 | S3 | DONE |  |
-| T-171 | Q-261111-663d | storage.js 결함 2·3: 스냅숏 없으면 메모리 모드, 지우기는 put+null | S2 | DONE |  |
-| T-172 | Q-261111-663d | app.js 결함 4·5·6: 남는 필드 거름, 굳은 칸 풀기, 정리 훅 구멍 | S2 | DONE |  |
-| T-173 | Q-261111-2665 | browser_monitor_ui.py: KISTI 검사가 작업 기록 글자에 걸리던 것 | S3 | DONE |  |
-| T-174 | Q-261111-663d | 재검수: 고친 결함 넷의 변이 시험 | S1 | DONE |  |
-| T-175 | Q-261111-663d | storage.js: init 의 지난 daily 정리가 접두를 빠뜨려 한 번도 안 지워지던 결함 | S2 | DONE |  |
-| T-176 | Q-261111-663d | test_storage.mjs: 지난 daily 정리와 '스냅숏 없으면 put 안 보냄' 검사 | S3 | DONE |  |
-| T-177 | Q-261111-7859 | aimem_db.py: 끝난 것 정리가 딸린 실행 기록·이벤트를 함께 옮긴다 | S2 | DONE |  |
-| T-178 | Q-261111-7859 | aimem_db.py: 핸드오프·전달 기록·로그 줄까지 + VACUUM·종류별 건수 | S2 | DONE |  |
-| T-179 | Q-261111-7859 | server.py: /api/archive 가 종류별 건수를 돌려주고 audit 에 남긴다 | S2 | DONE |  |
-| T-180 | Q-261111-7859 | test_aimem_db_cli.py: 연동 아카이브 단위 시험 (열린 작업의 기록은 남는다) | S3 | DONE |  |
-| T-181 | Q-261111-731b | app.js·index.html·style.css: 요청 트리에서 끝난 것 치우기 + 진행 표시 현실화 | S2 | DONE |  |
-| T-182 | Q-261111-7859 | test_archive_api.py(새): /api/archive 가 종류별 건수를 돌려준다 | S3 | DONE |  |
-| T-183 | Q-261111-fa37 | browser_monitor_ui.py: 바뀐 요청 트리 실측 + ETA 검사를 임시 저장소로 | S3 | DONE |  |
-| T-184 | Q-261111-b56e | browser_monitor_preview.py(새): 미리보기 기록이 남고 칸이 섞이지 않는다 | S2 | DONE |  |
-| T-185 | Q-261111-b56e | browser_monitor_preview_guard.py(새): 중첩 iframe·팝업·자기 put 이 무시된다 | S3 | DONE |  |
-| T-186 | Q-261111-7859 | 적대적 검수: 연동 아카이브가 열린 작업·감사 기록·REV 길을 깨뜨리지 않는가 | S1 | DONE | rounds/R14/REVIEW-archive.md |
-| T-187 | Q-261111-7859 | 아카이브 결함 1·5·6·9: 열려 있는 것의 기록을 지키는 집합을 넓힌다 | S2 | DONE |  |
-| T-188 | Q-261111-7859 | 아카이브 결함 2·4: 서버가 쥔 로그를 안 갈아 끼우고 실행 파일 고아를 안 만든다 | S2 | DONE |  |
-| T-189 | Q-261111-7859 | 아카이브 결함 3·7·8·12: 멱등·칸 보존·줄 단위 확인·끝에 render | S2 | DONE |  |
-| T-190 | Q-261111-7859 | test_aimem_db_cli.py: 검수가 살려 둔 변이 14개를 잡는 검사로 메우기 | S3 | DONE |  |
-| T-191 | Q-261111-7859 | 재검수: 결함 13건의 수정이 실제로 닫혔는가 (변이 22개 재실행) | S1 | DONE | rounds/R14/REVIEW-archive-2.md |
-| T-192 | Q-261111-7859 | N3: 웹 '끝난 것 정리' 가 AIMEM.md 를 고쳐 쓰는 길을 막는다 | S2 | DONE |  |
-| T-193 | Q-261111-7859 | 빈 검사 둘(N4)을 메우고 시험이 없던 수정(결함 2·4·8·9·12)을 검사로 지킨다 | S3 | DONE |  |
-| T-194 | Q-261112-7417 | server.py: 실행 티켓 서명에 주체를 넣고 /app/ 에서 대조 (큐 2) | S2 | DONE |  |
-| T-195 | Q-261112-7417 | server.py: 허용 목록에 걸린 요청을 audit 에 남긴다 (큐 3) | S2 | DONE |  |
-| T-196 | Q-261112-7417 | server.py: monitor.log 의 모든 줄에 ISO 시각 (큐 8) | S2 | DONE |  |
-| T-197 | Q-261112-7417 | aimem_db.py: 복구 적재가 REV 없는 핸드오프를 가라앉히던 것 (큐 6) | S2 | DONE |  |
-| T-198 | Q-261112-7417 | aimem_db.py: 아카이브 N1(마지막 .json 고아)·N2(로그 자르기 경쟁) (큐 7) | S2 | DONE |  |
-| T-199 | Q-261112-7417 | test_storage.mjs: 키 꼴·8,192자 상한을 지키는 단위 시험 (큐 4) | S3 | DONE |  |
-| T-200 | Q-261112-7417 | browser_ui.py: 접근성 대비 검사를 오늘의 낱말에서 떼기 (큐 5) | S3 | DONE |  |
-| T-201 | Q-261112-7417 | test_aimem_db_cli.py: 결함 10·N1·N2 회귀 시험 | S3 | DONE |  |
-| T-202 | Q-261112-7417 | 적대적 검수: 티켓 주체 묶기와 거절 감사 | S1 | DONE |  |
-| T-203 | Q-261112-7417 | server.py: 티켓이 주체를 자기 안에 담아 쿠키 없이도 앱이 열리게 (검수 D1) | S2 | DONE |  |
-| T-204 | Q-261112-7417 | browser_monitor_auth.py: 인증 켠 브라우저로 앱 자원 200 + 회수 403 실측 | S3 | DONE |  |
-| T-205 | Q-261112-7417 | 재검수: D1 수정이 회수를 깨지 않고 앱을 되살렸는가 | S1 | DONE |  |
-| T-206 | Q-261112-6ec6 | 감사 로그: 모든 티켓·쿠키 거절을 남기고 억제 키에서 ip 를 뺀다 (큐 2 D5 · 큐 3 D3·D4) | S2 | DONE |  |
-| T-207 | Q-261112-6ec6 | 티켓 URL 에서 로그인 감추기: 주체를 되돌릴 수 없는 태그로 (큐 4) + 회수 뒤 재등록 TTL 문서화 (큐 9 N5) | S2 | DONE |  |
-| T-208 | Q-261112-6ec6 | browser_monitor_auth.py: 회수를 iframe 안에서 옛 티켓 하위 자원으로 재기 (큐 7 N3) | S3 | DONE |  |
-| T-209 | Q-261112-6ec6 | 웹워들 tests/README.md 의 browser_ui.py 기대 검사 수 155→156 (큐 5) | S3 | DONE |  |
-| T-210 | Q-261112-6ec6 | 티켓 회귀 시험 새 파일: 주체 바꿔치기·상한 160·회수 감사·꼴 검사 (큐 6 N1 · 큐 8 N2·N6·D6) | S3 | DONE |  |
-| T-211 | Q-261112-6ec6 | 적대적 검수: 이번 라운드의 감사·티켓 변경이 회수와 실제 브라우저 앱을 깨뜨리지 않았는가 | S1 | DONE |  |
-| T-212 | Q-261112-6ec6 | _APP_RE: 상한 넘는 티켓 칸이 프로젝트 이름으로 넘어가지 않게 (T-210 NEEDS-FIX 후속) | S2 | DONE |  |
 | T-213 | Q-261112-6ec6 | 검수 D1·D2: 무인증 거절이 감사 로그를 불리지 못하게, session-bad 는 세션 쿠키가 있을 때만 | S2 | DONE |  |
 | T-214 | Q-261112-6ec6 | 시험 구멍 다섯(M10·M12·M13·M15·M17)과 D1 회귀 시험 메우기 | S3 | DONE |  |
 | T-215 | Q-261112-6ec6 | 재검수: D1·D2 수정이 D5 감사 범위를 잃지 않았는가 | S1 | DONE | rounds/R16/REVIEW-ticket-url-2.md |
@@ -323,16 +249,15 @@
 | T-444 | Q-261125-76c8 | [VoxLog] R49-N1 화면 쪽 - saveLabels 가 태그 입력이 바뀌었을 때만 tags 를 보냄 | S2 | DONE |  |
 | T-445 | Q-261125-76c8 | [VoxLog] R49-N1 브라우저 검사 - 이름만 저장해도 자동 태그가 이어짐, 자동 태그 기다리는 중 저장해도 AI 태그가 붙음 | S6 | DONE |  |
 | T-446 | Q-261125-76c8 | [VoxLog] R49 재검수 - R49-N1~N4 고침이 맞는지, 고치며 생긴 새 문제, 변이 검사 | S4 | DONE | .aimem/sessions/T-446-S4-a1-163102/report.md |
+| T-447 | Q-261126-902f | [VoxLog] 화면 큐 고치기 - R49-N5 받아쓰기 끝 순간 자동 태그 폴링, R49-N6 폴링 오류 뒤 굳음, R48-N24 webm 길이 Infinity, R49-N9 검사 항등식 | S2 | DONE | projects/VoxLog/web/app.js, projects/VoxLog/tests/test_ask.py |
+| T-448 | Q-261126-902f | [VoxLog] R49-N11 store.set_label_tags - 대소문자만 바뀐 태그는 표기만 갱신 | S3 | DONE | projects/VoxLog/voxlog/store.py, projects/VoxLog/tests/test_store.py |
+| T-449 | Q-261126-902f | [VoxLog] 문서 큐 정리 - 설계 문서 R48-N9~N22 반영, R48-N23 결론, R47-N1 persisted 단서, R49-N7·N8 INTERFACE | S3 | DONE | projects/VoxLog/docs/DESIGN-next-features.md, projects/VoxLog/docs/RESEARCH-draft-owner.md, projects/VoxLog/docs/INTERFACE.md |
+| T-450 | Q-261126-902f | [VoxLog] 브라우저 검사 t46~t48 - webm 길이, 받아쓰기 끝 순간 AI 태그, 폴링 오류 뒤 이어짐 + 셸 캐시 VERSION | S6 | DONE | projects/VoxLog/tests/browser_voxlog.py, projects/VoxLog/web/sw.js |
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
-| 1 | [VoxLog] R47-N1·R47-N2(하) R47 검수 남은 지적: R47-N1 docs/RESEARCH-draft-owner.md:148 (f) 검사 항목의 'resume/pageshow 에서 다시 걸어' 에 persisted 단서가 빠짐(요약·§4.2·§6 에는 붙음); R47-N2(추정, 지금 코드에선 안 일어남) app.js init 의 첫 로드 회수와 initOpen 이 getConfig.then 안의 fillSettings·applyRecSupport·updateQueue·checkHealth 가 동기로 던지지 않아야만 돎 - 회수를 그 앞으로 빼거나 감싸면 독립. 검수 보고 .aimem/sessions/T-420-S4-a1-001546/report.md |  |  |
-| 2 | [VoxLog] R48-N9·R48-N10·R48-N11·R48-N12·R48-N13·R48-N14·R48-N18·R48-N19·R48-N21·R48-N22(하) 설계 문서 DESIGN-next-features.md 의 남은 검수 지적(이름·태그 몫과 R48-N20 은 R49 에서 반영) - 출처·이어 묻기 구현 요청 때 함께: R48-N9 <앞답> 은 prefix 에(녹취만 빠지게)·앞답 안 녹취 태그 이스케이프, R48-N10 INTERFACE.md 의 출처 노드·이어 묻기 시그니처 갱신, R48-N11 실 깊이·50건 한도·기존 답 선택자 유지, R48-N12 의견 절 이어 묻기 아이디어 둘의 S2 요약, R48-N13 출처 되돌림 검사 근거, R48-N14 펼치기는 details 로·부모 해석을 Asker.submit 한 곳에, R48-N18 askFollowUp 이중 전송·토큰, R48-N19 FakeStore.answer_states, R48-N21 부모 확인은 stat 만(answer_exists), R48-N22 한도 밖 부모 표시 한 줄. 원문 .aimem/sessions/T-428-S4-a1-012943·T-430-S4-a1-014911·T-432-S4-a1-015855/report.md |  | VoxLog 설계 문서 하 등급 묶음 |
-| 3 | [VoxLog] R48-N23·R48-N24(하, 확인 필요 - 써 보다 본 것) R48-N23 날짜 거르기 뒤 목록은 1건인데 현황(stats)은 전체 수·글자(S3 관찰, 뜻한 것인지 확인), R48-N24 짧은 webm 녹음의 audio.duration 이 Infinity(S2 관찰, 넘기기는 됨). 출처 rounds/R48/decision.md '써 보다 본 다른 것' |  | VoxLog 관찰 둘 |
-| 4 | [VoxLog] R49-N5·R49-N6·R49-N7·R49-N8(하) 이름·태그 검수 남은 지적: R49-N5 app.js loadDetail 폴링이 받아쓰기 done 순간 autotag 가 아직 null 이면 멈춰 열린 상세에 AI 태그가 안 뜸(새로고침하면 보임 - done 직후 한 번 더 읽거나 pending 을 set_transcript 와 같은 잠금에서), R49-N6 폴링 중 네트워크 오류 한 번이면 detailTimer 가 다시 안 서 '다는 중…' 이 굳음(loadList 와 같은 약점), R49-N7 TAG_TEXT_MAX 20000자 - 긴 녹취는 앞만 보고 태그(INTERFACE 에 한 줄), R49-N8 서버 casefold·화면 toLowerCase 차이(ß 등, 기록만). 원문 .aimem/sessions/T-441-S4-a1-135833/report.md |  |  |
-| 5 | [VoxLog] R49-N9·R49-N10·R49-N11(하) 이름·태그 재검수 남은 지적: R49-N9 tests/test_ask.py:449 태그 호출 상한 검사가 ask.TAG_TIMEOUT 을 자기와 비교하는 항등식이라 300 으로 되돌려도 통과 - [60] 으로 박기(한 줄), R49-N10 문장부호 없는 안내 문장(예: 죄송합니다 요약할 수 없습니다)은 아직 태그가 됨(기록만), R49-N11 store.set_label_tags 가 대소문자만 바뀐 같은 태그(python→Python)면 조기 반환해 표기가 안 바뀜 - 표기만 갱신하고 tags_human 은 그대로. 원문 .aimem/sessions/T-446-S4-a1-163102/report.md |  |  |
 
 ## 6. 파일 소유권
 
@@ -358,9 +283,9 @@
 | `projects/**` | 관리자 | 프로젝트 결과물 projects/<이름>/ - 여러 라운드에 걸쳐 쌓임 (REV 142). 관리자가 하위 경로를 슬롯에 배정 |
 | `projects/VoxLog/README.md` | S6 | R49 |
 | `projects/VoxLog/docs/**` | S6 | R39 |
-| `projects/VoxLog/docs/DESIGN-next-features.md` | S6 | R49 |
-| `projects/VoxLog/docs/INTERFACE.md` | S6 | R49 |
-| `projects/VoxLog/docs/RESEARCH-draft-owner.md` | S2 | R46 |
+| `projects/VoxLog/docs/DESIGN-next-features.md` | S3 | R50 |
+| `projects/VoxLog/docs/INTERFACE.md` | S3 | R50 |
+| `projects/VoxLog/docs/RESEARCH-draft-owner.md` | S3 | R50 |
 | `projects/VoxLog/serve.py` | S3 | R49 |
 | `projects/VoxLog/settings.example.json` | S2 | R44 |
 | `projects/VoxLog/tests/**` | S6 | R39 |
@@ -613,3 +538,4 @@
 | Q-261125-f9f0 | [VoxLog] 대기 큐의 VoxLog 항목 처리 (R46-N1, R46-N2) | 태석 (클로드 코드 전달) | DONE | 2026-11-25T00:08:19 |
 | Q-261125-5fa4 | [VoxLog] 작업자마다 써 보고 추가 기능 아이디어 둘씩 → 관리자가 검토·확정 → 설계 문서 (구현하지 않음) | 태석 (클로드 코드 전달) | DONE | 2026-11-25T00:31:34 |
 | Q-261125-76c8 | [VoxLog] F2 녹취 이름·태그 구현 - AI 가 자동으로 태그를 달고 사람이 고치거나 더함 | 태석 (클로드 코드 전달) | DONE | 2026-11-25T11:21:26 |
+| Q-261126-902f | [VoxLog] 대기 큐의 VoxLog 항목 다섯 모두 정리 | 태석 (클로드 코드 전달) | DONE | 2026-11-26T10:21:43 |

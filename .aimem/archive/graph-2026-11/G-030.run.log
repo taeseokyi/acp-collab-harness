@@ -1,0 +1,5 @@
+G-030: 100.0%  남은 ETA 0s  상태 {'done': 4}
+  T-171  done     S2  시도 1  run T-171-S2-a1-211908  rc 0/0  storage.js 결함 2·3: 스냅숏 없으면 메모리 모드, 지우기는 put+null
+  T-172  done     S2  시도 1  run T-172-S2-a1-212302  rc 0/0  app.js 결함 4·5·6: 남는 필드 거름, 굳은 칸 풀기, 정리 훅 구멍
+  T-173  done     S3  시도 1  run T-173-S3-a1-211908  rc 0/0  browser_monitor_ui.py: KISTI 검사가 작업 기록 글자에 걸리던 것
+  T-174  done     S1  시도 1  run T-174-S1-a1-212711  rc 0/0  재검수: 고친 결함 넷의 변이 시험

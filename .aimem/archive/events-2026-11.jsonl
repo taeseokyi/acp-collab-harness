@@ -368,3 +368,320 @@
 {"seq": 447, "at": "2026-11-11T16:08:35", "actor": "관리자 R11", "rev": 154, "kind": "ownership", "body": "tests/browser_monitor_ui.py -> S3"}
 {"seq": 448, "at": "2026-11-11T16:08:35", "actor": "관리자 R11", "rev": 154, "kind": "ownership", "body": "rounds/R11/REVIEW-C.md -> S1"}
 {"seq": 468, "at": "2026-11-11T17:13:06", "actor": "관리자 R11", "rev": 154, "kind": "request", "body": "Q-261111-8481 DONE"}
+{"seq": 446, "at": "2026-11-11T16:02:05", "actor": "관리자 R11", "rev": 154, "kind": "graph", "body": "G-022 끝남(노드 3/3 전부 1차 성공). T-136 S1 검수 A: 결함 2건(높음 1 - 무인증 /app/<이름>/../~x/ 로 티켓 발급되는 인증 우회, 낮음 1 - 티켓이 monitor.log 에 원문). T-137 S4 검수 B: 결함 2건(낮음 - Host 가 그대로 CSP 출처, 미리보기 최소 높이에서 결과물 키 20px) + 검사 구멍 6개. T-138 S3: browser_monitor_auth.py 임시 루트로 - 운영 access.log 무변화 확인. 검수 A 결함 1 은 라운드 중 클로드 코드가 운영 서버에 바로 고침(rounds/R11/NOTE-claude-code.md) - 남은 일은 나머지 결함 수정과 재검수(G-023)."}
+{"seq": 449, "at": "2026-11-11T16:08:35", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-139 ASSIGNED S2 검수 결함 수정: 티켓 로그 가리기 + Host 허용 목록 + 미리보기 최소 높이"}
+{"seq": 450, "at": "2026-11-11T16:08:35", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-140 ASSIGNED S2 단위 검사 6개 추가: TLS 쿠키·TLS/Host CSP 출처·티켓 수명·sw.js"}
+{"seq": 451, "at": "2026-11-11T16:08:35", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-141 ASSIGNED S3 browser_monitor_ui: 폰 폭 미리보기 높이·잘림·가로 스크롤 검사 3개"}
+{"seq": 452, "at": "2026-11-11T16:08:35", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-142 ASSIGNED S3 browser_monitor_auth: 새 탭(최상위) 격리 검사 3개"}
+{"seq": 453, "at": "2026-11-11T16:08:35", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-143 ASSIGNED S1 재검수: 고친 넷 + 새 검사의 변이 시험"}
+{"seq": 454, "at": "2026-11-11T16:37:49", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-141 DONE"}
+{"seq": 455, "at": "2026-11-11T16:37:49", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-142 DONE"}
+{"seq": 456, "at": "2026-11-11T16:37:49", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-139 DONE"}
+{"seq": 457, "at": "2026-11-11T16:37:49", "actor": "관리자 R11", "rev": 154, "kind": "graph", "body": "G-023 T-139: 작업자(S2)는 1차에 세 수정을 다 했는데 노드가 두 번 실패했다 - 원인은 관리자가 쓴 verify 명령(`unittest … | tail -3 | grep -qE '^OK'`)이 테스트 fixture 가 stdout 에 찍는 'ok: /tmp/…' 줄에 밀려 OK 줄을 못 본 것. 관리자가 산출물을 직접 재현 확인(Host 허용 목록: evil.com 이면 CSP 에 출처 없음·IP/localhost 는 그대로, 로그 가리기: 티켓이 /app/~*** 로, style.css min-height 380px)하고 노드를 done 으로 바꿨다. 교훈: 단위 시험 검증은 tail 이 아니라 파일로 받아 grep 해야 한다."}
+{"seq": 458, "at": "2026-11-11T16:59:30", "actor": "관리자 R11", "rev": 154, "kind": "ownership", "body": "tests/browser_monitor_ui.py -> S2"}
+{"seq": 459, "at": "2026-11-11T16:59:30", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-144 ASSIGNED S2 남은 결함 둘: Host 꼴 엄격 검사 + 미리보기 최소 높이 428px"}
+{"seq": 460, "at": "2026-11-11T16:59:30", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-145 ASSIGNED S2 검사 구멍 셋: 티켓 로그 가리기·발급 갈래 단독·짧은 화면 키 크기"}
+{"seq": 461, "at": "2026-11-11T17:12:58", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-140 DONE"}
+{"seq": 462, "at": "2026-11-11T17:12:58", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-143 DONE"}
+{"seq": 463, "at": "2026-11-11T17:12:58", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-144 DONE"}
+{"seq": 464, "at": "2026-11-11T17:12:58", "actor": "관리자 R11", "rev": 154, "kind": "task", "body": "T-145 DONE"}
+{"seq": 465, "at": "2026-11-11T17:12:59", "actor": "관리자 R11", "rev": 154, "kind": "queue", "body": "queue +1 모니터 티켓 심층 방어 두 가지: 발급 티켓에 exp 상한(exp <= now+TTL+60) 검사, _TICKET_LOG_RE 를 %7E 인코딩 꼴까지 넓히기"}
+{"seq": 466, "at": "2026-11-11T17:12:59", "actor": "관리자 R11", "rev": 154, "kind": "queue", "body": "queue +2 웹워들 키 높이 하한을 clamp(32px, …) 로 (projects/웹워들/web/css). 모니터가 min-height 428px 로 받쳐 주고 있을 뿐, 결과물 자체 하한은 아직 20px"}
+{"seq": 467, "at": "2026-11-11T17:12:59", "actor": "관리자 R11", "rev": 154, "kind": "queue", "body": "queue +3 모니터 브라우저 검사를 크로미엄 말고 파이어폭스로도 한 번: CSP sandbox 지시어와 티켓 경로 동작 확인"}
+{"seq": 469, "at": "2026-11-11T17:13:06", "actor": "관리자 R11", "rev": 154, "kind": "graph", "body": "G-024 끝남(2/2 1차 성공). T-144: _app_origin 이 Host 를 정규식 한 벌로 쪼개 [::1].evil.com·127.0.0.1:abc 를 거절, 미리보기 min-height 428px(짧은 화면 키 20px→32px 실측). T-145: 검사 구멍 셋을 메움(티켓 로그 가리기·게이트 없이도 발급 갈래가 세션을 요구·짧은 화면 키 32px). 관리자 재현: 전체 단위 478 OK, 브라우저 app 8/8·ui 10/10·auth 9/9, Host 표 9/9, 운영 access.log 무변화. 요청 Q-261111-8481 DONE."}
+{"seq": 472, "at": "2026-11-11T18:01:38", "actor": "관리자", "rev": 155, "kind": "ownership", "body": "projects/웹워들/web/css/style.css -> S2"}
+{"seq": 473, "at": "2026-11-11T18:01:38", "actor": "관리자", "rev": 155, "kind": "ownership", "body": "projects/웹워들/web/js/ui.js -> S3"}
+{"seq": 474, "at": "2026-11-11T18:01:38", "actor": "관리자", "rev": 155, "kind": "ownership", "body": "projects/웹워들/web/js/game.js -> S2"}
+{"seq": 475, "at": "2026-11-11T18:01:38", "actor": "관리자", "rev": 155, "kind": "ownership", "body": "projects/웹워들/docs/** -> S1"}
+{"seq": 476, "at": "2026-11-11T18:01:38", "actor": "관리자", "rev": 155, "kind": "ownership", "body": "rounds/R12/REVIEW-design.md -> S4"}
+{"seq": 477, "at": "2026-11-11T18:08:28", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-146 TODO S2 style.css: 화면 키 32px 하한 + 가로로 넓고 낮은 창의 좌우 배치"}
+{"seq": 478, "at": "2026-11-11T18:08:28", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-147 TODO S3 ui.js: 뒤집기가 pop 을 끊어 class 가 남는 결함 수정"}
+{"seq": 479, "at": "2026-11-11T18:08:28", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-148 TODO S2 game.js: 하드 모드를 엄하게 (노랑 개수·같은 자리 되놓기)"}
+{"seq": 480, "at": "2026-11-11T18:08:28", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-149 TODO S2 낱말 거르기: 고유명사·굴절형·고어 꼴을 정답 후보에서 빼기"}
+{"seq": 481, "at": "2026-11-11T18:08:28", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-150 TODO S3 browser_layout.py: 키 높이·좌우 배치·뒤집기 뒤 칸 크기 실측 검사"}
+{"seq": 482, "at": "2026-11-11T18:08:28", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-151 TODO S3 test_game.mjs: 엄해진 하드 모드 검사"}
+{"seq": 483, "at": "2026-11-11T18:08:29", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-152 TODO S1 설계: 미리보기에서도 기록이 남는 postMessage 길"}
+{"seq": 484, "at": "2026-11-11T18:08:29", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-153 TODO S4 적대적 검토: T-152 설계가 보안 경계를 새로 뚫지 않는가"}
+{"seq": 485, "at": "2026-11-11T18:08:29", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-154 TODO S2 모니터 티켓 심층 방어: exp 상한 + %7E 로그 가리기"}
+{"seq": 486, "at": "2026-11-11T18:08:29", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-155 TODO S2 GitHub 로그인 세션으로의 실행 티켓 발급 단위 시험"}
+{"seq": 487, "at": "2026-11-11T18:08:34", "actor": "관리자", "rev": 155, "kind": "request", "body": "Q-261111-4e63 PLANNED"}
+{"seq": 488, "at": "2026-11-11T18:08:34", "actor": "관리자", "rev": 155, "kind": "request", "body": "Q-261111-e1f1 PLANNED"}
+{"seq": 489, "at": "2026-11-11T18:29:47", "actor": "관리자", "rev": 155, "kind": "ownership", "body": "rounds/R12/REVIEW-auth.md -> S1"}
+{"seq": 490, "at": "2026-11-11T18:29:47", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-156 TODO S2 허용 목록에서 빠진 GitHub 계정의 옛 세션을 끊기 (_subject 재확인)"}
+{"seq": 491, "at": "2026-11-11T18:29:48", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-157 TODO S1 재검수: 허용 목록 재확인 수정 적대적 재검수 (변이 시험)"}
+{"seq": 492, "at": "2026-11-11T18:29:48", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-158 TODO S1 설계 문서를 T-153 검토 지적대로 고치기"}
+{"seq": 493, "at": "2026-11-11T18:29:59", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-146 REVIEW"}
+{"seq": 494, "at": "2026-11-11T18:29:59", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-147 REVIEW"}
+{"seq": 495, "at": "2026-11-11T18:29:59", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-148 REVIEW"}
+{"seq": 496, "at": "2026-11-11T18:29:59", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-149 REVIEW"}
+{"seq": 497, "at": "2026-11-11T18:29:59", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-150 REVIEW"}
+{"seq": 498, "at": "2026-11-11T18:29:59", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-151 REVIEW"}
+{"seq": 499, "at": "2026-11-11T18:29:59", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-152 REVIEW"}
+{"seq": 500, "at": "2026-11-11T18:29:59", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-153 REVIEW"}
+{"seq": 501, "at": "2026-11-11T18:29:59", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-154 REVIEW"}
+{"seq": 502, "at": "2026-11-11T18:29:59", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-155 BLOCKED"}
+{"seq": 503, "at": "2026-11-11T18:30:00", "actor": "관리자 R12", "rev": 155, "kind": "graph", "body": "G-025 끝: T-146~T-154 done(1차 성공, 유료 대체 없음), T-155 는 NEEDS-FIX 로 막힘 - 허용 목록에서 빠진 gh: 계정의 옛 세션이 /app/ 실행 티켓을 받는다(_subject 가 목록을 다시 안 봄). 관리자가 실패 시험으로 직접 재현. 후속 G-026 으로 수정·재검수."}
+{"seq": 504, "at": "2026-11-11T18:30:09", "actor": "관리자", "rev": 155, "kind": "queue", "body": "queue -2 웹워들 키 높이 하한을 clamp(32px, …) 로 (projects/웹워들/web/css). 모니터가 min-height 428px 로 받쳐 주고 있을 뿐, 결과물 자체 하한은 아직 20px"}
+{"seq": 505, "at": "2026-11-11T18:30:09", "actor": "관리자", "rev": 155, "kind": "queue", "body": "queue -1 모니터 티켓 심층 방어 두 가지: 발급 티켓에 exp 상한(exp <= now+TTL+60) 검사, _TICKET_LOG_RE 를 %7E 인코딩 꼴까지 넓히기"}
+{"seq": 506, "at": "2026-11-11T18:36:36", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-159 TODO S2 test_aimem_monitor_auth 픽스처: 임시 루트에 GitHub 허용 목록 만들기"}
+{"seq": 507, "at": "2026-11-11T18:36:36", "actor": "관리자 R12", "rev": 155, "kind": "graph", "body": "G-026: T-158 done(설계 반영). T-156 은 제품 수정은 맞았으나 낡은 픽스처(test_aimem_monitor_auth.AuthHttpTests.setUpClass 가 허용 목록 파일을 안 만듦)로 전체 시험이 빨개져 NEEDS-FIX. T-157 재검수는 그 때문에 못 돌았고 G-027 로 옮겨 같은 id 로 돈다."}
+{"seq": 508, "at": "2026-11-11T18:37:14", "actor": "관리자", "rev": 155, "kind": "request", "body": "Q-261111-fbd1 DONE"}
+{"seq": 509, "at": "2026-11-11T18:37:14", "actor": "관리자", "rev": 155, "kind": "request", "body": "Q-261111-2665 PLANNED"}
+{"seq": 510, "at": "2026-11-11T18:37:14", "actor": "관리자", "rev": 155, "kind": "request", "body": "Q-261111-d64b PLANNED"}
+{"seq": 511, "at": "2026-11-11T18:37:15", "actor": "관리자", "rev": 155, "kind": "request", "body": "Q-261111-0afe PLANNED"}
+{"seq": 512, "at": "2026-11-11T18:37:15", "actor": "관리자 R12", "rev": 155, "kind": "request", "body": "라운드 도중 들어온 NEW 넷: fbd1 은 클로드 코드가 이미 고쳐 운영에 올린 것이라 관리자가 archive --days 0 --dry-run 으로 재현 확인(rc 0, 태스크 50·요청 5·그래프 17 계획) 후 DONE. 2665·d64b·0afe 는 모니터 UI 일로, 이번 라운드 새 일 상한(그래프 3·태스크 10)을 이미 다 써 PLANNED + 다음 라운드."}
+{"seq": 513, "at": "2026-11-11T18:42:32", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-159 REVIEW"}
+{"seq": 514, "at": "2026-11-11T18:42:32", "actor": "관리자 R12", "rev": 155, "kind": "graph", "body": "G-027 T-159: 작업자는 일을 다 했는데 관리자가 쓴 verify 의 정규식이 이중 탈출(\\\\d)이라 시험 수를 0 으로 읽어 실패 판정이 났습니다. 관리자가 직접 재현(전체 507 OK, 픽스처·새 시험 둘 다 자리에 있음) 후 노드를 done 으로 닫고 T-157 을 todo 로 되돌렸습니다. 교훈: 중첩 heredoc 안에서 verify 문자열을 만들면 역슬래시가 한 번 더 먹힙니다."}
+{"seq": 515, "at": "2026-11-11T18:48:02", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-160 TODO S2 대소문자 검사를 실제 쓰임대로 (쿠키 gh:TaeSeok, 목록 taeseok)"}
+{"seq": 516, "at": "2026-11-11T18:52:27", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-146 DONE"}
+{"seq": 517, "at": "2026-11-11T18:52:27", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-147 DONE"}
+{"seq": 518, "at": "2026-11-11T18:52:27", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-148 DONE"}
+{"seq": 519, "at": "2026-11-11T18:52:27", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-149 DONE"}
+{"seq": 520, "at": "2026-11-11T18:52:27", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-150 DONE"}
+{"seq": 521, "at": "2026-11-11T18:52:27", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-151 DONE"}
+{"seq": 522, "at": "2026-11-11T18:52:27", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-152 DONE"}
+{"seq": 523, "at": "2026-11-11T18:52:27", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-153 DONE"}
+{"seq": 524, "at": "2026-11-11T18:52:27", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-154 DONE"}
+{"seq": 525, "at": "2026-11-11T18:52:27", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-155 DONE"}
+{"seq": 526, "at": "2026-11-11T18:52:27", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-156 DONE"}
+{"seq": 527, "at": "2026-11-11T18:52:27", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-157 DONE"}
+{"seq": 528, "at": "2026-11-11T18:52:27", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-158 DONE"}
+{"seq": 529, "at": "2026-11-11T18:52:27", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-159 DONE"}
+{"seq": 530, "at": "2026-11-11T18:52:28", "actor": "관리자", "rev": 155, "kind": "task", "body": "T-160 DONE"}
+{"seq": 531, "at": "2026-11-11T18:52:28", "actor": "관리자", "rev": 155, "kind": "request", "body": "Q-261111-4e63 DONE"}
+{"seq": 532, "at": "2026-11-11T18:52:28", "actor": "관리자", "rev": 155, "kind": "request", "body": "Q-261111-e1f1 DONE"}
+{"seq": 533, "at": "2026-11-11T18:52:28", "actor": "관리자", "rev": 155, "kind": "request", "body": "Q-261111-e099 PLANNED"}
+{"seq": 534, "at": "2026-11-11T18:52:28", "actor": "관리자", "rev": 155, "kind": "queue", "body": "queue +2 실행 티켓이 주체를 안 묶습니다: 허용 목록에서 계정을 지워도 그 전에 받아 둔 12시간 티켓은 그대로 듣습니다(쿠키·API 는 즉시 끊김). 티켓 서명 payload 에 주체를 넣고 /app/ 에서 세션 주체와 대조 (R12 T-157 결함 2)"}
+{"seq": 535, "at": "2026-11-11T18:52:28", "actor": "관리자", "rev": 155, "kind": "queue", "body": "queue +3 허용 목록에 걸려 끊긴 요청이 audit 에 안 남습니다 - monitor.log 의 401 뿐이라 왜 못 들어오는지 아무도 못 봅니다 (R12 T-157 결함 3)"}
+{"seq": 537, "at": "2026-11-11T18:55:27", "actor": "관리자", "rev": 156, "kind": "request", "body": "Q-261111-2e0f PLANNED"}
+{"seq": 538, "at": "2026-11-11T18:55:28", "actor": "관리자 R12", "rev": 156, "kind": "request", "body": "보고를 쓰는 동안 Q-261111-2e0f (작업 트리·태스크 그래프 제목의 생략 내용 조회) 가 더 들어왔습니다. 같은 이유(새 일 상한 소진)로 PLANNED + 다음 라운드. 다음 라운드의 모니터 UI 요청은 다섯입니다: 2665·d64b·0afe·e099·2e0f."}
+{"seq": 539, "at": "2026-11-11T19:07:16", "actor": "관리자", "rev": 156, "kind": "ownership", "body": "projects/웹워들/web/js/storage.js -> S2"}
+{"seq": 540, "at": "2026-11-11T19:07:16", "actor": "관리자", "rev": 156, "kind": "ownership", "body": "projects/웹워들/web/js/ui.js -> S2"}
+{"seq": 541, "at": "2026-11-11T19:07:16", "actor": "관리자", "rev": 156, "kind": "ownership", "body": "projects/웹워들/tests/test_storage.mjs -> S3"}
+{"seq": 542, "at": "2026-11-11T19:07:17", "actor": "관리자", "rev": 156, "kind": "ownership", "body": "tools/aimem_monitor/static/index.html -> S2"}
+{"seq": 543, "at": "2026-11-11T19:07:17", "actor": "관리자", "rev": 156, "kind": "ownership", "body": "tools/aimem_monitor/reader.py -> S2"}
+{"seq": 544, "at": "2026-11-11T19:07:17", "actor": "관리자", "rev": 156, "kind": "ownership", "body": "tests/browser_monitor_ui.py -> S3"}
+{"seq": 545, "at": "2026-11-11T19:07:17", "actor": "관리자", "rev": 156, "kind": "ownership", "body": "rounds/R13/REVIEW-preview.md -> S1"}
+{"seq": 546, "at": "2026-11-11T19:07:21", "actor": "관리자", "rev": 156, "kind": "request", "body": "Q-261111-663d PLANNED"}
+{"seq": 547, "at": "2026-11-11T19:07:21", "actor": "관리자", "rev": 156, "kind": "request", "body": "Q-261111-2665 PLANNED"}
+{"seq": 548, "at": "2026-11-11T19:07:21", "actor": "관리자", "rev": 156, "kind": "request", "body": "Q-261111-e099 PLANNED"}
+{"seq": 549, "at": "2026-11-11T19:07:21", "actor": "관리자", "rev": 156, "kind": "request", "body": "Q-261111-0afe PLANNED"}
+{"seq": 550, "at": "2026-11-11T19:07:21", "actor": "관리자", "rev": 156, "kind": "request", "body": "Q-261111-d64b PLANNED"}
+{"seq": 551, "at": "2026-11-11T19:07:21", "actor": "관리자", "rev": 156, "kind": "request", "body": "Q-261111-2e0f PLANNED"}
+{"seq": 552, "at": "2026-11-11T19:07:21", "actor": "관리자", "rev": 156, "kind": "request", "body": "Q-261111-731b PLANNED"}
+{"seq": 553, "at": "2026-11-11T19:07:32", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-161 ASSIGNED S2 웹워들 storage.js·ui.js: 미리보기(격리 칸) 부모 모드 저장"}
+{"seq": 554, "at": "2026-11-11T19:07:32", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-162 ASSIGNED S3 test_storage.mjs: 부모 모드 단위 시험 (가짜 parent)"}
+{"seq": 555, "at": "2026-11-11T19:07:32", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-163 ASSIGNED S2 app.js: panelCleanups + openProjectApp 보관함 리스너"}
+{"seq": 556, "at": "2026-11-11T19:07:32", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-164 ASSIGNED S3 browser_monitor_app.py: 미리보기 기록 유지·칸 격리 실측"}
+{"seq": 557, "at": "2026-11-11T19:07:32", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-165 ASSIGNED S1 적대적 검수: 미리보기 보관함이 새 길을 뚫지 않는가"}
+{"seq": 558, "at": "2026-11-11T19:07:32", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-166 ASSIGNED S2 server.py·reader.py: KISTI 상태 폴링·준비 점검·aimem.goal 제거"}
+{"seq": 559, "at": "2026-11-11T19:07:32", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-167 ASSIGNED S2 app.js·index.html·style.css: KISTI 카드 제거 + 현재 목표 -> 이번 라운드"}
+{"seq": 560, "at": "2026-11-11T19:07:33", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-168 ASSIGNED S2 reader.py·app.js: 분담 전 요청의 ETA 0초 버그와 상태별 표시"}
+{"seq": 561, "at": "2026-11-11T19:07:33", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-169 ASSIGNED S2 app.js·style.css: 프로젝트 칸 볼드 기준 + 생략 제목 전문 보기"}
+{"seq": 562, "at": "2026-11-11T19:07:33", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-170 ASSIGNED S3 browser_monitor_ui.py: 바뀐 화면 다섯 가지 실측"}
+{"seq": 563, "at": "2026-11-11T21:01:07", "actor": "관리자", "rev": 156, "kind": "graph", "body": "G-029 T-164(S3 browser_monitor_app 실측) 2회 실패 - a1 45분 타임아웃, a2 빈손(쓰기 경로 무변경). 무료 슬롯 실패를 유료로 옮기지 않고 BLOCKED 로 둔다(8.0 '유료 모델 대체 금지'). T-165·T-170 의 T-164 의존은 S3 직렬화 목적이었으므로 관리자가 제거하고 todo 로 되돌림. T-165 브리프에 '브라우저 실측 증거 없음' 을 명시."}
+{"seq": 564, "at": "2026-11-11T21:17:30", "actor": "관리자", "rev": 156, "kind": "ownership", "body": "rounds/R13/REVIEW-preview-2.md -> S1"}
+{"seq": 565, "at": "2026-11-11T21:17:30", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-171 ASSIGNED S2 storage.js 결함 2·3: 스냅숏 없으면 메모리 모드, 지우기는 put+null"}
+{"seq": 566, "at": "2026-11-11T21:17:30", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-172 ASSIGNED S2 app.js 결함 4·5·6: 남는 필드 거름, 굳은 칸 풀기, 정리 훅 구멍"}
+{"seq": 567, "at": "2026-11-11T21:17:30", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-173 ASSIGNED S3 browser_monitor_ui.py: KISTI 검사가 작업 기록 글자에 걸리던 것"}
+{"seq": 568, "at": "2026-11-11T21:17:30", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-174 ASSIGNED S1 재검수: 고친 결함 넷의 변이 시험"}
+{"seq": 569, "at": "2026-11-11T21:33:17", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-175 ASSIGNED S2 storage.js: init 의 지난 daily 정리가 접두를 빠뜨려 한 번도 안 지워지던 결함"}
+{"seq": 570, "at": "2026-11-11T21:33:17", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-176 ASSIGNED S3 test_storage.mjs: 지난 daily 정리와 '스냅숏 없으면 put 안 보냄' 검사"}
+{"seq": 571, "at": "2026-11-11T21:47:13", "actor": "관리자", "rev": 156, "kind": "slot", "body": "slot set S3: 역할, 비고"}
+{"seq": 572, "at": "2026-11-11T21:47:13", "actor": "관리자", "rev": 156, "kind": "slot", "body": "slot set S2: 역할, 비고"}
+{"seq": 573, "at": "2026-11-11T21:47:13", "actor": "관리자", "rev": 156, "kind": "request", "body": "Q-261111-7958 DONE"}
+{"seq": 574, "at": "2026-11-11T21:47:20", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-161 DONE"}
+{"seq": 575, "at": "2026-11-11T21:47:20", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-162 DONE"}
+{"seq": 576, "at": "2026-11-11T21:47:20", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-163 DONE"}
+{"seq": 577, "at": "2026-11-11T21:47:20", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-165 DONE"}
+{"seq": 578, "at": "2026-11-11T21:47:20", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-166 DONE"}
+{"seq": 579, "at": "2026-11-11T21:47:20", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-167 DONE"}
+{"seq": 580, "at": "2026-11-11T21:47:20", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-168 DONE"}
+{"seq": 581, "at": "2026-11-11T21:47:20", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-169 DONE"}
+{"seq": 582, "at": "2026-11-11T21:47:20", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-170 DONE"}
+{"seq": 583, "at": "2026-11-11T21:47:21", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-171 DONE"}
+{"seq": 584, "at": "2026-11-11T21:47:21", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-172 DONE"}
+{"seq": 585, "at": "2026-11-11T21:47:21", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-173 DONE"}
+{"seq": 586, "at": "2026-11-11T21:47:21", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-174 DONE"}
+{"seq": 587, "at": "2026-11-11T21:47:21", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-175 DONE"}
+{"seq": 588, "at": "2026-11-11T21:47:21", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-176 DONE"}
+{"seq": 589, "at": "2026-11-11T21:47:21", "actor": "관리자", "rev": 156, "kind": "task", "body": "T-164 BLOCKED"}
+{"seq": 590, "at": "2026-11-11T21:47:21", "actor": "관리자", "rev": 156, "kind": "request", "body": "Q-261111-2665 DONE"}
+{"seq": 591, "at": "2026-11-11T21:47:21", "actor": "관리자", "rev": 156, "kind": "request", "body": "Q-261111-e099 DONE"}
+{"seq": 592, "at": "2026-11-11T21:47:21", "actor": "관리자", "rev": 156, "kind": "request", "body": "Q-261111-0afe DONE"}
+{"seq": 593, "at": "2026-11-11T21:47:21", "actor": "관리자", "rev": 156, "kind": "request", "body": "Q-261111-d64b DONE"}
+{"seq": 594, "at": "2026-11-11T21:47:21", "actor": "관리자", "rev": 156, "kind": "request", "body": "Q-261111-2e0f DONE"}
+{"seq": 595, "at": "2026-11-11T21:47:22", "actor": "관리자", "rev": 156, "kind": "request", "body": "Q-261111-663d IN-PROGRESS"}
+{"seq": 596, "at": "2026-11-11T21:47:30", "actor": "관리자", "rev": 156, "kind": "queue", "body": "queue +4 미리보기 보관함을 **브라우저에서** 재는 검사 (설계 preview-storage.md 7절). R13 T-164 가 S3 에서 두 번 실패(45분 타임아웃·빈손)해 이 길은 자동 검사가 0개입니다 - 변이 10개 중 0개를 잡습니다. 모니터 '/' 를 열고 openProjectApp 으로 띄운 뒤 재야 하며, 노드를 '한 판 두고 새로 고침' / '칸 격리' / '중첩 iframe 무시' 셋으로 쪼개 주십시오"}
+{"seq": 597, "at": "2026-11-11T21:47:30", "actor": "관리자", "rev": 156, "kind": "queue", "body": "queue +5 storage.js 의 키 꼴 검사와 8,192자 상한을 단위 시험이 보지 않습니다 - 관리자 변이 M5·M6 를 넣어도 40개가 그대로 초록입니다. 모니터가 같은 것을 다시 거르므로 제품은 안전하지만, 결과물 쪽 방어선이 언제 사라졌는지 아무도 모릅니다"}
+{"seq": 599, "at": "2026-11-11T22:09:36", "actor": "관리자", "rev": 157, "kind": "ownership", "body": "tools/aimem_db.py -> S2"}
+{"seq": 600, "at": "2026-11-11T22:09:36", "actor": "관리자", "rev": 157, "kind": "ownership", "body": "tests/test_aimem_db_cli.py -> S3"}
+{"seq": 601, "at": "2026-11-11T22:09:36", "actor": "관리자", "rev": 157, "kind": "ownership", "body": "tests/test_archive_api.py -> S3"}
+{"seq": 602, "at": "2026-11-11T22:09:36", "actor": "관리자", "rev": 157, "kind": "ownership", "body": "tests/browser_monitor_preview.py -> S2"}
+{"seq": 603, "at": "2026-11-11T22:09:36", "actor": "관리자", "rev": 157, "kind": "ownership", "body": "rounds/R14/REVIEW-archive.md -> S1"}
+{"seq": 604, "at": "2026-11-11T22:09:39", "actor": "관리자 R14", "rev": 157, "kind": "request", "body": "Q-261111-7859 PLANNED"}
+{"seq": 605, "at": "2026-11-11T22:09:39", "actor": "관리자 R14", "rev": 157, "kind": "request", "body": "Q-261111-731b PLANNED"}
+{"seq": 606, "at": "2026-11-11T22:09:39", "actor": "관리자 R14", "rev": 157, "kind": "request", "body": "Q-261111-fa37 PLANNED"}
+{"seq": 607, "at": "2026-11-11T22:09:40", "actor": "관리자 R14", "rev": 157, "kind": "request", "body": "Q-261111-b56e PLANNED"}
+{"seq": 608, "at": "2026-11-11T22:19:44", "actor": "관리자", "rev": 157, "kind": "ownership", "body": "tests/browser_monitor_preview_guard.py -> S3"}
+{"seq": 609, "at": "2026-11-11T22:23:22", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-177 ASSIGNED S2 aimem_db.py: 끝난 것 정리가 딸린 실행 기록·이벤트를 함께 옮긴다"}
+{"seq": 610, "at": "2026-11-11T22:23:22", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-178 ASSIGNED S2 aimem_db.py: 핸드오프·전달 기록·로그 줄까지 + VACUUM·종류별 건수"}
+{"seq": 611, "at": "2026-11-11T22:23:22", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-179 ASSIGNED S2 server.py: /api/archive 가 종류별 건수를 돌려주고 audit 에 남긴다"}
+{"seq": 612, "at": "2026-11-11T22:23:22", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-180 ASSIGNED S3 test_aimem_db_cli.py: 연동 아카이브 단위 시험 (열린 작업의 기록은 남는다)"}
+{"seq": 613, "at": "2026-11-11T22:23:22", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-181 ASSIGNED S2 app.js·index.html·style.css: 요청 트리에서 끝난 것 치우기 + 진행 표시 현실화"}
+{"seq": 614, "at": "2026-11-11T22:23:22", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-182 ASSIGNED S3 test_archive_api.py(새): /api/archive 가 종류별 건수를 돌려준다"}
+{"seq": 615, "at": "2026-11-11T22:23:22", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-183 ASSIGNED S3 browser_monitor_ui.py: 바뀐 요청 트리 실측 + ETA 검사를 임시 저장소로"}
+{"seq": 616, "at": "2026-11-11T22:23:22", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-184 ASSIGNED S2 browser_monitor_preview.py(새): 미리보기 기록이 남고 칸이 섞이지 않는다"}
+{"seq": 617, "at": "2026-11-11T22:23:22", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-185 ASSIGNED S3 browser_monitor_preview_guard.py(새): 중첩 iframe·팝업·자기 put 이 무시된다"}
+{"seq": 618, "at": "2026-11-11T22:23:22", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-186 ASSIGNED S1 적대적 검수: 연동 아카이브가 열린 작업·감사 기록·REV 길을 깨뜨리지 않는가"}
+{"seq": 619, "at": "2026-11-11T22:23:40", "actor": "관리자 R14", "rev": 157, "kind": "request", "body": "Q-261111-7859 IN-PROGRESS"}
+{"seq": 620, "at": "2026-11-11T22:23:40", "actor": "관리자 R14", "rev": 157, "kind": "request", "body": "Q-261111-731b IN-PROGRESS"}
+{"seq": 621, "at": "2026-11-11T22:23:40", "actor": "관리자 R14", "rev": 157, "kind": "request", "body": "Q-261111-fa37 IN-PROGRESS"}
+{"seq": 622, "at": "2026-11-11T22:23:40", "actor": "관리자 R14", "rev": 157, "kind": "request", "body": "Q-261111-b56e IN-PROGRESS"}
+{"seq": 623, "at": "2026-11-11T22:23:40", "actor": "관리자 R14", "rev": 157, "kind": "graph", "body": "R14 G-032 시작: 노드 10 (T-177~T-186). 요청 Q-261111-7859·731b(연동 아카이브)·fa37(진행 표시)·b56e(웹워들 미리보기 실측). 상한 안 - 새 일 그래프 1·태스크 10"}
+{"seq": 624, "at": "2026-11-11T22:45:43", "actor": "관리자 R14", "rev": 157, "kind": "graph", "body": "R14 G-032 T-177: 작업자 a1 은 일을 다 했고(rc 0) verify 의 고정물이 틀렸습니다 - 갓 만든 임시 DB 에는 meta.rev 행이 없는데 smoke 가 'REV 가 사라졌습니다' 로 단언했습니다. a2 재시도를 pid 1064437 로 중단하고, T-177·T-178 의 smoke 가 rev 행을 먼저 넣도록 고친 뒤 관리자가 직접 돌려 rc 0 을 확인하고 노드를 닫았습니다."}
+{"seq": 626, "at": "2026-11-11T23:45:32", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-177 REVIEW"}
+{"seq": 627, "at": "2026-11-11T23:45:32", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-178 REVIEW"}
+{"seq": 628, "at": "2026-11-11T23:45:33", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-179 REVIEW"}
+{"seq": 629, "at": "2026-11-11T23:45:33", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-180 REVIEW"}
+{"seq": 630, "at": "2026-11-11T23:45:33", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-181 REVIEW"}
+{"seq": 631, "at": "2026-11-11T23:45:33", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-182 REVIEW"}
+{"seq": 632, "at": "2026-11-11T23:45:33", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-183 REVIEW"}
+{"seq": 633, "at": "2026-11-11T23:45:33", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-184 REVIEW"}
+{"seq": 634, "at": "2026-11-11T23:45:33", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-185 REVIEW"}
+{"seq": 635, "at": "2026-11-11T23:45:33", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-186 DONE"}
+{"seq": 636, "at": "2026-11-11T23:45:33", "actor": "관리자 R14", "rev": 157, "kind": "graph", "body": "R14 G-032 끝: 노드 10개 전부 done (T-177~T-186). 적대적 검수 T-186 이 결함 13건(높음 2: 도는 그래프의 기록이 딸려 내려감 · monitor.log os.replace 로 서버 쓰기 유실)과 변이 22개 중 8개만 잡히는 검사 구멍을 냈습니다. 후속 그래프에서 고치고 재검수합니다. 결함 1·2 를 고치기 전에는 운영에서 '지금 끝난 것 전부' 정리를 누르지 않습니다."}
+{"seq": 637, "at": "2026-11-11T23:49:51", "actor": "관리자", "rev": 157, "kind": "ownership", "body": "rounds/R14/REVIEW-archive-2.md -> S1"}
+{"seq": 638, "at": "2026-11-11T23:49:51", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-187 ASSIGNED S2 아카이브 결함 1·5·6·9: 열려 있는 것의 기록을 지키는 집합을 넓힌다"}
+{"seq": 639, "at": "2026-11-11T23:49:52", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-188 ASSIGNED S2 아카이브 결함 2·4: 서버가 쥔 로그를 안 갈아 끼우고 실행 파일 고아를 안 만든다"}
+{"seq": 640, "at": "2026-11-11T23:49:52", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-189 ASSIGNED S2 아카이브 결함 3·7·8·12: 멱등·칸 보존·줄 단위 확인·끝에 render"}
+{"seq": 641, "at": "2026-11-11T23:49:52", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-190 ASSIGNED S3 test_aimem_db_cli.py: 검수가 살려 둔 변이 14개를 잡는 검사로 메우기"}
+{"seq": 642, "at": "2026-11-11T23:49:52", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-191 ASSIGNED S1 재검수: 결함 13건의 수정이 실제로 닫혔는가 (변이 22개 재실행)"}
+{"seq": 643, "at": "2026-11-12T00:13:09", "actor": "관리자 R14", "rev": 157, "kind": "graph", "body": "R14 G-033 T-187: verify 고정물이 두 번 틀려(relay 기대값) 재시도가 돌았습니다. a1 이 결함 1·5·6·9 를 고쳤고 a2 가 중단 전 relay 보호를 한 칸 더 엄하게 바꿔 둔 상태에서, 관리자가 고정물을 고쳐 직접 돌려 rc 0 을 확인하고 노드를 닫았습니다. 교훈: 검수 결함 설명보다 느슨한 브리프를 쓰면 고정물이 제품과 어긋납니다."}
+{"seq": 644, "at": "2026-11-12T00:59:32", "actor": "관리자 R14", "rev": 157, "kind": "graph", "body": "R14 G-033 T-189: 두 시도 모두 verify 실패. 드러난 것 둘 - (가) archive_plan 이 이벤트의 rev 칸을 안 담아 아카이브에 null 로 적힘 (나) STATE_MD 가 모듈 상수라 ROOT 만 patch 한 시험이 **운영 AIMEM-state.md·handoff.md 를 덮어씀**(345줄→40줄, render 로 되살림). 브리프에 이 둘을 더하고 verify 를 '운영 생성물이 그대로인가 + test_aimem_db_cli 밖에 빨간 줄 없음' 으로 바꿔 노드를 초기화했습니다."}
+{"seq": 645, "at": "2026-11-12T01:52:12", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-192 ASSIGNED S2 N3: 웹 '끝난 것 정리' 가 AIMEM.md 를 고쳐 쓰는 길을 막는다"}
+{"seq": 646, "at": "2026-11-12T01:52:12", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-193 ASSIGNED S3 빈 검사 둘(N4)을 메우고 시험이 없던 수정(결함 2·4·8·9·12)을 검사로 지킨다"}
+{"seq": 647, "at": "2026-11-12T02:26:53", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-177 DONE"}
+{"seq": 648, "at": "2026-11-12T02:26:53", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-178 DONE"}
+{"seq": 649, "at": "2026-11-12T02:26:54", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-179 DONE"}
+{"seq": 650, "at": "2026-11-12T02:26:54", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-180 DONE"}
+{"seq": 651, "at": "2026-11-12T02:26:54", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-181 DONE"}
+{"seq": 652, "at": "2026-11-12T02:26:54", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-182 DONE"}
+{"seq": 653, "at": "2026-11-12T02:26:54", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-183 DONE"}
+{"seq": 654, "at": "2026-11-12T02:26:54", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-184 DONE"}
+{"seq": 655, "at": "2026-11-12T02:26:54", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-185 DONE"}
+{"seq": 656, "at": "2026-11-12T02:26:54", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-187 DONE"}
+{"seq": 657, "at": "2026-11-12T02:26:54", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-188 DONE"}
+{"seq": 658, "at": "2026-11-12T02:26:54", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-189 DONE"}
+{"seq": 659, "at": "2026-11-12T02:26:54", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-190 DONE"}
+{"seq": 660, "at": "2026-11-12T02:26:54", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-192 DONE"}
+{"seq": 661, "at": "2026-11-12T02:26:54", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-193 DONE"}
+{"seq": 662, "at": "2026-11-12T02:26:55", "actor": "관리자 R14", "rev": 157, "kind": "task", "body": "T-191 DONE"}
+{"seq": 663, "at": "2026-11-12T02:27:13", "actor": "관리자 R14", "rev": 157, "kind": "queue", "body": "queue -4 미리보기 보관함을 **브라우저에서** 재는 검사 (설계 preview-storage.md 7절). R13 T-164 가 S3 에서 두 번 실패(45분 타임아웃·빈손)해 이 길은 자동 검사가 0개입니다 - 변이 10개 중 0개를 잡습니다. 모니터 '/' 를 열고 openProjectApp 으로 띄운 뒤 재야 하며, 노드를 '한 판 두고 새로 고침' / '칸 격리' / '중첩 iframe 무시' 셋으로 쪼개 주십시오"}
+{"seq": 664, "at": "2026-11-12T02:27:13", "actor": "관리자 R14", "rev": 157, "kind": "queue", "body": "queue +5 웹워들 browser_ui.py 의 '접근성 - 대비 present 키' 넷이 **오늘의 낱말에 매달려** 있습니다 - 라운드가 자정을 넘기자 151/155 가 됐습니다(제품은 그대로). scenario_accessibility_contrast 가 답을 고정한 판에서 재게 고치십시오 (R14 관리자 실측)"}
+{"seq": 665, "at": "2026-11-12T02:27:13", "actor": "관리자 R14", "rev": 157, "kind": "queue", "body": "queue +6 아카이브 결함 10(재검수 T-191 에서 '안 닫힘'): DB 를 잃고 migrate 하면 본문에 **REV N 이 없는 핸드오프의 rev 가 None 이 되어 맨 아래로 가라앉고, handoff.md 와 DB 렌더가 달라져 HANDOFF_SNAPSHOT_STALE 이 바로 뜹니다. _import_handoff_entries 가 rev 를 못 읽으면 앞뒤에서 이어받거나 파일 순서로 seq 를 매기게"}
+{"seq": 666, "at": "2026-11-12T02:27:13", "actor": "관리자 R14", "rev": 157, "kind": "queue", "body": "queue +7 아카이브 N1·N2(재검수 T-191 새 결함): (N1) 실행 파일 이동이 **마지막 .json** 에서 죽으면 .json 만 남아 다음 계획이 못 줍습니다 (N2) 로그를 읽은 뒤 다시 쓰기 전에 덧붙은 줄은 원본에도 아카이브에도 없습니다. 둘 다 rounds/R14/REVIEW-archive-2.md 에 재현기가 있습니다"}
+{"seq": 667, "at": "2026-11-12T02:27:13", "actor": "관리자 R14", "rev": 157, "kind": "queue", "body": "queue +8 monitor.log 의 줄에 시각을 찍기. 지금 줄에 시각이 없어 '끝난 것 정리' 의 로그 줄 정리가 monitor.log 에서는 **언제나 0줄**입니다(서버가 fd 를 쥐고 있어 건너뛰기도 합니다). 시각을 찍으면 큐 3번의 401 추적도 쉬워집니다"}
+{"seq": 668, "at": "2026-11-12T02:27:19", "actor": "관리자 R14", "rev": 157, "kind": "request", "body": "Q-261111-7859 DONE"}
+{"seq": 669, "at": "2026-11-12T02:27:19", "actor": "관리자 R14", "rev": 157, "kind": "request", "body": "Q-261111-731b DONE"}
+{"seq": 670, "at": "2026-11-12T02:27:19", "actor": "관리자 R14", "rev": 157, "kind": "request", "body": "Q-261111-fa37 DONE"}
+{"seq": 671, "at": "2026-11-12T02:27:19", "actor": "관리자 R14", "rev": 157, "kind": "request", "body": "Q-261111-b56e DONE"}
+{"seq": 672, "at": "2026-11-12T02:27:19", "actor": "관리자 R14", "rev": 157, "kind": "request", "body": "Q-261111-663d DONE"}
+{"seq": 673, "at": "2026-11-12T02:27:19", "actor": "관리자 R14", "rev": 157, "kind": "request", "body": "R14: Q-261111-663d(이어 달리기가 넣은 웹워들 남은 목표 1개)는 Q-261111-b56e 로 이어 닫았습니다 - 같은 일이고, b56e 의 T-184·T-185 가 브라우저 실측 10개로 그 목표를 닫았습니다."}
+{"seq": 674, "at": "2026-11-12T02:27:56", "actor": "관리자", "rev": 157, "kind": "archive", "body": "14일 경과 - 태스크 0건, 요청 0건, 그래프 0개 아카이브, 실행 0건, 이벤트 0건, 핸드오프 4건, 전달 0개, 로그 0줄"}
+{"seq": 676, "at": "2026-11-12T02:29:34", "actor": "관리자 R14", "rev": 158, "kind": "note", "body": "R14 종료: 요청 5건 DONE, 그래프 3(새 일 G-032 10 + 후속 G-033 5·G-034 2), T-177~T-193. 보고 rounds/R14/REPORT.md. 검사 509→554, 모니터 브라우저 48개(ui 21·app 8·auth 9·preview 5·guard 5), 웹워들 22/22. 커밋 안 함."}
+{"seq": 677, "at": "2026-11-12T02:29:42", "actor": "관리자 R14", "rev": 158, "kind": "task", "body": "T-164 DONE"}
+{"seq": 678, "at": "2026-11-12T02:29:42", "actor": "관리자 R14", "rev": 158, "kind": "task", "body": "R14: T-164(R13 에서 S3 가 두 번 실패해 BLOCKED 로 둔 '미리보기 기록 유지·칸 격리 실측')를 DONE 으로 닫습니다 - 같은 일을 R14 의 T-184·T-185 가 파일을 둘로 쪼개 해냈습니다(browser_monitor_preview.py 5개 + browser_monitor_preview_guard.py 5개, 모두 통과). 유료 슬롯으로 옮기지 않았습니다."}
+{"seq": 680, "at": "2026-11-12T06:41:54", "actor": "관리자", "rev": 158, "kind": "ownership", "body": "projects/웹워들/tests/browser_ui.py -> S3"}
+{"seq": 681, "at": "2026-11-12T06:41:54", "actor": "관리자", "rev": 158, "kind": "ownership", "body": "rounds/R15/REVIEW-ticket.md -> S1"}
+{"seq": 682, "at": "2026-11-12T06:42:01", "actor": "관리자", "rev": 158, "kind": "request", "body": "Q-261112-7417 PLANNED"}
+{"seq": 683, "at": "2026-11-12T06:42:01", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-194 ASSIGNED S2 server.py: 실행 티켓 서명에 주체를 넣고 /app/ 에서 대조 (큐 2)"}
+{"seq": 684, "at": "2026-11-12T06:42:01", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-195 ASSIGNED S2 server.py: 허용 목록에 걸린 요청을 audit 에 남긴다 (큐 3)"}
+{"seq": 685, "at": "2026-11-12T06:42:01", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-196 ASSIGNED S2 server.py: monitor.log 의 모든 줄에 ISO 시각 (큐 8)"}
+{"seq": 686, "at": "2026-11-12T06:42:02", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-197 ASSIGNED S2 aimem_db.py: 복구 적재가 REV 없는 핸드오프를 가라앉히던 것 (큐 6)"}
+{"seq": 687, "at": "2026-11-12T06:42:02", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-198 ASSIGNED S2 aimem_db.py: 아카이브 N1(마지막 .json 고아)·N2(로그 자르기 경쟁) (큐 7)"}
+{"seq": 688, "at": "2026-11-12T06:42:02", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-199 ASSIGNED S3 test_storage.mjs: 키 꼴·8,192자 상한을 지키는 단위 시험 (큐 4)"}
+{"seq": 689, "at": "2026-11-12T06:42:02", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-200 ASSIGNED S3 browser_ui.py: 접근성 대비 검사를 오늘의 낱말에서 떼기 (큐 5)"}
+{"seq": 690, "at": "2026-11-12T06:42:02", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-201 ASSIGNED S3 test_aimem_db_cli.py: 결함 10·N1·N2 회귀 시험"}
+{"seq": 691, "at": "2026-11-12T06:42:02", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-202 ASSIGNED S1 적대적 검수: 티켓 주체 묶기와 거절 감사"}
+{"seq": 692, "at": "2026-11-12T06:51:12", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-199 DONE"}
+{"seq": 693, "at": "2026-11-12T06:51:12", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-199 DONE (큐 4): test_storage.mjs 키 꼴·8,192자 상한 시험 4개 (40→44). 관리자 재현: M5·M6 변이 각각 1개씩 잡힘, storage.js 원복 확인"}
+{"seq": 694, "at": "2026-11-12T06:54:28", "actor": "관리자", "rev": 158, "kind": "graph", "body": "G-035 T-194: 관리자가 러너를 멈추고 브리프 결함을 고쳤다. a1 은 일을 제대로 했으나(server.py 주체 결속 + app 시험 40→43) tests/test_aimem_monitor_app_gate.py 의 test_the_normal_flow_still_works 가 '티켓 경로는 쿠키 없이'(78행)를 단언해 verify 실패. 그 성질을 없애라는 것이 큐 2번이므로 그 파일(S2 소유)을 write 에 더하고 시험을 고치라는 지시를 덧붙여 재실행. 멈춘 시도 2건은 stopped_attempts 로 옮겨 재시도 횟수에서 뺐다. T-200 작업자는 죽이지 않아 그대로 이어감"}
+{"seq": 695, "at": "2026-11-12T06:58:38", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-194 DONE"}
+{"seq": 696, "at": "2026-11-12T06:58:38", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-194 DONE (큐 2): 티켓 서명에 주체 결속(app.v1.<exp>.<subject>.<name>), /app/~티켓 경로가 _subject() 를 다시 봐 허용 목록 삭제 즉시 403. 관리자 재현: kim 티켓이 lee·무주체·다른 프로젝트에서 모두 False, 티켓 꼴 80자/점1개 유지, 55개 시험 OK. 게이트 시험의 '쿠키 없이 열린다'(78행)를 403 단언으로 바꿈"}
+{"seq": 697, "at": "2026-11-12T07:04:23", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-195 DONE"}
+{"seq": 698, "at": "2026-11-12T07:04:24", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-195 DONE (큐 3): 허용 목록 밖 GitHub 주체가 끊길 때 github-revoked 감사 줄. (주체,ip) 당 60초 억제, OrderedDict 256개 상한. 관리자 재현: 목록에서 뺀 뒤 401 + 5회 요청에 줄 1개, _REVOKED_AUDIT_MIN_SEC=0 으로 바꾸면 2개. 감사 로그 실제 경로는 .aimem/access.log (AUDIT_LOG 상수, 큐 글의 audit.log 와 다름)"}
+{"seq": 699, "at": "2026-11-12T07:09:13", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-200 DONE"}
+{"seq": 700, "at": "2026-11-12T07:09:13", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-200 DONE (큐 5): browser_ui.py 가 오늘의 낱말에 기대지 않고 세 상태가 남는 낱말을 고른다(contrast_probe_words). 세 상태 확인 검사 1개 추가 + flip 경합 대기 보강. 관리자 재현: 통과 156/156 rc 0, '키 상태=[absent,correct,present]'. tests/README.md 의 기대 수 155→156 갱신 필요(S1 소유)"}
+{"seq": 701, "at": "2026-11-12T07:09:24", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-196 DONE"}
+{"seq": 702, "at": "2026-11-12T07:09:24", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-196 DONE (큐 8): log_message 머리를 ISO 초단위로, 서버 자기 글은 log_line() 으로 줄마다 머리. 시험 52→56. 관리자 재현: 찍힌 줄 2개가 모두 아카이브 정규식에 맞고 티켓은 /app/~*** 로 가려지고 ESC 는 \\x1b 로 치환됨"}
+{"seq": 703, "at": "2026-11-12T07:14:22", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-197 DONE"}
+{"seq": 704, "at": "2026-11-12T07:14:22", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-197 DONE (큐 6, 아카이브 결함 10): _import_handoff_entries 가 REV 를 못 읽으면 바로 앞(오래된) 항목에서 물려받고, 앞이 없으면 뒤에서 처음 나오는 REV, 그것도 없으면 0. verify 는 rc 1 이었으나 **원인은 관리자가 쓴 재현기의 비교가 본문 30자만 잘라 본 것**이고 제품은 옳았다. 재현기를 고친 뒤 rc 0 (rev=[100,100,101], 렌더 순서가 파일 순서와 같음). 작업자가 이 사실을 정확히 짚고 범위 밖 파일을 고치지 않았다. 멈춘 a2 는 재시도 횟수에서 뺐다"}
+{"seq": 705, "at": "2026-11-12T07:17:03", "actor": "관리자", "rev": 158, "kind": "ownership", "body": "rounds/R15/REVIEW-ticket-2.md -> S1"}
+{"seq": 706, "at": "2026-11-12T07:17:14", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-203 ASSIGNED S2 server.py: 티켓이 주체를 자기 안에 담아 쿠키 없이도 앱이 열리게 (검수 D1)"}
+{"seq": 707, "at": "2026-11-12T07:17:14", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-204 ASSIGNED S3 browser_monitor_auth.py: 인증 켠 브라우저로 앱 자원 200 + 회수 403 실측"}
+{"seq": 708, "at": "2026-11-12T07:17:14", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-205 ASSIGNED S1 재검수: D1 수정이 회수를 깨지 않고 앱을 되살렸는가"}
+{"seq": 709, "at": "2026-11-12T07:17:14", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-202 DONE"}
+{"seq": 710, "at": "2026-11-12T07:17:14", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-202 DONE: 적대적 검수가 결함 7건(높음 1·중간 1·낮음 3·정보 2)과 변이 포착을 냈다. **D1(높음)은 실측된 운영 회귀** - 티켓 경로가 쿠키를 요구하는데 CSP sandbox 로 불투명 출처가 된 앱 문서의 하위 자원에는 SameSite 쿠키가 안 실려 js·css·이미지가 403. 관리자가 tests/browser_monitor_auth.py 로 재현(통과 7/9, '안쪽이 진짜로 그려졌다'·'CSS 가 실제로 입혀졌다' 실패). 후속 그래프 G-036 으로 고치고 재검수한다"}
+{"seq": 711, "at": "2026-11-12T07:20:25", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-198 DONE"}
+{"seq": 712, "at": "2026-11-12T07:20:25", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-198 DONE (큐 7): N1 - 실행 파일 이동 차례를 .rc 맨 마지막으로(그 앞에서 죽으면 .json 없는 고아를 기존 고아 줍기가 받음). N2 - 읽은 위치 end=f.tell() 을 적어 두고 자르기 직전 seek(0,2) 로 비교해 덧붙은 꼬리를 kept 에 합침. 작업자 보고는 PARTIAL 이었고 그 판단이 옳다: R14 시험 test_run_json_moved_last_... 가 옛 차례를 단언해 빨간 것이고 그 파일은 S3 소유라 건드리지 않았다. T-201 브리프에 그 단언을 새 차례로 옮기라고 덧붙였다"}
+{"seq": 713, "at": "2026-11-12T07:32:44", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-201 DONE"}
+{"seq": 714, "at": "2026-11-12T07:32:44", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-201 DONE: test_aimem_db_cli 124→131. 결함 10 둘·N1 네(k=1~4)·N2 하나 + 옛 차례를 박아 둔 시험을 새 뜻(.rc 마지막)으로 옮김. 관리자 재현: 131 OK, N1 수정을 되돌리면 4건 빨개짐(거짓 초록 아님), aimem_db.py 원복 확인"}
+{"seq": 715, "at": "2026-11-12T07:41:42", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-203 DONE"}
+{"seq": 716, "at": "2026-11-12T07:41:42", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-203 DONE (검수 D1 높음): 티켓 꼴을 <만료>.<주체>.<mac> 로 바꿔 쿠키가 아니라 티켓 자체에서 주체를 읽고, gh: 주체면 요청마다 허용 목록을 다시 본다. 길이 상한 80→160. 관리자 실측: 쿠키 없이 index/app.js/s.css 모두 200(JS 실행됨), 허용 목록에서 지운 뒤 자격 없이도 403, 남의 쿠키로 403, 위조 403. 시험 88 OK. 참고: 티켓 URL 에 gh:<로그인> 이 보이게 됐다(_TICKET_LOG_RE 가 로그에서는 가림) - 재검수 T-205 가 볼 것"}
+{"seq": 717, "at": "2026-11-12T07:47:23", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-204 DONE"}
+{"seq": 718, "at": "2026-11-12T07:47:23", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-204 DONE: browser_monitor_auth.py 9→12 검사. 하위 자원 응답 코드 직접 수집(5개 모두 200, css·js), 회수 뒤 같은 티켓의 js fetch 403, 지운 뒤 새로 고치면 타일 0개. 관리자 재현: 통과 12/12 rc 0 - 라운드 앞부분에 빨갰던 '안쪽이 진짜로 그려졌다'(타일 30개)·'CSS 가 실제로 입혀졌다'(borderWidth 2px)가 초록"}
+{"seq": 719, "at": "2026-11-12T07:47:34", "actor": "관리자", "rev": 158, "kind": "queue", "body": "queue -8 monitor.log 의 줄에 시각을 찍기. 지금 줄에 시각이 없어 '끝난 것 정리' 의 로그 줄 정리가 monitor.log 에서는 **언제나 0줄**입니다(서버가 fd 를 쥐고 있어 건너뛰기도 합니다). 시각을 찍으면 큐 3번의 401 추적도 쉬워집니다"}
+{"seq": 720, "at": "2026-11-12T07:47:35", "actor": "관리자", "rev": 158, "kind": "queue", "body": "queue -7 아카이브 N1·N2(재검수 T-191 새 결함): (N1) 실행 파일 이동이 **마지막 .json** 에서 죽으면 .json 만 남아 다음 계획이 못 줍습니다 (N2) 로그를 읽은 뒤 다시 쓰기 전에 덧붙은 줄은 원본에도 아카이브에도 없습니다. 둘 다 rounds/R14/REVIEW-archive-2.md 에 재현기가 있습니다"}
+{"seq": 721, "at": "2026-11-12T07:47:35", "actor": "관리자", "rev": 158, "kind": "queue", "body": "queue -6 아카이브 결함 10(재검수 T-191 에서 '안 닫힘'): DB 를 잃고 migrate 하면 본문에 **REV N 이 없는 핸드오프의 rev 가 None 이 되어 맨 아래로 가라앉고, handoff.md 와 DB 렌더가 달라져 HANDOFF_SNAPSHOT_STALE 이 바로 뜹니다. _import_handoff_entries 가 rev 를 못 읽으면 앞뒤에서 이어받거나 파일 순서로 seq 를 매기게"}
+{"seq": 722, "at": "2026-11-12T07:47:35", "actor": "관리자", "rev": 158, "kind": "queue", "body": "queue -5 웹워들 browser_ui.py 의 '접근성 - 대비 present 키' 넷이 **오늘의 낱말에 매달려** 있습니다 - 라운드가 자정을 넘기자 151/155 가 됐습니다(제품은 그대로). scenario_accessibility_contrast 가 답을 고정한 판에서 재게 고치십시오 (R14 관리자 실측)"}
+{"seq": 723, "at": "2026-11-12T07:47:35", "actor": "관리자", "rev": 158, "kind": "queue", "body": "queue -4 storage.js 의 키 꼴 검사와 8,192자 상한을 단위 시험이 보지 않습니다 - 관리자 변이 M5·M6 를 넣어도 40개가 그대로 초록입니다. 모니터가 같은 것을 다시 거르므로 제품은 안전하지만, 결과물 쪽 방어선이 언제 사라졌는지 아무도 모릅니다"}
+{"seq": 724, "at": "2026-11-12T07:47:35", "actor": "관리자", "rev": 158, "kind": "queue", "body": "queue -3 허용 목록에 걸려 끊긴 요청이 audit 에 안 남습니다 - monitor.log 의 401 뿐이라 왜 못 들어오는지 아무도 못 봅니다 (R12 T-157 결함 3)"}
+{"seq": 725, "at": "2026-11-12T07:47:35", "actor": "관리자", "rev": 158, "kind": "queue", "body": "queue -2 실행 티켓이 주체를 안 묶습니다: 허용 목록에서 계정을 지워도 그 전에 받아 둔 12시간 티켓은 그대로 듣습니다(쿠키·API 는 즉시 끊김). 티켓 서명 payload 에 주체를 넣고 /app/ 에서 세션 주체와 대조 (R12 T-157 결함 2)"}
+{"seq": 726, "at": "2026-11-12T07:47:48", "actor": "관리자", "rev": 158, "kind": "queue", "body": "queue +2 검수 D5: 티켓 403(위조·만료·남의 주체)과 서명 틀린 쿠키가 감사 로그에 한 줄도 안 남습니다. 남는 것은 '서명은 맞는데 허용 목록 밖인 gh 주체' 하나뿐입니다 (R15 T-202 검수)"}
+{"seq": 727, "at": "2026-11-12T07:47:48", "actor": "관리자", "rev": 158, "kind": "queue", "body": "queue +3 검수 D3·D4: 거절 감사의 억제 키에 ip 가 들어 있어 출발 주소를 바꾸면 억제 없이 매번 기록됩니다(access.log 를 불릴 수 있음). 반대로 프록시 뒤라 ip 가 같으면 남의 첫 사용이 내 폴링 줄에 묻힙니다. 기록에 경로·메서드도 없습니다 (R15 T-202 검수)"}
+{"seq": 728, "at": "2026-11-12T07:47:48", "actor": "관리자", "rev": 158, "kind": "queue", "body": "queue +4 티켓 URL 에 gh:<로그인> 이 그대로 보입니다(R15 T-203 에서 쿠키 의존을 없애며 생긴 맞바꿈). 로그는 _TICKET_LOG_RE 가 가리지만 주소창·결과물 앱의 location 에는 보입니다. 주체를 되돌릴 수 없는 꼴(예: HMAC 8자)로 싣고 서버가 허용 목록과 대조하는 길을 검토하십시오"}
+{"seq": 729, "at": "2026-11-12T07:47:49", "actor": "관리자", "rev": 158, "kind": "queue", "body": "queue +5 projects/웹워들/tests/README.md 의 browser_ui.py 기대 검사 수를 155 → 156 으로 고치십시오 (R15 T-200 에서 '키보드 판정 세 상태' 검사 하나가 늘었습니다). S1 소유 문서입니다"}
+{"seq": 730, "at": "2026-11-12T07:58:53", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-205 DONE"}
+{"seq": 731, "at": "2026-11-12T07:58:53", "actor": "관리자", "rev": 158, "kind": "task", "body": "T-205 DONE (재검수): D1·D2·D6 닫힘, D7 실질 닫힘, D5 부분, D3·D4 안 닫힘(큐로 넘김). 새 결함 6건은 **전부 시험 구멍이고 살아 있는 구멍이 아니다** - 관리자가 N1 을 직접 재현: 주체 칸을 token·gh:lee·-·gh:kim2 로 바꿔 치고 mac 을 그대로 두면 모두 False, 이름 바꿔치기도 False, 앞 검수의 D6 구분자 재현도 이제 False. 변이 포착 단위 10/15·브라우저 2/3"}
+{"seq": 732, "at": "2026-11-12T07:58:53", "actor": "관리자", "rev": 158, "kind": "queue", "body": "queue +6 재검수 N1(중간): 주체 칸 바꿔치기(mac 그대로) 403 을 지키는 시험이 없습니다. 발급·검증 payload 에서 주체를 빼는 변이 M5 를 88건이 모두 통과시킵니다. 제품은 안전하나(관리자 실측: 전부 False) 회귀를 못 봅니다 (R15 T-205)"}
+{"seq": 733, "at": "2026-11-12T07:58:53", "actor": "관리자", "rev": 158, "kind": "queue", "body": "queue +7 재검수 N3(낮음): browser_monitor_auth.py 의 '회수가 듣는다' 가 모니터 최상위에서 fetch 해 쿠키가 실리고, '지운 뒤 새로 고치면' 은 옛 티켓이 아니라 발급 경로를 잽니다. iframe **안에서** 옛 티켓 하위 자원을 불러 재게 고치십시오 (R15 T-205)"}
+{"seq": 734, "at": "2026-11-12T07:58:53", "actor": "관리자", "rev": 158, "kind": "queue", "body": "queue +8 재검수 N2·N6(낮음)·D6 시험: _APP_RE 상한 160 을 라우팅 수준에서 지키는 시험(M8), 티켓 경로 회수 감사를 지키는 시험(M9), 주체·이름 꼴 검사를 지키는 시험(M10·M11)이 없습니다 (R15 T-205)"}
+{"seq": 735, "at": "2026-11-12T07:58:53", "actor": "관리자", "rev": 158, "kind": "queue", "body": "queue +9 재검수 N5(정보): 허용 목록에 계정을 다시 넣으면 옛 티켓이 TTL(12시간) 안에서 되살아납니다. 의도라면 문서에 적고, 아니라면 발급 시각 기준을 두십시오 (R15 T-205)"}
+{"seq": 737, "at": "2026-11-12T08:00:49", "actor": "관리자", "rev": 159, "kind": "request", "body": "Q-261112-7417 DONE"}
+{"seq": 738, "at": "2026-11-12T08:11:26", "actor": "관리자 R16", "rev": 159, "kind": "request", "body": "Q-261112-6ec6 PLANNED"}
+{"seq": 739, "at": "2026-11-12T08:11:26", "actor": "관리자 R16", "rev": 159, "kind": "task", "body": "T-206 TODO S2 감사 로그: 모든 티켓·쿠키 거절을 남기고 억제 키에서 ip 를 뺀다 (큐 2 D5 · 큐 3 D3·D4)"}
+{"seq": 740, "at": "2026-11-12T08:11:26", "actor": "관리자 R16", "rev": 159, "kind": "task", "body": "T-207 TODO S2 티켓 URL 에서 로그인 감추기: 주체를 되돌릴 수 없는 태그로 (큐 4) + 회수 뒤 재등록 TTL 문서화 (큐 9 N5)"}
+{"seq": 741, "at": "2026-11-12T08:11:26", "actor": "관리자 R16", "rev": 159, "kind": "task", "body": "T-208 TODO S3 browser_monitor_auth.py: 회수를 iframe 안에서 옛 티켓 하위 자원으로 재기 (큐 7 N3)"}
+{"seq": 742, "at": "2026-11-12T08:11:26", "actor": "관리자 R16", "rev": 159, "kind": "task", "body": "T-209 TODO S3 웹워들 tests/README.md 의 browser_ui.py 기대 검사 수 155→156 (큐 5)"}
+{"seq": 743, "at": "2026-11-12T08:11:26", "actor": "관리자 R16", "rev": 159, "kind": "task", "body": "T-210 TODO S3 티켓 회귀 시험 새 파일: 주체 바꿔치기·상한 160·회수 감사·꼴 검사 (큐 6 N1 · 큐 8 N2·N6·D6)"}
+{"seq": 744, "at": "2026-11-12T08:11:26", "actor": "관리자 R16", "rev": 159, "kind": "task", "body": "T-211 TODO S1 적대적 검수: 이번 라운드의 감사·티켓 변경이 회수와 실제 브라우저 앱을 깨뜨리지 않았는가"}
+{"seq": 745, "at": "2026-11-12T08:11:26", "actor": "관리자 R16", "rev": 159, "kind": "ownership", "body": "projects/웹워들/tests/README.md -> S3"}
+{"seq": 746, "at": "2026-11-12T08:11:26", "actor": "관리자 R16", "rev": 159, "kind": "ownership", "body": "tests/test_monitor_ticket_regress.py -> S3"}
+{"seq": 747, "at": "2026-11-12T08:11:27", "actor": "관리자 R16", "rev": 159, "kind": "ownership", "body": "rounds/R16/REVIEW-ticket-url.md -> S1"}
+{"seq": 748, "at": "2026-11-12T08:50:08", "actor": "관리자 R16", "rev": 159, "kind": "task", "body": "T-212 TODO S2 _APP_RE: 상한 넘는 티켓 칸이 프로젝트 이름으로 넘어가지 않게 (T-210 NEEDS-FIX 후속)"}
+{"seq": 749, "at": "2026-11-12T08:50:08", "actor": "관리자 R16", "rev": 159, "kind": "task", "body": "T-210 REVIEW"}
+{"seq": 750, "at": "2026-11-12T08:50:08", "actor": "관리자 R16", "rev": 159, "kind": "task", "body": "T-206 DONE"}
+{"seq": 751, "at": "2026-11-12T08:50:08", "actor": "관리자 R16", "rev": 159, "kind": "task", "body": "T-207 DONE"}
+{"seq": 752, "at": "2026-11-12T08:50:08", "actor": "관리자 R16", "rev": 159, "kind": "task", "body": "T-209 DONE"}
+{"seq": 753, "at": "2026-11-12T08:50:08", "actor": "관리자 R16", "rev": 159, "kind": "task", "body": "T-208 DONE"}
+{"seq": 754, "at": "2026-11-12T09:00:38", "actor": "관리자 R16", "rev": 159, "kind": "graph", "body": "G-037 (R16, 큐 2~9): T-206 감사 거절 기록·억제 키(D5·D3·D4) DONE / T-207 티켓 URL 주체 태그화(큐 4)·N5 문서화 DONE / T-209 웹워들 README 156 DONE / T-208 회수 브라우저 실측 iframe 안으로 DONE / T-210 티켓 회귀 시험 11건 - NEEDS-FIX(_APP_RE 161자 티켓이 이름 칸으로 넘어감)로 막힘. 후속 G-038 T-212 가 제품을 고쳐 11/11 초록이 된 것을 관리자가 재현하고 노드를 닫음. 남은 것은 T-211 적대적 검수"}
+{"seq": 756, "at": "2026-11-12T09:50:01", "actor": "관리자 R16", "rev": 159, "kind": "ownership", "body": "rounds/R16/REVIEW-ticket-url-2.md -> S1"}
+{"seq": 757, "at": "2026-11-12T09:50:01", "actor": "관리자 R16", "rev": 159, "kind": "task", "body": "T-211 DONE"}
+{"seq": 758, "at": "2026-11-12T09:50:01", "actor": "관리자 R16", "rev": 159, "kind": "task", "body": "T-212 DONE"}
+{"seq": 759, "at": "2026-11-12T09:50:01", "actor": "관리자 R16", "rev": 159, "kind": "task", "body": "T-210 DONE"}
+{"seq": 767, "at": "2026-11-12T11:57:39", "actor": "관리자 R17", "rev": 159, "kind": "request", "body": "Q-261112-6ec6 DONE"}
+{"seq": 768, "at": "2026-11-12T11:57:46", "actor": "관리자 R17", "rev": 159, "kind": "queue", "body": "queue -8 재검수 N5(정보): 허용 목록에 계정을 다시 넣으면 옛 티켓이 TTL(12시간) 안에서 되살아납니다. 의도라면 문서에 적고, 아니라면 발급 시각 기준을 두십시오 (R15 T-205)"}
+{"seq": 769, "at": "2026-11-12T11:57:46", "actor": "관리자 R17", "rev": 159, "kind": "queue", "body": "queue -7 재검수 N2·N6(낮음)·D6 시험: _APP_RE 상한 160 을 라우팅 수준에서 지키는 시험(M8), 티켓 경로 회수 감사를 지키는 시험(M9), 주체·이름 꼴 검사를 지키는 시험(M10·M11)이 없습니다 (R15 T-205)"}
+{"seq": 770, "at": "2026-11-12T11:57:46", "actor": "관리자 R17", "rev": 159, "kind": "queue", "body": "queue -6 재검수 N3(낮음): browser_monitor_auth.py 의 '회수가 듣는다' 가 모니터 최상위에서 fetch 해 쿠키가 실리고, '지운 뒤 새로 고치면' 은 옛 티켓이 아니라 발급 경로를 잽니다. iframe **안에서** 옛 티켓 하위 자원을 불러 재게 고치십시오 (R15 T-205)"}
+{"seq": 771, "at": "2026-11-12T11:57:46", "actor": "관리자 R17", "rev": 159, "kind": "queue", "body": "queue -5 재검수 N1(중간): 주체 칸 바꿔치기(mac 그대로) 403 을 지키는 시험이 없습니다. 발급·검증 payload 에서 주체를 빼는 변이 M5 를 88건이 모두 통과시킵니다. 제품은 안전하나(관리자 실측: 전부 False) 회귀를 못 봅니다 (R15 T-205)"}
+{"seq": 772, "at": "2026-11-12T11:57:46", "actor": "관리자 R17", "rev": 159, "kind": "queue", "body": "queue -4 projects/웹워들/tests/README.md 의 browser_ui.py 기대 검사 수를 155 → 156 으로 고치십시오 (R15 T-200 에서 '키보드 판정 세 상태' 검사 하나가 늘었습니다). S1 소유 문서입니다"}
+{"seq": 773, "at": "2026-11-12T11:57:46", "actor": "관리자 R17", "rev": 159, "kind": "queue", "body": "queue -3 티켓 URL 에 gh:<로그인> 이 그대로 보입니다(R15 T-203 에서 쿠키 의존을 없애며 생긴 맞바꿈). 로그는 _TICKET_LOG_RE 가 가리지만 주소창·결과물 앱의 location 에는 보입니다. 주체를 되돌릴 수 없는 꼴(예: HMAC 8자)로 싣고 서버가 허용 목록과 대조하는 길을 검토하십시오"}
+{"seq": 774, "at": "2026-11-12T11:57:46", "actor": "관리자 R17", "rev": 159, "kind": "queue", "body": "queue -2 검수 D3·D4: 거절 감사의 억제 키에 ip 가 들어 있어 출발 주소를 바꾸면 억제 없이 매번 기록됩니다(access.log 를 불릴 수 있음). 반대로 프록시 뒤라 ip 가 같으면 남의 첫 사용이 내 폴링 줄에 묻힙니다. 기록에 경로·메서드도 없습니다 (R15 T-202 검수)"}
+{"seq": 775, "at": "2026-11-12T11:57:46", "actor": "관리자 R17", "rev": 159, "kind": "queue", "body": "queue -1 검수 D5: 티켓 403(위조·만료·남의 주체)과 서명 틀린 쿠키가 감사 로그에 한 줄도 안 남습니다. 남는 것은 '서명은 맞는데 허용 목록 밖인 gh 주체' 하나뿐입니다 (R15 T-202 검수)"}
+{"seq": 776, "at": "2026-11-12T11:58:20", "actor": "관리자 R17", "rev": 159, "kind": "request", "body": "Q-261112-7a8e PLANNED"}
+{"seq": 777, "at": "2026-11-12T11:58:21", "actor": "관리자 R17", "rev": 159, "kind": "request", "body": "Q-261112-edfe PLANNED"}
+{"seq": 778, "at": "2026-11-12T11:58:21", "actor": "관리자 R17", "rev": 159, "kind": "request", "body": "Q-261112-a8be PLANNED"}
+{"seq": 818, "at": "2026-11-12T14:14:26", "actor": "관리자 R17", "rev": 159, "kind": "request", "body": "Q-261112-7a8e DONE"}
+{"seq": 819, "at": "2026-11-12T14:14:26", "actor": "관리자 R17", "rev": 159, "kind": "request", "body": "Q-261112-edfe DONE"}
+{"seq": 820, "at": "2026-11-12T14:14:26", "actor": "관리자 R17", "rev": 159, "kind": "request", "body": "Q-261112-a8be DONE"}

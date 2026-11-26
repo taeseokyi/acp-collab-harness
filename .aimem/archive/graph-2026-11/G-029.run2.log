@@ -1,0 +1,11 @@
+G-029: 77.6%  남은 ETA 1153s  상태 {'done': 7, 'failed': 1, 'blocked': 2}
+  T-161  done     S2  시도 1  run T-161-S2-a1-192006  rc 0/0  웹워들 storage.js·ui.js: 미리보기(격리 칸) 부모 모드 저장
+  T-162  done     S3  시도 2  run T-162-S3-a2-193728  rc 0/0  test_storage.mjs: 부모 모드 단위 시험 (가짜 parent)
+  T-163  done     S2  시도 1  run T-163-S2-a1-192409  rc 0/0  app.js: panelCleanups + openProjectApp 보관함 리스너 (미리보기 기록)
+  T-164  failed   S3  시도 2  run T-164-S3-a2-203544  rc 0/1  browser_monitor_app.py: 미리보기 기록 유지·칸 격리 실측
+  T-165  blocked  S1  시도 0  run -  rc -/-  적대적 검수: 미리보기 보관함이 새 길을 뚫지 않는가
+  T-166  done     S2  시도 1  run T-166-S2-a1-193307  rc 0/0  server.py·reader.py: KISTI 상태 폴링·준비 점검·aimem.goal 제거
+  T-167  done     S2  시도 1  run T-167-S2-a1-194339  rc 0/0  app.js·index.html·style.css: KISTI 카드 제거 + 현재 목표 -> 이번 라운드
+  T-168  done     S2  시도 1  run T-168-S2-a1-194736  rc 0/0  reader.py·app.js: 분담 전 요청의 ETA 0초 버그와 상태별 표시
+  T-169  done     S2  시도 1  run T-169-S2-a1-195151  rc 0/0  app.js·style.css: 프로젝트 칸 볼드 기준 + 생략 제목 전문 보기
+  T-170  blocked  S3  시도 0  run -  rc -/-  browser_monitor_ui.py: 바뀐 화면 다섯 가지 실측

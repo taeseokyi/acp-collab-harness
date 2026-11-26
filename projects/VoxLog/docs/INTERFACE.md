@@ -53,6 +53,7 @@ meta 의 `label`/`tags`/`tags_auto`/`tags_human`/`autotag` 로 이름·태그·�
 `label` 40자·태그 하나 20자·태그 10개·대소문자 무시 중복을 정규화하며 넘치면 400.
 `tags` 가 오면 `tags_human` 이 참이 되고(그 녹취의 자동 태그 끝), `tags_auto` 는 새 `tags` 에 남은 것만 남는다.
 `label` 만 고친 PATCH 는 `tags_human` 을 바꾸지 않는다. `Store.set_transcript` 는 이 필드를 건드리지 않는다.
+태그 비교: 서버는 casefold, 화면은 toLowerCase - ß 같은 드문 글자에서 다를 수 있음(R49-N8, 기록만).
 `GET /api/recordings?tag=<태그>` 는 `q`·`from`·`to`·`status` 와 AND 로 거르고(20자 넘으면 400),
 `q` 는 `label`·`tags` 도 찾아 항목에 `match`(`"text"`|`"label"`|`"tag"`)를 준다.
 
@@ -166,7 +167,7 @@ def llm_command(env=None) -> list[str]
     #   "--no-session-persistence","--output-format","text"] (사용자 설정 파일·MCP 서버를 읽지 않게 고정)
 def run_llm(prompt, env=None, timeout=300) -> str   # 프롬프트는 stdin 으로, 코드 0 이 아니면 AskError(stderr 끝 300자), 실행 파일 없음 → AskUnavailable
 TAG_HEAD = "이 녹취에 붙일 주제 태그를 3~5개 골라라. 한 줄에 태그 하나, 태그만 쓰고 다른 말은 쓰지 마라. 태그는 20자 이하의 짧은 명사구."
-TAG_TEXT_MAX = 20_000
+TAG_TEXT_MAX = 20_000  # 긴 녹취는 앞 20000자만 보고 태그를 단다(R49-N7)
 def build_tag_prompt(text) -> str   # TAG_HEAD + "\n" + _GUARD + "\n<녹취>\n" + text[:TAG_TEXT_MAX] + "\n</녹취>"
                                     # </녹취> 이스케이프는 build_prompt 와 같음
 def llm_status(env=None) -> tuple[bool, str|None]   # (명령을 쓸 수 있음, 오류 글). 설정 오류면 (False, "LLM 명령 설정 오류: …")
@@ -334,3 +335,7 @@ Error(서버의 error 글)), `VoxApi.audioUrl(id) -> Promise<blobURL>`.
 `web/app.js` (T-341): 화면 전부. 녹음 단추 `#rec`(`aria-pressed`), 대기 수 `#queue-count`, 목록 `#list` 의 항목
 `.rec-item[data-id]`, 상태 뱃지 `.status`, 상세 `#detail` 의 글 `#transcript`, 묻기 `#ask-kind`·`#ask-prompt`·`#ask-go`,
 답 `#answer`, 설정 `#settings`(토큰·`#auto-record`; 서버 주소 칸은 없음). 끝에서 끝 검사(T-344)가 이 선택자를 씁니다.
+
+## 고친 이력
+
+- R50: R49-N7·R49-N8 — `TAG_TEXT_MAX`가 긴 녹취의 앞 20000자만 본다는 단서와, 서버 casefold·화면 toLowerCase의 드문 글자 차이를 기록했다.

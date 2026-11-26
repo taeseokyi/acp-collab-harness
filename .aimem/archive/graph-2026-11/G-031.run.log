@@ -1,0 +1,3 @@
+G-031: 100.0%  남은 ETA 0s  상태 {'done': 2}
+  T-175  done     S2  시도 1  run T-175-S2-a1-213324  rc 0/0  storage.js: init 의 지난 daily 정리가 접두를 빠뜨려 한 번도 안 지워지던 결함
+  T-176  done     S3  시도 1  run T-176-S3-a1-213407  rc 0/0  test_storage.mjs: 지난 daily 정리와 '스냅숏 없으면 put 안 보냄' 검사

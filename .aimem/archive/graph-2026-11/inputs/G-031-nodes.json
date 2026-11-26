@@ -1,0 +1,32 @@
+[
+ {
+  "id": "T-175",
+  "title": "storage.js: init 의 지난 daily 정리가 접두를 빠뜨려 한 번도 안 지워지던 결함",
+  "slot": "S2",
+  "project": "웹워들",
+  "write": [
+   "projects/웹워들/web/js/storage.js"
+  ],
+  "deps": [],
+  "timeout_sec": 1800,
+  "max_attempts": 2,
+  "task": "# T-175 한 줄 결함 - 지난 날 기록 정리가 엉뚱한 키를 지웁니다\n\n고칠 파일은 **`projects/웹워들/web/js/storage.js` 하나**입니다. 다른 파일은 고치지 마십시오\n(`tests/**` 도 금지 - 검사는 다른 슬롯이 씁니다).\n\n## 결함\n\n`init()` 안, 지난 날 기록을 지우는 고리(123행 근처):\n\n```js\n    const dailyPrefix = PREFIX + 'daily.';\n    for (const k of [...memory.keys()]) {\n      if (!k.startsWith(dailyPrefix)) continue;\n      const day = k.slice(dailyPrefix.length);\n      if (day !== today) remove(day);          // ← 여기\n    }\n```\n\n`remove(key)` 는 **스스로 `PREFIX` 를 붙입니다.** 그런데 넘기는 값이 `day`(예: `2025-01-01`)라\n실제로 지워지는 키는 `webwordle.2025-01-01` 입니다. 지워야 할 `webwordle.daily.2025-01-01` 은\n그대로 남고, 부모에게도 엉뚱한 키의 `put` 이 나갑니다.\n\n`ui.js` 는 `clearDaily` 를 부르지 않으므로 **이 고리가 유일한 정리 경로**입니다. 그래서 하루에\n키가 하나씩 쌓여 61일째부터 키 64개 상한에 걸려 새 날의 판이 조용히 안 저장됩니다\n(적대적 재검수 T-174 가 재현했습니다).\n\n## 고칠 것 - 한 줄\n\n```js\n      if (day !== today) remove('daily.' + day);\n```\n\n**이 한 줄만** 고치십시오. 다른 것은 아무것도 바꾸지 마십시오.\n\n## 검증\n\n```bash\nnode --check projects/웹워들/web/js/storage.js && node --test projects/웹워들/tests/*.mjs\n```\n\n`ℹ fail 0` 이어야 합니다 (지금 38개가 초록이고, 이 고침으로 빨개지면 안 됩니다).\n\n## 보고\n\n첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` 중 하나만. 그 아래 두 줄 안쪽으로 고친 줄과\n`ℹ tests` / `ℹ fail` 줄을 적으십시오.\n",
+  "verify": "node --check projects/웹워들/web/js/storage.js || exit 1\nnode --test projects/웹워들/tests/*.mjs > /tmp/v175.txt 2>&1\ntail -8 /tmp/v175.txt\npython3 - <<'PY'\nimport re, sys, pathlib\nt = pathlib.Path(\"/tmp/v175.txt\").read_text(encoding=\"utf-8\", errors=\"replace\")\ns = pathlib.Path(\"projects/웹워들/web/js/storage.js\").read_text(encoding=\"utf-8\")\ntests = int(re.search(r\"tests (\\d+)\", t).group(1)) if re.search(r\"tests (\\d+)\", t) else 0\nfail = int(re.search(r\"fail (\\d+)\", t).group(1)) if re.search(r\"fail (\\d+)\", t) else 99\nfixed = \"remove('daily.' + day)\" in s or 'remove(\"daily.\" + day)' in s or \"remove(`daily.${day}`)\" in s\nprint(\"tests\", tests, \"fail\", fail, \"| 고침:\", fixed)\nsys.exit(0 if tests >= 38 and fail == 0 and fixed else 1)\nPY"
+ },
+ {
+  "id": "T-176",
+  "title": "test_storage.mjs: 지난 daily 정리와 '스냅숏 없으면 put 안 보냄' 검사",
+  "slot": "S3",
+  "project": "웹워들",
+  "write": [
+   "projects/웹워들/tests/test_storage.mjs"
+  ],
+  "deps": [
+   "T-175"
+  ],
+  "timeout_sec": 2400,
+  "max_attempts": 2,
+  "task": "# T-176 검사 둘을 더하십시오 - 아무도 안 보고 있던 두 줄\n\n고칠 파일은 **`projects/웹워들/tests/test_storage.mjs` 하나**입니다(당신이 쓴 파일, 검사 6개).\n**덧붙이기만** 하고 기존 여섯은 지우지 마십시오. 다른 파일은 고치지 마십시오.\n\n## 읽을 것 (이것만)\n\n- `projects/웹워들/tests/test_storage.mjs` 전부 - 가짜 부모를 만드는 틀을 그대로 씁니다\n- `projects/웹워들/web/js/storage.js` 의 `init()` 함수만\n\n## 왜 더하나\n\n적대적 재검수(T-174)가 **이 두 가지를 아무 검사도 보고 있지 않다**고 지적했습니다.\n변이 19개 중 기존 검사가 잡은 것은 1개뿐이었습니다.\n\n## 더할 검사 둘\n\n### 7. `init` 이 지난 날 기록을 **`daily.` 접두까지 붙여** 지운다\n\n스냅숏에 지난 날과 오늘 것을 함께 담아 보냅니다.\n\n```js\nreply({ aimem: 'store.v1', op: 'snapshot', items: {\n  'daily.2020-01-02': '{\"g\":[]}',          // 지난 날\n  ['daily.' + 오늘]: '{\"g\":[\"crane\"]}',     // 오늘\n  settings: '{\"hardMode\":false}',\n}});\n```\n\n`오늘` 은 `storage.js` 와 같은 지역 시간 기준으로 만드십시오\n(`getFullYear`/`getMonth`+1/`getDate`, 2자리 0채움).\n\n`await init()` 뒤에 확인할 것:\n\n- 부모에게 나간 `put` 가운데 `key === 'daily.2020-01-02'` 이고 `value === null` 인 것이 **있다**\n- `key === '2020-01-02'`(접두 없는 꼴)로 나간 것이 **하나도 없다** ← 이것이 결함을 잡는 조건입니다\n- `S.loadDaily(오늘)` 은 여전히 값이 있다 (오늘 것은 안 지움)\n\n### 8. 스냅숏이 **안 오면** `put` 을 하나도 안 보낸다\n\n부모가 답하지 않게 두고 `await init()` 한 뒤\n`S.recordResult(true, 3, 오늘)` 과 `S.saveSettings({hardMode:true,dark:false,colorblind:false})` 를 부릅니다.\n\n- 부모에게 나간 메시지가 **`{aimem:'store.v1', op:'ready'}` 하나뿐**이다 (`put` 0개)\n- 그래도 `S.loadStats().played === 1` 이다 (메모리로는 돈다)\n\n## 주의\n\n- 모듈은 한 번만 평가되므로 검사마다 `await import('../web/js/storage.js?v=N')` 로 **새 N** 을 쓰십시오\n  (기존 검사들이 쓰는 방식 그대로)\n- **검사 안에서 `storage.js` 를 고치지 마십시오.** 빨간 것이 나오면 고치지 말고\n  첫 줄을 `NEEDS-FIX: <무엇이 어디서>` 로 보고하십시오\n- 덧붙이는 부분은 **80줄 안쪽**\n\n## 검증\n\n```bash\nnode --test projects/웹워들/tests/*.mjs\n```\n\n`ℹ tests` 가 **40 이상**, `ℹ fail 0` 이어야 합니다.\n\n## 보고\n\n첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` / `NEEDS-FIX: …` 중 하나만. 그 아래 세 줄 안쪽으로\n검사 둘이 무엇을 재는지와 `ℹ tests` / `ℹ fail` 줄을 적으십시오.\n",
+  "verify": "node --test projects/웹워들/tests/*.mjs > /tmp/v176.txt 2>&1\ntail -10 /tmp/v176.txt\npython3 - <<'PY'\nimport re, sys, pathlib\nt = pathlib.Path(\"/tmp/v176.txt\").read_text(encoding=\"utf-8\", errors=\"replace\")\ntests = int(re.search(r\"tests (\\d+)\", t).group(1)) if re.search(r\"tests (\\d+)\", t) else 0\nfail = int(re.search(r\"fail (\\d+)\", t).group(1)) if re.search(r\"fail (\\d+)\", t) else 99\nprint(\"tests\", tests, \"fail\", fail)\nsys.exit(0 if tests >= 40 and fail == 0 else 1)\nPY"
+ }
+]

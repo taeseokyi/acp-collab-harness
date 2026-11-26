@@ -1,0 +1,6 @@
+2026-11-11T18:29:48 created 3 nodes, request='R12 후속: T-155 가 찾은 GitHub 세션 회수 결함 수정·재검수 + T-153 검토 지적의 설계 반영'
+2026-11-11T18:29:52 spawn T-156 attempt 1 -> T-156-S2-a1-182952 (S2)
+2026-11-11T18:29:52 spawn T-158 attempt 1 -> T-158-S1-a1-182952 (S1)
+2026-11-11T18:32:25 done T-158 (T-158-S1-a1-182952)
+2026-11-11T18:34:40 BLOCKED T-156 - NEEDS-FIX: `tests/test_aimem_monitor_auth.py:484` `test_gith
+2026-11-11T18:34:40 blocked T-157 (의존 실패)

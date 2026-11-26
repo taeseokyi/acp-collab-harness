@@ -517,12 +517,11 @@ class Store:
             if "tags" in patch:
                 new_tags = patch["tags"]
                 current = meta.get("tags") or []
-                if [tag_key(t) for t in new_tags] == [tag_key(t) for t in current]:
-                    pass                      # 태그가 그대로면 사람이 고친 것으로 치지 않는다
-                else:
-                    old_auto_keys = {tag_key(t) for t in (meta.get("tags_auto") or [])}
-                    meta["tags"] = new_tags
-                    meta["tags_auto"] = [t for t in new_tags if tag_key(t) in old_auto_keys]
+                same_keys = [tag_key(t) for t in new_tags] == [tag_key(t) for t in current]
+                old_auto_keys = {tag_key(t) for t in (meta.get("tags_auto") or [])}
+                meta["tags"] = new_tags
+                meta["tags_auto"] = [t for t in new_tags if tag_key(t) in old_auto_keys]
+                if not same_keys:
                     meta["tags_human"] = True
             self._write_json(self._meta_path(rid), meta)
 

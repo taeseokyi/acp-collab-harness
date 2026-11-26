@@ -446,7 +446,7 @@ class AskerTest(unittest.TestCase):
                 self.assertTrue(self._wait(asker), "idle 대기 초과")
             finally:
                 asker.stop()
-        self.assertEqual(seen, [ask.TAG_TIMEOUT])
+        self.assertEqual(seen, [60])
         self.assertEqual(store.get(rid)["autotag"], "done")
 
     # R49-N4

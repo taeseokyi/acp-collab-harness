@@ -1,0 +1,11 @@
+G-032: 100.0%  남은 ETA 0s  상태 {'done': 10}
+  T-177  done     S2  시도 2  run T-177-S2-a2-223926  rc -1/-  aimem_db.py: 끝난 것 정리가 딸린 실행 기록·이벤트를 함께 옮긴다
+  T-178  done     S2  시도 1  run T-178-S2-a1-224546  rc 0/0  aimem_db.py: 아카이브가 핸드오프·전달 기록·로그 줄까지 + VACUUM·종류별 건수
+  T-179  done     S2  시도 1  run T-179-S2-a1-230131  rc 0/0  server.py: /api/archive 가 종류별 건수를 돌려주고 audit 에 남긴다
+  T-180  done     S3  시도 1  run T-180-S3-a1-230131  rc 0/0  test_aimem_db_cli.py: 연동 아카이브 단위 시험 (열린 작업의 기록은 남는다)
+  T-181  done     S2  시도 1  run T-181-S2-a1-230611  rc 0/0  app.js·index.html·style.css: 요청 트리에서 끝난 것 치우기 + 진행 표시 현실화
+  T-182  done     S3  시도 1  run T-182-S3-a1-231133  rc 0/0  test_archive_api.py(새 파일): /api/archive 가 종류별 건수를 돌려준다
+  T-183  done     S3  시도 1  run T-183-S3-a1-232108  rc 0/0  browser_monitor_ui.py: 바뀐 요청 트리를 실측 + ETA 검사를 임시 저장소로
+  T-184  done     S2  시도 1  run T-184-S2-a1-231643  rc 0/0  browser_monitor_preview.py(새 파일): 미리보기 기록이 남고 칸이 섞이지 않는다
+  T-185  done     S3  시도 1  run T-185-S3-a1-222350  rc 0/0  browser_monitor_preview_guard.py(새 파일): 중첩 iframe·팝업·자기 put 이 무시된다
+  T-186  done     S1  시도 1  run T-186-S1-a1-232108  rc 0/0  적대적 검수: 연동 아카이브가 열린 작업·감사 기록·REV 길을 깨뜨리지 않는가

@@ -609,6 +609,15 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(got["tags_auto"], ["새AI"])
         self.assertIs(got["tags_human"], False)
 
+    def test_set_label_tags_case_only_change_updates_spelling(self):
+        rid = self.add()["id"]
+        self.store.set_auto_tags(rid, ["python"])
+        self.store.set_label_tags(rid, {"tags": ["Python"]})
+        got = self.store.get(rid)
+        self.assertEqual(got["tags"], ["Python"])
+        self.assertEqual(got["tags_auto"], ["Python"])
+        self.assertIs(got["tags_human"], False)
+
     def test_set_label_tags_different_tags_marks_human(self):
         rid = self.add()["id"]
         self.store.set_auto_tags(rid, ["회의", "업무"])
