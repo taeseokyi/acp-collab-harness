@@ -57,6 +57,8 @@ projects/VoxLog/settings.json
 
 # 엔진 v2: 세션 폴더(지시문·사건 흐름·보고). 재생성 가능한 실행 기록
 .aimem/sessions/
+# 끝난 세션을 정리가 옮겨 둔 자리 - 같은 원본 기록이다(읽은 파일·명령 출력이 그대로 든다). 공개 저장소에 올리지 않는다
+.aimem/archive/sessions-*/
 
 # 함대 설정·비밀 키 (API 키). **절대 커밋하지 않습니다.** 꼴은 .env.example
 .env
