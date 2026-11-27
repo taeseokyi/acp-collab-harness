@@ -4,6 +4,7 @@ import errno
 import http.client
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -50,16 +51,36 @@ class FakeJobPostOpener:
     def __init__(self):
         self.posts = []
         self.gets = []
+        self.jobs = {}
 
     def __call__(self, req, timeout):
         if req.get_method() == "POST":
             self.posts.append(req)
             jid = "job%d" % len(self.posts)
+            body = req.data.decode("utf-8", errors="replace")
+
+            def field(name):
+                m = re.search(r'name="%s"\r\n\r\n([^\r\n]*)' % re.escape(name), body)
+                return m.group(1) if m else None
+
+            speakers = field("num_speakers")
+            try:
+                speakers = int(speakers) if speakers else 1
+            except ValueError:
+                speakers = 1
+            self.jobs[jid] = {"preprocess": field("preprocess") or "none",
+                              "speakers": speakers}
             return json.dumps({"id": jid, "status": "queued"}).encode("utf-8")
         if req.get_method() == "DELETE":
             return json.dumps({"id": "deleted", "status": "deleted"}).encode("utf-8")
         self.gets.append(req.full_url.rsplit("/", 1)[1])
-        return json.dumps({"status": "done", "result": {"text": "받아 적음"}}).encode("utf-8")
+        jid = self.gets[-1]
+        opts = self.jobs.get(jid, {"preprocess": "none", "speakers": 1})
+        n = int(jid[3:]) if jid.startswith("job") and jid[3:].isdigit() else 1
+        result = {"text": "받아 적음 %d" % n,
+                  "preprocess": opts["preprocess"], "mode": "context",
+                  "speakers": opts["speakers"], "auto": False, "review": False}
+        return json.dumps({"status": "done", "result": result}).encode("utf-8")
 
 
 class Base(unittest.TestCase):
@@ -586,8 +607,15 @@ class TestSttOptions(Base):
         self.wait_done(rid)
         self.drain()
         _, body = self.jreq("GET", "/api/recordings/" + rid)
-        for key in ("stt_options", "stt_used", "prev_stt_used", "transcript_prev"):
+        for key in ("stt_options", "stt_used", "prev_transcripts"):
             self.assertIn(key, body)
+        self.assertEqual(body["prev_transcripts"], [])
+        self.assertNotIn("prev_stt_used", body)
+        self.assertNotIn("transcript_prev", body)
+        _, lst = self.jreq("GET", "/api/recordings")
+        item = lst["items"][0]
+        self.assertNotIn("prev_stt_used", item)
+        self.assertNotIn("transcript_prev", item)
         status, again = self.jreq("POST", "/api/recordings/%s/retry" % rid)
         self.assertEqual(status, 200)
         self.assertEqual(again["stt_options"], {"preprocess": "denoise"})
@@ -729,6 +757,69 @@ class TestRetryStaleJobApi(Base):
 
     def test_retry_without_body_clears_stale_job_and_resubmits(self):
         self.retry_with_stale_job(None)
+
+
+class TestPrevTranscriptsApi(Base):
+    """옵션을 바꿔 다시 받아쓰면 지난 글 벌이 직전 글의 stt_used 를 가진다."""
+
+    env = {
+        "VOXLOG_STT_URL": "https://stt.example.org/v1/audio/diarize/jobs",
+        "VOXLOG_STT_MODEL": "test-model",
+    }
+
+    def make_stt(self):
+        return None  # api 백엔드 + 가짜 opener 를 쓰게 한다
+
+    def setUp(self):
+        self.fake = FakeJobPostOpener()
+        self.patch = mock.patch.object(serve.stt_mod, "_default_opener", self.fake)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+        super().setUp()
+
+    def drain(self):
+        end = time.time() + 10
+        while time.time() < end and not self.server.transcriber.idle():
+            time.sleep(0.02)
+        self.assertTrue(self.server.transcriber.idle())
+
+    def test_prev_transcripts_keep_previous_stt_used(self):
+        status, _ = self.jreq("PUT", "/api/stt-options",
+                              {"options": {"preprocess": "level", "num_speakers": 2}})
+        self.assertEqual(status, 200)
+        _, meta = self.upload()
+        rid = meta["id"]
+        first = self.wait_done(rid)
+        self.drain()
+        self.assertEqual(first["transcript"], "받아 적음 1")
+        first_used = first["stt_used"]
+        self.assertEqual(first_used["preprocess"], "level")
+        self.assertEqual(first_used["speakers"], 2)
+
+        status, _ = self.jreq("POST", "/api/recordings/%s/retry" % rid,
+                              {"options": {"preprocess": "denoise"}})
+        self.assertEqual(status, 200)
+        self.drain()
+        done = self.wait_done(rid)
+        self.assertEqual(done["transcript"], "받아 적음 2")
+        self.assertEqual(len(self.fake.posts), 2)
+
+        _, detail = self.jreq("GET", "/api/recordings/" + rid)
+        self.assertIsInstance(detail["prev_transcripts"], list)
+        self.assertEqual(len(detail["prev_transcripts"]), 1)
+        prev = detail["prev_transcripts"][0]
+        self.assertEqual(prev["text"], "받아 적음 1")
+        self.assertEqual(prev["stt_used"]["preprocess"], "level")
+        self.assertEqual(prev["stt_used"]["speakers"], 2)
+        self.assertEqual(prev["at"], first_used["at"])
+        self.assertNotIn("prev_stt_used", detail)
+        self.assertNotIn("transcript_prev", detail)
+        self.assertEqual(detail["stt_used"]["preprocess"], "denoise")
+
+        _, lst = self.jreq("GET", "/api/recordings")
+        item = lst["items"][0]
+        self.assertNotIn("prev_stt_used", item)
+        self.assertNotIn("transcript_prev", item)
 
 
 class TestSttOptionsToken(Base):

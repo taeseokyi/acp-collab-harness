@@ -121,6 +121,10 @@ textarea { resize: vertical; }
 #detail-prev { margin: 8px 0; }
 #detail-prev summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
 #detail-prev .transcript { max-height: 40vh; }
+#detail-prev-list { margin: 0; padding-left: 1.25em; }
+#detail-prev .prev-item { margin: 4px 0; min-width: 0; }
+#detail-prev .prev-item summary { flex-wrap: wrap; overflow-wrap: anywhere; }
+#detail-prev .prev-item .transcript { margin: 4px 0 8px; }
 .detail audio { width: 100%; margin: 10px 0; }
 
 /* 태그 칩 (목록 항목·상세) */

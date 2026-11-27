@@ -17,6 +17,7 @@ if str(PROJECT) not in sys.path:
     sys.path.insert(0, str(PROJECT))
 
 from voxlog import stt  # noqa: E402
+from voxlog.store import Store  # noqa: E402
 
 FAKE_STT = pathlib.Path(__file__).resolve().parent / "fake_stt.py"
 HAVE_FFMPEG = shutil.which("ffmpeg") is not None
@@ -710,8 +711,67 @@ class TranscriberTest(unittest.TestCase):
         finally:
             tr.stop()
         self.assertEqual(done, [])
-        self.assertEqual(store.status_of(rid), "done")
-        self.assertEqual(store.transcripts.get(rid), "")
+        self.assertEqual(store.status_of(rid), "failed")
+        self.assertIn("비었습니다", store.error_of(rid)[1])
+        self.assertIsNone(store.transcripts.get(rid))
+
+    def test_blank_api_result_keeps_current_and_prev_transcripts(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = Store(tmp.name)
+        rid = store.add_recording(b"not-really-audio", "audio/webm")["id"]
+        store.set_transcript(rid, "옛 글")
+        store.set_transcript(rid, "좋은 글")
+        before = store.get(rid)
+        self.assertEqual(before["transcript"], "좋은 글")
+        self.assertEqual(before["prev_transcripts"], [
+            {"text": "옛 글", "stt_used": None, "at": None},
+        ])
+
+        url = "https://stt.example/v1/audio/diarize/jobs"
+        server = FakeJobServer(url, result={"text": "   "})
+        done = []
+        with mock.patch.object(stt, "_default_opener", server), \
+                mock.patch.object(stt, "_sleep", lambda s: None):
+            tr = stt.Transcriber(store, env={"VOXLOG_STT_URL": url}, on_done=done.append)
+            tr.start()
+            try:
+                tr.submit(rid)
+                self.assertTrue(wait_idle(tr))
+            finally:
+                tr.stop()
+
+        after = store.get(rid)
+        self.assertEqual(after["transcript"], "좋은 글")
+        self.assertEqual(after["status"], "failed")
+        self.assertIn("비었습니다", after["error"])
+        self.assertEqual(after["prev_transcripts"], before["prev_transcripts"])
+        self.assertEqual(done, [])
+
+    def test_blank_api_result_on_first_transcription_marks_failed(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = Store(tmp.name)
+        rid = store.add_recording(b"not-really-audio", "audio/webm")["id"]
+
+        url = "https://stt.example/v1/audio/diarize/jobs"
+        server = FakeJobServer(url, result={"text": "  "})
+        done = []
+        with mock.patch.object(stt, "_default_opener", server), \
+                mock.patch.object(stt, "_sleep", lambda s: None):
+            tr = stt.Transcriber(store, env={"VOXLOG_STT_URL": url}, on_done=done.append)
+            tr.start()
+            try:
+                self.assertTrue(wait_idle(tr))
+            finally:
+                tr.stop()
+
+        after = store.get(rid)
+        self.assertEqual(after["transcript"], "")
+        self.assertEqual(after["status"], "failed")
+        self.assertIn("비었습니다", after["error"])
+        self.assertEqual(after["prev_transcripts"], [])
+        self.assertEqual(done, [])
 
     def test_on_done_not_called_for_failed(self):
         rid = "r-20260101-000000-onfl"

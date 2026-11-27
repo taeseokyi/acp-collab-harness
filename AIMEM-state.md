@@ -1,33 +1,22 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-27T20:55:15 / REV 208
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-28T00:13:20 / REV 209
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | `a41f0c` | claude | opus | R51 쉼 (무료 중심) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
-| S2 | `d27e93` | codex | kisti/kistillm | R51 VoxLog 받아쓰기 옵션: stt.py·serve.py·브라우저 검사 | 무료 |
-| S3 | `5b8c1e` | opencode | kisti/kistillm | R51 VoxLog 받아쓰기 옵션: stt_options.py·store.py·문서 | 무료 |
-| S4 | `6cd650` | claude | sonnet | R51 VoxLog 적대적 검수(부작용 중심) | 유료, 검수만 |
-| S5 | `61dfcc` | claude | sonnet | R51 쉼 (무료 중심) |  |
-| S6 | `47764b` | freebuff | (하네스 기본) | R51 VoxLog 받아쓰기 옵션: 화면(web/) | 무료 |
+| S1 | `a41f0c` | claude | opus | R52 쉼 (무료 중심) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S2 | `d27e93` | codex | kisti/kistillm | R52 VoxLog 지난 글 여러 벌: 브라우저 검사·serve 응답 검사 | 무료 |
+| S3 | `5b8c1e` | opencode | kisti/kistillm | R52 VoxLog 지난 글 여러 벌: store.py·단위 검사·문서 | 무료 |
+| S4 | `6cd650` | claude | sonnet | R52 VoxLog 적대적 검수(부작용 중심) | 유료, 검수만 |
+| S5 | `61dfcc` | claude | sonnet | R52 쉼 (무료 중심) |  |
+| S6 | `47764b` | freebuff | (하네스 기본) | R52 VoxLog 지난 글 여러 벌: 화면(web/) | 무료 |
 
 ## 3. 작업 보드
 
 | ID | 요청 | 태스크 | 담당 | 상태 | 산출물 |
 | --- | --- | --- | --- | --- | --- |
-| T-293 | Q-261113-bd56 | 하드 모드 설정이 빈 판에 바로 닿게 (R24-N5 하) + 시험 | S3 | DONE |  |
-| T-294 | Q-261113-bd56 | 추측 목록 갈래 1: 생활(음식·집·옷·몸·건강) 300개+ (R24-N1) | S2 | DONE |  |
-| T-295 | Q-261113-bd56 | 추측 목록 갈래 2: 사회(학교·일·돈·교통·장소) 300개+ (R24-N1) | S3 | DONE |  |
-| T-296 | Q-261113-bd56 | 추측 목록 갈래 3: 자연·마음(날씨·동식물·시간·감정·놀이) 300개+ (R24-N1) | S3 | DONE |  |
-| T-297 | Q-261113-bd56 | 추측 목록 갈래 4: 풀이씨(동사·형용사 기본형) 250개+ (R24-N1) | S2 | DONE |  |
-| T-298 | Q-261113-bd56 | build_words 가 data/words/*.txt 읽기 + test_words 2000·까닭·경계 6개 빼기 (R24-N1·N2·N3) | S2 | DONE |  |
-| T-299 | Q-261113-bd56 | 적대적 검수: 새 표본으로 덮는 범위·지어낸 말 + N5 변이 + 목표 판정 | S1 | DONE |  |
-| T-300 | Q-261113-292d | 낱말: 갈래 파일 어근 걷기·BANNED·까닭 MUST·ANSWERS 약속 시험 + 빠진 흔한 말 32개 (R27-N1·N2) | S4 | DONE |  |
-| T-301 | Q-261113-292d | 브라우저: 연습 쪽 하드 맞춤·입력 중 글자 유지 시험 - V3·V6 (R27-N2) | S5 | DONE |  |
-| T-302 | Q-261113-292d | tests/README.md 검사 수 갱신 (R27-N3) | S2 | DONE |  |
-| T-303 | Q-261113-292d | 가벼운 적대적 재검수 + '검사' 목표 판정 | S1 | DONE |  |
 | T-304 | Q-261114-23ef | 브라우저: 줄 낸 판 하드 잠금·빈 판 맞춤 판 번호 시험 - V16·V14 (R28-N1·N2) | S4 | DONE |  |
 | T-305 | Q-261114-23ef | 낱말: 남은 어근 걷기·파일 훑기 + 빠진 흔한 말 30개 (R28-N3·N4) | S2 | DONE |  |
 | T-306 | Q-261114-23ef | 가벼운 적대적 재검수: R28-N1~N4 | S1 | DONE |  |
@@ -190,15 +179,23 @@
 | T-465 | Q-261127-8d1e | [VoxLog] R51-N9 화면 - '기본' 이름을 묶음마다 뜻대로, 녹음 옵션은 합치지 않음 안내, 이전 글 요약 이름 | S6 | DONE |  |
 | T-466 | Q-261127-8d1e | [VoxLog] R51-N9·N12·N10 - effective_stt_options 가 빈 옵션을 없음으로, 문서를 고친 동작에 맞춤 | S3 | DONE |  |
 | T-467 | Q-261127-8d1e | [VoxLog] R51 재검수 2 - N9 문구·빈 옵션 규칙·문서 | S4 | DONE | rounds/R51/REVIEW-r51-3.md |
+| T-468 | Q-261127-8f71 | [VoxLog] store.py 지난 글 여러 벌(.prev.json·상한 5·같은 글 안 늘림·옛 .prev.txt 이어받기) + 단위 검사 | S3 | DONE | projects/VoxLog/voxlog/store.py, projects/VoxLog/tests/test_store.py |
+| T-469 | Q-261127-8f71 | [VoxLog] 화면 - 상세 '지난 글 N벌' 목록(받아쓴 때·옵션), 안내 문구, 셸 캐시 VERSION | S6 | DONE | projects/VoxLog/web/app.js, index.html, style.css, sw.js |
+| T-470 | Q-261127-8f71 | [VoxLog] 문서 - INTERFACE.md·README.md 의 이전 글 규칙을 판 기록으로 (R51-N14 포함) | S3 | DONE | projects/VoxLog/docs/INTERFACE.md, projects/VoxLog/README.md |
+| T-471 | Q-261127-8f71 | [VoxLog] 검사 - test_serve 응답 키, 브라우저 t51 고침 + t56(A→B→C 둘 다 보임·옵션)·t57(옛 .prev.txt 가 지난 글로) | S2 | DONE | projects/VoxLog/tests/test_serve.py, projects/VoxLog/tests/browser_voxlog.py |
+| T-472 | Q-261127-8f71 | [VoxLog] R52 적대적 검수 - 지난 글 여러 벌(부작용 중심) | S4 | DONE | rounds/R52/REVIEW-r52.md |
+| T-473 | Q-261127-8f71 | [VoxLog] R52-N1 받아쓰기 결과가 빈 글이면 실패로 - 지금 글·지난 글 그대로 | S2 | DONE | projects/VoxLog/voxlog/stt.py, projects/VoxLog/tests/test_stt.py |
+| T-474 | Q-261127-8f71 | [VoxLog] R52 재검수 - N1 고침과 고치며 생긴 새 문제 | S4 | DONE | rounds/R52/REVIEW-r52-2.md |
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
 | 1 | [VoxLog] R51 검수 하 등급 묶음: R51-N4 깊은 중첩 JSON 이 400 대신 연결 끊김(RecursionError, PUT stt-options·retry·PATCH 세 곳), R51-N5 context 의 제로폭·제어 문자 거르기, R51-N6 설정 기본값 캐시가 낡음·설정 칸 다시 열면 입력 덮임, R51-N7 재시도 실패 시 옵션 되돌림의 좁은 틈·다른 녹취로 옮긴 뒤 묶음 숨김. 검사 구멍 넷(검수 변이 표의 폴링이 이전 글 펼침 접음·격리 출처 숨김·토스트 innerHTML·옵션 복구). 원문 rounds/R51/REVIEW-r51.md | S2/S3 무료 |  |
-| 2 | [VoxLog] 결정거리 R51-N8: 다시 받아쓰기의 이전 글 규칙. 지금은 '밀려난 글 중 가장 긴 것 한 벌'(R51-N1 고침) - 길고 나쁜 글 A → 짧고 좋은 글 B → C 면 B 가 사라짐. 같은 자리를 두 번째로 지적받아 이번 라운드엔 갈아엎지 않음. 안: (가) 지난 글 여러 벌(예: 5벌) 기록 = 판 기록이라는 흔한 방식, 덮는 규칙이 없어짐, store·화면 목록 필요 (나) 지금 규칙 유지(문구로 알림). 태석님이 고르면 구현. 원문 rounds/R51/REVIEW-r51-2.md | 결정 뒤 S3·S6 |  |
-| 3 | [VoxLog] R51 재검수 하 등급 묶음: R51-N11 겹친 두 재시도가 진행 중 작업 id 를 지울 수 있는 좁은 틈(set_job(None) 을 resubmit 잠금 안으로), R51-N12 resubmit 실패 시 옵션 복구 검사 없음. 원문 rounds/R51/REVIEW-r51-2.md | S2 무료 |  |
-| 4 | [VoxLog] R51 재검수 2 하 등급 묶음: R51-N13 녹음에 다른 옵션이 있을 때 상세 칸의 '기본(앱 설정 따름)' 이름이 틀림, R51-N14 INTERFACE.md 한 곳이 옛 이전 글 규칙을 말함, R51-N15 새 문구를 잡는 검사 없음. 원문 rounds/R51/REVIEW-r51-3.md | S3·S6 무료 |  |
+| 2 | [VoxLog] R51 재검수 하 등급 묶음: R51-N11 겹친 두 재시도가 진행 중 작업 id 를 지울 수 있는 좁은 틈(set_job(None) 을 resubmit 잠금 안으로), R51-N12 resubmit 실패 시 옵션 복구 검사 없음. 원문 rounds/R51/REVIEW-r51-2.md | S2 무료 |  |
+| 3 | [VoxLog] R51 재검수 2 하 등급 묶음: R51-N13 녹음에 다른 옵션이 있을 때 상세 칸의 '기본(앱 설정 따름)' 이름이 틀림, R51-N15 새 문구를 잡는 검사 없음 (R51-N14 는 R52 T-470 에서 닫힘). 원문 rounds/R51/REVIEW-r51-3.md | S3·S6 무료 |  |
+| 4 | [VoxLog] R52 검수 하 등급 묶음: R52-N2 같은 글 중복 제거 (2) 가 정상 경로로 안 닿고 검사도 없음(지울지·검사할지), R52-N3 깨진 .prev.json 이 옛 .prev.txt 를 가려 다음 쓰기에 옛 글이 사라짐, R52-N4 옛 .prev.txt 가 지금 글과 같으면 지난 글에 또 보임, R52-N5 큰 글 5벌이면 상세 응답이 커지고 받아쓰는 동안 5초마다 되풀이(지난 글을 따로 받는 API 는 후속 거리), R52-N6 검사 구멍(지난 글 본문 XSS·공백만 다른 글·'5벌까지' 문구가 PREV_KEEP 와 따로 놂). 원문 rounds/R52/REVIEW-r52.md | S2·S3 무료 |  |
+| 5 | [VoxLog] R52 재검수 하 등급 묶음: R52-N7 문서(INTERFACE·README)가 '빈 받아쓰기 결과는 실패' 를 말하지 않음, R52-N8 재시도가 빈 결과로 실패하면 '실패' 줄 옆에 옛 글의 N자가 보이고 무음 파일 안내가 없음, R52-N9 옛 done+빈 글 자료와 '(빈 글)' 문구, R52-N10 빈 결과 실패의 화면 검사 없음·문구가 두 곳에 박힘·on_done 앞 strip 군더더기. 원문 rounds/R52/REVIEW-r52-2.md | S3·S6 무료 |  |
 
 ## 6. 파일 소유권
 
@@ -222,40 +219,40 @@
 | `CLAUDE.md` | 관리자 | 부트스트랩. 자동 주입되는 유일한 파일 |
 | `README.md` | 관리자 | 저장소 소개 |
 | `projects/**` | 관리자 | 프로젝트 결과물 projects/<이름>/ - 여러 라운드에 걸쳐 쌓임 (REV 142). 관리자가 하위 경로를 슬롯에 배정 |
-| `projects/VoxLog/README.md` | S3 | R51 |
+| `projects/VoxLog/README.md` | S3 | R52 |
 | `projects/VoxLog/docs/**` | S6 | R39 |
 | `projects/VoxLog/docs/DESIGN-next-features.md` | S3 | R50 |
-| `projects/VoxLog/docs/INTERFACE.md` | S3 | R51 |
+| `projects/VoxLog/docs/INTERFACE.md` | S3 | R52 |
 | `projects/VoxLog/docs/RESEARCH-draft-owner.md` | S3 | R50 |
-| `projects/VoxLog/serve.py` | S2 | R51 |
+| `projects/VoxLog/serve.py` | S2 | R52 |
 | `projects/VoxLog/settings.example.json` | S2 | R44 |
 | `projects/VoxLog/tests/**` | S6 | R39 |
-| `projects/VoxLog/tests/browser_voxlog.py` | S2 | R51 |
+| `projects/VoxLog/tests/browser_voxlog.py` | S2 | R52 |
 | `projects/VoxLog/tests/fake_llm.py` | S3 | R49 |
 | `projects/VoxLog/tests/fake_tag_llm.py` | S2 | R49 |
 | `projects/VoxLog/tests/test_ask.py` | S2 | R49 |
-| `projects/VoxLog/tests/test_serve.py` | S2 | R51 |
+| `projects/VoxLog/tests/test_serve.py` | S2 | R52 |
 | `projects/VoxLog/tests/test_serve_ask_body.py` | S2 | R46 |
-| `projects/VoxLog/tests/test_store.py` | S3 | R51 |
-| `projects/VoxLog/tests/test_stt.py` | S2 | R51 |
+| `projects/VoxLog/tests/test_store.py` | S3 | R52 |
+| `projects/VoxLog/tests/test_stt.py` | S2 | R52 |
 | `projects/VoxLog/tests/test_stt_options.py` | S3 | R51 |
 | `projects/VoxLog/tests/test_tags.py` | S2 | R49 |
 | `projects/VoxLog/voxlog/**` | S6 | R39 |
 | `projects/VoxLog/voxlog/__init__.py` | S3 | R33 |
 | `projects/VoxLog/voxlog/ask.py` | S2 | R49 |
-| `projects/VoxLog/voxlog/store.py` | S3 | R51 |
-| `projects/VoxLog/voxlog/stt.py` | S2 | R51 |
+| `projects/VoxLog/voxlog/store.py` | S3 | R52 |
+| `projects/VoxLog/voxlog/stt.py` | S2 | R52 |
 | `projects/VoxLog/voxlog/stt_options.py` | S3 | R51 |
 | `projects/VoxLog/voxlog/tags.py` | S2 | R49 |
 | `projects/VoxLog/web/**` | S4 | R34 |
 | `projects/VoxLog/web/api.js` | S6 | R41 |
-| `projects/VoxLog/web/app.js` | S6 | R51 |
+| `projects/VoxLog/web/app.js` | S6 | R52 |
 | `projects/VoxLog/web/icons/**` | S5 | R33 |
-| `projects/VoxLog/web/index.html` | S6 | R51 |
+| `projects/VoxLog/web/index.html` | S6 | R52 |
 | `projects/VoxLog/web/manifest.webmanifest` | S5 | R33 |
 | `projects/VoxLog/web/queue.js` | S3 | R46 |
-| `projects/VoxLog/web/style.css` | S6 | R51 |
-| `projects/VoxLog/web/sw.js` | S6 | R51 |
+| `projects/VoxLog/web/style.css` | S6 | R52 |
+| `projects/VoxLog/web/sw.js` | S6 | R52 |
 | `projects/웹워들/README.md` | S3 | R10 |
 | `projects/웹워들/app.json` | S3 | R10 |
 | `projects/웹워들/docs/**` | S1 | R12 T-152 미리보기 기록 저장 설계 문서 (새 경로) |
@@ -377,6 +374,7 @@
 | `rounds/R51/REAL-CHECK.md` | S6 | R51 실물 확인 |
 | `rounds/R51/REVIEW-r51*.md` | S4 | R51 적대적 검수 |
 | `rounds/R51/REVIEW-r51-3.md` | S4 | R51 재검수 2 |
+| `rounds/R52/REVIEW-r52*.md` | S4 | R52 적대적 검수 |
 | `skills/**` | 관리자 | **현재 비어 있음** (REV 101 에서 `acp-slot-lifecycle` 제거). 되살아나면 이 행이 그대로 적용된다 |
 | `tests/browser_monitor_app.py` | S3 | R10 T-131 |
 | `tests/browser_monitor_app_server.py` | S5 | R32 |
@@ -486,3 +484,4 @@
 | Q-261125-76c8 | [VoxLog] F2 녹취 이름·태그 구현 - AI 가 자동으로 태그를 달고 사람이 고치거나 더함 | 태석 (클로드 코드 전달) | DONE | 2026-11-25T11:21:26 |
 | Q-261126-902f | [VoxLog] 대기 큐의 VoxLog 항목 다섯 모두 정리 | 태석 (클로드 코드 전달) | DONE | 2026-11-26T10:21:43 |
 | Q-261127-8d1e | [VoxLog] 웹에서 받아쓰기 설정 옵션 바꾸기 (전처리 denoise 등) | 태석 (클로드 코드 전달) | DONE | 2026-11-27T16:17:01 |
+| Q-261127-8f71 | [VoxLog] 다시 받아쓰기의 지난 글을 여러 벌 남기기 (판 기록, R51-N8 결정) | 태석 (클로드 코드 전달) | DONE | 2026-11-27T21:56:58 |

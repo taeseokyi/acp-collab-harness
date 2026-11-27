@@ -472,6 +472,9 @@ class Transcriber:
         except Exception as exc:
             self.store.set_status(rid, "failed", _short(exc))
         else:
+            if not (text or "").strip():
+                self.store.set_status(rid, "failed", "받아 적은 글이 비었습니다")
+                return
             self.store.set_transcript(rid, text, used=used)
             if (text or "").strip() and self.on_done is not None:
                 try:

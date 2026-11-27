@@ -1,0 +1,142 @@
+{
+ "id": "G-061",
+ "request": "Q-261113-292d",
+ "created": "2026-11-13T23:30:20",
+ "rev": 175,
+ "round": 28,
+ "concurrency": 4,
+ "nodes": [
+  {
+   "id": "T-300",
+   "slot": "S4",
+   "deps": [],
+   "project": "자모맞히기",
+   "title": "R27-N1·N2(낱말): 갈래 파일 어근 걷기·BANNED·까닭 MUST·ANSWERS 약속 시험 + 빠진 흔한 말 32개",
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "write": [
+    "projects/자모맞히기/data/words/생활.txt",
+    "projects/자모맞히기/data/words/사회.txt",
+    "projects/자모맞히기/data/words/자연마음.txt",
+    "projects/자모맞히기/data/words/풀이씨.txt",
+    "projects/자모맞히기/tests/test_words.py",
+    "projects/자모맞히기/web/js/words.js"
+   ],
+   "task": "# T-300 낱말 목록: 어근 걷기·시험 빈틈·덮는 범위 (R27-N1·N2, `rounds/R27/REVIEW-r27.md` 3·4절)\n\n쓸 파일: `projects/자모맞히기/data/words/*.txt`(넷), `projects/자모맞히기/tests/test_words.py`, `projects/자모맞히기/web/js/words.js`(빌드 출력만). 다른 파일은 읽기만. **바로 파일을 고치십시오.** 낱말 기준은 `.aimem/graph/inputs/r25/CONTRACT.md` '낱말 고르는 기준'(짧음).\n\n## 1. 어근·비표준 말 걷기 (N1)\n\n`grep -n -x -E '억울|솔직|명랑|온순|당당|씩씩|튼튼|든든|단단|쌀쌀|침울|패이다|개이다' projects/자모맞히기/data/words/*.txt` 로 찾은 줄을 지웁니다(`자연마음.txt` 성격 묶음, `풀이씨.txt` 두 줄). `불안 침착 순진 겸손 성실` 은 명사라 **둡니다**. 같은 성격 묶음에서 다른 어근(뒤에 `-하다` 가 붙어야 말이 되는 것, 예: `착실 똑똑 꼼꼼 넉넉`)이 눈에 띄면 같이 지우고 보고에 적으십시오.\n\n## 2. 시험 (`test_words.py`, N2)\n\n- `BANNED` 에 위 13개 + `착실 똑똑 꼼꼼 넉넉` 을 더함(새 줄 하나).\n- `MUST` 에 `까닭` 을 더함.\n- 새 시험 하나: **`set(ANSWERS)` 가 `data/answers.txt` 의 낱말 집합과 같고 380개** (지금은 갈래 낱말이 정답에 섞여도 초록입니다 - 변이 V12). `words.js` 를 읽는 기존 방식을 그대로 쓰십시오.\n\n## 3. 빠진 흔한 말 (덮는 범위)\n\n아래 32개는 검수가 시험 밖 표본에서 찾은 \"없는 낱말\" 입니다. 이미 ALLOWED 에 없으면 알맞은 갈래 파일의 알맞은 `#` 묶음에 넣으십시오(모두 6칸 표준어; `MUST` 에는 넣지 마십시오 - 다음 검수가 새 표본으로 잴 몫):\n`강둑 늦잠 물속 믿음 발끝 밤잠 봄빛 손끝 숙면 숙박 운명 첫날 편식 평일 행운 손맛 꿀맛 성함 꿈길 잠결 밤참 친정 큰집 지하도 꽃눈 떡잎 덩굴 풀숲 백합 분통 불평 잘못`\n갈래 파일마다 첫 음절 15개 상한(`test_branch_files_first_syllable`)이 있으니 넘으면 다른 갈래 파일로.\n\n## 4. 다시 만들기\n\n`python3 projects/자모맞히기/tools/build_words.py` 로 `web/js/words.js` 를 다시 만듭니다(손으로 고치지 않음). ANSWERS 는 380 그대로여야 합니다.\n\n## 스스로 확인 (엔진의 검증도 이것)\n\n`python3 .aimem/graph/inputs/r28/v_words.py` 의 마지막 줄이 `v_words: 모두 통과`. 이 도구는 관리자 것이니 고치지 마십시오. 실패 줄이 무엇을 고칠지 알려 줍니다.\n\n## 하지 말 것\n\n다른 파일 쓰기(`answers.txt`·`allowed.txt`·`build_words.py`·`browser_*.py` 포함), `git commit`/`push`, 파일 삭제, 의존성 설치, 네트워크에서 목록 내려받기, 운영 모니터 부르기.\n\n보고 첫 줄은 `DONE` / `PARTIAL` / `BLOCKED`, 그다음 지운 낱말·더한 낱말 수와 도구 출력의 마지막 세 줄.\n",
+   "verify": "python3 .aimem/graph/inputs/r28/v_words.py",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-300-S4-a1-233022",
+     "started": "2026-11-13T23:30:23",
+     "ended": "2026-11-13T23:31:21",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n**지운 낱말 13개**\n- `자연마음.txt` 11개: 억울 솔직 명랑 온순 당당 씩씩 튼튼 든든 단단 쌀쌀 침울\n- `풀이씨.txt` 2개: 패이다 개이다\n- 착실·똑똑·꼼꼼·넉넉은 어느 파일에도 없었습니다. 성격 묶음에서 눈에 띄는 다른 어근도 없어서 더 지우지 않았습니다. 불안 침착 순진 겸손 성실은 그대로 뒀습니다.\n\n**더한 낱말 32개**\n- 32개 모두 갈래 파일에 없었고, 모두 6칸입니다. `MUST` 에는 넣지 않았습니다.\n- `자연마음.txt` 15개\n  - 땅·물·산: 강둑 물속\n  - 계절·때: 봄빛\n  - 풀·꽃·나무: 꽃눈 떡잎 덩굴 풀숲 백합\n  - 마음·느낌: 믿음 운명 행운 분통 불평 잠결 꿈길\n- `생활.txt` 10개\n  - 음식: 밤참 손맛 꿀맛 편식\n  - 건강과 위생: 숙면 손끝 발끝 늦잠 밤잠\n  - 집: 숙박\n- `사회.txt` 7개\n  - 사람: 성함 친정 큰집\n  - 장소: 지하도\n  - 일: 잘못\n  - 나라: 평일 첫날\n\n**`test_words.py`**\n- `BANNED` 에 위 13개와 `착실 똑똑 꼼꼼 넉넉` 을 새 두 줄로 더했습니다. 새 줄 하나로 하라고 하셨는데 줄 길이 때문에 둘로 나눴습니다.\n- `MUST` 에 `까닭` 을 더했습니다.\n- 새 시험 `test_answers_match_answers_file` 을 넣었습니다. `set(ANSWERS)` 가 `data/answers.txt` 의 낱말 집합과 같고 개수가 380인지 봅니다.\n\n**돌린 검증**\n- `python3 projects/자모맞히기/tools/build_words.py` 로 `words.js` 를 다시 만들었습니다. ANSWERS 는 380 그대로이고 ALLOWED 는 2156개입니다.\n- `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_words.py'` 는 13개 모두 OK 였습니다. 첫 음절 15개 상한도 넘은 파일이 없습니다.\n- `python3 .aimem/graph/inputs/r28/v_words.py` 마지막 세 줄:\n```\nRan 13 tests in 0.072s\nOK\nANSWERS 380 · ALLOWED 2156\nv_words: 모두 통과\n```\n\n**다음 담당자에게**\n- `words/*.txt` 는 파일 끝 개행이 없을 수 있습니다. 읽는 쪽은 문제없지만 diff 에는 `\\ No newline` 이 보일 수 있습니다.\n- `test_words.py` 에 보탠 `MUST` 의 `까닭` 은 이미 ALLOWED 에 있어서 통과했습니다.\n- 위에 쓴 `unittest` 명령은 `test_words.py` 한 파일만 돌린 것입니다. 전체 `tests/` 는 돌리지 않았습니다.",
+     "report_tail": "\n  - 장소: 지하도\n  - 일: 잘못\n  - 나라: 평일 첫날\n\n**`test_words.py`**\n- `BANNED` 에 위 13개와 `착실 똑똑 꼼꼼 넉넉` 을 새 두 줄로 더했습니다. 새 줄 하나로 하라고 하셨는데 줄 길이 때문에 둘로 나눴습니다.\n- `MUST` 에 `까닭` 을 더했습니다.\n- 새 시험 `test_answers_match_answers_file` 을 넣었습니다. `set(ANSWERS)` 가 `data/answers.txt` 의 낱말 집합과 같고 개수가 380인지 봅니다.\n\n**돌린 검증**\n- `python3 projects/자모맞히기/tools/build_words.py` 로 `words.js` 를 다시 만들었습니다. ANSWERS 는 380 그대로이고 ALLOWED 는 2156개입니다.\n- `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_words.py'` 는 13개 모두 OK 였습니다. 첫 음절 15개 상한도 넘은 파일이 없습니다.\n- `python3 .aimem/graph/inputs/r28/v_words.py` 마지막 세 줄:\n```\nRan 13 tests in 0.072s\nOK\nANSWERS 380 · ALLOWED 2156\nv_words: 모두 통과\n```\n\n**다음 담당자에게**\n- `words/*.txt` 는 파일 끝 개행이 없을 수 있습니다. 읽는 쪽은 문제없지만 diff 에는 `\\ No newline` 이 보일 수 있습니다.\n- `test_words.py` 에 보탠 `MUST` 의 `까닭` 은 이미 ALLOWED 에 있어서 통과했습니다.\n- 위에 쓴 `unittest` 명령은 `test_words.py` 한 파일만 돌린 것입니다. 전체 `tests/` 는 돌리지 않았습니다.",
+     "session_state": "done",
+     "verify_rc": 0,
+     "verify_tail": "Ran 13 tests in 0.086s\n\nOK\nANSWERS 380 · ALLOWED 2156\nv_words: 모두 통과\n",
+     "fail_kind": null
+    }
+   ]
+  },
+  {
+   "id": "T-301",
+   "slot": "S5",
+   "deps": [],
+   "project": "자모맞히기",
+   "title": "R27-N2(브라우저): 연습 쪽 하드 맞춤·입력 중 글자 유지 시험 - 변이 V3·V6 잡기",
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "write": [
+    "projects/자모맞히기/tests/browser_modes.py"
+   ],
+   "task": "# T-301 브라우저 시험 빈틈 메우기 (R27-N2, `rounds/R27/REVIEW-r27.md` 4·5절의 V3·V6, 탐침 C·D)\n\n쓸 파일은 **하나**: `projects/자모맞히기/tests/browser_modes.py`. 다른 파일은 읽기만(특히 `web/js/ui.js` 는 **고치지 마십시오** - 제품은 맞고 시험이 없는 것입니다). **바로 파일을 고치십시오.**\n\n## 배경\n\n`web/js/ui.js:507` `alignEmptyHard(g)` 는 줄이 없는 판을 저장된 하드 설정에 맞춰 다시 만들되 **입력 중인 글자를 옮깁니다**(511행). `selectMode()` 는 연습 쪽(561행)과 날마다 쪽(564행) 둘 다 이것을 씁니다. 지금 시험은 날마다 쪽만 지켜서, 아래 두 변이가 살아남습니다:\n- V3: 561행 `practiceGame = alignEmptyHard(practiceGame);` 을 지워도 초록\n- V6: 511행 `for (const ch of typed) fresh.addLetter(ch);` 를 지워도 초록\n\n## 더할 시나리오 (기존 83개는 그대로, 새 검사 3개 이상 → 합계 86 이상)\n\n기존 `scenario_hard_mode`·`scenario_saved_hard_empty_daily` 와 도우미(`open_page`, `dismiss_help`, `type_units`, `row_text`, `empty_board` 등)를 그대로 쓰십시오.\n\n1. **(V3, 탐침 D)** 연습 판을 먼저 만든 뒤(연습으로 갔다가 날마다로 돌아옴, 연습 판은 빈 채) → 날마다에서 설정 창 `#set-hard` 를 켬 → 연습으로 감 → 설정 창의 `#set-hard` 가 **켜져 있음**(`is_checked()`). 할 수 있으면 그 연습 판에 하드 규칙이 실제로 걸리는지도(예: 한 줄 낸 뒤 맞힌 자모를 빼고 내면 거절 안내) 묻습니다.\n2. **(V6, 탐침 C)** 날마다 빈 판에 세 칸(예: `ㄱㅏㄱ`)을 쳐 둔 채 → 연습으로 가서 하드를 바꿈 → 날마다로 돌아옴 → 첫 줄에 **그 세 칸이 그대로 보임**(`row_text`·그려진 글자) 그리고 `#set-hard` 가 바꾼 값.\n\n화면 검사 규칙: 그려진 것을 묻습니다(`is_visible()`, `getComputedStyle`, `bounding_box()`, 체크박스는 `is_checked()`). 고정 `sleep` 으로 판정하지 않습니다.\n\n## 스스로 확인 (엔진의 검증도 이것)\n\n`python3 .aimem/graph/inputs/r28/v_modes.py` 의 마지막 줄이 `v_modes: 모두 통과`. 이 도구는 원본에서 `browser_modes.py` 가 전부 통과(86개 이상)하는지 본 다음, `/tmp` 사본의 `ui.js` 에서 위 두 줄을 하나씩 빼고 돌려 **실패해야** 잡힌 것으로 봅니다(몇 분 걸립니다). 관리자 것이니 고치지 마십시오. 먼저 `python3 projects/자모맞히기/tests/browser_modes.py` 로 원본 통과를 보고, 변이는 사본을 직접 만들어 확인해도 됩니다(자기가 만든 `/tmp` 폴더는 끝날 때 `rm -rf`).\n\n## 하지 말 것\n\n다른 파일 쓰기, `git commit`/`push`, 저장소 안 파일 삭제, 의존성 설치, 운영 모니터 부르기.\n\n보고 첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` / `NEEDS-FIX: …`, 그다음 더한 시나리오 이름과 도구 출력의 마지막 네 줄.\n",
+   "verify": "python3 .aimem/graph/inputs/r28/v_modes.py",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-301-S5-a1-233023",
+     "started": "2026-11-13T23:30:23",
+     "ended": "2026-11-13T23:35:18",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n`projects/자모맞히기/tests/browser_modes.py` 에 시나리오 2개(검사 7개)를 더했습니다. 원본은 83개에서 90개로 늘어 모두 통과했고, V3·V6 변이는 둘 다 잡힙니다. 다른 파일은 건드리지 않았습니다.\n\n**더한 시나리오** (`main()` 의 `T-293 낸 줄 있는 판은 유지` 바로 뒤에 등록)\n- `scenario_hard_reaches_empty_practice` (V3, 탐침 D)\n  - 연습으로 갔다가 날마다로 돌아와 연습 판을 만들어 둡니다(빈 채).\n  - 날마다에서 `#set-hard` 를 켭니다.\n  - 연습으로 가서 설정 창을 열면 `#set-hard` 가 켜져 있는지 `is_checked()` 로 묻습니다.\n- `scenario_typed_letters_survive_align` (V6, 탐침 C)\n  - 날마다 빈 판에 틀린 낱말의 앞 세 칸을 쳐 둡니다.\n  - 연습에서 하드를 켜고 날마다로 돌아옵니다(`set_hard_in_practice` 사용).\n  - 첫 줄 `row_text` 가 그 세 칸 그대로인지, `#set-hard` 가 켜져 있는지 묻습니다.\n\n**실제로 돌린 검증**\n- `python3 projects/자모맞히기/tests/browser_modes.py`: 마지막 줄 `통과 90 / 전체 90`\n- `python3 .aimem/graph/inputs/r28/v_modes.py`, 마지막 네 줄:\n```\n원본: 통과 90 / 전체 90 rc 0\nV3 연습 쪽 하드 맞춤 뺌: 잡힘 (통과 89 / 전체 90)\nV6 입력 중 글자 안 옮김: 잡힘 (통과 89 / 전체 90)\nv_modes: 모두 통과\n```\n\n**다음 담당자가 알아야 할 것**\n- 연습 판에 하드 규칙이 실제로 걸리는지(맞힌 자모를 빼고 내면 거절 안내)는 묻지 않았습니다. 연습 정답이 무작위이고 시험에서 읽을 수 없어서, 선택 사항으로 보고 체크박스 검사만 했습니다.\n- `ui.js` 와 `v_modes.py` 는 고치지 않았습니다.",
+     "report_tail": "힙니다. 다른 파일은 건드리지 않았습니다.\n\n**더한 시나리오** (`main()` 의 `T-293 낸 줄 있는 판은 유지` 바로 뒤에 등록)\n- `scenario_hard_reaches_empty_practice` (V3, 탐침 D)\n  - 연습으로 갔다가 날마다로 돌아와 연습 판을 만들어 둡니다(빈 채).\n  - 날마다에서 `#set-hard` 를 켭니다.\n  - 연습으로 가서 설정 창을 열면 `#set-hard` 가 켜져 있는지 `is_checked()` 로 묻습니다.\n- `scenario_typed_letters_survive_align` (V6, 탐침 C)\n  - 날마다 빈 판에 틀린 낱말의 앞 세 칸을 쳐 둡니다.\n  - 연습에서 하드를 켜고 날마다로 돌아옵니다(`set_hard_in_practice` 사용).\n  - 첫 줄 `row_text` 가 그 세 칸 그대로인지, `#set-hard` 가 켜져 있는지 묻습니다.\n\n**실제로 돌린 검증**\n- `python3 projects/자모맞히기/tests/browser_modes.py`: 마지막 줄 `통과 90 / 전체 90`\n- `python3 .aimem/graph/inputs/r28/v_modes.py`, 마지막 네 줄:\n```\n원본: 통과 90 / 전체 90 rc 0\nV3 연습 쪽 하드 맞춤 뺌: 잡힘 (통과 89 / 전체 90)\nV6 입력 중 글자 안 옮김: 잡힘 (통과 89 / 전체 90)\nv_modes: 모두 통과\n```\n\n**다음 담당자가 알아야 할 것**\n- 연습 판에 하드 규칙이 실제로 걸리는지(맞힌 자모를 빼고 내면 거절 안내)는 묻지 않았습니다. 연습 정답이 무작위이고 시험에서 읽을 수 없어서, 선택 사항으로 보고 체크박스 검사만 했습니다.\n- `ui.js` 와 `v_modes.py` 는 고치지 않았습니다.",
+     "session_state": "done",
+     "verify_rc": 0,
+     "verify_tail": "원본: 통과 90 / 전체 90 rc 0\nV3 연습 쪽 하드 맞춤 뺌: 잡힘 (통과 89 / 전체 90)\nV6 입력 중 글자 안 옮김: 잡힘 (통과 89 / 전체 90)\nv_modes: 모두 통과\n",
+     "fail_kind": null
+    }
+   ]
+  },
+  {
+   "id": "T-302",
+   "slot": "S2",
+   "deps": [
+    "T-300",
+    "T-301"
+   ],
+   "project": "자모맞히기",
+   "title": "R27-N3: tests/README.md 의 검사 수를 지금 값으로",
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "write": [
+    "projects/자모맞히기/tests/README.md"
+   ],
+   "task": "# T-302 시험 안내 문서의 수 맞추기 (R27-N3)\n\n쓸 파일은 **하나**: `projects/자모맞히기/tests/README.md`. 다른 파일은 고치지 마십시오. **바로 파일을 고치십시오 - 계획을 길게 쓰지 마십시오.**\n\n## 할 일\n\n1. 저장소 루트에서 네 벌을 돌려 지금 수를 봅니다:\n   - `node --test projects/자모맞히기/tests/*.mjs` → `ℹ pass N`\n   - `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'` → `Ran N tests`\n   - `python3 projects/자모맞히기/tests/browser_game.py` → `통과 N / 전체 N`\n   - `python3 projects/자모맞히기/tests/browser_modes.py` → `통과 N / 전체 N`\n2. `README.md` 위쪽 표의 '초록이면' 칸과, 그 아래 \"이 글을 쓸 때 …\" 같은 문단의 옛 수(`pass 61`·`Ran 8 tests`·`통과 62 / 전체 62` 등)를 **지금 수로** 바꿉니다. 옛 날짜·태스크 번호 문단은 \"2026-11-13 (R28 T-302) 에 네 벌이 초록: …\" 한 문장으로 바꾸면 됩니다. 문서 어디에도 옛 수가 남으면 안 됩니다.\n3. 문서에 `browser_modes.py` 가 보는 것을 적은 곳이 있으면 R28 에 더해진 시나리오(연습 쪽 하드 맞춤, 입력 중 글자 유지) 한 줄을 더합니다(`browser_modes.py` 의 `scenario_` 이름을 보고).\n\n## 스스로 확인 (엔진의 검증도 이것)\n\n`python3 .aimem/graph/inputs/r28/v_readme.py` 의 마지막 줄이 `v_readme: 모두 통과`(네 벌을 다 돌리니 몇 분 걸립니다). 관리자 것이니 고치지 마십시오.\n\n## 하지 말 것\n\n다른 파일 쓰기, `git commit`/`push`, 파일 삭제, 의존성 설치, 운영 모니터 부르기.\n\n보고 첫 줄은 `DONE` / `PARTIAL` / `BLOCKED`, 그다음 바꾼 수와 도구 출력의 마지막 두 줄.\n",
+   "verify": "python3 .aimem/graph/inputs/r28/v_readme.py",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-302-S2-a1-233834",
+     "started": "2026-11-13T23:38:34",
+     "ended": "2026-11-13T23:42:38",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n- 고친 파일: `projects/자모맞히기/tests/README.md` (다른 파일 수정 없음)\n- 바꾼 수: `ℹ pass 66`·`fail 0`, `Ran 13 tests`·`OK`, `통과 121 / 전체 121`, `통과 90 / 전체 90`\n- 표의 ‘초록이면’ 칸과 목표 표의 옛 수를 갱신하고, 옛 날짜·태스크 문단을 `2026-11-13 (R28 T-302)` 한 문장으로 교체\n- `browser_modes.py` 설명에 T-301 시나리오 두 줄 추가: `scenario_hard_reaches_empty_practice`, `scenario_typed_letters_survive_align`\n- 돌린 검증: 위 네 명령 모두 초록. `python3 .aimem/graph/inputs/r28/v_readme.py` 출력 마지막 두 줄:\n  - `지금 수: node pass 66 · py Ran 13 · game 121 · modes 90`\n  - `v_readme: 모두 통과`\n- 다음 담당자: 문서 어디에도 옛 수(`pass 61`, `Ran 8`, `62`)는 남아 있지 않음.",
+     "report_tail": "DONE\n- 고친 파일: `projects/자모맞히기/tests/README.md` (다른 파일 수정 없음)\n- 바꾼 수: `ℹ pass 66`·`fail 0`, `Ran 13 tests`·`OK`, `통과 121 / 전체 121`, `통과 90 / 전체 90`\n- 표의 ‘초록이면’ 칸과 목표 표의 옛 수를 갱신하고, 옛 날짜·태스크 문단을 `2026-11-13 (R28 T-302)` 한 문장으로 교체\n- `browser_modes.py` 설명에 T-301 시나리오 두 줄 추가: `scenario_hard_reaches_empty_practice`, `scenario_typed_letters_survive_align`\n- 돌린 검증: 위 네 명령 모두 초록. `python3 .aimem/graph/inputs/r28/v_readme.py` 출력 마지막 두 줄:\n  - `지금 수: node pass 66 · py Ran 13 · game 121 · modes 90`\n  - `v_readme: 모두 통과`\n- 다음 담당자: 문서 어디에도 옛 수(`pass 61`, `Ran 8`, `62`)는 남아 있지 않음.",
+     "session_state": "done",
+     "verify_rc": 0,
+     "verify_tail": "지금 수: node pass 66 · py Ran 13 · game 121 · modes 90\nv_readme: 모두 통과\n",
+     "fail_kind": null
+    }
+   ]
+  },
+  {
+   "id": "T-303",
+   "slot": "S1",
+   "deps": [
+    "T-300",
+    "T-301"
+   ],
+   "project": "자모맞히기",
+   "title": "가벼운 적대적 재검수: R27-N1·N2 닫혔나 + 변이 V3·V6·V10·V11·V12 + '검사' 목표 판정",
+   "timeout_sec": 3000,
+   "max_attempts": 2,
+   "write": [
+    "rounds/R28/REVIEW-r28.md"
+   ],
+   "task": "# T-303 가벼운 적대적 재검수 (자모맞히기 '검사' 목표 판정)\n\n쓸 파일은 **하나**: `rounds/R28/REVIEW-r28.md`(새 파일). 프로젝트 파일은 **고치지 마십시오** - 결함은 기록만 합니다. 변이·실험은 `/tmp` 사본에서만(끝날 때 자기가 만든 `/tmp` 폴더를 `rm -rf`). 바로 시작하십시오.\n\n## 배경\n\n`projects/자모맞히기/PROGRESS.md` 의 목표 15개 중 '검사 - 로직 단위 검사·브라우저 검사(그려진 것)가 모두 초록, 적대적 검수 통과' 하나만 열려 있습니다. R27 검수 `rounds/R27/REVIEW-r27.md`(3·4절)가 남긴 결함 N1(갈래 파일 어근)·N2(시험 빈틈: 변이 V3·V6·V10·V11·V12 생존)·N3(README 수)을 이번 라운드에 고쳤습니다: T-300(`data/words/*.txt`·`tests/test_words.py`·`web/js/words.js`), T-301(`tests/browser_modes.py`), T-302(`tests/README.md`, 이 검수와 동시에 진행 - 보지 않아도 됨). 이 검수는 **그 고침이 맞는지와 목표를 닫아도 되는지**만 봅니다(가벼움).\n\n## 할 일\n\n1. **네 벌 재현**(사본 아니어도 됨, 읽기만): `node --test projects/자모맞히기/tests/*.mjs`, `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'`, `python3 projects/자모맞히기/tests/browser_game.py`, `python3 projects/자모맞히기/tests/browser_modes.py` - 수와 rc.\n2. **변이 다시**: R27 4절에서 살아남은 V3·V6·V10·V11·V12 를 프로젝트 폴더의 `/tmp` 사본에서 하나씩 다시 넣고(낱말 변이는 사본에서 `tools/build_words.py` 로 다시 만듦) 네 벌을 돌려 잡히는지. V11 은 이번에 BANNED 에 든 낱말 말고 **새 어근 4개**(예: `성급 정직 화목 친절` 처럼 `-하다` 가 붙어야 하는 것 - 고르는 것은 당신)로. 새 변이 2~3개를 더 생각해 보십시오.\n3. **N1 확인**: 갈래 파일 넷에 어근·비표준 말이 아직 있는지 표본으로(200줄 정도 훑기). `불안 침착 순진 겸손 성실` 은 명사라 괜찮음. 새로 들어간 32개(T-300 보고 참고)에 문제가 있는지.\n4. **덮는 범위 한 번 더**: 시험(`MUST`)과 R27 검수 표본에 없는 흔한 6칸 낱말 **새 표본 60개**를 스스로 골라 ALLOWED 에 없는 비율(R27 은 쉬운 표본 0%, 어려운 표본 21%).\n5. 판정.\n\n## 기록 꼴 (`rounds/R28/REVIEW-r28.md`)\n\n절: 1 네 벌 · 2 변이(표: 번호·변이·잡은 곳·판정, V3·V6·V10·V11·V12 와 새 것) · 3 N1·새 낱말 · 4 덮는 범위 · 5 새 결함(표: 번호 `R28-N1`… · 심각도 상/중/하 · 무엇 · 어디 · 재현 · 고칠 방향) · 6 판정. 마지막 절에 **한 줄** `판정: '검사' 목표 닫음` 또는 `판정: '검사' 목표 열어 둠` 과 그 까닭. 닫는 기준: 네 벌 모두 초록, R27 생존 변이가 모두 잡힘(또는 남은 것이 하이고 까닭이 분명함), '상'·'중' 결함 없음. '하' 결함만 남으면 닫아도 되고 그것은 큐로 갑니다.\n\n## 스스로 확인 (엔진의 검증도 이것)\n\n`python3 .aimem/graph/inputs/r28/v_review.py` 의 마지막 줄이 `v_review: 모두 통과`(꼴만 봅니다 - 판정 내용은 관리자가 읽음).\n\n## 하지 말 것\n\n저장소 안 파일 쓰기(위 하나 빼고), `git commit`/`push`, 저장소 안 파일 삭제, 의존성 설치, 운영 모니터 부르기.\n\n보고 첫 줄은 `DONE` / `PARTIAL` / `BLOCKED`, 그다음 판정 줄과 새 결함 수(심각도별).\n",
+   "verify": "python3 .aimem/graph/inputs/r28/v_review.py",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-303-S1-a1-233834",
+     "started": "2026-11-13T23:38:34",
+     "ended": "2026-11-14T00:00:00",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n判정: '검사' 목표 닫음. 새 결함 4건, 모두 '하'(상 0 · 중 0 · 하 4).\n\n**Short answer:** R27의 N1·N2 고침은 제대로 들어갔습니다. 다만 새 변이로 시험 빈틈 둘을 더 찾았고, 어근도 몇 개 남았습니다. 모두 '하'라서 닫는 기준(상·중 없음)은 넘습니다.\n\n**한 일·고친 파일:** `rounds/R28/REVIEW-r28.md` 하나만 새로 썼습니다(98줄, 6절 꼴). 프로젝트 파일은 고치지 않았습니다. 변이와 표본은 `/tmp/t303-s1/` 사본에서만 했습니다.\n\n**실제로 돌린 검증과 출력**\n- 네 벌(작업 트리, 읽기만), 모두 rc 0:\n  - `node --test projects/자모맞히기/tests/*.mjs` → pass 66 / fail 0\n  - `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'` → `Ran 13 tests` `OK`\n  - `python3 projects/자모맞히기/tests/browser_game.py` → `통과 121 / 전체 121`\n  - `python3 projects/자모맞히기/tests/browser_modes.py` → `통과 90 / 전체 90`\n- 변이: 변이마다 사본을 새로 만들어 네 벌을 다 돌렸습니다. 변이 없는 사본 기준선도 위와 같은 수였습니다.\n\n| 변이 | 무엇 | 결과 |\n| ---- | ---- | ---- |\n| V3 | 연습 쪽 하드 맞춤 뺌 | 잡힘 (modes 1) |\n| V6 | 입력 중 글자 안 옮김 | 잡힘 (modes 1) |\n| V10 | `까닭` 뺌 | 잡힘 (py `test_common_words_present`) |\n| V12 | 갈래 낱말을 ANSWERS 에 넣음 (380 → 1695) | 잡힘 (py `test_answers_match_answers_file`) |\n| V11 | 새 어근 4개 `날씬 뚱뚱 싱싱 쫄깃` | 생존: 목록 시험의 본래 한계라 하 |\n| V13 (새) | 빌드의 6칸 거르기 뺌 | 동치: 지금 데이터에선 결과가 같음. 6칸이 아닌 말이 들어오면 `test_words.py:98` 이 잡음 |\n| V14 (새) | 하드를 바꿔 판을 새로 만들 때 판 번호를 안 넘김 | 생존 → R28-N2 |\n| V15 (새) | 옮길 때 첫 글자를 빠뜨림 | 잡힘 |\n| V16 (새) | 하드 모드 잠금(`hardModeLocked`)이 늘 꺼짐 | 생존 → R28-N1 |\n\n- `python3 .aimem/graph/inputs/r28/v_review.py` → `REVIEW-r28.md: 98줄` / `v_review: 모두 통과`\n\n**새 결함 (모두 하, 큐로)**\n- **R28-N1:** 줄을 낸 판에서 하드 모드를 못 바꾸게 막는 잠금을 지키는 시험이 없습니다. 잠금이 풀리면 하드를 바꿀 때 낸 줄이 지워진 채 날마다 판이 저장됩니다(`ui.js:466-480`, 코드를 읽어 확인). 지금 코드는 맞고, 시험만 없습니다.\n- **R28-N2:** 하드를 바꿔 판을 새로 만들 때 판 번호를 지키는지 보는 시험이 없습니다. 연습을 연 뒤 하드를 바꾸고 날마다로 오면 번호가 0이 될 수 있는 변경을 못 잡습니다.\n- **R28-N3:** 지정된 13개는 모두 지워졌지만, T-300 이 보지 않은 다른 묶음에 같은 종류가 남았습니다.\n  - 어근: `선선 눅눅 촉촉`(`자연마음.txt:19-21`), `용감`(경계, `:430`)\n  - 비표준: `채이다`(경계, `풀이씨.txt:146`)\n- **R28-N4:** 덮는 범위.\n  - 새 표본 60개에서는 30개(50%)가 빠졌습니다. 다만 3절에서 파일을 이미 훑은 뒤 골라서 위로 치우친 수입니다.\n  - 파일에서 봐서 뺐던 흔한 말 78개를 합친 138개로 치면 21.7%이고, R27(21%)과 같으며 30% 기준 안입니다.\n  - 그래도 `싸우다 빠지다 다투다 데리다 비싸다 변화 행동 단점 동쪽 남쪽 북쪽` 같은 아주 흔한 말이 아직 거절됩니다.\n\n**다음 담당자가 알아야 할 것**\n- T-300 이 더한 32개는 모두 6칸 표준 명사이고 문제없습니다. 다만 R27 의 빠진 낱말 목록을 그대로 메운 것이라 R27 표본은 더는 독립 잣대가 아닙니다. 다음 덮는 범위 검수는 R27 표본도 이번 표본도 쓰지 말고 새 표본으로 재야 합니다.\n- `tests/README.md` 가 고쳐진 상태로 보이는데, 이것은 같이 돈 T-302 의 몫이고 저는 건드리지 않았습니다.\n- `/tmp/t303-s1/` 는 지우지 못했습니다. `rm -rf /tmp/t303-s1` 이 작업 폴더 밖이라 승인 요구로 막혔습니다. 안에는 변이 사본 10개와 스크립트 2개만 있습니다. 승인할 수 있는 쪽에서 지워 주십시오.",
+     "report_tail": "0`, 코드를 읽어 확인). 지금 코드는 맞고, 시험만 없습니다.\n- **R28-N2:** 하드를 바꿔 판을 새로 만들 때 판 번호를 지키는지 보는 시험이 없습니다. 연습을 연 뒤 하드를 바꾸고 날마다로 오면 번호가 0이 될 수 있는 변경을 못 잡습니다.\n- **R28-N3:** 지정된 13개는 모두 지워졌지만, T-300 이 보지 않은 다른 묶음에 같은 종류가 남았습니다.\n  - 어근: `선선 눅눅 촉촉`(`자연마음.txt:19-21`), `용감`(경계, `:430`)\n  - 비표준: `채이다`(경계, `풀이씨.txt:146`)\n- **R28-N4:** 덮는 범위.\n  - 새 표본 60개에서는 30개(50%)가 빠졌습니다. 다만 3절에서 파일을 이미 훑은 뒤 골라서 위로 치우친 수입니다.\n  - 파일에서 봐서 뺐던 흔한 말 78개를 합친 138개로 치면 21.7%이고, R27(21%)과 같으며 30% 기준 안입니다.\n  - 그래도 `싸우다 빠지다 다투다 데리다 비싸다 변화 행동 단점 동쪽 남쪽 북쪽` 같은 아주 흔한 말이 아직 거절됩니다.\n\n**다음 담당자가 알아야 할 것**\n- T-300 이 더한 32개는 모두 6칸 표준 명사이고 문제없습니다. 다만 R27 의 빠진 낱말 목록을 그대로 메운 것이라 R27 표본은 더는 독립 잣대가 아닙니다. 다음 덮는 범위 검수는 R27 표본도 이번 표본도 쓰지 말고 새 표본으로 재야 합니다.\n- `tests/README.md` 가 고쳐진 상태로 보이는데, 이것은 같이 돈 T-302 의 몫이고 저는 건드리지 않았습니다.\n- `/tmp/t303-s1/` 는 지우지 못했습니다. `rm -rf /tmp/t303-s1` 이 작업 폴더 밖이라 승인 요구로 막혔습니다. 안에는 변이 사본 10개와 스크립트 2개만 있습니다. 승인할 수 있는 쪽에서 지워 주십시오.",
+     "session_state": "done",
+     "verify_rc": 0,
+     "verify_tail": "REVIEW-r28.md: 98줄\nv_review: 모두 통과\n",
+     "fail_kind": null
+    }
+   ]
+  }
+ ],
+ "updated": "2026-11-14T00:00:01"
+}

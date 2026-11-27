@@ -326,7 +326,7 @@
       st.textContent = '';
       $('detail-stt').hidden = true;
       $('detail-retry-opts').setAttribute('aria-expanded', 'false');
-      toast('옵션을 바꿔 다시 받아쓰기를 요청했습니다. 바뀌기 전 글 중 가장 긴 것 한 벌이 남습니다.');
+      toast('옵션을 바꿔 다시 받아쓰기를 요청했습니다. 바뀌기 전 글은 \'지난 글\' 에 5벌까지 남습니다.');
       loadDetail(id);
       loadList();
     }, function (e) {
@@ -335,13 +335,18 @@
     });
   }
 
-  function sttUsedText(used) {
-    if (!used || typeof used !== 'object') return '';
+  function sttUsedParts(used) {
+    if (!used || typeof used !== 'object') return [];
     var parts = [];
     if (typeof used.preprocess === 'string' && used.preprocess) parts.push('전처리 ' + used.preprocess);
     if (typeof used.speakers === 'number' && isFinite(used.speakers)) parts.push('화자 ' + used.speakers);
     if (typeof used.auto === 'boolean') parts.push('자동 추정 ' + (used.auto ? '켬' : '끔'));
     if (typeof used.review === 'boolean') parts.push('검토 ' + (used.review ? '켬' : '끔'));
+    return parts;
+  }
+
+  function sttUsedText(used) {
+    var parts = sttUsedParts(used);
     return parts.length ? '받아쓴 옵션: ' + parts.join(' · ') : '';
   }
 
@@ -352,23 +357,49 @@
     el.hidden = !text;
   }
 
-  function renderPrev(text, used) {
+  function fmtPrevAt(at) {
+    var iso = typeof at === 'string' ? at : '';
+    var d = iso ? new Date(iso) : null;
+    if (!d || isNaN(d.getTime())) return '받아쓴 때 모름';
+    return '받아쓴 때 ' + d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+      ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  function renderPrev(list) {
     var box = $('detail-prev');
-    var pre = $('detail-prev-text');
+    var ol = $('detail-prev-list');
     var sum = $('detail-prev-summary');
-    var prev = typeof text === 'string' ? text : '';
-    var p = used && typeof used === 'object' && typeof used.preprocess === 'string' ? used.preprocess : '';
-    sum.textContent = '이전 글 중 가장 긴 것' + (p ? ' (전처리 ' + p + ')' : '');
-    box.hidden = !prev;
-    if (!prev) {
-      if (state.detailPrevText !== null) { box.open = false; pre.textContent = ''; state.detailPrevText = null; }
+    var items = (Array.isArray(list) ? list : []).filter(function (it) {
+      return it && typeof it.text === 'string';
+    });
+    if (!items.length) {
+      box.hidden = true;
+      sum.textContent = '';
+      if (state.detailPrevText !== null) { box.open = false; ol.textContent = ''; state.detailPrevText = null; }
       return;
     }
-    if (state.detailPrevText !== prev) { // 폴링이 펼쳐 둔 것을 접지 않게, 글이 바뀔 때만 다시 채운다
-      state.detailPrevText = prev;
-      box.open = false;
-      pre.textContent = prev;
-    }
+    box.hidden = false;
+    sum.textContent = '지난 글 ' + items.length + '벌';
+    var key = JSON.stringify(items);
+    if (state.detailPrevText === key) return; // 폴링이 펼쳐 둔 벌을 접지 않게, 내용이 바뀔 때만 다시 그린다
+    state.detailPrevText = key;
+    box.open = false;
+    ol.textContent = '';
+    items.forEach(function (it) {
+      var li = document.createElement('li');
+      li.className = 'prev-item';
+      var d = document.createElement('details');
+      var s = document.createElement('summary');
+      var parts = sttUsedParts(it.stt_used);
+      s.textContent = fmtPrevAt(it.at) + ' · ' + (parts.length ? parts.join(' · ') : '옵션 기록 없음');
+      var pre = document.createElement('pre');
+      pre.className = 'transcript';
+      pre.textContent = it.text;
+      d.appendChild(s);
+      d.appendChild(pre);
+      li.appendChild(d);
+      ol.appendChild(li);
+    });
   }
 
   // 서버가 살아 있는지(api/health, 토큰 없이 답함)와 넣은 토큰이 통하는지(토큰이 필요한 호출)를 따로 본다.
@@ -1092,7 +1123,7 @@
       $('detail-retry-opts').hidden = isolated();
       if (isolated()) $('detail-stt').hidden = true;
       renderSttUsed(r.stt_used);
-      renderPrev(r.transcript_prev, r.prev_stt_used);
+      renderPrev(r.prev_transcripts);
       $('detail-delete').hidden = isolated();
       state.detailText = r.transcript || '';
       state.detailHead = (label || r.title || '녹취') + ' · ' + fmtTime(r.recorded_at || r.created);
@@ -1164,7 +1195,7 @@
     $('detail-stt-used').hidden = true;
     $('detail-stt-used').textContent = '';
     $('detail-prev').hidden = true;
-    $('detail-prev-text').textContent = '';
+    $('detail-prev-list').textContent = '';
     fillSttFields(state.sttFields.detail, {});
     Array.prototype.forEach.call($('list').children, function (li) {
       li.classList.toggle('open', li.dataset.id === id);

@@ -29,7 +29,8 @@ projects/VoxLog/
 - `audio/<id>.<ext>` 받은 녹음 원본 (ext: webm·ogg·m4a·mp3·wav)
 - `meta/<id>.json` 녹음 하나의 메타
 - `transcripts/<YYYY-MM-DD>/<id>.txt` 받아 적은 글 (날짜는 recorded_at 의 날짜) - **텍스트 파일로 쌓이는 것이 요청의 핵심**
-- `transcripts/<YYYY-MM-DD>/<id>.prev.txt` 다시 받아쓸 때 남긴 **밀려난 글 중 가장 긴 것 한 벌** (더 짧은 글은 남기지 않음 - 직전 글이 아닐 수 있음; 없으면 없음)
+- `transcripts/<YYYY-MM-DD>/<id>.prev.json` 다시 받아쓸 때 밀려난 글 벌 목록 (JSON 배열, 오래된 것이 앞, 최대 `PREV_KEEP=5`벌). 벌 하나 = `{"text": 글, "stt_used": 그 글이 지금 글일 때 옵션 dict|None, "at": 그 글을 받아쓴 ISO 시각|None}`. 같은 글은 늘리지 않는다
+- `transcripts/<YYYY-MM-DD>/<id>.prev.txt` 옛 자료(R51) - `.prev.json` 이 없으면 읽을 때 첫 벌로 보고, 다음 쓰기에 `.prev.json` 으로 옮기며 지운다 (옛 파일은 쓰기 전까지 손대지 않음)
 - `stt_options.json` 앱 전체 받아쓰기 기본 옵션 (없거나 깨졌으면 옵션 없음). **settings.json 과 별개** - 키가 섞이지 않음
 - `answers/<aid>.json` 묻기 결과
 
@@ -47,10 +48,10 @@ id 형식: 녹음 `r-YYYYMMDD-HHMMSS-xxxx`, 답 `a-YYYYMMDD-HHMMSS-xxxx` (xxxx �
  "tags_human": 사람이 태그를 고친 적이 있음(bool, 기본 false),
  "autotag": null | "pending" | "done" | "failed" (자동 태그 진행 상태, 기본 null),
  "stt_options": dict|None (이 녹음만의 받아쓰기 옵션, 기본 None = 전체 기본값을 따름; 빈 dict {} 도 같다),
- "stt_used": dict|None (마지막으로 받아쓸 때 실제 쓰인 옵션 + "at" ISO 시각, 기본 None),
- "prev_stt_used": dict|None (이전 글을 남길 때 그 글을 받아쓴 옵션, 기본 None)}
+ "stt_used": dict|None (마지막으로 받아쓸 때 실제 쓰인 옵션 + "at" ISO 시각, 기본 None)}
 ```
-옛 meta 에 없는 필드(`label`·`tags`·`tags_auto`·`tags_human`·`autotag`·`stt_options`·`stt_used`·`prev_stt_used`)는
+옛 meta 의 `prev_stt_used` 는 옛 `.prev.txt` 를 첫 벌로 읽을 때만 쓰고(그 글을 받아쓴 옵션), 응답에는 내지 않으며 다음 쓰기에 지운다.
+옛 meta 에 없는 필드(`label`·`tags`·`tags_auto`·`tags_human`·`autotag`·`stt_options`·`stt_used`)는
 `Store.get`·`Store.list` 가 읽을 때 기본값으로 채운다.
 
 ## 녹취 이름·태그 (F2)
@@ -113,10 +114,11 @@ def used_from_result(result) -> dict
 
 ### voxlog/store.py 에 더한 것
 
-- `get(rid)` 는 메타에 `transcript`(글)와 `transcript_prev`(이전 글, 없으면 `""`)를 함께 돌려준다.
-- `set_transcript(rid, text, used=None)`: 있던 글이 비어 있지 않고 새 글과 다르면, 그 글을 `.prev.txt` 의 현재 이전 글과
-  견주어(공백 뺀 길이) 더 길거나 같을 때만 새 이전 글로 쓰고 `prev_stt_used` = 그 글을 받아쓴 `stt_used` 로 바꾼다.
-  더 짧으면 이전 글을 그대로 둔다 - 이전 글은 밀려난 글 중 가장 긴 것 한 벌이고, 직전 글이 아닐 수 있다.
+- `get(rid)` 는 메타에 `transcript`(글, 없으면 `""`)와 `prev_transcripts`(지난 글 벌 목록, 없으면 `[]`)를 함께 돌려준다. `prev_transcripts` 는 최근 것이 앞이다.
+- `set_transcript(rid, text, used=None)`: 있던 글이 비어 있지 않고 새 글과 다르면(`old.strip() != text.strip()`), 그 글을 지난 글 목록 끝에 붙인다
+  (`stt_used` = 그 글이 지금 글일 때 메타 `stt_used`, `at` = 그 글을 받아쓴 때). 붙인 뒤 새 지금 글과 같은 벌을 빼고,
+  같은 글(`strip()`)이 여럿이면 가장 최근 것 하나만 남기며, 상한 `PREV_KEEP=5` 를 넘으면 가장 오래된 것부터 버린다.
+  목록은 `.prev.json` 에 쓰고 `.prev.txt` 를 지우며 메타의 `prev_stt_used` 키를 없앤다. 새 글과 같은 글이면 목록을 건드리지 않는다.
   그다음 새 글을 쓰고 `stt_used` = `dict(used, at=<지금 ISO>)`(used 가 None 이면 None). title·chars·status·error 는 지금과 같다.
   이름·태그·사람이 고친 태그·묻기 답은 건드리지 않는다.
 - `set_stt_options(rid, opts)`: normalize 해서 메타 `stt_options` 에 쓴다. `opts is None` 이면 그 키를 지워
@@ -127,7 +129,7 @@ def used_from_result(result) -> dict
   녹음 옵션이 있으면 앱 전체 기본값과 키 단위로 합치지 않는다.
 - `default_stt_options()`: `<자료 폴더>/stt_options.json` 을 읽어 normalize. 없거나 깨졌으면 `{}`.
 - `set_default_stt_options(opts)`: normalize 해서 `stt_options.json` 에 원자적으로 쓴다(`_atomic_write`).
-- `delete(rid)` 는 `<id>.prev.txt` 도 지운다. 목록·검색(`q`)·현황(`stats`)은 이전 글을 보지 않는다.
+- `delete(rid)` 는 `<id>.prev.json` 과 `<id>.prev.txt` 를 모두 지운다. 목록·검색(`q`)·현황(`stats`)은 지난 글을 보지 않는다.
 
 ## voxlog/store.py
 
@@ -147,7 +149,7 @@ class Store:
                            client_id=None, location=None) -> dict
         # incoming_path() 에 흘려 쓴 파일을 검사(mime·빈 파일·크기)하고 audio/ 로 옮김(복사 아님). 같은 인자·같은 오류(ValueError)·
         # 같은 duplicate 규칙. 실패·중복이면 그 파일은 지움. Store 를 만들 때 incoming/ 에 남은 찌꺼기는 치움
-    def get(self, rid) -> dict|None                      # 메타 + "transcript": 글(없으면 "") + "transcript_prev": 이전 글(없으면 "")
+    def get(self, rid) -> dict|None                      # 메타 + "transcript": 글(없으면 "") + "prev_transcripts": 지난 글 벌(최근 것이 앞, 없으면 [])
     def list(self, q=None, date_from=None, date_to=None, status=None, limit=200, tag=None) -> list[dict]
         # recorded_at 최신순. q 는 받아 적은 글·title·label·tags 에서 대소문자 무시 부분 일치. date_* 는 "YYYY-MM-DD"(포함).
         # tag 는 tag_key(t) 가 같은 태그가 있는 것만, 다른 거르기와 AND.
@@ -157,7 +159,8 @@ class Store:
     def set_status(self, rid, status, error=None) -> None
     def set_job(self, rid, jid) -> None                  # 받아쓰기 서버에 맡긴 작업 id 를 메타 stt_job 에(None 이면 지움)
     def set_transcript(self, rid, text, used=None) -> None
-                                                        # 새 글이 있던 글과 다르면 그 글을 .prev.txt 로 남기고 prev_stt_used=있던 stt_used.
+                                                        # 새 글이 있던 글과 다르면 그 글을 .prev.json 목록 끝에 붙이고(옛 stt_used·at),
+                                                        # 같은 글은 빼고 중복은 최근 것 하나, PREV_KEEP=5 넘으면 가장 오래된 것부터 버림.
                                                         # txt 쓰기, status "done", title·chars 갱신, error None,
                                                         # stt_used = dict(used, at=ISO) (used None 이면 None).
                                                         #   label·tags·tags_auto·tags_human·autotag 는 건드리지 않음
@@ -175,7 +178,7 @@ class Store:
     def set_autotag(self, rid, state) -> None             # state 는 None|"pending"|"done"|"failed" (아니면 ValueError)
     def autotag_pending_ids(self) -> list[str]            # meta 만 훑어 autotag=="pending" 인 id (재시작 때 failed 로)
     def pending_ids(self) -> list[str]                   # status 가 pending 또는 transcribing 인 것 (재시작 때 다시 넣기)
-    def delete(self, rid) -> bool                         # 오디오·메타·글·이전 글(.prev.txt) 지움
+    def delete(self, rid) -> bool                         # 오디오·메타·글·지난 글(.prev.json·옛 .prev.txt) 지움
     def stats(self) -> dict  # {"count","done","pending","failed","chars","by_date": {"YYYY-MM-DD": n}}
     def add_answer(self, kind, prompt, ids) -> dict      # {"id","kind","prompt","ids","created","status":"running","answer":None,"error":None}
     def set_answer(self, aid, status, answer=None, error=None) -> None   # status "done"|"failed"
@@ -183,7 +186,7 @@ class Store:
     def delete_answer(self, aid) -> bool|"running"   # 지웠으면 True, 없거나 잘못된 id 면 False, 아직 status "running" 이면 "running"(지우지 않음)
     def list_answers(self, limit=50) -> list[dict]       # 최신순. 항목마다 about = 첫 녹취의 {recorded_at, title} (지워졌으면 None)
 ```
-잘못된 id 는 get/audio_path/get_answer 가 None, delete_answer 가 False, set_*(set_status·set_job·set_transcript·set_stt_options·set_default_stt_options·set_answer·set_label_tags·set_auto_tags·set_autotag) 와 삭제 delete(녹음) 는 `ValueError`(set_stt_options·set_default_stt_options 는 틀린 옵션도 `ValueError`). 옛 meta 에 `label`·`tags`·`tags_auto`·`tags_human`·`autotag`·`stt_options`·`stt_used`·`prev_stt_used` 가 없으면 `get`·`list` 가 `""`/`[]`/`[]`/`false`/`null`/`null`/`null`/`null` 로 채운다.
+잘못된 id 는 get/audio_path/get_answer 가 None, delete_answer 가 False, set_*(set_status·set_job·set_transcript·set_stt_options·set_default_stt_options·set_answer·set_label_tags·set_auto_tags·set_autotag) 와 삭제 delete(녹음) 는 `ValueError`(set_stt_options·set_default_stt_options 는 틀린 옵션도 `ValueError`). 옛 meta 에 `label`·`tags`·`tags_auto`·`tags_human`·`autotag`·`stt_options`·`stt_used` 가 없으면 `get`·`list` 가 `""`/`[]`/`[]`/`false`/`null`/`null`/`null` 로 채운다.
 
 ## voxlog/stt.py
 
@@ -285,7 +288,7 @@ API (JSON, 오류는 `{"error": "한국어 까닭"}` + 4xx/5xx). 토큰이 있�
 | `PUT /api/stt-options` 본문 `{"options": {…}}` (32 KiB 까지) | 200 `{"options": …}` / 400(본문이 JSON 객체가 아님·`options` 없음·틀린 옵션) / 413(32 KiB 초과) |
 | `POST /api/recordings` 본문=오디오 그대로, 머리 `Content-Type`, `X-Recorded-At`, `X-Duration-Ms`, `X-Client-Id` | 201 메타(새 것) / 200 메타(duplicate) / 400 / 408(업로드 마감 넘김) / 413 / 500(저장 실패) / 503(동시 업로드 2개 넘음, `Retry-After: 5`) / 507(디스크 여유 부족) |
 | `GET /api/recordings?q=&from=&to=&status=&limit=&tag=` | `{"items":[…],"stats":{…}}` / 400(`from`·`to` 가 실제 날짜가 아님·`limit` 가 정수가 아님·`tag` 가 20자 초과) |
-| `GET /api/recordings/<id>` | 메타+transcript+transcript_prev(그리고 `stt_options`·`stt_used`·`prev_stt_used`) / 404 |
+| `GET /api/recordings/<id>` | 메타+transcript+`prev_transcripts`(최근 것이 앞, 그리고 `stt_options`·`stt_used`) / 404 |
 | `PATCH /api/recordings/<id>` 본문 `{"label"?, "tags"?}` | 200 메타+transcript / 400(본문·타입·40자·20자·10개) / 404 / 413(6 KiB 초과) |
 | `POST /api/recordings/<id>/autotag` (본문 없음) | 202 `{"ok":true,"autotag":"pending"}` / 404 / 409(글이 없음) / 503(LLM 없음) |
 | `GET /api/recordings/<id>/audio` | 오디오 바이트(그 mime) |
@@ -305,7 +308,7 @@ API 키가 응답·자료 파일로 나가지 않는다. `GET` 은 토큰이 설
 `"options": null` 은 그 녹음의 옵션 키를 지워 전체 기본값을 따르게 한다; 화면이 항상 보내는 `"options": {}` 도 같은 뜻이다
 (서버가 null 로 바꿔 저장하므로 메타 키가 지워진다). `options` 키가 없으면 옵션을 바꾸지 않는다. 녹음 옵션이 남아 있으면
 그 옵션만 쓰고 앱 전체 기본값과 키 단위로 합치지 않는다. 틀린 옵션이면 400 이고 상태·옵션 모두 그대로다. 응답은
-`Store.get` 꼴의 메타(글·이전 글 포함)다.
+`Store.get` 꼴의 메타(글·`prev_transcripts` 포함)다.
 
 `GET /api/recordings`·`GET /api/recordings/<id>` 의 항목에는 `label`·`tags`·`tags_auto`·`tags_human`·`autotag` 가
 붙고(`q` 가 있으면 `match` 도), `tag` 는 `q`·날짜·`status` 와 AND 로 거른다. `PATCH` 는 `PATCH_JSON_MAX = 6 * 1024` 로
@@ -444,15 +447,20 @@ Error(서버의 error 글)), `VoxApi.audioUrl(id) -> Promise<blobURL>`.
   `#detail-stt` 묶음을 연다. 녹음의 `stt_options` 가 비어 있지 않으면 그것으로, 없거나 비어 있으면 전체 기본값으로
   채운다. 폴링·재렌더는 열어 둔 이 입력을 지우지 않는다. `#detail-stt-run` 이 `POST api/recordings/<id>/retry` 에
   `{"options": …}` 를 보내고, 성공하면 묶음을 닫고 상세·목록을 다시 읽는다. 묶음 안 뒤처리 한 줄: "다시 받아쓰면
-  글이 새 글로 바뀝니다(바뀌기 전 글 중 가장 긴 것 한 벌이 남음). 이름·직접 고친 태그·묻기 답은 그대로이고,
-  AI 태그는 새 글로 다시 답니다." (그 한 벌은 직전 글이 아니라 밀려난 글 중 가장 긴 것일 수 있다.)
+  글이 새 글로 바뀝니다(바뀌기 전 글은 '지난 글' 에 5벌까지 남음). 이름·직접 고친 태그·묻기 답은 그대로이고,
+  AI 태그는 새 글로 다시 답니다."
 - 상세 메타: `stt_used` 가 있으면 `#detail-stt-used` 에 "받아쓴 옵션: 전처리 denoise · 화자 1 · 자동 추정 켬 · 검토 끔"
-  꼴로 보인다. `transcript_prev` 가 있으면 `<details id="detail-prev">` 의 `#detail-prev-summary`(요약에 `prev_stt_used`
-  의 전처리)와 `#detail-prev-text` 로 이전 글을 펼쳐 본다.
+  꼴로 보인다. `prev_transcripts` 가 있으면 `<details id="detail-prev">` 의 `#detail-prev-summary` = "지난 글 N벌"
+  (N = 배열 길이, 비면 묶음을 숨김) 안 `<ol id="detail-prev-list">` 의 `.prev-item` 마다 `<details>` 로 받아쓴 때와
+  옵션 요약을 보이고 그 글은 `<pre class="transcript">` 에 `textContent` 로 넣는다(옛 `#detail-prev-text` 는 쓰지 않는다).
 - 400 이면 서버가 준 message 를 토스트로 보인다(글은 `textContent` 로만 쓴다). 320px 폭에서 두 묶음이 겹치거나 넘치지 않는다.
 
 ## 고친 이력
 
+- R52: 다시 받아쓰기의 지난 글을 한 벌이 아니라 순서대로 여러 벌로 남긴다(`.prev.json`, 오래된 것이 앞, 상한 `PREV_KEEP=5`,
+  같은 글은 늘리지 않음). `transcript_prev`·`prev_stt_used` 를 없애고 `get`·`GET /api/recordings/<id>` 응답은
+  `prev_transcripts`(최근 것이 앞, 벌마다 `{text, stt_used, at}`)를 준다. 옛 `.prev.txt` 는 첫 벌로 보이고 다음 쓰기에
+  `.prev.json` 으로 옮긴다. 화면은 `#detail-prev-list` 목록으로 보인다.
 - R51: 받아쓰기 옵션(`preprocess`·`num_speakers`·`context`·`auto`·`review`)을 전체 기본값(`data/stt_options.json`)과
   녹음마다(`meta.stt_options`)에 두고, `GET/PUT /api/stt-options` 와 `POST …/retry` 의 선택 본문으로 바꾼다.
   새 모듈 `voxlog/stt_options.py`, `Store` 의 옵션·`stt_used`·이전 글(`.prev.txt`), `stt.transcribe(options=, used=)`,

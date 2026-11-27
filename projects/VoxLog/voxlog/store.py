@@ -19,6 +19,7 @@ from .tags import tag_key, merge_tags
 from .stt_options import normalize
 
 MAX_AUDIO_BYTES = 50 * 1024 * 1024
+PREV_KEEP = 5
 ALLOWED_MIME = {
     "audio/webm": "webm",
     "audio/ogg": "ogg",
@@ -54,8 +55,6 @@ def _fill_meta_defaults(meta):
         meta["stt_options"] = None
     if "stt_used" not in meta:
         meta["stt_used"] = None
-    if "prev_stt_used" not in meta:
-        meta["prev_stt_used"] = None
     return meta
 
 
@@ -198,6 +197,9 @@ class Store:
     def _prev_transcript_path(self, meta):
         return self.transcripts_dir / self._record_date(meta) / (meta["id"] + ".prev.txt")
 
+    def _prev_json_path(self, meta):
+        return self.transcripts_dir / self._record_date(meta) / (meta["id"] + ".prev.json")
+
     def _read_transcript(self, meta):
         try:
             with open(self._transcript_path(meta), "r", encoding="utf-8") as f:
@@ -211,6 +213,47 @@ class Store:
                 return f.read()
         except OSError:
             return ""
+
+    def _read_prev_list(self, meta):
+        """지난 글 벌 목록 - 오래된 것이 앞. 옛 .prev.txt 한 벌도 여기서 이어받는다."""
+        path = self._prev_json_path(meta)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+        except FileNotFoundError:
+            prev = self._read_prev_transcript(meta)
+            if not prev.strip():
+                return []
+            used = meta.get("prev_stt_used")
+            if not isinstance(used, dict):
+                used = None
+            at = used.get("at") if isinstance(used, dict) else None
+            return [{"text": prev, "stt_used": dict(used) if used is not None else None,
+                     "at": at if isinstance(at, str) else None}]
+        except (OSError, ValueError):
+            return []
+        if not isinstance(raw, list):
+            return []
+        items = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            text = entry.get("text")
+            if not isinstance(text, str):
+                continue
+            used = entry.get("stt_used")
+            if not isinstance(used, dict):
+                used = None
+            at = entry.get("at")
+            if not isinstance(at, str):
+                at = None
+            items.append({"text": text, "stt_used": used, "at": at})
+        return items
+
+    def _write_prev_list(self, meta, items):
+        self._write_json(self._prev_json_path(meta), items)
+        _unlink_quiet(self._prev_transcript_path(meta))
+        meta.pop("prev_stt_used", None)
 
     def _cached_transcript(self, meta):
         """(경로, mtime_ns, size) 가 같으면 캐시된 글을 돌려준다."""
@@ -389,7 +432,6 @@ class Store:
                 "autotag": None,
                 "stt_options": None,
                 "stt_used": None,
-                "prev_stt_used": None,
             }
             # 3) 잠금 안: 메타 쓰기만
             with self._lock:
@@ -419,8 +461,10 @@ class Store:
             _fill_meta_defaults(out)
             if "location" not in out:
                 out["location"] = None
+            out.pop("transcript_prev", None)
+            out.pop("prev_stt_used", None)
             out["transcript"] = self._read_transcript(meta)
-            out["transcript_prev"] = self._read_prev_transcript(meta)
+            out["prev_transcripts"] = list(reversed(self._read_prev_list(meta)))
             return out
 
     def list(self, q=None, date_from=None, date_to=None, status=None, limit=200, tag=None):
@@ -470,6 +514,8 @@ class Store:
             _fill_meta_defaults(item)
             if "location" not in item:
                 item["location"] = None
+            item.pop("transcript_prev", None)
+            item.pop("prev_stt_used", None)
             item["snippet"] = snippet
             if match is not None:
                 item["match"] = match
@@ -523,12 +569,28 @@ class Store:
             meta = self._load_meta(rid)
             path = self._transcript_path(meta)
             old = self._read_transcript(meta)
-            if old and old != text:
-                prev = self._read_prev_transcript(meta)
-                if not prev or len(old.strip()) >= len(prev.strip()):
-                    self._atomic_write(self._prev_transcript_path(meta),
-                                       old.encode("utf-8"))
-                    meta["prev_stt_used"] = meta.get("stt_used")
+            prev_items = self._read_prev_list(meta)
+            if old.strip() and old.strip() != text.strip():
+                stt_used = meta.get("stt_used")
+                entry_used = dict(stt_used) if isinstance(stt_used, dict) else None
+                at = entry_used.get("at") if isinstance(entry_used, dict) else None
+                prev_items.append({"text": old, "stt_used": entry_used,
+                                   "at": at if isinstance(at, str) else None})
+                current = text.strip()
+                kept = [item for item in prev_items
+                        if item["text"].strip() != current]
+                seen = set()
+                deduped = []
+                for item in reversed(kept):
+                    key = item["text"].strip()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    deduped.append(item)
+                prev_items = list(reversed(deduped))
+                if len(prev_items) > PREV_KEEP:
+                    prev_items = prev_items[-PREV_KEEP:]
+                self._write_prev_list(meta, prev_items)
             self._atomic_write(path, text.encode("utf-8"))
             self._drop_cache(path)
             meta["title"] = " ".join(text.split())[:40]     # 화자 구분 글은 여러 줄 - 제목은 한 줄로
@@ -660,19 +722,28 @@ class Store:
                         removed = True
                     except OSError:
                         pass
+                pjpath = self._prev_json_path(meta)
+                if pjpath.exists():
+                    try:
+                        os.unlink(pjpath)
+                        removed = True
+                    except OSError:
+                        pass
             for candidate in self.audio_dir.glob(rid + ".*"):
                 try:
                     os.unlink(candidate)
                     removed = True
                 except OSError:
                     pass
-            for candidate in self.transcripts_dir.glob("*/" + rid + ".txt"):
-                self._drop_cache(candidate)
-                try:
-                    os.unlink(candidate)
-                    removed = True
-                except OSError:
-                    pass
+            for suffix in (".txt", ".prev.txt", ".prev.json"):
+                for candidate in self.transcripts_dir.glob("*/" + rid + suffix):
+                    if suffix == ".txt":
+                        self._drop_cache(candidate)
+                    try:
+                        os.unlink(candidate)
+                        removed = True
+                    except OSError:
+                        pass
             mpath = self._meta_path(rid)
             if mpath.exists():
                 try:

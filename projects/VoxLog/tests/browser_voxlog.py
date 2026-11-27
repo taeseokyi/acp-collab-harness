@@ -3,7 +3,7 @@
 
 실행: python3 projects/VoxLog/tests/browser_voxlog.py
 서버는 이 검사가 임시 data 폴더로 직접 띄우고(subprocess) 끝나면 내린다.
-검사는 모두 54개입니다.
+검사는 모두 56개입니다.
 마지막 줄 `N/M 통과`, 하나라도 실패면 종료 코드 1.
 """
 import json
@@ -2112,12 +2112,20 @@ def run_all(browser, base, data, tmp, procs):
              "두 번째 받아쓰기 글이 상세에 없음: %r" % pg.inner_text("#transcript"))
         need(wait_for(lambda: pg.is_visible("#detail-prev"), 10, pg=pg), "#detail-prev 가 보이지 않음")
         pg.click("#detail-prev summary")
-        need(wait_for(lambda: pg.is_visible("#detail-prev-text"), 5, pg=pg), "#detail-prev 를 펼쳐도 글칸이 보이지 않음")
-        need(pg.inner_text("#detail-prev-text").strip() == "첫 받아쓰기",
-             "이전 글이 앞 글과 다름: %r" % pg.inner_text("#detail-prev-text"))
+        need(wait_for(lambda: pg.locator("#detail-prev-list .prev-item").count() == 1, 5, pg=pg),
+             "#detail-prev 를 펼쳐도 지난 글 벌이 보이지 않음")
+        pg.locator("#detail-prev-list .prev-item summary").first.click()
+        prev_text = pg.locator("#detail-prev-list .prev-item pre.transcript").first
+        need(wait_for(lambda: prev_text.is_visible(), 5, pg=pg), "지난 글 벌을 펼쳐도 글칸이 보이지 않음")
+        need(prev_text.inner_text().strip() == "첫 받아쓰기",
+             "지난 글이 앞 글과 다름: %r" % prev_text.inner_text())
         got = api_get(b, "/api/recordings/" + rid)
-        need(got["transcript"] == "두 번째 받아쓰기" and got["transcript_prev"] == "첫 받아쓰기",
-             "서버의 새 글·이전 글이 다름: %r / %r" % (got["transcript"], got["transcript_prev"]))
+        prevs = got.get("prev_transcripts")
+        need(got["transcript"] == "두 번째 받아쓰기" and isinstance(prevs, list) and
+             len(prevs) == 1 and prevs[0]["text"] == "첫 받아쓰기",
+             "서버의 새 글·지난 글 벌이 다름: %r / %r" % (got["transcript"], prevs))
+        need("transcript_prev" not in got and "prev_stt_used" not in got,
+             "서버 응답에 없앤 키가 남음: %r" % sorted(got))
 
         def inject_used(route):
             if route.request.method != "GET" or "/audio" in route.request.url:
@@ -2349,6 +2357,176 @@ def run_all(browser, base, data, tmp, procs):
         pg.unroute("**/api/recordings/*/retry", retry_400)
         c.close()
     check("55 재시도 400 뒤 서버 error 글을 토스트로 보임", t55)
+
+
+    def t56():
+        counter = tmp / "t56-count.txt"
+        stt_code = ("import pathlib, sys\n"
+                    "p = pathlib.Path(sys.argv[1])\n"
+                    "n = int(p.read_text(encoding='utf-8')) if p.exists() else 0\n"
+                    "p.write_text(str(n + 1), encoding='utf-8')\n"
+                    "print('글 ' + chr(ord('A') + n))\n")
+        stt_cmd = "%s -c %s %s" % (sys.executable, shlex.quote(stt_code), shlex.quote(str(counter)))
+        b, _ = new_server("d56", stt_cmd=stt_cmd)
+        c = new_ctx(timezone_id="Asia/Seoul")
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        rec_cycle(pg)
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 20, pg=pg), "목록 항목이 생기지 않음")
+        need(wait_for(lambda: pg.locator("#list .rec-item .status").first.inner_text().strip() == "완료", 20, pg=pg),
+             "받아쓰기가 끝나지 않음")
+        rid = server_items(b)[0]["id"]
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.is_visible("#detail-edit") and detail_ready(pg), 10, pg=pg),
+             "상세 편집 칸이 보이지 않거나 첫 읽기가 끝나지 않음")
+        need(wait_for(lambda: pg.inner_text("#transcript").strip() == "글 A", 20, pg=pg),
+             "첫 받아쓰기가 글 A 가 아님: %r" % pg.inner_text("#transcript"))
+
+        for expected in ("글 B", "글 C"):
+            pg.click("#detail-retry")
+            need(wait_for(lambda exp=expected: pg.inner_text("#transcript").strip() == exp, 30, pg=pg),
+                 "다시 받아쓴 글이 %s 가 아님: %r" % (expected, pg.inner_text("#transcript")))
+
+        need(wait_for(lambda: pg.is_visible("#detail-prev") and
+                      pg.inner_text("#detail-prev-summary").strip() == "지난 글 2벌", 10, pg=pg),
+             "#detail-prev 요약이 '지난 글 2벌' 이 아님: %r" % pg.inner_text("#detail-prev-summary"))
+        got = api_get(b, "/api/recordings/" + rid)
+        prevs = got.get("prev_transcripts")
+        need(got["transcript"] == "글 C" and isinstance(prevs, list) and
+             [p["text"] for p in prevs] == ["글 B", "글 A"],
+             "서버의 새 글·지난 글 벌 순서가 다름: %r / %r" % (got["transcript"], prevs))
+
+        injected = [
+            {"text": "글 B", "stt_used": {"preprocess": "denoise", "speakers": 2},
+             "at": "2026-11-20T10:15:00+09:00"},
+            {"text": "글 A", "stt_used": {"preprocess": "none", "auto": True},
+             "at": "2026-11-20T09:30:00+09:00"},
+        ]
+        seen = {"n": 0}
+
+        def inject(route):
+            req = route.request
+            url = req.url.split("?")[0]
+            if req.method != "GET" or "/audio" in url or not re.search(r"/api/recordings/[^/]+$", url):
+                route.continue_()
+                return
+            data = api_get(b, "/api/recordings/" + rid)
+            data["prev_transcripts"] = injected
+            data["autotag"] = "pending"
+            seen["n"] += 1
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(data, ensure_ascii=False))
+
+        pg.route("**/api/recordings/*", inject)
+        pg.reload()
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 10, pg=pg), "새로고침 뒤 목록 항목이 없음")
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: detail_ready(pg) and
+                      pg.inner_text("#detail-prev-summary").strip() == "지난 글 2벌", 10, pg=pg),
+             "주입한 상세 응답의 지난 글 요약이 '지난 글 2벌' 이 아님: %r" % pg.inner_text("#detail-prev-summary"))
+        pg.click("#detail-prev summary")
+        items = pg.locator("#detail-prev-list .prev-item")
+        need(wait_for(lambda: items.count() == 2, 5, pg=pg), "지난 글 벌이 2개가 아님")
+        pg.locator("#detail-prev-list .prev-item summary").nth(0).click()
+        pg.locator("#detail-prev-list .prev-item summary").nth(1).click()
+        pre = pg.locator("#detail-prev-list .prev-item pre.transcript")
+        need(wait_for(lambda: pre.nth(0).is_visible() and pre.nth(1).is_visible(), 5, pg=pg),
+             "지난 글 벌을 펼쳐도 글칸이 보이지 않음")
+        need(pre.nth(0).inner_text().strip() == "글 B" and pre.nth(1).inner_text().strip() == "글 A",
+             "지난 글 벌 순서/글자가 다름: %r / %r" % (pre.nth(0).inner_text(), pre.nth(1).inner_text()))
+        summaries = pg.locator("#detail-prev-list .prev-item summary")
+        s0, s1 = summaries.nth(0).inner_text(), summaries.nth(1).inner_text()
+        need("받아쓴 때 2026-11-20 10:15" in s0 and "전처리 denoise" in s0 and "화자 2" in s0,
+             "첫 지난 글 벌 요약에 받아쓴 때/옵션이 없음: %r" % s0)
+        need("받아쓴 때 2026-11-20 09:30" in s1 and "전처리 none" in s1 and "자동 추정 켬" in s1,
+             "둘째 지난 글 벌 요약에 받아쓴 때/옵션이 없음: %r" % s1)
+
+        baseline = seen["n"]
+        need(wait_for(lambda: seen["n"] >= baseline + 2, 10, pg=pg),
+             "지난 글 상세가 폴링으로 두 번 다시 읽히지 않음 (%d)" % (seen["n"] - baseline))
+        open_states = pg.evaluate("Array.from(document.querySelectorAll('#detail-prev-list .prev-item details')).map(d => d.open)")
+        need(open_states == [True, True], "폴링 뒤 펼친 지난 글 벌이 접힘: %r" % open_states)
+
+        pg.set_viewport_size({"width": 320, "height": 800})
+        pg.wait_for_timeout(100)
+        rects = pg.evaluate("""() => {
+            var vw = window.innerWidth;
+            var ol = document.querySelector('#detail-prev-list');
+            var box = document.querySelector('#detail-prev').getBoundingClientRect();
+            var items = Array.from(document.querySelectorAll('#detail-prev-list .prev-item')).map(function (li) {
+                var r = li.getBoundingClientRect();
+                return {left: r.left, right: r.right, scrollW: li.scrollWidth, clientW: li.clientWidth};
+            });
+            return {vw: vw, boxLeft: box.left, boxRight: box.right,
+                    listScroll: ol.scrollWidth, listClient: ol.clientWidth, items: items};
+        }""")
+        need(rects["boxLeft"] >= -0.5 and rects["boxRight"] <= rects["vw"] + 0.5,
+             "320px 지난 글 묶음이 화면 밖으로 넘침: %r" % rects)
+        need(rects["listScroll"] <= rects["listClient"] + 1,
+             "320px 지난 글 목록이 가로로 넘침: %d > %d" % (rects["listScroll"], rects["listClient"]))
+        for item in rects["items"]:
+            need(item["left"] >= -0.5 and item["right"] <= rects["vw"] + 0.5,
+                 "320px 지난 글 벌이 화면 밖으로 넘침: %r" % item)
+            need(item["scrollW"] <= item["clientW"] + 1,
+                 "320px 지난 글 벌 안이 가로로 넘침: %r" % item)
+
+        pg.unroute("**/api/recordings/*", inject)
+        c.close()
+    check("56 A→B→C 지난 글 2벌 순서·주입 옵션·폴링 뒤 펼침 유지·320px 넘침 없음", t56)
+
+
+    def t57():
+        b, d = new_server("d57")
+        c = new_ctx(timezone_id="Asia/Seoul")
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        rec_cycle(pg)
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 20, pg=pg), "목록 항목이 생기지 않음")
+        need(wait_for(lambda: pg.locator("#list .rec-item .status").first.inner_text().strip() == "완료", 20, pg=pg),
+             "받아쓰기가 끝나지 않음")
+        rid = server_items(b)[0]["id"]
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid).get("autotag") in ("done", "failed"), 10, pg=pg),
+             "자동 태그가 끝나지 않아 메타를 고치기 전에 상태가 흔들림")
+
+        transcript_paths = list(d.glob("transcripts/*/%s.txt" % rid))
+        need(len(transcript_paths) == 1, "녹취 글 파일이 하나가 아님: %r" % transcript_paths)
+        txt = transcript_paths[0]
+        (txt.parent / (rid + ".prev.txt")).write_text("옛 글", encoding="utf-8")
+        meta_path = d / "meta" / (rid + ".json")
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["prev_stt_used"] = {"preprocess": "denoise", "at": "2026-11-20T09:15:00+09:00"}
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.is_visible("#detail-edit") and detail_ready(pg), 10, pg=pg),
+             "상세 편집 칸이 보이지 않거나 읽기가 끝나지 않음")
+        need(wait_for(lambda: pg.is_visible("#detail-prev") and
+                      pg.inner_text("#detail-prev-summary").strip() == "지난 글 1벌", 10, pg=pg),
+             "#detail-prev 요약이 '지난 글 1벌' 이 아님: %r" % pg.inner_text("#detail-prev-summary"))
+        pg.click("#detail-prev summary")
+        need(wait_for(lambda: pg.locator("#detail-prev-list .prev-item").count() == 1, 5, pg=pg),
+             "옛 .prev.txt 가 지난 글 벌로 보이지 않음")
+        pg.locator("#detail-prev-list .prev-item summary").first.click()
+        prev_text = pg.locator("#detail-prev-list .prev-item pre.transcript").first
+        need(wait_for(lambda: prev_text.is_visible(), 5, pg=pg), "옛 지난 글 벌을 펼쳐도 글칸이 보이지 않음")
+        need(prev_text.inner_text().strip() == "옛 글",
+             "옛 .prev.txt 글자가 다름: %r" % prev_text.inner_text())
+        summary = pg.locator("#detail-prev-list .prev-item summary").first.inner_text()
+        need("전처리 denoise" in summary and "받아쓴 때 2026-11-20 09:15" in summary,
+             "옛 지난 글 벌 요약에 옵션/받아쓴 때가 없음: %r" % summary)
+        got = api_get(b, "/api/recordings/" + rid)
+        need(isinstance(got.get("prev_transcripts"), list) and len(got["prev_transcripts"]) == 1 and
+             got["prev_transcripts"][0]["text"] == "옛 글" and
+             got["prev_transcripts"][0]["stt_used"]["preprocess"] == "denoise",
+             "서버 응답의 옛 지난 글 벌이 다름: %r" % got.get("prev_transcripts"))
+        c.close()
+    check("57 옛 .prev.txt·prev_stt_used 가 지난 글 1벌로 보임", t57)
 
 
 if __name__ == "__main__":

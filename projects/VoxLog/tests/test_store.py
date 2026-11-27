@@ -723,12 +723,13 @@ class StoreTest(unittest.TestCase):
         meta = self.add()
         self.assertIsNone(meta["stt_options"])
         self.assertIsNone(meta["stt_used"])
-        self.assertIsNone(meta["prev_stt_used"])
+        self.assertNotIn("prev_stt_used", meta)
         got = self.store.get(meta["id"])
         self.assertIsNone(got["stt_options"])
         self.assertIsNone(got["stt_used"])
-        self.assertIsNone(got["prev_stt_used"])
-        self.assertEqual(got["transcript_prev"], "")
+        self.assertNotIn("prev_stt_used", got)
+        self.assertNotIn("transcript_prev", got)
+        self.assertEqual(got["prev_transcripts"], [])
 
     def test_set_transcript_used_and_previous_text(self):
         rid = self.add(recorded_at="2026-01-01T10:00:00")["id"]
@@ -737,8 +738,8 @@ class StoreTest(unittest.TestCase):
 
         got = self.store.get(rid)
         self.assertEqual(got["transcript"], "첫 글")
-        self.assertEqual(got["transcript_prev"], "")
-        self.assertIsNone(got["prev_stt_used"])
+        self.assertEqual(got["prev_transcripts"], [])
+        self.assertNotIn("prev_stt_used", got)
         self.assertEqual(got["stt_used"]["preprocess"], "denoise")
         self.assertEqual(got["stt_used"]["speakers"], 1)
         self.assertIn("at", got["stt_used"])
@@ -749,13 +750,21 @@ class StoreTest(unittest.TestCase):
 
         got = self.store.get(rid)
         self.assertEqual(got["transcript"], "둘째 글")
-        self.assertEqual(got["transcript_prev"], "첫 글")
-        prev_used = dict(got["prev_stt_used"])
-        prev_used.pop("at")
-        self.assertEqual(prev_used, first_used)
+        self.assertNotIn("transcript_prev", got)
+        self.assertNotIn("prev_stt_used", got)
+        self.assertEqual(len(got["prev_transcripts"]), 1)
+        prev = got["prev_transcripts"][0]
+        self.assertEqual(prev["text"], "첫 글")
+        self.assertEqual(prev["stt_used"]["preprocess"], "denoise")
+        self.assertEqual(prev["stt_used"]["speakers"], 1)
+        self.assertEqual(prev["at"], prev["stt_used"]["at"])
         self.assertEqual(got["stt_used"]["preprocess"], "none")
-        prev_path = self.store.transcripts_dir / "2026-01-01" / (rid + ".prev.txt")
-        self.assertEqual(prev_path.read_text(encoding="utf-8"), "첫 글")
+        prev_path = self.store.transcripts_dir / "2026-01-01" / (rid + ".prev.json")
+        self.assertEqual(json.loads(prev_path.read_text(encoding="utf-8"))[0]["text"], "첫 글")
+        txt_prev = self.store.transcripts_dir / "2026-01-01" / (rid + ".prev.txt")
+        self.assertFalse(txt_prev.exists())
+        meta = json.loads((self.root / "meta" / (rid + ".json")).read_text(encoding="utf-8"))
+        self.assertNotIn("prev_stt_used", meta)
 
     def test_set_transcript_same_text_keeps_previous(self):
         rid = self.add(recorded_at="2026-01-01T10:00:00")["id"]
@@ -766,8 +775,7 @@ class StoreTest(unittest.TestCase):
         self.store.set_transcript(rid, "둘째 글", used={"preprocess": "basic"})
         got = self.store.get(rid)
 
-        self.assertEqual(got["transcript_prev"], after_second["transcript_prev"])
-        self.assertEqual(got["prev_stt_used"], after_second["prev_stt_used"])
+        self.assertEqual(got["prev_transcripts"], after_second["prev_transcripts"])
         self.assertEqual(got["stt_used"]["preprocess"], "basic")
         self.assertNotEqual(before["stt_used"]["preprocess"], "basic")
 
@@ -776,9 +784,8 @@ class StoreTest(unittest.TestCase):
         self.store.set_transcript(rid, "")
         self.store.set_transcript(rid, "새 글", used={"preprocess": "level"})
         got = self.store.get(rid)
-        self.assertEqual(got["transcript_prev"], "")
-        self.assertIsNone(got["prev_stt_used"])
-        prev_path = self.store.transcripts_dir / "2026-01-01" / (rid + ".prev.txt")
+        self.assertEqual(got["prev_transcripts"], [])
+        prev_path = self.store.transcripts_dir / "2026-01-01" / (rid + ".prev.json")
         self.assertFalse(prev_path.exists())
 
     def test_set_transcript_used_none_clears_stt_used(self):
@@ -788,7 +795,8 @@ class StoreTest(unittest.TestCase):
         self.store.set_transcript(rid, "다른 글", used=None)
         got = self.store.get(rid)
         self.assertIsNone(got["stt_used"])
-        self.assertEqual(got["transcript_prev"], "글")
+        self.assertEqual(got["prev_transcripts"][0]["text"], "글")
+        self.assertEqual(got["prev_transcripts"][0]["stt_used"]["preprocess"], "denoise")
 
     def test_retranscript_keeps_label_and_tags(self):
         rid = self.add()["id"]
@@ -814,12 +822,14 @@ class StoreTest(unittest.TestCase):
         got = self.store.get(prefix)
         self.assertIsNone(got["stt_options"])
         self.assertIsNone(got["stt_used"])
-        self.assertIsNone(got["prev_stt_used"])
-        self.assertEqual(got["transcript_prev"], "")
+        self.assertNotIn("prev_stt_used", got)
+        self.assertNotIn("transcript_prev", got)
+        self.assertEqual(got["prev_transcripts"], [])
         item = self.store.list()[0]
         self.assertIsNone(item["stt_options"])
         self.assertIsNone(item["stt_used"])
-        self.assertIsNone(item["prev_stt_used"])
+        self.assertNotIn("prev_stt_used", item)
+        self.assertNotIn("transcript_prev", item)
 
     def test_default_and_effective_stt_options(self):
         self.assertEqual(self.store.default_stt_options(), {})
@@ -886,11 +896,14 @@ class StoreTest(unittest.TestCase):
         self.store.set_transcript(rid, "첫 글", used={"preprocess": "denoise"})
         self.store.set_transcript(rid, "둘째 글", used={"preprocess": "none"})
         txt = self.root / "transcripts" / "2026-02-03" / (rid + ".txt")
-        prev = self.root / "transcripts" / "2026-02-03" / (rid + ".prev.txt")
-        self.assertTrue(txt.exists() and prev.exists())
+        prev_json = self.root / "transcripts" / "2026-02-03" / (rid + ".prev.json")
+        prev_txt = self.root / "transcripts" / "2026-02-03" / (rid + ".prev.txt")
+        prev_txt.write_text("옛 벌", encoding="utf-8")
+        self.assertTrue(txt.exists() and prev_json.exists() and prev_txt.exists())
         self.assertTrue(self.store.delete(rid))
         self.assertFalse(txt.exists())
-        self.assertFalse(prev.exists())
+        self.assertFalse(prev_json.exists())
+        self.assertFalse(prev_txt.exists())
         self.assertIsNone(self.store.get(rid))
 
     def test_list_and_search_ignore_previous_text(self):
@@ -904,7 +917,7 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(found[0]["snippet"], "새글")
         self.assertEqual(self.store.list()[0]["snippet"], "새글")
 
-    def test_set_transcript_keeps_longest_displaced_text(self):
+    def test_set_transcript_keeps_displaced_text_in_order(self):
         rid = self.add(recorded_at="2026-01-01T10:00:00")["id"]
         long_text = "긴" * 50
         first_used = {"preprocess": "denoise"}
@@ -912,20 +925,16 @@ class StoreTest(unittest.TestCase):
         self.store.set_transcript(rid, "아", used={"preprocess": "none"})
         got = self.store.get(rid)
         self.assertEqual(got["transcript"], "아")
-        self.assertEqual(got["transcript_prev"], long_text)
-        prev_used = dict(got["prev_stt_used"])
-        prev_used.pop("at")
-        self.assertEqual(prev_used, first_used)
+        self.assertEqual(got["prev_transcripts"][0]["text"], long_text)
+        self.assertEqual(got["prev_transcripts"][0]["stt_used"]["preprocess"], "denoise")
 
         self.store.set_transcript(rid, "아.", used={"preprocess": "basic"})
         got = self.store.get(rid)
         self.assertEqual(got["transcript"], "아.")
-        self.assertEqual(got["transcript_prev"], long_text)
-        prev_used = dict(got["prev_stt_used"])
-        prev_used.pop("at")
-        self.assertEqual(prev_used, first_used)
+        self.assertEqual([p["text"] for p in got["prev_transcripts"]], ["아", long_text])
+        self.assertEqual(got["prev_transcripts"][0]["stt_used"]["preprocess"], "none")
 
-    def test_set_transcript_previous_tracks_longest_of_displaced(self):
+    def test_set_transcript_previous_tracks_displaced_in_order(self):
         rid = self.add(recorded_at="2026-01-01T10:00:00")["id"]
         a = "짧은 글"
         b = "훨씬 더 긴 두 번째 글"
@@ -933,15 +942,118 @@ class StoreTest(unittest.TestCase):
         self.store.set_transcript(rid, a, used={"preprocess": "level"})
         self.store.set_transcript(rid, b, used={"preprocess": "denoise"})
         got = self.store.get(rid)
-        self.assertEqual(got["transcript_prev"], a)
+        self.assertEqual([p["text"] for p in got["prev_transcripts"]], [a])
 
         self.store.set_transcript(rid, c, used={"preprocess": "basic"})
         got = self.store.get(rid)
         self.assertEqual(got["transcript"], c)
-        self.assertEqual(got["transcript_prev"], b)
-        prev_used = dict(got["prev_stt_used"])
-        prev_used.pop("at")
-        self.assertEqual(prev_used, {"preprocess": "denoise"})
+        self.assertEqual([p["text"] for p in got["prev_transcripts"]], [b, a])
+        self.assertEqual(got["prev_transcripts"][0]["stt_used"]["preprocess"], "denoise")
+        self.assertEqual(got["prev_transcripts"][1]["stt_used"]["preprocess"], "level")
+
+    def test_prev_transcripts_recent_first_with_used_and_at(self):
+        rid = self.add(recorded_at="2026-01-01T10:00:00")["id"]
+        a_used = {"preprocess": "level", "num_speakers": 1}
+        b_used = {"preprocess": "denoise", "num_speakers": 2}
+        self.store.set_transcript(rid, "A", used=a_used)
+        self.store.set_transcript(rid, "B", used=b_used)
+        self.store.set_transcript(rid, "C", used={"preprocess": "none"})
+        got = self.store.get(rid)
+        self.assertEqual([p["text"] for p in got["prev_transcripts"]], ["B", "A"])
+        for item, used in zip(got["prev_transcripts"], (b_used, a_used)):
+            self.assertEqual({k: v for k, v in item["stt_used"].items() if k != "at"}, used)
+            self.assertEqual(item["at"], item["stt_used"]["at"])
+            self.assertIsNotNone(store_mod._parse_iso(item["at"]))
+        self.assertNotIn("transcript_prev", got)
+
+    def test_prev_transcripts_capped_at_five_oldest_dropped(self):
+        rid = self.add(recorded_at="2026-01-01T10:00:00")["id"]
+        texts = ["A", "B", "C", "D", "E", "F", "G"]
+        for i, text in enumerate(texts):
+            self.store.set_transcript(rid, text,
+                                      used={"preprocess": ["level", "denoise", "basic", "none"][i % 4]})
+        got = self.store.get(rid)
+        self.assertEqual([p["text"] for p in got["prev_transcripts"]],
+                         ["F", "E", "D", "C", "B"])
+        prev_json = self.root / "transcripts" / "2026-01-01" / (rid + ".prev.json")
+        stored = json.loads(prev_json.read_text(encoding="utf-8"))
+        self.assertEqual([p["text"] for p in stored], ["B", "C", "D", "E", "F"])
+        self.assertEqual(len(stored), store_mod.PREV_KEEP)
+
+    def test_same_text_reappearing_does_not_grow_list(self):
+        rid = self.add(recorded_at="2026-01-01T10:00:00")["id"]
+        for text in ("A", "B", "C"):
+            self.store.set_transcript(rid, text, used={"preprocess": "level"})
+        before = self.store.get(rid)
+        self.assertEqual([p["text"] for p in before["prev_transcripts"]], ["B", "A"])
+
+        self.store.set_transcript(rid, "B", used={"preprocess": "none"})
+        got = self.store.get(rid)
+        self.assertEqual(got["transcript"], "B")
+        self.assertEqual([p["text"] for p in got["prev_transcripts"]], ["C", "A"])
+        texts = [p["text"].strip() for p in got["prev_transcripts"]]
+        self.assertEqual(len(texts), len(set(texts)))
+
+    def test_legacy_prev_txt_and_meta_are_absorbed_on_next_write(self):
+        rid = self.add(recorded_at="2026-01-01T10:00:00")["id"]
+        self.store.set_transcript(rid, "옛 글", used={"preprocess": "denoise"})
+        day_dir = self.root / "transcripts" / "2026-01-01"
+        prev_txt = day_dir / (rid + ".prev.txt")
+        prev_txt.write_text("옛전 글", encoding="utf-8")
+        meta_path = self.root / "meta" / (rid + ".json")
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["prev_stt_used"] = {"preprocess": "level", "at": "2025-12-31T10:00:00"}
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+        got = self.store.get(rid)
+        self.assertEqual(got["prev_transcripts"], [{
+            "text": "옛전 글",
+            "stt_used": {"preprocess": "level", "at": "2025-12-31T10:00:00"},
+            "at": "2025-12-31T10:00:00",
+        }])
+        self.assertNotIn("prev_stt_used", got)
+        item = self.store.list()[0]
+        self.assertNotIn("prev_stt_used", item)
+        self.assertNotIn("transcript_prev", item)
+        self.assertTrue(prev_txt.exists())
+        self.assertEqual(prev_txt.read_text(encoding="utf-8"), "옛전 글")
+        self.assertEqual(json.loads(meta_path.read_text(encoding="utf-8"))["prev_stt_used"]["preprocess"],
+                         "level")
+
+        self.store.set_transcript(rid, "새 글", used={"preprocess": "none"})
+        prev_json = day_dir / (rid + ".prev.json")
+        stored = json.loads(prev_json.read_text(encoding="utf-8"))
+        self.assertEqual([p["text"] for p in stored], ["옛전 글", "옛 글"])
+        self.assertFalse(prev_txt.exists())
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        self.assertNotIn("prev_stt_used", meta)
+        got = self.store.get(rid)
+        self.assertEqual([p["text"] for p in got["prev_transcripts"]], ["옛 글", "옛전 글"])
+
+    def test_broken_prev_json_is_empty_list(self):
+        rid = self.add(recorded_at="2026-01-01T10:00:00")["id"]
+        self.store.set_transcript(rid, "A", used={"preprocess": "level"})
+        self.store.set_transcript(rid, "B", used={"preprocess": "none"})
+        prev_json = self.root / "transcripts" / "2026-01-01" / (rid + ".prev.json")
+
+        prev_json.write_text("{oops", encoding="utf-8")
+        self.assertEqual(self.store.get(rid)["prev_transcripts"], [])
+        prev_json.write_text("[]", encoding="utf-8")
+        self.assertEqual(self.store.get(rid)["prev_transcripts"], [])
+
+        prev_json.write_text(json.dumps([{"text": 1}, {"text": "A"}]), encoding="utf-8")
+        self.assertEqual([p["text"] for p in self.store.get(rid)["prev_transcripts"]], ["A"])
+
+    def test_list_has_no_previous_text_keys(self):
+        rid = self.add(recorded_at="2026-01-01T10:00:00")["id"]
+        self.store.set_transcript(rid, "A", used={"preprocess": "level"})
+        self.store.set_transcript(rid, "B", used={"preprocess": "none"})
+        item = self.store.list()[0]
+        self.assertNotIn("transcript_prev", item)
+        self.assertNotIn("prev_stt_used", item)
+        got = self.store.get(rid)
+        self.assertNotIn("transcript_prev", got)
+        self.assertNotIn("prev_stt_used", got)
 
     def test_set_status_failed_keeps_transcript_and_previous(self):
         rid = self.add(recorded_at="2026-01-01T10:00:00")["id"]
@@ -953,7 +1065,7 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(got["status"], "failed")
         self.assertEqual(got["error"], "받아쓰기 실패")
         self.assertEqual(got["transcript"], "둘째 글")
-        self.assertEqual(got["transcript_prev"], "첫 글")
+        self.assertEqual([p["text"] for p in got["prev_transcripts"]], ["첫 글"])
         path = self.store.transcripts_dir / "2026-01-01" / (rid + ".txt")
         self.assertEqual(path.read_text(encoding="utf-8"), "둘째 글")
 
