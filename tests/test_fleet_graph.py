@@ -620,6 +620,22 @@ class FleetGraphContractTests(unittest.TestCase):
         self.assertIn("percent", fleet_graph.progress(graph))
         self.assertEqual(fleet_graph._live_scan(graph)[0], set())
 
+    def test_eta_counts_down_while_a_node_runs(self):
+        # 실행 중인 노드가 쓴 시간은 남은 시간에서도 빠진다 (진행율만 오르고 ETA 는 서 있지 않게)
+        import datetime
+        started = (datetime.datetime.now() - datetime.timedelta(seconds=40)).isoformat(timespec="seconds")
+        node = self._node(status="running")
+        node["attempts"] = [{"started": started}]
+        durations = {"x": [100.0]}
+        idle = fleet_graph.progress(self._graph([self._node(status="todo")]), durations)["eta_seconds"]
+        live = fleet_graph.progress(self._graph([node]), durations)
+        self.assertGreater(idle - live["eta_seconds"], 30)
+        self.assertGreater(live["percent"], 0)
+        node["attempts"] = [{"started": "2020-01-01T00:00:00"}]          # 추정보다 오래 돌아도 끝났다고 하지 않는다
+        late = fleet_graph.progress(self._graph([node]), durations)
+        self.assertGreater(late["eta_seconds"], 0)
+        self.assertLess(late["percent"], 100)
+
 
 class EngineV2Stage3(unittest.TestCase):
     """엔진 v2 3단계: 실패의 종류(5.3)·공급자 문지기(5.4)·싼 틱(5.7)·보드 동기화(5.8). 상태는 패치로 꾸민다."""

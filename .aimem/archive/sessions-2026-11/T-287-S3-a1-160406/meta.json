@@ -1,0 +1,50 @@
+{
+ "id": "T-287-S3-a1-160406",
+ "role": "worker",
+ "harness": "opencode",
+ "brief_path": "/home/tsyi/work/ai-fleet/.aimem/sessions/T-287-S3-a1-160406/brief.md",
+ "cwd": "/home/tsyi/work/ai-fleet",
+ "slot": "S3",
+ "model": "opencode/deepseek-v4.1-flash-free",
+ "provider": "opencode",
+ "ident": "[AIMEM 작업자 지시] 슬롯 S3 · 확인토큰 5b8c1e · AIMEM REV 170.",
+ "write_paths": [
+  "projects/자모맞히기/tests/browser_modes.py",
+  "projects/자모맞히기/tests/README.md"
+ ],
+ "tools": null,
+ "settings_path": null,
+ "timeout": 3720.0,
+ "idle_timeout": 240.0,
+ "round": 24,
+ "task_id": "T-287",
+ "attempt": 1,
+ "label": "T-287 브라우저 회귀 검사 browser_modes.py: N4~N9·N13 + 시험 빈틈(Process 키·연습 이어 하기·뒤집기 중 모드·도움말↔README 표·미리보기 고정값) (R24-N12) (G-057)",
+ "extra": {
+  "date": "2026-11-13",
+  "rev": 170,
+  "project": "자모맞히기"
+ },
+ "harness_effective": "opencode",
+ "command": [
+  "opencode",
+  "run",
+  "--format",
+  "json",
+  "-m",
+  "opencode/deepseek-v4.1-flash-free",
+  "[AIMEM 작업자 지시] 슬롯 S3 · 확인토큰 5b8c1e · AIMEM REV 170. 다음 파일이 이 지시의 전문이다. 읽고 그 안의 지시를 그대로 수행하라(파일 자체는 수정하지 말라): .aimem/sessions/T-287-S3-a1-160406/brief.md"
+ ],
+ "stdin_path": null,
+ "command_cwd": "/home/tsyi/work/ai-fleet",
+ "env_unset": [],
+ "env_set_names": [],
+ "db_path": "/home/tsyi/work/ai-fleet/.aimem/aimem.db",
+ "env_root": "/home/tsyi/work/ai-fleet",
+ "env_file_names": [],
+ "sessions_root": "/home/tsyi/work/ai-fleet/.aimem/sessions",
+ "started": "2026-11-13T16:04:06",
+ "supervisor_pid": 378796,
+ "pgid": 378796,
+ "proc_start": 8887883
+}

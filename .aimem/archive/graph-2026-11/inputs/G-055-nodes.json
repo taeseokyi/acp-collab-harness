@@ -1,0 +1,50 @@
+[
+ {
+  "id": "T-272",
+  "slot": "S2",
+  "deps": [],
+  "project": "",
+  "title": "실행 기록 읽기: FIFO 에서 막힘·메타 크기 상한 없음 (R20-N6·R20-N8 = R22-P4)",
+  "timeout_sec": 2400,
+  "max_attempts": 2,
+  "write": ["tools/fleet.py", "tools/fleet_graph.py"],
+  "task": "# T-272 실행 기록을 안전하게 읽기 (R20-N6·R20-N8, R22 재검수 P4)\n\n쓸 파일은 **둘**입니다: `tools/fleet.py`, `tools/fleet_graph.py`. 다른 파일(`tests/**` 포함)은 **읽기만** 하십시오. 바로 파일을 고치십시오.\n근거: `rounds/R20/REVIEW-r20.md` 의 N6·N8 행 (그 보고서의 나머지는 읽지 않아도 됩니다).\n\n## 결함\n\n- N6: `tools/fleet_graph.py` `run_limit_signal` 이 `.aimem/runs/<id>.out` 을 `open(\"rb\").read(1MiB)` 로 엽니다. 그 자리가 FIFO(이름 있는 파이프)면 **쓰는 쪽이 올 때까지 영영 막힙니다** - 그래프 실행기 전체가 멈춥니다. 세션 갈래의 `meta.json` 읽기도 같습니다.\n- N8: `tools/fleet.py` `_run_meta` (369행 근처)와 `_session_meta` (352행 근처)가 `read_text()` 로 **크기 상한 없이** 읽습니다.\n\n## 할 일\n\n1. `tools/fleet.py` 에 작은 도우미 하나: `read_regular_bytes(path, limit) -> Optional[bytes]`. `os.open(path, os.O_RDONLY | os.O_NONBLOCK)` 로 연 뒤 `os.fstat` 으로 `stat.S_ISREG` 가 아니면 `None`, 크기가 `limit` 를 넘으면 `None`, 아니면 `limit` 바이트까지 읽어 돌려줍니다. `OSError` 는 `None`. 열었으면 반드시 닫습니다(`try/finally`).\n2. `_run_meta`·`_session_meta` 가 그 도우미로 읽게 합니다 (상한 256 KiB). 지금의 반환 꼴(dict 또는 None)은 그대로.\n3. `tools/fleet_graph.py` `run_limit_signal`: `.out` 읽기는 `fleet.read_regular_bytes(..., 1024*1024)` 로 (넘으면 지금처럼 `None` 이 되면 됩니다 - 지금은 1MiB 까지 잘라 읽어 JSON 이 깨져 `None` 이었습니다). 세션 갈래의 `meta.json` 읽기도 도우미로(256 KiB).\n4. 다른 동작은 바꾸지 마십시오.\n\n## 하지 말 것\n\n`tests/**` 고치기(다음 노드 S3 가 시험을 씁니다), `git commit`/`push`, 파일 삭제, 운영 모니터 부르기.\n\n## 검증 (엔진이 돌립니다)\n\n`tests.test_fleet_graph`·`tests.test_fleet_ctl`·`tests.test_fleet` 와 `test_rt_*.py` 전부가 통과하고, 임시 `RUNS` 에 FIFO `X.out` + claude 메타를 두면 `run_limit_signal(\"X\")` 가 3초 안에 `None`, 2 MiB 짜리 `Y.json` 이면 `fleet._run_meta(\"Y\")` 가 `None`, 정상 메타는 dict, `fleet.read_regular_bytes` 가 있어야 합니다.\n",
+  "verify": "python3 -m unittest tests.test_fleet_graph tests.test_fleet_ctl tests.test_fleet > /tmp/r22-t272.txt 2>&1 && python3 -m unittest discover -s tests -p 'test_rt_*.py' >> /tmp/r22-t272.txt 2>&1 && python3 - >> /tmp/r22-t272.txt 2>&1 <<'PY'\nimport json, os, pathlib, sys, tempfile, threading\nsys.path.insert(0, 'tools')\nimport fleet, fleet_graph\nd = pathlib.Path(tempfile.mkdtemp(prefix='r22-t272-'))\nfleet.RUNS = d\nfleet._session_dir = lambda rid: None\n(d / 'X.json').write_text(json.dumps({'harness': 'claude'}), encoding='utf-8')\nos.mkfifo(d / 'X.out')\nbox = []\nt = threading.Thread(target=lambda: box.append(fleet_graph.run_limit_signal('X')), daemon=True)\nt.start(); t.join(3)\nfifo_ok = (not t.is_alive()) and box == [None]\n(d / 'Y.json').write_text('{\"harness\": \"claude\", \"pad\": \"' + 'a' * (2 * 1024 * 1024) + '\"}', encoding='utf-8')\nbig_ok = fleet._run_meta('Y') is None\nok_ok = isinstance(fleet._run_meta('X'), dict)\nhelper = hasattr(fleet, 'read_regular_bytes')\nprint('fifo', fifo_ok, 'big', big_ok, 'normal', ok_ok, 'helper', helper)\nos._exit(0 if (fifo_ok and big_ok and ok_ok and helper) else 1)\nPY"
+ },
+ {
+  "id": "T-273",
+  "slot": "S3",
+  "deps": ["T-272"],
+  "project": "",
+  "title": "시험: FIFO·큰 메타 회귀 + 한도 판정 시험 구멍 둘 (R22-P4·R22-S1·R22-S2)",
+  "timeout_sec": 2400,
+  "max_attempts": 2,
+  "write": ["tests/test_fleet_graph.py", "tests/test_rt_claude.py"],
+  "task": "# T-273 시험 메우기 (R22-P4·R22-S1·R22-S2)\n\n쓸 파일은 **둘**입니다: `tests/test_fleet_graph.py`, `tests/test_rt_claude.py`. 제품(`tools/**`)은 **읽기만**. 바로 파일을 고치십시오.\n\n## 앞 노드가 바꾼 것 (T-272)\n\n`tools/fleet.py` 에 `read_regular_bytes(path, limit)` (일반 파일이 아니거나 limit 초과면 `None`, `O_NONBLOCK` 으로 열어 FIFO 에서 안 막힘). `_run_meta`·`_session_meta` 는 256 KiB 상한, `fleet_graph.run_limit_signal` 의 `.out` 은 1 MiB 상한으로 이 도우미를 씁니다.\n\n## 할 일\n\n1. `tests/test_fleet_graph.py`\n   - FIFO: 임시 `fleet.RUNS` 에 claude 메타 `X.json` 과 `os.mkfifo` 로 만든 `X.out` → `run_limit_signal(\"X\")` 가 **막히지 않고** `None`. 스레드로 돌리고 `join(3)` 뒤 살아 있으면 실패로 (시험이 영영 멈추지 않게).\n   - 큰 메타: 2 MiB 짜리 `Y.json` → `fleet._run_meta(\"Y\")` 가 `None`. `read_regular_bytes` 를 직접: 일반 파일 → 바이트, 디렉터리 → `None`, 없는 경로 → `None`, limit 초과 → `None`.\n   - R22-S1: `test_q2_session_branch_context_window_text_is_not_true` 의 단언을 `assertIsNone` 으로.\n   - 이 파일의 다른 시험이 `fleet.RUNS`·`fleet._session_dir` 를 어떻게 갈아끼우는지 보고 같은 방식을 쓰십시오. 전체 discover 에서는 `AIFLEET_HARNESS=fake` 가 깔려 있다는 것을 기억하십시오(세션 갈래 시험은 이미 `fleet_rt.harness.get` 을 패치합니다).\n2. `tests/test_rt_claude.py`\n   - R22-S2: `limit_signal` 의 `except` 갈래를 타는 시험 하나 - 예: `ClaudeHarness._events` 를 `mock.patch.object` 로 예외를 던지게 하고 `None` 인지.\n\n## 제품 결함을 찾으면\n\n제품도 시험도 고치지 말고 첫 줄 `NEEDS-FIX: <무엇이 어디서>`.\n\n## 하지 말 것\n\n`tools/**` 고치기, `git commit`/`push`, 파일 삭제, 운영 모니터 부르기.\n\n## 검증 (엔진이 돌립니다)\n\n**전체** `python3 -m unittest discover -s tests` 통과(2~3분), `tests.test_fleet_graph` 80개 이상, `test_rt_claude.py` 29개 이상. 끝내기 전에 당신도 전체 discover 로 확인하십시오.\n",
+  "verify": "python3 -m unittest discover -s tests > /tmp/r22-t273a.txt 2>&1 && python3 -m unittest tests.test_fleet_graph > /tmp/r22-t273b.txt 2>&1 && python3 -m unittest discover -s tests -p 'test_rt_claude.py' > /tmp/r22-t273c.txt 2>&1 && python3 - <<'PY'\nimport re, sys\nb = int(re.search(r'Ran (\\d+) test', open('/tmp/r22-t273b.txt').read()).group(1))\nc = int(re.search(r'Ran (\\d+) test', open('/tmp/r22-t273c.txt').read()).group(1))\nprint('test_fleet_graph', b, 'test_rt_claude', c)\nsys.exit(0 if b >= 80 and c >= 29 else 1)\nPY"
+ },
+ {
+  "id": "T-274",
+  "slot": "S3",
+  "deps": ["T-273"],
+  "project": "",
+  "title": "browser_monitor_ui.py: 이번 라운드 값도 고정 자료로 + 잘린 제목 펼침 갈래 (R22-Q3·R22-Q4)",
+  "timeout_sec": 3000,
+  "max_attempts": 2,
+  "write": ["tests/browser_monitor_ui.py"],
+  "task": "# T-274 `tests/browser_monitor_ui.py` 시험 구멍 둘 (R22-Q3·R22-Q4)\n\n쓸 파일은 **하나**입니다: `tests/browser_monitor_ui.py`. 제품(`tools/**`)은 **읽기만**. 바로 파일을 고치십시오. 근거는 `rounds/R22/REVIEW-r22.md` 의 Q3·Q4 행(45~46줄).\n\n## R22-Q3\n\n임시 저장소로 옮긴 뒤에도 '이번 라운드' 값은 `fleet.RUNS` 기반이라 **진짜 저장소 상태**를 읽습니다 - `temporary_aimem_root` 가 `fleet.RUNS` 를 갈아끼우지 않습니다. 검사는 '내용이 있다' 만 봐서 어느 값이든 통과합니다.\n→ `temporary_aimem_root` 에서 `fleet.RUNS` 도 `root/.aimem/runs` 로 바꾸고(끝나면 되돌리기), 고정 자료에 `rounds/R1/round.json` 하나(무엇을 써야 하는지는 `tools/fleet_ctl.py` 가 그 파일을 어떻게 읽는지 보고 맞추십시오)를 두고, 화면에 보이는 '이번 라운드' 값이 그 고정 자료에서 나온 값인지까지 단언하십시오.\n\n## R22-Q4\n\n'생략된 제목' 검사는 카드 배치(좁은 폭) 대체 갈래로만 통과합니다. 넓은 폭(표 배치)에서 **옆으로 잘린 제목**이 있는 고정 자료(아주 긴 제목의 태스크/그래프)를 두고, 잘린 칸을 찾아(`scrollWidth > clientWidth` 를 `page.evaluate` 로) 누르면 전체 제목이 **보이는지**(`is_visible()`, `bounding_box()` 가 화면 안) 따로 재십시오.\n\n## 화면 검사 규칙\n\n그려진 것을 물으십시오: `hidden`/`display` → `is_visible()`, 자리·겹침·잘림 → `bounding_box()`. 진짜 저장소를 읽지 말고 임시 저장소 고정 자료만 쓰십시오. 서버는 이 파일이 이미 쓰는 방식(임시 포트)으로 띄웁니다 - 운영 모니터(https)를 부르지 마십시오.\n\n## 제품 결함을 찾으면\n\n제품도 시험도 고치지 말고 첫 줄 `NEEDS-FIX: <무엇이 어디서>`.\n\n## 검증 (엔진이 돌립니다)\n\n`projects/`·`.aimem` 을 뺀 저장소 사본에서 `python3 tests/browser_monitor_ui.py` 의 마지막 줄이 `통과 N / 전체 N` 꼴로 전부 통과이고 N 이 28 이상. 끝내기 전에 당신도 한 번 돌려 보십시오.\n",
+  "verify": "rm -rf /tmp/r22-t274 && mkdir -p /tmp/r22-t274\nrsync -a --exclude .git --exclude '.aimem' --exclude 'projects' --exclude __pycache__ ./ /tmp/r22-t274/ > /dev/null 2>&1\nmkdir -p /tmp/r22-t274/.aimem\n(cd /tmp/r22-t274 && python3 tests/browser_monitor_ui.py > /tmp/r22-t274.txt 2>&1)\npython3 - <<'PY'\nimport sys\nlast = open('/tmp/r22-t274.txt', encoding='utf-8', errors='replace').read().strip().splitlines()[-1].split()\nprint('빈 저장소 사본 마지막 줄:', last)\nsys.exit(0 if len(last) == 5 and last[1] == last[4] and int(last[4]) >= 28 else 1)\nPY\n"
+ },
+ {
+  "id": "T-275",
+  "slot": "S1",
+  "deps": ["T-272", "T-273", "T-274"],
+  "project": "",
+  "title": "검수: R22-P4·S1·S2·Q3·Q4 수정이 닫혔는가 (FIFO·메타 상한·시험 구멍)",
+  "timeout_sec": 3000,
+  "max_attempts": 1,
+  "write": ["rounds/R22/REVIEW-r22-4.md"],
+  "task": "# T-275 **검수** - 큐 두 건(R22-P4, R22-S1·S2·Q3·Q4)의 수정이 정말 닫혔는가\n\n쓸 파일은 **하나**입니다: `rounds/R22/REVIEW-r22-4.md` (새 파일). 저장소의 다른 파일은 고치지 마십시오. 변이는 저장소 사본에만.\n\n## 고친 것\n\n| 번호 | 무엇 | 고친 곳 |\n| - | --- | --- |\n| R20-N6 (= R22-P4) | `.out`·`meta.json` 이 FIFO 면 막힘 → `fleet.read_regular_bytes` (`O_NONBLOCK` + `S_ISREG`) | `tools/fleet.py`, `tools/fleet_graph.py` |\n| R20-N8 | 메타를 크기 상한 없이 읽음 → 256 KiB 상한 | `tools/fleet.py` |\n| R22-S1·S2 | context-window 시험 `assertIsNone`, 어댑터 except 갈래 시험 | `tests/test_fleet_graph.py`, `tests/test_rt_claude.py` |\n| R22-Q3·Q4 | 브라우저 검사의 '이번 라운드' 값 고정 자료화, 넓은 폭 잘린 제목 펼침 갈래 | `tests/browser_monitor_ui.py` |\n\n근거 보고서: `rounds/R20/REVIEW-r20.md`(N6·N8), `rounds/R22/REVIEW-r22.md`(Q3·Q4), `rounds/R22/REVIEW-r22-3.md`(S1·S2).\n\n## 방법\n\n1. 저장소를 `/tmp` 로 복사(`.aimem/tls/` 제외, `.git`·`.aimem/runs`·`__pycache__` 도 빼도 됨). 끝나면 그 `/tmp` 폴더를 `rm -rf`\n2. 사본에서 **전체** `python3 -m unittest discover -s tests` 와, `projects/`·`.aimem` 을 치운 사본에서 `python3 tests/browser_monitor_ui.py`\n3. 수정마다 옛 모습으로 되돌리는 변이를 넣어 시험이 빨개지는지 (FIFO 검사 지우기, 크기 상한 지우기, fd 닫기 지우기, `fleet.RUNS` 갈아끼우기 지우기 등)\n4. 새 결함: `read_regular_bytes` 가 심볼릭 링크·권한 없는 파일·딱 상한 크기에서 어떻게 되는지, fd 가 새지 않는지, 이 변경이 모니터(`tools/aimem_monitor/reader.py` 등 `fleet._run_meta` 를 부르는 곳)의 동작을 바꾸지 않는지\n\n## 보고서\n\n1. 닫힘표 `| 번호 | 닫혔나 | 근거 |` 2. 새 결함표 `| 번호 | 심각도 | 무엇이 | 어디 | 재현 | 고칠 방향 |` (없으면 \"없음\") 3. 변이표, 마지막 줄 `합계 <n>개: 잡힘 <a>, 생존 <b>` 4. 한 문단 총평\n\n## 하지 말 것\n\n제품·시험 고치기, `git commit`/`push`, 저장소 파일 삭제, 운영 모니터 부르기.\n",
+  "verify": "python3 - > /tmp/r22-t275.txt 2>&1 <<'PY'\nimport pathlib\np = pathlib.Path('rounds/R22/REVIEW-r22-4.md')\nassert p.exists(), '보고서가 없다'\nt = p.read_text(encoding='utf-8')\nrows = [l for l in t.splitlines() if l.strip().startswith('|')]\nprint('chars', len(t), 'rows', len(rows))\nassert len(t) >= 2000, len(t)\nassert len(rows) >= 12, len(rows)\nassert '합계' in t\nPY"
+ }
+]

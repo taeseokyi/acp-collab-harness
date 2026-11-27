@@ -1,0 +1,16 @@
+[
+ {
+  "id": "T-227",
+  "slot": "S3",
+  "deps": [],
+  "timeout_sec": 3000,
+  "max_attempts": 2,
+  "title": "browser_monitor_ui.py: 그래프 제목 펼치기 검사를 임시 저장소 고정 그래프로",
+  "project": "",
+  "write": [
+   "tests/browser_monitor_ui.py"
+  ],
+  "task": "# T-227 그래프 제목 펼치기 검사를 **임시 저장소**에서 돌게 고치십시오\n\n고칠 파일은 **`tests/browser_monitor_ui.py` 하나**입니다. 제품 코드(`tools/aimem_monitor/**`)는\n**읽기만 하고 절대 고치지 마십시오.**\n\n## 무엇이 문제인가 (관리자가 실측함)\n\n방금 더한 `graph_title_expand_scenario`(592행 근처)가 **진짜 저장소**를 보고 있습니다. 요청 트리의\n태스크 그래프는 **끝난 그래프를 접어 둡니다.** 그래서 도는 그래프가 하나도 없는 순간(= 라운드가 끝난\n뒤)에는 `#graphs-list .graph-title` 이 보이지 않고, 검사가 통째로\n\n```\n[FAIL] 그래프 제목 펼치기 - 그래프 없음\n```\n\n하나로 떨어집니다. 실제로 지금 그렇습니다(`통과 21 / 전체 23`). 다섯 개를 재야 할 검사가 **한 개**로\n줄어들어 검사 수도 들쭉날쭉합니다.\n\n## 고칠 내용\n\n같은 파일의 `zero_subtask_scenario` 가 쓰는 본을 그대로 따르십시오 - **임시 저장소를 만들고\n`monitor_server(root=temp_root)` 로 그 폴더를 읽는 서버를 띄우는** 방식입니다(`main()` 의 아래쪽,\n`tempfile.TemporaryDirectory()` 블록을 보십시오).\n\n1. **고정 그래프를 쓰는 도우미를 더하십시오.**\n\n   ```python\n   def write_fixed_graph(root):\n       \"\"\"제목이 아주 긴, 아직 끝나지 않은 그래프 하나를 임시 저장소에 씁니다.\"\"\"\n   ```\n\n   - 쓸 곳은 `root / \".aimem\" / \"graph\" / \"G-FIXED.json\"` 입니다\n   - 내용은 `{\"id\": \"G-FIXED\", \"request\": \"<아주 긴 한 줄 제목>\", \"created\": …, \"updated\": …,\n     \"concurrency\": 1, \"nodes\": [...]}` 꼴입니다. **지금 저장소의 `.aimem/graph/G-040.json` 을 열어\n     칸 이름을 맞추십시오** (노드는 `id`·`slot`·`deps`·`status`·`title` 정도면 됩니다)\n   - **노드 하나는 `status` 를 `running` 또는 `todo`** 로 두십시오. 끝난 그래프는 접히므로 제목이\n     안 보입니다\n   - `request` 제목은 **200자 이상**으로 길게 쓰십시오. 폰 폭 390px 에서 반드시 `...` 로 줄여지도록\n\n2. `graph_title_expand_scenario` 의 서명을 바꾸지 말고(`browser, base, checks`), **`main()` 에서\n   부르는 자리**를 임시 저장소 블록으로 옮기십시오.\n\n   ```python\n   with tempfile.TemporaryDirectory() as temp_dir:\n       temp_root = pathlib.Path(temp_dir)\n       write_fixed_graph(temp_root)\n       with monitor_server(root=temp_root) as temp_base:\n           graph_title_expand_scenario(browser, temp_base, checks)\n   ```\n\n   (기존 `write_fixed_requests` 블록과 **합쳐도 되고 따로 두어도 됩니다.** 합친다면 두 도우미를 모두\n   부르십시오.)\n\n3. `#graphs-list .graph-title` 을 못 찾았을 때의 `checks.ok(\"그래프 제목 펼치기\", False, \"그래프 없음\")`\n   **예외 갈래는 그대로 두십시오.** 이제는 정말로 깨졌을 때만 걸립니다.\n\n4. 다섯 검사의 내용(처음엔 줄여져 있다 / 누르면 펼쳐진다 / 화면 밖으로 안 나간다 / 6초 뒤에도 펼친\n   채다 / 다시 누르면 접힌다)은 **고치지 마십시오.** 보던 저장소만 바뀝니다.\n\n## 하지 말 것\n\n- 다른 시나리오를 고치지 마십시오\n- 진짜 `.aimem/graph/` 에 파일을 쓰지 마십시오 - **임시 폴더에만** 씁니다\n- 검사를 느슨하게 만들지 마십시오(`try/except` 로 삼키기, 확인 지우기)\n\n## 검증 (이 명령이 0 으로 끝나야 합니다 - **전부 통과**해야 합니다)\n\n```bash\npython3 tests/browser_monitor_ui.py > /tmp/t227.txt 2>&1 && python3 -c \"import pathlib,sys; p=pathlib.Path('/tmp/t227.txt').read_text().strip().splitlines()[-1].split(); sys.exit(0 if (len(p)==5 and int(p[4])>=26 and int(p[1])==int(p[4])) else 1)\"\n```\n\n(지금은 `통과 21 / 전체 23` 입니다. 그래프가 보이면 한 줄짜리 실패가 다섯 검사로 펴지므로 전체가\n**27** 이 되고, 전부 통과해야 합니다.)\n\n## 보고\n\n첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` / `NEEDS-FIX: …` 중 하나. 그 아래에 `/tmp/t227.txt` 의\n`[FAIL]` 줄 전부와 마지막 `통과 N / 전체 M` 줄을 그대로 붙이십시오.\n",
+  "verify": "python3 tests/browser_monitor_ui.py > /tmp/t227.txt 2>&1 && python3 -c \"import pathlib,sys; p=pathlib.Path('/tmp/t227.txt').read_text().strip().splitlines()[-1].split(); sys.exit(0 if (len(p)==5 and int(p[4])>=26 and int(p[1])==int(p[4])) else 1)\""
+ }
+]

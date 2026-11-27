@@ -1,0 +1,49 @@
+{
+ "id": "G-041",
+ "request": "R17 후속: 적대적 검수 T-224 의 N9(중간, 시험 구멍)·M10 - N1 수정을 되돌려도 시험이 전부 초록인 것을 메움",
+ "created": "2026-11-12T13:27:33",
+ "rev": 159,
+ "round": 17,
+ "concurrency": 1,
+ "nodes": [
+  {
+   "id": "T-226",
+   "slot": "S3",
+   "deps": [],
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "title": "검수 N9·M10 시험 구멍: 진짜 티켓으로 N1 수정을 지키는 회귀 시험",
+   "project": "",
+   "write": [
+    "tests/test_monitor_ticket_regress.py"
+   ],
+   "task": "# T-226 적대적 검수가 찾은 **시험 구멍**을 메우십시오 (N9 중간 · M10)\n\n고칠 파일은 **`tests/test_monitor_ticket_regress.py` 하나**입니다. 제품 코드\n(`tools/aimem_monitor/server.py`)는 **읽기만 하고 절대 고치지 마십시오.**\n\n## 무엇이 문제인가 (검수가 실측한 것)\n\n이번 라운드가 `_audit_denied` 의 **가장 무거운 결함(N1)** 을 고쳤습니다. 핵심은 **URL 이 주장한 티켓\n주체를 인증된 주체로 치지 않는 것**(키에서 경로를 뺌)입니다. 그런데 **그 수정을 되돌려도 시험이 전부\n초록**입니다.\n\n- **M1**: `_audit_denied` 의 `authenticated` 를 늘 `True` 로 → 시험 **0건 빨강**\n- **M2**: `elif has_subject:` 가지의 키에 `safe_path` 를 다시 넣음 → 시험 **0건 빨강**\n- **M11**: `주체 불일치` 자리의 `authenticated=True` 를 지움 → 시험 **0건 빨강**\n\n세 변이 중 아무거나 넣고 가상 30분을 돌리면, 회수된 계정의 시도는 다시 **0줄**이 됩니다(수정 전과 같음).\n\n**왜 못 잡나.** 지금 있는 `test_ticket_subject_cannot_grow_the_audit_keys` 가 태그 자리를\n`'a' * 12` 로 채운 **가짜 티켓**을 씁니다. 그러면 `app_ticket_resolve` 가 주체를 못 찾아 주체가 `None` 이\n되고, `(event, \"-\", method)` 쪽 키를 탑니다 - **고친 갈래를 아예 안 지납니다.**\n\n그리고 **M10**(창이 바뀌어도 상한 생략 수를 0 으로 안 돌림 = 같은 수를 두 번 싣기)도 못 잡습니다.\n\n## 읽을 곳 (이것만)\n\n- `tests/test_monitor_ticket_regress.py` 전체. 특히 도우미 `mint_ticket(login)`,\n  `github_headers(login)`, `revoke_all()`, `audit_line_count()`, `audit_event_lines(event)`,\n  그리고 `test_ticket_subject_cannot_grow_the_audit_keys`(249행 근처) ·\n  `test_window_reopens_after_a_minute`(274행 근처)\n- `tools/aimem_monitor/server.py` 의 `_audit_denied` - **읽기만**\n\nAIMEM.md 와 검수 문서는 읽지 마십시오.\n\n## 더할 시험 (넷)\n\n`mint_ticket(\"kim\")` 은 `/app/~<만료>.<태그>.<mac>/알파/` 꼴의 **진짜** 티켓 경로를 돌려줍니다.\n그 티켓 칸을 그대로 쓰되 **앱 이름을 `베타`(없는 이름)로 바꿔** 보내면, 주체는 `gh:kim` 으로 풀리고\nmac 만 안 맞아 `app-ticket-bad … 서명·만료` 가 됩니다 - **이것이 고친 갈래**입니다.\n\n1. `test_real_ticket_subject_cannot_grow_the_audit_keys` (M1 · M2 를 빨갛게)\n   `mint_ticket(\"kim\")` 으로 받은 티켓 칸을 꺼내, 쿠키 없이 `/app/~<티켓>/베타/z{i}` 를\n   **i=0..199** 로 보냅니다(모두 403). 늘어난 감사 줄이 **5줄 이하**여야 합니다.\n   덧붙여, 그 줄 가운데 적어도 하나에 `gh:kim` 이 주체 칸으로 들어 있는지도 확인하십시오\n   (주체는 살아 있고 **경로만** 키에서 빠졌다는 뜻).\n\n2. `test_a_revoked_account_is_still_audited_during_a_ticket_flood` (M1 · M2 를 빨갛게)\n   1번과 같은 홍수를 200번 보낸 **뒤**, `revoke_all()` 로 허용 목록을 비우고\n   `self.get(\"/api/state\", self.github_headers(\"lee\"))` 를 한 번 보냅니다.\n   `audit_event_lines(\"github-revoked\")` 가 **한 줄 이상 늘어야** 합니다.\n   (고치기 전에는 0줄이었습니다. `revoke_all` 뒤에는 `mint_ticket` 이 안 되니 **순서를 지키십시오**.)\n\n3. `test_credential_subject_mismatch_keeps_the_path_in_the_key` (M11 을 빨갛게)\n   `mint_ticket(\"kim\")` 으로 kim 의 티켓을 받은 뒤, **lee 의 세션 쿠키**(`github_headers(\"lee\")`)를 달고\n   그 티켓 경로로 서로 다른 경로 **다섯 개**(`.../알파/a`, `.../알파/b`, …)를 보냅니다 → `주체 불일치`.\n   이 갈래는 **인증된 주체**라 키에 경로가 들어 있으므로, 늘어난 감사 줄이 **3줄 이상**이어야 합니다\n   (경로마다 따로 남는다는 뜻). `M11` 처럼 `authenticated=True` 가 빠지면 1줄로 줄어 빨개집니다.\n\n4. `test_cap_skipped_count_is_reported_only_once` (M10 을 빨갛게)\n   `server._audit_denied` 를 **직접** 불러 상한을 채웁니다(주체를 `gh:user{i}` 로 바꿔 가며\n   `_DENIED_AUDIT_MAX_PER_MIN + 20` 번, `authenticated=True`). 그 뒤\n   `server._denied_window_start` 를 `time.time() - 61` 로 밀고 새 주체로 한 번 부릅니다 →\n   `audit-dropped` 줄이 하나 생깁니다. **다시** 창을 61초 밀고 또 새 주체로 한 번 부릅니다 →\n   이번에는 `audit-dropped` 줄이 **더 생기지 않아야** 합니다(또는 생기더라도 수가 0 이어야 합니다).\n   `audit-dropped` 줄의 숫자 합이 **상한으로 버린 실제 건수와 같은지**도 확인하십시오.\n\n## 지킬 것\n\n- 이미 있는 시험을 지우거나 고치지 마십시오. **더하기만** 하십시오\n  (약한 `test_ticket_subject_cannot_grow_the_audit_keys` 도 그대로 둡니다)\n- 실제 시각을 기다리지 마십시오. `server._denied_window_start` 를 직접 밀거나\n  `mock.patch.object(server, \"_REVOKED_AUDIT_MIN_SEC\", 0.1)` 를 쓰십시오.\n  더하는 넷이 **합쳐서 10초 안에** 끝나야 합니다\n- 시험이 제품의 결함을 찾으면 제품도 시험도 고치지 말고, 보고 첫 줄을\n  `NEEDS-FIX: <무엇이 어디서>` 로 쓰고 멈추십시오\n\n## 검증 (이 명령이 0 으로 끝나야 합니다 - \"돌았다 + 검사 수가 늘었다\")\n\n```bash\npython3 -m unittest tests.test_monitor_ticket_regress > /tmp/t226.txt 2>&1 && python3 -c \"import pathlib,re,sys; t=pathlib.Path('/tmp/t226.txt').read_text(); m=re.search(r'Ran (\\d+) tests', t); sys.exit(0 if (m and int(m.group(1))>=29 and 'FAILED' not in t and re.search(r'^OK', t, re.M)) else 1)\"\n```\n\n(지금 트리는 25건입니다. 넷을 더하면 29건이 됩니다.)\n\n## 보고\n\n첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` / `NEEDS-FIX: …` 중 하나. 그 아래에 더한 시험 이름과\n`Ran N tests` 줄을 그대로 붙이십시오.\n",
+   "verify": "python3 -m unittest tests.test_monitor_ticket_regress > /tmp/t226.txt 2>&1 && python3 -c \"import pathlib,re,sys; t=pathlib.Path('/tmp/t226.txt').read_text(); m=re.search(r'Ran (\\d+) tests', t); sys.exit(0 if (m and int(m.group(1))>=29 and 'FAILED' not in t and re.search(r'^OK', t, re.M)) else 1)\"",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-226-S3-a1-132740",
+     "started": "2026-11-12T13:27:41",
+     "ended": "2026-11-12T13:31:01",
+     "rc": 0,
+     "state": "done",
+     "report": "(최종 보고문 없음 - 작업자가 보고 전에 끝남. stderr 꼬리:)\n2796:            who = self._subject()\n2808:            who = self._subject()\n3059:    require_auth = bool(tls) if auth is None else bool(auth)\n3063:    if require_auth:\n3066:        \"root\": root, \"require_auth\": require_auth, \"tls\": bool(tls),\n3080:    if require_auth:\n→ Read tools/aimem_monitor/server.py [limit=40, offset=2500]\n→ Read tools/aimem_monitor/server.py [limit=30, offset=2590]\nIndex: /home/tsyi/work/ai-fleet/tests/test_monitor_ticket_regress.py\n===================================================================\n import http.client\n import http.server\n import json\n import pathlib\n import sys\n import tempfile\n import threading\n import time\nIndex: /home/tsyi/work/ai-fleet/tests/test_monitor_ticket_regress.py\n===================================================================\n         last = p.read_text(encoding=\"utf-8\").splitlines()[-1]\n         self.assertIn(\"/api/REAL-TARGET\", last)\n if __name__ == \"__main__\":\n     unittest.main()\nError: The user rejected permission to use this specific tool call.",
+     "verify_rc": 1,
+     "verify_tail": ""
+    },
+    {
+     "run_id": "T-226-S3-a2-133119",
+     "started": "2026-11-12T13:31:19",
+     "ended": "2026-11-12T13:36:20",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n- 고친 파일: `tests/test_monitor_ticket_regress.py` 하나. `tools/aimem_monitor/server.py`는 읽기만 했고 고치지 않았습니다.\n- 직전 산출물 확인: 네 시험은 이미 들어 있었으나 `f\"/app/~{ticket}/베타/z{i}\"`가 비ASCII라 `http.client`가 `UnicodeEncodeError`로 2건 ERROR였습니다. `Q_BETA = urllib.parse.quote(\"베타\")`를 추가하고 두 곳을 `{Q_BETA}`로 바꿔 고쳤습니다.\n- 더한 시험(기존 시험은 삭제·수정 없음):\n  - `test_real_ticket_subject_cannot_grow_the_audit_keys`\n  - `test_a_revoked_account_is_still_audited_during_a_ticket_flood`\n  - `test_credential_subject_mismatch_keeps_the_path_in_the_key`\n  - `test_cap_skipped_count_is_reported_only_once`\n- 실제 검증:\n  ```bash\n  python3 -m unittest tests.test_monitor_ticket_regress > /tmp/t226.txt 2>&1 && python3 -c \"...>=29 ... ^OK ...\"\n  ```\n  출력 `Ran 29 tests in 16.097s` / `OK`, 검증 명령 rc=0. 네 신험만 따로 돌리면 `Ran 4 tests in 2.722s` / `OK`.\n- 변이 확인(제품 파일 무수정, `/tmp`에서 `server._audit_denied`를 monkeypatch):\n  - M1 → `FAILED (failures=2)`\n  - M2 → `FAILED (failures=2)`\n  - M11 → `FAILED (failures=1)`\n  - M10 → `FAILED (failures=1)`\n- 다음 담당자가 알아야 할 것: 제품의 N1 수정은 현재 트리에서 정상이며 시험이 결함을 찾지 않았습니다. HTTP 시험 경로에 한글 앱 이름을 쓸 때는 반드시 `urllib.parse.quote`로 인코딩해야 합니다(직전 실패 원인). 네 신험은 합쳐 2.7초로 10초 제한 안입니다.",
+     "verify_rc": 0,
+     "verify_tail": ""
+    }
+   ]
+  }
+ ],
+ "followup": "T-224 적대적 검수가 찾은 N9(중간)·M10 시험 구멍 메우기",
+ "updated": "2026-11-12T13:36:38"
+}

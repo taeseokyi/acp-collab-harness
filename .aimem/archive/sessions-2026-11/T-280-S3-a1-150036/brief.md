@@ -1,0 +1,43 @@
+SLOT=S3 T-280 index.html·style.css·storage.js: 제목·도움말·모드 줄·미리보기·6칸·jamo. 접두어 (G-056)
+확인토큰: 5b8c1e
+AIMEM REV: 170
+너는 S3 슬롯이다. 작업 폴더는 /home/tsyi/work/ai-fleet 다.
+쓰기는 다음 경로에만 한다: projects/자모맞히기/web/index.html, projects/자모맞히기/web/css/style.css, projects/자모맞히기/web/js/storage.js, projects/자모맞히기/tests/test_storage.mjs
+금지: git commit / push / 삭제 / 의존성 설치. 보고는 응답 본문에 직접 쓴다.
+보고 첫 줄은 상태(DONE / PARTIAL / BLOCKED / NEEDS-LOCK / NEEDS-APPROVAL), 이어서 한 일·고친 파일·실제로 돌린 검증 명령과 출력·다음 담당자가 알아야 할 것.
+
+# T-280 화면 뼈대(HTML·CSS)와 저장소 접두어
+
+쓸 파일: `projects/자모맞히기/web/index.html`, `web/css/style.css`, `web/js/storage.js`, `tests/test_storage.mjs`. 넷 다 지금은 **웹워들 것을 그대로 복사한 것**입니다. `web/js/ui.js` 는 다른 노드(T-279)가 고칩니다 - 읽기만. **바로 파일을 고치십시오.**
+
+먼저 `.aimem/graph/inputs/r24/CONTRACT.md` 의 '칸(unit) 규칙' 과 '화면' 절을 읽으십시오. 웹워들의 모양·색·애니메이션·창은 **그대로** 두고 아래만 바꿉니다.
+
+## index.html
+
+- `<title>`·`<h1>` → `자모맞히기`.
+- 머리글(`header`) 바로 아래 `<nav id="modes">`: `<button id="mode-daily" aria-pressed="true">날마다</button>`, `<button id="mode-practice" aria-pressed="false">연습</button>`, `<button id="btn-new" hidden>새 판</button>` (모두 `type="button"`).
+- `#board` 바로 위 `<div id="preview" class="preview" aria-live="off"></div>`.
+- 도움말(`#modal-help`)을 새로 씁니다 (웹워들 문구는 남기지 않음): 자모 여섯 칸 낱말을 여섯 번 안에 맞히기 / 한 칸 = 자판 한 번 / **쌍자음**(ㄲㄸㅃㅆㅉ)과 ㅐㅔㅒㅖ 는 한 칸, **Shift**(화면 ⇧ 또는 실물 Shift)로 넣음 / **겹모음**은 두 칸(ㅘ=ㅗㅏ … CONTRACT 표 전부) / **겹받침**도 두 칸(ㄺ=ㄹㄱ … 표 전부) / 예시 세 줄(6칸 자모 타일, 각각 자리 맞음·들어 있음·없음 한 칸씩 색) / 같은 자모가 여러 번이면 정답에 있는 개수만큼만 색 / 날마다(누구에게나 같은 하루 하나)와 **연습**(무제한, 기록 안 남음).
+- 통계 창·설정 창은 그대로(하드 모드 설명의 '글자' → '자모').
+
+## style.css
+
+- 보드 6칸: `repeat(5` → `repeat(6`, 그리고 칸 크기·보드 너비 계산이 5칸 기준이면 6칸으로(320px 폭에서 보드가 화면 밖으로 나가지 않게).
+- `#modes` 한 줄(가운데 정렬, 작은 단추, `aria-pressed="true"` 인 단추는 칠해진 모양), `#preview`(보드 위 한 줄, 글자 크게, 비어도 높이 유지해 보드가 들썩이지 않게).
+- 자판: 1줄 10키, 2줄 Shift+9키 = 10키, 3줄 입력+7키+지우기. 웹워들의 2줄 양옆 `.spacer` 는 더 안 씀. `#keyboard[data-shift="on"] .key[data-key="shift"]` 는 눌린 모양. 320px 에서 3줄이 넘치지 않게 키 너비를 맞추십시오.
+- 어두운 테마·색약 모드는 웹워들 그대로 새 요소에도 적용(`#modes` 단추, `#preview` 글자색).
+
+## storage.js · test_storage.mjs
+
+- `const PREFIX = 'webwordle.';` → `const PREFIX = 'jamo.';` 만. 나머지는 그대로.
+- `tests/test_storage.mjs` 에서 `webwordle.` 를 `jamo.` 로 맞추고 `node --test projects/자모맞히기/tests/test_storage.mjs` 가 모두 통과하게.
+
+## 스스로 확인
+
+`python3 .aimem/graph/inputs/r24/v_static.py` 가 `static: 모두 통과` (관리자 스크립트 - 고치지 마십시오), 그리고 위 node 시험 통과. 화면 전체 동작은 ui.js 가 바뀐 뒤 다른 노드가 잽니다.
+
+## 하지 말 것
+
+`web/js/ui.js`·`game.js`·`jamo.js` 쓰기, `git commit`/`push`, 파일 삭제, 의존성 설치(CDN·웹 글꼴 포함), 운영 모니터 부르기. 외부 게임의 이름·문구·색을 가져오지 않기.
+
+보고 첫 줄은 `DONE` / `PARTIAL` / `BLOCKED`, 그다음 바꾼 파일과 검사 출력 마지막 줄.

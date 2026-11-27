@@ -1,0 +1,63 @@
+{
+ "id": "T-267-S2-a1-235730",
+ "role": "worker",
+ "harness": "claude",
+ "brief_path": "/home/tsyi/work/ai-fleet/.aimem/sessions/T-267-S2-a1-235730/brief.md",
+ "cwd": "/home/tsyi/work/ai-fleet",
+ "slot": "S2",
+ "model": "sonnet",
+ "provider": "anthropic",
+ "ident": "[AIMEM 작업자 지시] 슬롯 S2 · 확인토큰 d27e93 · AIMEM REV 164.",
+ "write_paths": [
+  "tools/fleet_rt/harness/claude.py",
+  "tools/fleet_graph.py"
+ ],
+ "tools": null,
+ "settings_path": null,
+ "timeout": 2520.0,
+ "idle_timeout": 600.0,
+ "round": 22,
+ "task_id": "T-267",
+ "attempt": 1,
+ "label": "T-267 claude 어댑터 한도 판정: N3·N4 수정 옮기기 + 판정 한 곳으로 (재검수 R22-P1·P2·P3) (G-053)",
+ "extra": {
+  "date": "2026-11-12",
+  "rev": 164,
+  "project": ""
+ },
+ "harness_effective": "claude",
+ "command": [
+  "claude",
+  "-p",
+  "--model",
+  "sonnet",
+  "--output-format",
+  "stream-json",
+  "--verbose",
+  "--permission-mode",
+  "acceptEdits",
+  "--allowedTools",
+  "Read,Edit,Write,Glob,Grep,Bash(python3:*),Bash(python:*),Bash(pytest:*),Bash(PYTHONPATH=tools python3:*),Bash(PYTHONPATH=tools python:*),Bash(PYTHONPATH=. python3:*),Bash(PYTHONPYCACHEPREFIX=/tmp/pyc python3:*),Bash(node:*),Bash(npm test:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(sed -n:*),Bash(pwd),Bash(mkdir:*),Bash(diff:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(curl:*),Bash(cd:*),Bash(echo:*),Bash(timeout:*),Bash(sleep:*),Bash(ss:*),Bash(kill:*)"
+ ],
+ "stdin_path": "/home/tsyi/work/ai-fleet/.aimem/sessions/T-267-S2-a1-235730/brief.md",
+ "command_cwd": "/home/tsyi/work/ai-fleet",
+ "env_unset": [
+  "CLAUDECODE",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_MESSAGING_SOCKET",
+  "CLAUDE_CODE_MESSAGING_TOKEN",
+  "CLAUDE_CODE_SESSION_ATTENDED",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_EXECPATH"
+ ],
+ "env_set_names": [],
+ "db_path": "/home/tsyi/work/ai-fleet/.aimem/aimem.db",
+ "env_root": "/home/tsyi/work/ai-fleet",
+ "env_file_names": [],
+ "sessions_root": "/home/tsyi/work/ai-fleet/.aimem/sessions",
+ "started": "2026-11-12T23:57:30",
+ "supervisor_pid": 231549,
+ "pgid": 231549,
+ "proc_start": 3088275
+}

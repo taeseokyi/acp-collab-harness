@@ -30,6 +30,15 @@
       <input id="save-location" type="checkbox" checked>
       <span>위치 함께 저장 (녹음 시작 때의 위치를 음성과 같이 서버에 보냄)</span>
     </label>
+    <section id="stt-defaults" class="stt-box" aria-label="받아쓰기 기본 옵션">
+      <h3>받아쓰기 옵션 (새 녹음과 '다시 받아쓰기' 의 기본값)</h3>
+      <p id="stt-defaults-note" class="muted" role="status"></p>
+      <div id="stt-defaults-fields"></div>
+      <div class="row">
+        <button id="stt-defaults-save" type="button">기본값 저장</button>
+        <span id="stt-defaults-state" class="muted" role="status"></span>
+      </div>
+    </section>
     <div class="row">
       <button id="health-check" type="button">연결 확인</button>
       <span id="health-out" class="muted" role="status"></span>
@@ -109,6 +118,7 @@
           <button id="detail-close" type="button" class="small">닫기</button>
         </div>
         <div id="detail-meta" class="muted"></div>
+        <p id="detail-stt-used" class="muted" hidden></p>
         <div id="detail-chips" class="rec-tags"></div>
         <div id="detail-edit" class="detail-edit" hidden>
           <label class="field">이름
@@ -127,14 +137,28 @@
         <div id="detail-loc" class="muted" hidden></div>
         <p id="audio-note" class="notice" hidden>음성은 VoxLog 자체 주소에서 들으십시오.</p>
         <pre id="transcript" class="transcript"></pre>
+        <details id="detail-prev" class="detail-prev" hidden>
+          <summary id="detail-prev-summary">이전 글 중 가장 긴 것</summary>
+          <pre id="detail-prev-text" class="transcript"></pre>
+        </details>
         <div id="detail-export" class="row" hidden>
           <button id="detail-copy" type="button" class="small">복사</button>
           <button id="detail-share" type="button" class="small">공유</button>
         </div>
         <div class="row">
           <button id="detail-retry" type="button">다시 받아쓰기</button>
+          <button id="detail-retry-opts" type="button" class="small" aria-expanded="false" aria-controls="detail-stt">옵션 바꿔 다시 받아쓰기</button>
           <button id="detail-delete" type="button" class="danger">지우기</button>
         </div>
+        <section id="detail-stt" class="stt-box" hidden aria-label="다시 받아쓰기 옵션">
+          <div id="detail-stt-fields"></div>
+          <p class="muted stt-why">이 녹음에 옵션을 하나라도 고르면 앱 설정 대신 이 녹음 옵션만 씁니다(합치지 않음).</p>
+          <p class="muted stt-why">다시 받아쓰면 글이 새 글로 바뀝니다(바뀌기 전 글 중 가장 긴 것 한 벌이 남음). 이름·직접 고친 태그·묻기 답은 그대로이고, AI 태그는 새 글로 다시 답니다.</p>
+          <div class="row">
+            <button id="detail-stt-run" type="button">이 옵션으로 다시 받아쓰기</button>
+            <span id="detail-stt-state" class="muted" role="status"></span>
+          </div>
+        </section>
       </section>
     </section>
 

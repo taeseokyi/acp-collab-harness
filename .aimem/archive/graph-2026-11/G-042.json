@@ -1,0 +1,49 @@
+{
+ "id": "G-042",
+ "request": "R17 후속: 그래프 제목 펼치기 검사가 끝난 그래프가 접히면 통째로 실패하는 것 (T-222 산출물의 결함, 관리자 실측)",
+ "created": "2026-11-12T13:41:49",
+ "rev": 159,
+ "round": 17,
+ "concurrency": 1,
+ "nodes": [
+  {
+   "id": "T-227",
+   "slot": "S3",
+   "deps": [],
+   "timeout_sec": 3000,
+   "max_attempts": 2,
+   "title": "browser_monitor_ui.py: 그래프 제목 펼치기 검사를 임시 저장소 고정 그래프로",
+   "project": "",
+   "write": [
+    "tests/browser_monitor_ui.py"
+   ],
+   "task": "# T-227 그래프 제목 펼치기 검사를 **임시 저장소**에서 돌게 고치십시오\n\n고칠 파일은 **`tests/browser_monitor_ui.py` 하나**입니다. 제품 코드(`tools/aimem_monitor/**`)는\n**읽기만 하고 절대 고치지 마십시오.**\n\n## 무엇이 문제인가 (관리자가 실측함)\n\n방금 더한 `graph_title_expand_scenario`(592행 근처)가 **진짜 저장소**를 보고 있습니다. 요청 트리의\n태스크 그래프는 **끝난 그래프를 접어 둡니다.** 그래서 도는 그래프가 하나도 없는 순간(= 라운드가 끝난\n뒤)에는 `#graphs-list .graph-title` 이 보이지 않고, 검사가 통째로\n\n```\n[FAIL] 그래프 제목 펼치기 - 그래프 없음\n```\n\n하나로 떨어집니다. 실제로 지금 그렇습니다(`통과 21 / 전체 23`). 다섯 개를 재야 할 검사가 **한 개**로\n줄어들어 검사 수도 들쭉날쭉합니다.\n\n## 고칠 내용\n\n같은 파일의 `zero_subtask_scenario` 가 쓰는 본을 그대로 따르십시오 - **임시 저장소를 만들고\n`monitor_server(root=temp_root)` 로 그 폴더를 읽는 서버를 띄우는** 방식입니다(`main()` 의 아래쪽,\n`tempfile.TemporaryDirectory()` 블록을 보십시오).\n\n1. **고정 그래프를 쓰는 도우미를 더하십시오.**\n\n   ```python\n   def write_fixed_graph(root):\n       \"\"\"제목이 아주 긴, 아직 끝나지 않은 그래프 하나를 임시 저장소에 씁니다.\"\"\"\n   ```\n\n   - 쓸 곳은 `root / \".aimem\" / \"graph\" / \"G-FIXED.json\"` 입니다\n   - 내용은 `{\"id\": \"G-FIXED\", \"request\": \"<아주 긴 한 줄 제목>\", \"created\": …, \"updated\": …,\n     \"concurrency\": 1, \"nodes\": [...]}` 꼴입니다. **지금 저장소의 `.aimem/graph/G-040.json` 을 열어\n     칸 이름을 맞추십시오** (노드는 `id`·`slot`·`deps`·`status`·`title` 정도면 됩니다)\n   - **노드 하나는 `status` 를 `running` 또는 `todo`** 로 두십시오. 끝난 그래프는 접히므로 제목이\n     안 보입니다\n   - `request` 제목은 **200자 이상**으로 길게 쓰십시오. 폰 폭 390px 에서 반드시 `...` 로 줄여지도록\n\n2. `graph_title_expand_scenario` 의 서명을 바꾸지 말고(`browser, base, checks`), **`main()` 에서\n   부르는 자리**를 임시 저장소 블록으로 옮기십시오.\n\n   ```python\n   with tempfile.TemporaryDirectory() as temp_dir:\n       temp_root = pathlib.Path(temp_dir)\n       write_fixed_graph(temp_root)\n       with monitor_server(root=temp_root) as temp_base:\n           graph_title_expand_scenario(browser, temp_base, checks)\n   ```\n\n   (기존 `write_fixed_requests` 블록과 **합쳐도 되고 따로 두어도 됩니다.** 합친다면 두 도우미를 모두\n   부르십시오.)\n\n3. `#graphs-list .graph-title` 을 못 찾았을 때의 `checks.ok(\"그래프 제목 펼치기\", False, \"그래프 없음\")`\n   **예외 갈래는 그대로 두십시오.** 이제는 정말로 깨졌을 때만 걸립니다.\n\n4. 다섯 검사의 내용(처음엔 줄여져 있다 / 누르면 펼쳐진다 / 화면 밖으로 안 나간다 / 6초 뒤에도 펼친\n   채다 / 다시 누르면 접힌다)은 **고치지 마십시오.** 보던 저장소만 바뀝니다.\n\n## 하지 말 것\n\n- 다른 시나리오를 고치지 마십시오\n- 진짜 `.aimem/graph/` 에 파일을 쓰지 마십시오 - **임시 폴더에만** 씁니다\n- 검사를 느슨하게 만들지 마십시오(`try/except` 로 삼키기, 확인 지우기)\n\n## 검증 (이 명령이 0 으로 끝나야 합니다 - **전부 통과**해야 합니다)\n\n```bash\npython3 tests/browser_monitor_ui.py > /tmp/t227.txt 2>&1 && python3 -c \"import pathlib,sys; p=pathlib.Path('/tmp/t227.txt').read_text().strip().splitlines()[-1].split(); sys.exit(0 if (len(p)==5 and int(p[4])>=26 and int(p[1])==int(p[4])) else 1)\"\n```\n\n(지금은 `통과 21 / 전체 23` 입니다. 그래프가 보이면 한 줄짜리 실패가 다섯 검사로 펴지므로 전체가\n**27** 이 되고, 전부 통과해야 합니다.)\n\n## 보고\n\n첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` / `NEEDS-FIX: …` 중 하나. 그 아래에 `/tmp/t227.txt` 의\n`[FAIL]` 줄 전부와 마지막 `통과 N / 전체 M` 줄을 그대로 붙이십시오.\n",
+   "verify": "python3 tests/browser_monitor_ui.py > /tmp/t227.txt 2>&1 && python3 -c \"import pathlib,sys; p=pathlib.Path('/tmp/t227.txt').read_text().strip().splitlines()[-1].split(); sys.exit(0 if (len(p)==5 and int(p[4])>=26 and int(p[1])==int(p[4])) else 1)\"",
+   "status": "failed",
+   "attempts": [
+    {
+     "run_id": "T-227-S3-a1-134831",
+     "started": "2026-11-12T13:48:31",
+     "ended": "2026-11-12T13:51:51",
+     "rc": 0,
+     "state": "done",
+     "report": "(최종 보고문 없음 - 작업자가 보고 전에 끝남. stderr 꼬리:)\ngdir = root / \".aimem\" / \"graph\"\n gdir.mkdir(parents=True, exist_ok=True)\n long_title = (\n     \"임시 저장소 고정 그래프의 아주 긴 제목입니다 \"\n )\n data = {\n     \"id\": \"G-FIXED\",\n     \"request\": long_title,\nIndex: /home/tsyi/work/ai-fleet/tests/browser_monitor_ui.py\n===================================================================\n                 narrow_scenario(browser, base, checks)\n                 short_scenario(browser, base, checks)\n                 changed_ui_scenario(browser, base, checks)\n                 request_tree_scenario(browser, base, checks)\n             with tempfile.TemporaryDirectory() as temp_dir:\n                 temp_root = pathlib.Path(temp_dir)\n                 write_fixed_requests(temp_root)\n                 with monitor_server(root=temp_root) as temp_base:\n                     zero_subtask_scenario(browser, temp_base, checks)\n         finally:\n             browser.close()\n except Exception as exc:\n     checks.ok(\"검사 실행\", False, f\"{type(exc).__name__}: {exc}\")\nrc=1\nError: The user rejected permission to use this specific tool call.",
+     "verify_rc": 1,
+     "verify_tail": ""
+    },
+    {
+     "run_id": "T-227-S3-a2-135225",
+     "started": "2026-11-12T13:52:25",
+     "ended": "2026-11-12T14:03:26",
+     "rc": 0,
+     "state": "done",
+     "report": "PARTIAL\n\n- AIMEM 확인: `python3 tools/aimem_db.py check --slot S3 --token 5b8c1e --rev 159` → 일치, 소유 경로에 `tests/browser_monitor_ui.py` 포함.\n- 고친 파일: `tests/browser_monitor_ui.py` 하나. 직전 시도 산출물이 이미 남아 있어 그대로 확인했고 추가 수정은 필요 없었습니다.\n  - `write_fixed_graph(root)`가 `root/.aimem/graph/G-FIXED.json`에 222자 제목과 `todo` 노드를 포함한 그래프를 씁니다.\n  - `main()`에서 `write_fixed_graph(temp_root)` 후 `monitor_server(root=temp_root)`로 `graph_title_expand_scenario(browser, temp_base, checks)`를 부릅니다.\n  - 그래프 없음 예외 갈래와 다섯 검사 내용은 그대로 두었습니다. 진짜 `.aimem/graph/`에는 쓰지 않았습니다.\n- 실제 검증 명령: `python3 tests/browser_monitor_ui.py > /tmp/t227.txt 2>&1 && python3 -c \"... int(p[4])>=26 and int(p[1])==int(p[4]) ...\"` → `rc=1`.\n- `/tmp/t227.txt`의 `[FAIL]` 줄과 마지막 줄:\n```text\n[FAIL] 프로젝트 칸의 볼드 기준 - 프로젝트 이름 [], 프로젝트 없음 [400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400], 라운드 꼬리표 [400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400]\n통과 26 / 전체 27\n```\n- 그래프 제목 시나리오 다섯 검사는 모두 통과했습니다. 실패는 `changed_ui_scenario`의 기존 검사 하나이며, 지시대로 다른 시나리오를 고치지 않았습니다.\n- 다음 담당자: `프로젝트 칸의 볼드 기준`은 실제 저장소 `#runs-table-wrap` 첫 20개 실행에 프로젝트 이름(`.proj-tag:not(.none) .proj-name`)이 없어 실패합니다. 이 검사를 임시 저장소 고정 실행으로 돌리거나 `이전 실행 더 보기`로 전체를 보게 해야 검증이 27/27로 끝납니다.",
+     "verify_rc": 1,
+     "verify_tail": ""
+    }
+   ]
+  }
+ ],
+ "followup": "T-222 가 더한 검사의 결함 - 관리자 종료 검증에서 발견",
+ "updated": "2026-11-12T14:04:01"
+}

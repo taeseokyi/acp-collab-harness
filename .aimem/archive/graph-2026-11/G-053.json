@@ -1,0 +1,100 @@
+{
+ "id": "G-053",
+ "request": "Q-261112-7d68",
+ "created": "2026-11-12T23:57:22",
+ "rev": 164,
+ "round": 22,
+ "concurrency": 3,
+ "nodes": [
+  {
+   "id": "T-267",
+   "slot": "S2",
+   "deps": [],
+   "project": "",
+   "title": "claude 어댑터 한도 판정: N3·N4 수정 옮기기 + 판정 한 곳으로 (재검수 R22-P1·P2·P3)",
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "write": [
+    "tools/fleet_rt/harness/claude.py",
+    "tools/fleet_graph.py"
+   ],
+   "task": "# T-267 claude 어댑터의 사용 한도 판정 고치기 (재검수 R22-P1·P2·P3)\n\n쓸 파일은 **둘**입니다: `tools/fleet_rt/harness/claude.py`, `tools/fleet_graph.py`. 다른 파일(특히 `tests/**`)은 **읽기만** 하십시오 - 시험은 다음 노드(다른 슬롯)가 고칩니다.\n바로 파일을 고치십시오. 근거는 `rounds/R22/REVIEW-r22.md` 의 P1·P2·P3 행(38~40줄)입니다. 그 보고서의 나머지는 읽지 않아도 됩니다.\n\n## 지금 상태\n\n- `tools/fleet_graph.py` 430~497행: `_LIMIT_PATTERNS`, `report_limit_hit(text)`, `run_limit_signal(run_id)`. 옛 `.aimem/runs/<id>.out` 경로는 이미 고쳐져 있습니다(오류인데 표지가 없으면 `None`, `terminal_reason==\"api_error\"` 갈래는 `report_limit_hit` 로 좁게).\n- `run_limit_signal` 은 세션 폴더(`.aimem/sessions/<id>`, 지금 실제로 도는 엔진)가 있으면 `fleet_rt.harness.claude.ClaudeHarness.limit_signal(sd)` 로 넘깁니다. **그 어댑터(`tools/fleet_rt/harness/claude.py` 92~94행 `_limit_text`, 210~239행 `limit_signal`)에는 수정이 안 들어갔습니다:**\n  - P1: `is_error` 참 + 구조 표지 없음 + 거절 사건 없음 → 지금 `False` (마지막 `return False`). **`None`** 이어야 `step()` 이 글자 판정으로 넘어갑니다.\n  - P2: `_limit_text` 가 `\"limit\" in v` 부분 일치라 `\"Prompt exceeds the context window limit\"`·`\"max_tokens limit: output token limit exceeded\"` 를 사용 한도로 봅니다. 좁은 문구 목록으로 바꿔야 합니다.\n  - P3: 판정이 두 벌이라 이미 어긋났습니다.\n\n## 할 일\n\n1. `tools/fleet_rt/harness/claude.py` 에 판정을 **한 벌만** 둡니다 (엔진 아래층이 위층 `fleet_graph` 를 import 하면 안 되므로 여기에 둡니다):\n   - `LIMIT_PATTERNS` (지금 `fleet_graph._LIMIT_PATTERNS` 를 그대로 옮기고 `\"hit your limit\"` 하나를 더합니다 - 실제 claude 문구 `You've hit your limit · resets 11am`)\n   - `limit_text_hit(text) -> bool` : 지금 `fleet_graph.report_limit_hit` 와 같은 동작(문자열 아니면 False, 마지막 2000자, 소문자, 목록 부분 일치)\n   - `result_limit_signal(res, events=()) -> Optional[bool]` : result dict 하나(+ 그 앞 사건들)를 받아 `True/False/None`. 순서: dict 아님 → None / `is_error` 거짓 → False / `api_error_status` 429 → True / `api_error` 에 `usage_limit`·`rate_limit` → True / `terminal_reason==\"api_error\"` 이고 `result`·`api_error`·`stop_reason` 중 하나가 `limit_text_hit` → True / `events` 안에 `rate_limit_event` 의 `rate_limit_info.status` 가 `rejected`·`blocked` → True / **그 밖은 None**\n   - `_limit_text` 는 지웁니다. `limit_signal(session_dir)` 은 마지막 result 사건을 찾아 `result_limit_signal(res, evs)` 를 부르기만 합니다(result 없음 → None, 예외 → None).\n2. `tools/fleet_graph.py`:\n   - `_LIMIT_PATTERNS` 는 `from fleet_rt.harness.claude import LIMIT_PATTERNS as _LIMIT_PATTERNS` 처럼 **옮겨 온 것을 가리키게** 하고, `report_limit_hit` 는 `limit_text_hit` 를 부르게 합니다(이름과 docstring 은 남깁니다 - 다른 곳이 씁니다). import 는 파일 위쪽 다른 import 근처에 두되, `fleet_graph` 가 이미 `fleet_rt` 를 함수 안에서 늦게 import 하는 까닭이 있으면(순환 import) 그 방식을 따르십시오.\n   - `run_limit_signal` 의 옛 `.out` 경로는 `json` 을 읽은 뒤 `result_limit_signal(data)` 를 부르게 합니다. run_id 꼴 검사·`fleet._session_dir`·1MiB 읽기는 그대로 둡니다.\n3. 다른 동작은 바꾸지 마십시오.\n\n## 하지 말 것\n\n- `tests/**` 를 고치지 마십시오. `tests/test_rt_claude.py` 의 `test_other_error_false` 는 옛(잘못된) 동작을 못박고 있어 이 수정 뒤 **실패하는 것이 맞습니다** - 다음 노드가 고칩니다.\n- `git commit` / `git push` / 파일 삭제 금지. 운영 모니터(https)를 부르지 마십시오.\n\n## 검증 (엔진이 돌립니다)\n\n`python3 -m unittest tests.test_fleet_graph tests.test_fleet_ctl tests.test_fleet` 가 통과하고, `tests/test_rt_claude.py` 를 **뺀** `test_rt_*.py` 가 통과하고, 아래가 맞아야 합니다: 세션 폴더의 `events.jsonl` 에 `{\"type\":\"result\",\"is_error\":true,\"result\":\"You've hit your 5-hour limit\"}` 만 있으면 어댑터 `None`, `terminal_reason=api_error` + `\"Prompt exceeds the context window limit\"` 면 `None`, `api_error_status=429` 면 `True`, 성공이면 `False`, `fleet_graph.report_limit_hit(\"You've hit your limit · resets 11am\")` 는 `True`, `fleet_graph._LIMIT_PATTERNS is claude.LIMIT_PATTERNS`.\n",
+   "verify": "python3 -m unittest tests.test_fleet_graph tests.test_fleet_ctl tests.test_fleet > /tmp/r22-t267.txt 2>&1 && python3 -m unittest discover -s tests -p 'test_rt_[!c]*.py' >> /tmp/r22-t267.txt 2>&1 && python3 -m unittest discover -s tests -p 'test_rt_co*.py' >> /tmp/r22-t267.txt 2>&1 &&python3 - >> /tmp/r22-t267.txt 2>&1 <<'PY'\nimport json, pathlib, sys, tempfile\nsys.path.insert(0, 'tools')\nimport fleet_graph\nfrom fleet_rt.harness import claude as c\ndef sig(res, pre=()):\n    d = pathlib.Path(tempfile.mkdtemp(prefix='r22-t267-'))\n    lines = list(pre) + [json.dumps(dict(type='result', **res))]\n    (d / 'events.jsonl').write_text(''.join('2026-11-12T10:00:00\\t' + l + '\\n' for l in lines), encoding='utf-8')\n    return c.ADAPTER.limit_signal(d)\nchecks = [\n  (sig({'is_error': True, 'result': \"You've hit your 5-hour limit\"}), None),\n  (sig({'is_error': True, 'terminal_reason': 'api_error', 'result': 'Prompt exceeds the context window limit'}), None),\n  (sig({'is_error': True, 'terminal_reason': 'api_error', 'result': 'max_tokens limit: output token limit exceeded'}), None),\n  (sig({'is_error': True, 'api_error_status': 500, 'result': 'boom'}), None),\n  (sig({'is_error': True, 'api_error_status': 429}), True),\n  (sig({'is_error': True, 'terminal_reason': 'api_error', 'result': \"You've hit your limit \\u00b7 resets 11am\"}), True),\n  (sig({'is_error': True, 'result': 'stopped'}, [json.dumps({'type': 'rate_limit_event', 'rate_limit_info': {'status': 'rejected'}})]), True),\n  (sig({'is_error': False, 'result': 'ok'}), False),\n  (fleet_graph.report_limit_hit(\"You've hit your limit \\u00b7 resets 11am\"), True),\n  (fleet_graph.report_limit_hit('DONE - added handler for HTTP 429 Too Many Requests'), False),\n  (fleet_graph._LIMIT_PATTERNS is c.LIMIT_PATTERNS, True),\n  (hasattr(c, '_limit_text'), False),\n]\nbad = [(i, got, want) for i, (got, want) in enumerate(checks) if got is not want]\nprint('checks', len(checks), 'bad', bad)\nsys.exit(1 if bad else 0)\nPY",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-267-S2-a1-235730",
+     "started": "2026-11-12T23:57:30",
+     "ended": "2026-11-12T23:59:50",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n**한 일**\n- `tools/fleet_rt/harness/claude.py`: 판정을 이 파일 한 벌로 모았습니다.\n  - `LIMIT_PATTERNS`(`fleet_graph` 에 있던 목록과 같고 `\"hit your limit\"` 을 더했습니다), `limit_text_hit(text)`, `result_limit_signal(res, events=())` 를 추가했습니다.\n  - `result_limit_signal` 은 지시한 순서대로 판정하고, 표지가 없는 오류는 `None` 을 돌려줍니다.\n  - `_limit_text` 는 지웠습니다. `limit_signal(session_dir)` 은 마지막 result 를 찾아 `result_limit_signal` 을 부를 뿐이며, result 가 없거나 예외가 나면 `None` 입니다.\n- `tools/fleet_graph.py`\n  - `_LIMIT_PATTERNS` 는 `from fleet_rt.harness.claude import ...` 로 옮겨 온 것을 가리킵니다. import 는 파일 위쪽 `import fleet` 바로 아래에 두었고 순환 문제는 없었습니다.\n  - `report_limit_hit` 은 `limit_text_hit` 를 부르게 했습니다. 이름과 docstring 은 그대로입니다.\n  - 옛 `.out` 경로는 `json.loads` 뒤에 `_result_limit_signal(data)` 만 부릅니다. run_id 꼴 검사, `fleet._session_dir`, 1MiB 읽기는 그대로입니다.\n- `tests/**` 와 다른 파일은 건드리지 않았습니다.\n\n**검증**\n\n| 명령 | 결과 |\n|---|---|\n| `python3 -m unittest tests.test_fleet_graph tests.test_fleet_ctl tests.test_fleet` | 123개 OK |\n| `python3 -m unittest discover -s tests -p \"test_rt_*.py\"` | 175개 중 실패 1개 |\n| 위 명령에서 실패한 시험 | `test_rt_claude.LimitTest.test_other_error_false` 하나뿐 |\n| `python3 -m unittest discover -s tests -p \"test_rt_claude.py\"` | 24개 중 같은 시험 1개 실패 |\n\n그 시험이 실패하는 것은 지시하신 대로입니다. 옛 `False` 를 못박고 있어서, 다음 노드가 `None` 으로 고쳐야 합니다.\n\n`PYTHONPATH=tools python3 -c ...` 로 세션 폴더 `events.jsonl` 에 직접 써서 확인한 결과:\n- `_LIMIT_PATTERNS is claude.LIMIT_PATTERNS` → `True`\n- `report_limit_hit(\"You've hit your limit · resets 11am\")` → `True`\n- 오류 + `\"You've hit your 5-hour limit\"` 만 있을 때 → `None`\n- `terminal_reason=api_error` + `\"Prompt exceeds the context window limit\"` → `None`\n- `api_error_status=429` → `True`\n- 성공 → `False`\n\n**다음 담당자에게**\n- 처음에 `xargs` 로 파일 경로를 넘긴 시도는 `_fleet_env` import 오류로 실패했습니다. 시험은 `discover -s tests -p ...` 로 돌려야 합니다.\n- 작업 트리에 있던 `_LIMIT_PATTERNS` 는 HEAD 보다 짧아서 `\"limit reached\"` 와 `\"too many requests\"` 가 이미 빠져 있었습니다. 지시대로 작업 트리 쪽 목록을 옮겼고 이번에 더한 것은 `\"hit your limit\"` 뿐입니다.\n- `report_limit_hit` 의 `\"limit reached\"` 부분 일치가 필요한 시험이 있다면 다음 노드가 확인해야 합니다. 다만 `test_fleet_graph` 는 통과했습니다.",
+     "verify_rc": 0,
+     "verify_tail": ""
+    }
+   ]
+  },
+  {
+   "id": "T-268",
+   "slot": "S3",
+   "deps": [
+    "T-267"
+   ],
+   "project": "",
+   "title": "시험: 어댑터 한도 판정 세션 갈래·옛 동작 못박기 걷기 (재검수 R22-Q1·Q2·Q5, V19)",
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "write": [
+    "tests/test_rt_claude.py",
+    "tests/test_fleet_graph.py"
+   ],
+   "task": "# T-268 한도 판정 시험 메우기 (재검수 R22-Q1·Q2·Q5, 변이 V19)\n\n쓸 파일은 **둘**입니다: `tests/test_rt_claude.py`, `tests/test_fleet_graph.py`. 제품 코드(`tools/**`)는 **읽기만** 하십시오.\n바로 파일을 고치십시오. 근거는 `rounds/R22/REVIEW-r22.md` 의 Q1·Q2·Q5 행(43~47줄)입니다.\n\n## 앞 노드가 바꾼 것 (T-267, `tools/fleet_rt/harness/claude.py`)\n\n한도 판정이 `claude.py` 한 곳으로 모였습니다: `LIMIT_PATTERNS`, `limit_text_hit(text)`, `result_limit_signal(res, events=())`. 오류인데 구조 표지도 거절 사건도 없으면 이제 `False` 가 아니라 **`None`** 이고, `terminal_reason==\"api_error\"` 갈래는 좁은 문구 목록만 봅니다(\"context window limit\" 같은 문구는 한도 아님). `fleet_graph.report_limit_hit`·`_LIMIT_PATTERNS` 는 그것을 가리킵니다.\n\n## 할 일\n\n1. `tests/test_rt_claude.py`\n   - `test_other_error_false` 는 옛 잘못된 동작을 못박고 있습니다(V19). 이름을 `test_other_error_none` 으로 바꾸고 `assertIsNone` 으로.\n   - 새 시험: `is_error` 참 + `\"You've hit your 5-hour limit\"` (표지 없음) → `None` / `terminal_reason=api_error` + `\"Prompt exceeds the context window limit\"`·`\"max_tokens limit: output token limit exceeded\"`·`\"API Error: 400 input length and max_tokens exceed context limit\"` → 각각 **True 가 아님** / `result_limit_signal` 을 직접 부르는 시험 하나(dict 아님 → None).\n2. `tests/test_fleet_graph.py`\n   - **Q2:** 세션 갈래 시험. 임시 폴더를 `fleet` 의 세션 폴더 자리로 쓰게 하고(`fleet._session_dir` 를 `mock.patch` 하거나, 이 파일이 이미 쓰는 방식을 따르십시오), 그 안에 `meta.json`(`{\"harness_effective\": \"claude\"}`)과 `events.jsonl` 을 두고 `fleet_graph.run_limit_signal(\"T-1-S1-a1-000000\")` 이 N3 기록에서 `None`, N4 문구에서 True 가 아님, 429 에서 `True` 인지 봅니다. `events.jsonl` 의 줄 꼴은 `tests/test_rt_claude.py` 의 `_session_dir` 를 보십시오(`<시각>\\t<json>`).\n   - **Q1:** run_id 반례에 `\"R-1/../../outside/evil\"`, `\"T-1-S1-a1-000000/../x\"` 를 더합니다 (`None` 이어야 함).\n   - **Q5:** `test_run_limit_signal_is_none_for_text_only_harnesses` 는 claude 꼴 JSON 이 아니라 **글자 `.out`**(예: `\"DONE: something\"`) 으로 되돌려, 새 `test_m6_non_claude_harness_ignores_claude_shaped_json` 과 다른 것을 재게 합니다.\n\n## 제품 결함을 찾으면\n\n시험이 위 기대대로 썼는데 제품이 틀리면 제품도 시험도 고치지 말고 보고 첫 줄을 `NEEDS-FIX: <무엇이 어디서>` 로 쓰십시오.\n\n## 하지 말 것\n\n`tools/**` 고치기, `git commit`/`push`, 파일 삭제, 운영 모니터 부르기.\n\n## 검증 (엔진이 돌립니다)\n\n`tests/test_rt_claude.py` 와 `tests/test_fleet_graph.py` 가 **전부 통과**하고, 시험 수가 각각 지금(24, 73)보다 늘어야 합니다(28 이상, 76 이상).\n",
+   "verify": "python3 -m unittest discover -s tests -p 'test_rt_claude.py' > /tmp/r22-t268a.txt 2>&1 && python3 -m unittest tests.test_fleet_graph > /tmp/r22-t268b.txt 2>&1 && python3 - <<'PY'\nimport re, sys\na = re.search(r'Ran (\\d+) test', open('/tmp/r22-t268a.txt').read())\nb = re.search(r'Ran (\\d+) test', open('/tmp/r22-t268b.txt').read())\nna, nb = int(a.group(1)), int(b.group(1))\nprint('test_rt_claude', na, 'test_fleet_graph', nb)\nsys.exit(0 if na >= 28 and nb >= 76 else 1)\nPY",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-268-S3-a1-000043",
+     "started": "2026-11-13T00:00:43",
+     "ended": "2026-11-13T00:01:33",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n둘 다 전부 통과했고 시험 수는 `tests/test_rt_claude.py` 24→28, `tests/test_fleet_graph.py` 73→77 로 늘었습니다. 제품 결함은 없었고 `tools/**` 는 읽기만 했습니다.\n\n**고친 파일**\n- `tests/test_rt_claude.py`\n  - `test_other_error_false` 를 `test_other_error_none` 으로 바꾸고 `assertIsNone` 으로 고쳤습니다(V19).\n  - 새 시험 4개를 더했습니다.\n    - `test_error_without_marker_even_with_limit_text_is_none`: `\"You've hit your 5-hour limit\"` 에 표지가 없으면 `None` 인지 봅니다.\n    - `test_api_error_branch_ignores_non_usage_limit_phrases`: `terminal_reason=api_error` 와 요청하신 세 문구에서 각각 `True` 가 아님을 `subTest` 로 봅니다.\n    - `test_result_limit_signal_direct_events_rejected_is_true`: 시험 수 28을 채우려고 제가 더한 시험입니다. `result_limit_signal` 을 직접 불러 거절 사건이 있으면 `True`, 없으면 `None` 인지 봅니다.\n    - `test_result_limit_signal_direct_non_dict_is_none`: `result_limit_signal` 을 직접 불러, dict 가 아닌 입력(`None`, 문자열, 목록, 숫자)에서 `None` 인지 봅니다.\n- `tests/test_fleet_graph.py`\n  - Q2 세션 갈래 시험 3개를 더했습니다. 이름은 `test_q2_session_branch_n3_record_is_none`, `test_q2_session_branch_context_window_text_is_not_true`, `test_q2_session_branch_429_is_true` 입니다. 임시 폴더를 세션 폴더로 쓰게 하려고 `fleet._sessions_root` 를 `mock.patch` 했습니다(`fleet._session_dir` 를 직접 패치하지 않고, 그것이 부르는 `_sessions_root` 를 패치). 도우미 `_session` 은 `meta.json` 과 `events.jsonl`(`<시각>\\t<json>`)을 만듭니다.\n  - Q1 `test_q1_run_id_with_path_segments_is_none` 은 `\"R-1/../../outside/evil\"` 과 `\"T-1-S1-a1-000000/../x\"` 가 `None` 인지 봅니다. 앞의 것은 실제로 `evil.json`·`evil.out` 을 만들어 두어, 경로 검사를 걷어내면 `True` 가 나오는 꼴입니다.\n  - Q5 `test_run_limit_signal_is_none_for_text_only_harnesses` 의 `.out` 을 글자 `\"DONE: something\"` 으로 되돌렸습니다. claude 꼴 JSON 은 `test_m6_non_claude_harness_ignores_claude_shaped_json` 이 맡습니다.\n\n**돌린 검증**\n`python3 -m unittest tests.test_rt_claude tests.test_fleet_graph` 는 `_fleet_env` 를 못 찾아 import 에 실패했습니다. `tests/` 가 경로에 있어야 하니 `discover -s tests` 로 돌리십시오.\n- `python3 -m unittest discover -s tests -p \"test_rt_claude.py\"` → `Ran 28 tests ... OK`\n- `python3 -m unittest discover -s tests -p \"test_fleet_graph.py\"` → `Ran 77 tests ... OK`\n\n**다음 담당자에게**\n- 위 명령 중 `test_rt_claude.py` 28개 통과는 마지막 시험을 더한 뒤에 다시 확인했습니다. 중간에는 27개였습니다.\n- 쓴 경로는 슬롯 소유 경로 안의 두 파일뿐입니다.",
+     "verify_rc": 0,
+     "verify_tail": "test_rt_claude 28 test_fleet_graph 77\n"
+    }
+   ]
+  },
+  {
+   "id": "T-269",
+   "slot": "S1",
+   "deps": [
+    "T-267",
+    "T-268"
+   ],
+   "project": "",
+   "title": "재검수: R22-P1·P2·P3·Q1·Q2·Q5 가 정말 닫혔는가",
+   "timeout_sec": 3000,
+   "max_attempts": 1,
+   "write": [
+    "rounds/R22/REVIEW-r22-2.md"
+   ],
+   "task": "# T-269 **재검수** - 당신이 R22 1차 재검수에서 찾은 P1·P2·P3·Q1·Q2·Q5 가 정말 닫혔는가\n\n쓸 파일은 **하나**입니다: `rounds/R22/REVIEW-r22-2.md` (새 파일). **저장소의 다른 파일은 단 하나도 고치지 마십시오.** 변이는 저장소 사본에만 넣습니다.\n먼저 `rounds/R22/REVIEW-r22.md` (당신이 쓴 보고서)를 읽으십시오.\n\n## 닫혔다고 보고된 것\n\n| 번호 | 무엇 | 고친 곳 |\n| - | --- | --- |\n| P1 | 어댑터: 오류 + 표지 없음 → `None` | `tools/fleet_rt/harness/claude.py` |\n| P2 | 어댑터: `_limit_text` 삭제, 좁은 문구 목록(`LIMIT_PATTERNS`, `\"hit your limit\"` 추가) | 같은 파일 |\n| P3 | 판정을 `claude.result_limit_signal`·`limit_text_hit` 한 벌로, `fleet_graph` 는 그것을 부름 | 같은 파일 + `tools/fleet_graph.py` |\n| Q1·Q2·Q5·V19 | 세션 갈래 시험, `/` 반례, 글자 `.out` 시험 복원, `test_other_error_none` | `tests/test_fleet_graph.py`, `tests/test_rt_claude.py` |\n\n## 방법\n\n1. 저장소를 `/tmp` 로 복사하십시오 - **`.aimem/tls/` 는 빼십시오**(개인키·운영 토큰). `.git`·`.aimem/runs`·`__pycache__` 도 빼면 빠릅니다. 끝나면 그 `/tmp` 폴더를 `rm -rf` 하십시오\n2. 1차 재현(`repro.py` 꼴)을 다시 돌려 각 번호가 **세션 경로와 옛 경로 둘 다에서** 닫혔는지 확인\n3. 1차 변이 V08·V19·V20·V21 과, 이번 수정을 옛 모습으로 되돌리는 변이를 넣어 시험이 빨개지는지\n4. 새 결함: `\"hit your limit\"` 추가가 오인을 늘리지 않는지 진짜 기록(`.aimem/runs/*.out`, `.aimem/sessions/*/events.jsonl`) 전수로 재기(읽기만), import 순환·`fleet_graph` 단독 import 가 되는지\n\n## 보고서\n\n1. 닫힘표 `| 번호 | 닫혔나 | 근거 |` 2. 새 결함표 `| 번호 | 심각도 | 무엇이 | 어디 | 재현 | 고칠 방향 |` (없으면 \"없음\") 3. 변이표 `| 변이 | 잡혔나 |`, 마지막 줄 `합계 <n>개: 잡힘 <a>, 생존 <b>` 4. 한 문단 총평\n\n## 하지 말 것\n\n제품·시험 고치기, `git commit`/`push`, 저장소 파일 삭제, 운영 모니터 부르기.\n",
+   "verify": "python3 - > /tmp/r22-t269.txt 2>&1 <<'PY'\nimport pathlib\np = pathlib.Path('rounds/R22/REVIEW-r22-2.md')\nassert p.exists(), '보고서가 없다'\nt = p.read_text(encoding='utf-8')\nrows = [l for l in t.splitlines() if l.strip().startswith('|')]\nprint('chars', len(t), 'rows', len(rows))\nassert len(t) >= 2000, len(t)\nassert len(rows) >= 15, len(rows)\nassert '합계' in t\nPY",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-269-S1-a1-000136",
+     "started": "2026-11-13T00:01:36",
+     "ended": "2026-11-13T00:12:42",
+     "rc": 0,
+     "state": "done",
+     "report": "PARTIAL\n\nThe product-code fixes P1, P2 and P3 are closed, and so are tests Q5 and V19. Q2 is only half closed, and the full test suite (`python3 -m unittest discover -s tests`) now fails 1 of 940 tests. Q1 is not closed.\n\n**What I did:** `python3 tools/aimem_db.py check --slot S1 --token a41f0c --rev 164` printed `일치` (match), and `rounds/R22/REVIEW-r22-2.md` is on my owned-path list. I copied the repo to `/tmp/r22b-review`, leaving out `.git`, `__pycache__`, `tls`, `runs` and `sessions`; `.aimem/tls` was confirmed absent. In that copy I ran the reproduction, 17 mutations, and a read-only survey of the real run records. I deleted both `/tmp` folders afterwards. Only the review file below was written in the repo; the other changes in `git status` were already there.\n\n**Changed file:** `rounds/R22/REVIEW-r22-2.md` (new; contains the closure, new-defect and mutation tables and the summary)\n\n**Verification commands and output:**\n- `python3 -m unittest discover -s tests -p test_fleet_graph.py` → `Ran 77 tests OK`\n- `python3 -m unittest discover -s tests -p test_rt_claude.py` → `Ran 28 tests OK`\n- `python3 -m unittest discover -s tests` → `Ran 940 tests in 135.9s FAILED (failures=1, skipped=1)`, failing test `test_q2_session_branch_429_is_true: None is not True`\n- Reproduction: I gave the same 10 records to both the old `.aimem/runs` path and the session path. All four checks (old path, session path, the claude adapter, and the shared function) gave the same answer every time:\n  - the N3 cases → `None`\n  - context-window / `max_tokens` errors → `None`\n  - `429`, or `api_error` with \"hit your limit\" → `True`\n  - `fleet_graph._result_limit_signal is claude.result_limit_signal` → `True`\n- Mutations: 16 counted, 15 caught, 1 survived (V08). W12 is equivalent to the original and is left out of the count.\n- Survey of all 290 real records: the final limit verdict count went 1→1, so adding `\"hit your limit\"` caused no new misreads. The only report that matches it is `T-267`, where the fix worker quotes the phrase; it ended with rc 0, so the verdict is unaffected.\n- `import fleet_graph` works on its own, and there is no import cycle.\n\n**What the next owner needs to know:**\n1. **R1 (medium, fix before committing):** `tests/_fleet_env.py:10` sets `AIFLEET_HARNESS=fake`. In a full `discover` run, other test modules load it first, so the `_session` helper's session tests get the fake adapter instead of the claude one. Run that way, the 429 test fails, and the `n3` and `context window` tests pass without testing anything. The fix author apparently ran each module on its own. Fix: clear the forced fake harness inside `_session` (`mock.patch.dict(os.environ, {\"AIFLEET_HARNESS\": \"\"})`), then confirm with a full `discover` run.\n2. **R2 (low):** the Q1 test's counterexamples don't create the session folder the path would climb out from. So when `/` is allowed in run IDs (V08), all 77 tests still pass. With that change and a real session folder in place, `T-1-S1-a1-000000/../../outside/evil` reads files outside the repo and returns `True`. The product currently blocks this; the gap is that no test would notice if that protection were removed.\n3. Minor: `LIMIT_PATTERNS as _LIMIT_PATTERNS` in `tools/fleet_graph.py:52` is imported but never used.\n4. The work tree is still uncommitted.",
+     "verify_rc": 0,
+     "verify_tail": ""
+    }
+   ]
+  }
+ ],
+ "followup": "G-052 재검수(rounds/R22/REVIEW-r22.md) P1·P2·P3·Q1·Q2·Q5 수정과 재검수",
+ "updated": "2026-11-13T00:12:44"
+}

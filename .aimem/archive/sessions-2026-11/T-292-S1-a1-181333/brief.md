@@ -1,0 +1,29 @@
+SLOT=S1 T-292 3차 확인(가벼움): 낱말 표본 + 시험 4묶음 + 목표 15개 판정 (G-059)
+확인토큰: a41f0c
+AIMEM REV: 170
+너는 S1 슬롯이다. 작업 폴더는 /home/tsyi/work/ai-fleet 다.
+쓰기는 다음 경로에만 한다: rounds/R24/REVIEW-r24-3.md
+금지: git commit / push / 삭제 / 의존성 설치. 보고는 응답 본문에 직접 쓴다.
+보고 첫 줄은 상태(DONE / PARTIAL / BLOCKED / NEEDS-LOCK / NEEDS-APPROVAL), 이어서 한 일·고친 파일·실제로 돌린 검증 명령과 출력·다음 담당자가 알아야 할 것.
+검증 명령은 승인 없이 실행되는 형태로 쓴다: `python3 ...`, `PYTHONPATH=tools python3 ...`, `pytest ...`, `ls/cat/grep/sed -n/wc/diff/git status/git diff/curl ...`. 셸 변수 대입이나 다른 접두사를 앞에 붙이면 승인 요구로 막힌다. py_compile 이 만드는 __pycache__ 는 쓰기로 치지 않는다.
+
+# T-292 **3차 확인 (가벼움)** - 재검수가 남긴 것이 닫혔는가
+
+쓸 파일은 **하나**: `rounds/R24/REVIEW-r24-3.md` (새 파일). 저장소의 다른 파일은 고치지 마십시오. 실험은 `/tmp/r24-review3/` 사본에서(`.aimem/tls/`·`.git`·`.aimem/runs` 제외, 끝나면 `rm -rf`). **오래 걸리는 명령은 결과를 파일로 받으며 돌리고, 10분 넘게 아무 출력 없이 기다리지 마십시오**(엔진이 침묵 600초로 끊습니다 - 앞 재검수가 한 번 끊겼습니다).
+
+근거: `rounds/R24/REVIEW-r24-2.md` (특히 2절 N1~N6, 4절, 5절). 바뀐 것: `data/*`·`web/js/words.js`·`tests/test_words.py`(T-290: 흔한 낱말 130개 이상 보강·ALLOWED 1000 이상·오기/어근 제거), `web/js/ui.js`·`tests/browser_modes.py`(T-291: 새 날 정답 토스트, 시험 빈틈 V13·V14·V17).
+
+## 할 일
+
+1. 사본에서 네 묶음(`node --test projects/자모맞히기/tests/*.mjs`, `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'`, `browser_game.py`, `browser_modes.py`) 수를 적음.
+2. 변이 6개 이상: V13·V14·V17 되돌림, 새 날 토스트 되돌림, 금칙어 하나 다시 넣기, ALLOWED 를 999 로.
+3. 낱말: ALLOWED 에 새로 들어온 낱말(이전 900 대비) 전수 훑기 - 지어낸 말·오기·고유명사·비속어 수. 2차에서 쓰지 않은 **새 흔한 6칸 낱말 60개**를 넣어 보고 빠진 수.
+4. 2차 새 결함 N5(하드 모드 설정이 다른 모드 빈 판에 새로 고칠 때까지 안 닿음)는 이번에 고치지 않았습니다 - 그대로인지만 한 줄.
+
+## 보고서
+
+1. 닫힘표 `| 번호(2차) | 닫혔나 | 근거 |` (N1~N6) 2. 새 결함표 (없으면 "없음") 3. 변이표, 마지막 줄 `합계 <n>개: 잡힘 <a>, 생존 <b>` 4. 낱말 판정 5. `projects/자모맞히기/PROGRESS.md` `## 목표` 15개 `| 목표 | 닫아도 되나 | 근거 |` 6. 한 문단 총평.
+
+## 하지 말 것
+
+제품·시험 고치기, `git commit`/`push`, 저장소 파일 삭제, 의존성 설치, 운영 모니터 부르기.

@@ -1,0 +1,71 @@
+{
+ "id": "G-047",
+ "request": "R19: 엔진의 한도 오인(거짓 양성) 수정과 회귀 시험",
+ "created": "2026-11-12T16:11:57",
+ "rev": 160,
+ "round": 19,
+ "concurrency": 2,
+ "nodes": [
+  {
+   "id": "T-242",
+   "slot": "S2",
+   "deps": [],
+   "project": "",
+   "title": "엔진: 멀쩡한 보고를 '사용 한도'로 오인하는 거짓 양성 고치기",
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "write": [
+    "tools/fleet_graph.py"
+   ],
+   "task": "# T-242 엔진이 **멀쩡한 보고를 '사용 한도'로 오인**하는 것을 고치십시오\n\n쓸 파일은 **하나**입니다: `tools/fleet_graph.py`. **`tests/**` 와 `tools/fleet_ctl.py` 는 읽기만 하고\n절대 고치지 마십시오.** 계획을 세우지 말고 바로 고치십시오.\n\n## 실제로 일어난 일 (오늘 15:59, run `T-241-S2-a1-155911`)\n\n작업자가 계약표에 키 하나를 더하고 `상태: DONE` 과 함께 \"**사용 한도**\" 라는 말이 든 보고를 냈습니다\n(일 자체가 'Claude **사용 한도** 표시' 였으니 당연합니다). 그런데 `step()` 이 보고 글자만 보고\n한도로 끊긴 시도로 판정해 `verify` 를 **돌려 보지도 않고** 노드를 `blocked`(`verify_rc=-4`) 로\n두었습니다. 일은 멀쩡히 끝나 있었고, 관리자가 그 노드의 `verify` 를 직접 돌리니 `OK` 였습니다.\n**멀쩡한 일을 영영 막는 거짓 양성**입니다.\n\n## 고칠 것 둘\n\n### (1) `_LIMIT_PATTERNS` 를 '한도에 부딪혔다'는 말에만 맞추십시오 (414행 근처)\n\n지금은 `\"사용 한도\"`, `\"rate limit\"`, `\"주간 한도\"` 같은 **낱말 자체**가 들어 있습니다. 본문에서\n그 기능을 설명하기만 해도 걸립니다. 걸림말을 **사건을 말하는 꼴**로 바꾸십시오. 예:\n\n- 영어: `hit your 5-hour limit`, `5-hour limit reached`, `weekly limit reached`,\n  `usage limit reached`, `rate limit exceeded`, `rate_limit_error`\n- 한국어: `한도에 도달`, `한도에 걸`, `한도를 초과`, `한도로 끊`, `한도로 끝`, `한도에 막`\n\n**이 다섯은 반드시 그대로 True** 여야 합니다 (이미 있는 계약 시험):\n`\"상태: DONE\\nClaude hit your 5-hour limit\"` · `\"5-hour limit reached\"` ·\n`\"주간 한도에 걸렸습니다\"` · `\"사용 한도로 끝났습니다\"` · `\"x\"*2500 + \"\\n사용 한도로 끊겼습니다\"`\n\n**이 셋은 반드시 False** 여야 합니다:\n`\"상태: DONE\\n- 검증 통과\"` · `\"DONE\\n- 함대 탭에 Claude 사용 한도 카드를 넣었습니다\"` ·\n`\"DONE\\n- rate limit 글자를 설명에 적었습니다\"`\n\n마지막 2000자만 보는 것은 그대로 두십시오.\n\n### (2) 검증이 통과하면 한도로 보지 않습니다 (819행 근처, `step()`)\n\n지금은 `report_limit_hit(...)` 이 참이면 **검증을 건너뛰고** 바로 `blocked` 입니다. 바꾸십시오:\n\n- 노드에 **`verify` 명령이 있고** `rc == 0` 이면 → **먼저 `_verify(n)` 을 돌립니다.**\n  - `verify_rc == 0` → 한도로 **보지 않습니다.** 보통의 성공 경로(`done`)로 갑니다\n    (`att[\"limit\"]`·`n[\"limit\"]` 를 세우지 않습니다). 일이 끝났으면 어떻게 끊겼든 끝난 것입니다\n  - `verify_rc != 0` → 지금처럼 `att[\"limit\"]=True`, `n[\"limit\"]=True`,\n    `att[\"verify_rc\"]=-4`, `n[\"status\"]=\"blocked\"`, `_log(... 사용 한도로 끊김)`.\n    이때 `verify_tail` 은 `\"사용 한도로 끊겼다 - 재시도하지 않는다\"` 를 **그대로 담되** 그 뒤에\n    실제 검증 출력 꼬리를 붙이십시오 (다음 사람이 까닭을 봅니다)\n- 노드에 `verify` 가 **없거나** `rc != 0` 이면 → **지금 동작 그대로** (검증 없이 바로 한도 `blocked`)\n\n`_verify` 를 **두 번 돌리지 마십시오** - 결과를 받아 두고 아래 보통 경로에서 다시 부르지 않게\n짜십시오. `report_block_reason`(NEEDS-FIX 등) 판정은 **지금 자리에 그대로** 둡니다 - 한도 판정보다\n앞섭니다.\n\n## 알아 둘 것\n\n이미 있는 시험 `test_step_limit_flag_remains_in_saved_graph_json` 은 보고 본문이 맨낱말\n`\"상태: DONE\\n사용 한도\"` 라서 **빨개집니다. 그대로 두십시오** - 다음 노드(T-243, 다른 슬롯)가\n시험을 고칩니다. 그 밖의 `tests/test_fleet_graph.py`·`tests/test_fleet_ctl.py` 시험은 모두 초록이어야\n합니다(고정 노드에는 `verify` 키가 없으므로 (2)의 새 갈래를 타지 않습니다).\n\n## 검증\n\n```bash\npython3 -m unittest tests.test_fleet_ctl\n```\n+ 위에 적은 True/False 여덟 줄 계약. 검증 명령이 그대로 그것을 봅니다.\n",
+   "verify": "python3 -m unittest tests.test_fleet_ctl > /tmp/r19-t242.txt 2>&1; rc=$?; python3 - >> /tmp/r19-t242.txt 2>&1 <<'PY' || rc=1\nimport sys\nsys.path.insert(0, 'tools')\nimport fleet_graph as fg\nyes = ['\\uc0c1\\ud0dc: DONE\\nClaude hit your 5-hour limit', '5-hour limit reached',\n       '\\uc8fc\\uac04 \\ud55c\\ub3c4\\uc5d0 \\uac78\\ub838\\uc2b5\\ub2c8\\ub2e4', '\\uc0ac\\uc6a9 \\ud55c\\ub3c4\\ub85c \\ub05d\\ub0ac\\uc2b5\\ub2c8\\ub2e4',\n       'x'*2500 + '\\n\\uc0ac\\uc6a9 \\ud55c\\ub3c4\\ub85c \\ub04a\\uaca8\\uc2b5\\ub2c8\\ub2e4']\nno = ['\\uc0c1\\ud0dc: DONE\\n- \\uac80\\uc99d \\ud1b5\\uacfc',\n      'DONE\\n- \\ud568\\ub300 \\ud0ed\\uc5d0 Claude \\uc0ac\\uc6a9 \\ud55c\\ub3c4 \\uce74\\ub4dc\\ub97c \\ub123\\uc5c8\\uc2b5\\ub2c8\\ub2e4',\n      'DONE\\n- rate limit \\uae00\\uc790\\ub97c \\uc124\\uba85\\uc5d0 \\uc801\\uc5c8\\uc2b5\\ub2c8\\ub2e4']\nbad = [t for t in yes if not fg.report_limit_hit(t)] + [t for t in no if fg.report_limit_hit(t)]\nprint('contract bad:', bad)\nsys.exit(1 if bad else 0)\nPY\ntail -20 /tmp/r19-t242.txt; exit $rc",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-242-S2-a1-161159",
+     "started": "2026-11-12T16:11:59",
+     "ended": "2026-11-12T16:16:45",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n**한 일**\n- `_LIMIT_PATTERNS`를 사건을 말하는 표현으로 교체했습니다: `hit your 5-hour limit`, `5-hour limit reached`, `weekly limit reached`, `usage limit reached`, `rate limit exceeded`, `rate_limit_error`, `한도에 도달`, `한도에 걸`, `한도를 초과`, `한도로 끊`, `한도로 끝`, `한도에 막`.\n- `step()`에서 한도 판정 시 노드에 `verify`가 있고 실행 `rc == 0`이면 먼저 `_verify(n)`을 돌립니다. 통과하면 한도 플래그 없이 `done`; 실패하면 기존처럼 `blocked`, `verify_rc=-4`, `verify_tail`에 “사용 한도로 끊겼다 - 재시도하지 않는다”와 실제 검증 출력 꼬리를 붙입니다.\n- 검증 결과는 `verified` 변수에 캐시해 아래 성공 경로에서 `_verify`를 두 번 돌리지 않습니다.\n- `verify`가 없거나 실행 `rc != 0`이면 기존 동작대로 검증 없이 바로 한도 `blocked`입니다.\n- `report_block_reason` 판정 위치는 그대로 두었습니다.\n\n**고친 파일**\n- `tools/fleet_graph.py:413` — 한도 패턴\n- `tools/fleet_graph.py:820` — `step()` 한도/검증 판정\n\n**실행한 검증**\n- `python3 tools/aimem_db.py check --slot S2 --token d27e93 --rev 160` → `rc 0`, 일치 및 `tools/fleet_graph.py` 소유 경로 확인.\n- `python3 -m unittest tests.test_fleet_ctl` → `Ran 38 tests ... OK`\n- 8줄 계약 검사 → True 5개, False 3개 모두 `OK`.\n- 새 갈래 직접 확인 → 통과 검증은 `done`(`verify_rc=0`, 한도 플래그 없음, `_verify` 1회), 실패 검증은 `blocked`(`verify_rc=-4`, 한도 플래그 있음, 꼬리에 `FAIL 3행`, `_verify` 1회), `verify` 없음/`rc != 0`은 기존처럼 `blocked`이고 `_verify` 0회.\n- `python3 -m unittest tests.test_fleet_graph` → `Ran 45 tests`, 오류 1개. 예상대로 `test_step_limit_flag_remains_in_saved_graph_json`만 `KeyError: 'limit'`로 실패합니다.\n\n**다음 담당자에게**\n- `test_step_limit_flag_remains_in_saved_graph_json`은 보고가 `\"상태: DONE\\n사용 한도\"`라서 새 규칙상 한도로 보지 않아 실패합니다. 지시대로 고치지 않았으며 T-243에서 시험을 고쳐야 합니다.\n- 그 외 `tests/test_fleet_graph.py`와 `tests/test_fleet_ctl.py` 시험은 초록입니다.\n- `git diff`에는 이 파일의 기존 미커밋 변경도 함께 보입니다. 내가 바꾼 곳은 위 두 위치뿐입니다.\n- 커밋·푸시·삭제·의존성 설치 없이 `tools/fleet_graph.py`만 수정했습니다.",
+     "limit": true,
+     "verify_rc": -4,
+     "verify_tail": "사용 한도로 끊겼다 - 재시도하지 않는다"
+    }
+   ],
+   "limit": true,
+   "closed_by_manager": "R19: 보고 DONE·수정 반영. 엔진이 '사용 한도' 글자로 오인해 blocked 였다(고치려던 그 결함). 관리자가 verify 를 직접 돌려 rc 0 확인"
+  },
+  {
+   "id": "T-243",
+   "slot": "S3",
+   "deps": [
+    "T-242"
+   ],
+   "project": "",
+   "title": "test_fleet_graph.py: 한도 오인 회귀 시험 + 검증 통과 갈래",
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "write": [
+    "tests/test_fleet_graph.py"
+   ],
+   "task": "# T-243 `tests/test_fleet_graph.py` 에 '한도 오인' 회귀 시험을 넣으십시오\n\n쓸 파일은 **하나**입니다: `tests/test_fleet_graph.py`. **`tools/**` 는 읽기만 하고 절대 고치지\n마십시오.** 계획을 세우지 말고 바로 고치십시오.\n\n## 제품이 바뀌었습니다 (앞 노드 T-242, 의도된 변경)\n\n`tools/fleet_graph.py` 의 한도 판정이 둘 바뀌었습니다.\n\n1. `report_limit_hit` 의 걸림말이 **'한도에 부딪혔다'는 꼴**로 좁아졌습니다. 맨낱말\n   `\"사용 한도\"`·`\"rate limit\"`·`\"주간 한도\"` 만으로는 더 이상 참이 아닙니다. 실제로 멀쩡한\n   보고(일 자체가 '사용 한도 표시' 였던 작업자의 `DONE` 보고)가 한도로 오인돼 노드가 막혔습니다\n2. `step()` 은 보고가 한도처럼 보여도 **노드에 `verify` 명령이 있고 `rc == 0`이면 먼저 검증을\n   돌립니다.** 검증이 통과하면 한도로 보지 않고 `done` 으로 갑니다. 검증이 실패하면 예전처럼\n   `limit`·`verify_rc=-4`·`blocked` 입니다. `verify` 가 없는 노드는 예전 그대로입니다\n\n## 할 일\n\n### (1) 이미 있는 시험 하나 고치기\n\n`test_step_limit_flag_remains_in_saved_graph_json` 의 보고 본문\n`\"상태: DONE\\n사용 한도\"` 를 **진짜 한도 문구**로 바꾸십시오 (예: `\"상태: DONE\\n사용 한도에 도달했습니다\"`).\n단언(저장된 json 에 `limit: true`)은 그대로 둡니다.\n\n### (2) 계약표에 거짓 양성 줄 더하기\n\n`test_report_limit_hit_contract_table` 의 `cases` 에 **False** 로 셋을 더하십시오:\n- `\"DONE\\n- 함대 탭에 Claude 사용 한도 카드를 넣었습니다\"`\n- `\"DONE\\n- rate limit 글자를 설명에 적었습니다\"`\n- `\"상태: DONE\\n- 주간 한도 표시를 style.css 에 넣었습니다\"`\n이미 있는 True 다섯 줄은 **손대지 마십시오**.\n\n### (3) `step()` 의 새 갈래 시험 둘 (새로 쓰기)\n\n고정 노드 만들개(`self._node(...)`)에 `verify=\"true\"` 처럼 `verify` 키를 넘길 수 있습니다\n(`**extra` 로 들어갑니다). `fleet_graph._verify` 를 `mock.patch.object` 로 바꿔 쓰십시오.\n\n- **검증이 통과하면 한도로 보지 않는다**: `verify` 가 있는 노드 + 보고가\n  `\"상태: DONE\\n5-hour limit reached\"` + `_verify` 가 `(0, \"ok\")` →\n  노드 `status == \"done\"`, `attempt.get(\"limit\")` 이 참이 아님, `attempt[\"verify_rc\"] == 0`\n- **검증이 실패하면 예전처럼 한도로 막는다**: 같은 상황인데 `_verify` 가 `(1, \"빨강\")` →\n  `status == \"blocked\"`, `attempt[\"limit\"] is True`, `attempt[\"verify_rc\"] == -4`,\n  `attempt[\"verify_tail\"]` 에 `\"사용 한도\"` 가 들어 있음\n\n이미 있는 `test_step_limit_hit_blocks_without_retry`(`verify` 없는 노드 - `_verify` 를 부르지 않음)는\n**그대로 두십시오**. 시험을 지우지 마십시오 - 지금 45건이고 **48건 이상**이어야 합니다.\n\n## 검증\n\n```bash\npython3 -m unittest tests.test_fleet_graph\n```\n`OK` 이고 `Ran` 이 48 이상이어야 합니다. 제품이 틀렸다고 판단되면 고치지 말고 보고 첫 줄을\n`NEEDS-FIX: <무엇이 어디서>` 로 쓰십시오.\n",
+   "verify": "python3 -m unittest tests.test_fleet_graph > /tmp/r19-t243.txt 2>&1; rc=$?; tail -20 /tmp/r19-t243.txt; [ $rc -eq 0 ] || exit 1; python3 -c \"import re,sys;t=open('/tmp/r19-t243.txt').read();m=re.search(r'Ran (\\d+) tests',t);sys.exit(0 if m and int(m.group(1))>=48 else 1)\"",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-243-S3-a1-161709",
+     "started": "2026-11-12T16:17:09",
+     "ended": "2026-11-12T16:20:54",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n- 고친 파일: `tests/test_fleet_graph.py` 하나뿐. `tools/fleet_graph.py`는 읽기만 했고 고치지 않았습니다.\n- (1) `test_step_limit_flag_remains_in_saved_graph_json`의 보고 본문을 `\"상태: DONE\\n사용 한도에 도달했습니다\"`로 바꿨습니다. 저장된 json의 `limit: true` 단언은 그대로입니다.\n- (2) `test_report_limit_hit_contract_table`에 False 세 줄을 더했습니다. 기존 True 다섯 줄은 손대지 않았습니다.\n- (3) 새 시험 둘을 추가했습니다: `test_step_limit_like_report_with_passing_verify_is_done`(status `done`, limit 없음, `verify_rc == 0`)와 `test_step_limit_like_report_with_failing_verify_blocks`(status `blocked`, `limit is True`, `verify_rc == -4`, `verify_tail`에 `\"사용 한도\"`). 기존 `test_step_limit_hit_blocks_without_retry`는 그대로입니다.\n- 브리프의 건수 산술이 맞지 않습니다: 기존 45건 + 새 시험 2건 = 47건인데 검증은 48건 이상을 요구합니다. 그래서 제품 변경 1(맨낱말 한도 오인)을 직접 고정하는 `test_report_limit_hit_ignores_bare_limit_words`를 1건 더 넣어 48건을 맞췄습니다. 이 추가 시험이 불필요하다고 판단되면 제거하면 `Ran 47`이 됩니다.\n- 실제 검증: `python3 -m unittest tests.test_fleet_graph` → `Ran 48 tests in 0.594s`, `OK`.\n- 다음 담당자: 브리프의 \"지금 45건 + 새 시험 둘 = 48 이상\"은 산술적으로 상충합니다. 추가한 세 번째 시험은 `\"사용 한도\"`·`\"주간 한도 표시\"` 같은 맨낱말이 더 이상 한도로 판정되지 않음을 확인하는 회귀 시험입니다.",
+     "verify_rc": 0,
+     "verify_tail": "................................................\n----------------------------------------------------------------------\nRan 48 tests in 0.530s\n\nOK\n"
+    }
+   ]
+  }
+ ],
+ "followup": "R18 T-237 이 넣은 한도 판정이 멀쩡한 보고를 막은 결함(run T-241)의 수정",
+ "updated": "2026-11-12T16:20:57"
+}

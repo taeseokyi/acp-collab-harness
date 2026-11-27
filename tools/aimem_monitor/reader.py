@@ -144,6 +144,15 @@ def _gate_phase(d: pathlib.Path) -> str | None:
     return ph if isinstance(ph, str) and re.fullmatch(r"[a-z]{1,16}", ph) else None
 
 
+#: 어댑터가 보고 없는 세션에 붙이는 머리. 정본은 `fleet_rt.base.NO_REPORT` 이고 여기서는 앞머리만 본다
+_NO_REPORT_HEAD = "(최종 보고문 없음"
+
+
+def _live_report(text: str, running: bool) -> str:
+    """도는 세션의 '보고 전에 끝남' 글은 내지 않는다 - 아직 끝나지 않았으니 보고가 없는 것이 정상이다."""
+    return "" if running and text.startswith(_NO_REPORT_HEAD) else text
+
+
 def _session_row(rt, d: pathlib.Path, now: datetime) -> dict | None:
     meta = rt.load_meta(d)
     if not isinstance(meta, dict):
@@ -164,7 +173,7 @@ def _session_row(rt, d: pathlib.Path, now: datetime) -> dict | None:
     if stt is not None:
         elapsed = max(0, int(round(((end or now) - stt).total_seconds())))
     try:
-        head = (rt.report(d) or "").strip()[:REPORT_HEAD]
+        head = _live_report((rt.report(d) or "").strip(), state == "running")[:REPORT_HEAD]
     except Exception:  # noqa: BLE001
         head = ""
     rnd = meta.get("round")
@@ -275,7 +284,9 @@ def _estimate(req: dict, runs_by_id: dict, slot_harness: dict, eta: dict) -> dic
                 "eta_basis": f"요청 {status} - 끝난 요청은 남은 시간을 내지 않습니다"}
 
     by_h, overall = eta["by_harness"], eta["overall"]["median_sec"]
-    remaining = [s for s in subs if s.get("status") != "DONE"]
+    # REVIEW 는 작업자 일이 끝나 관리자 확인만 남은 것 - 작업자 실행 시간을 더 잡지 않는다
+    remaining = [s for s in subs if s.get("status") not in ("DONE", "REVIEW")]
+    in_review = sum(1 for s in subs if s.get("status") == "REVIEW")
     ests, used = [], []
     over: list[dict] = []
     floor: dict = {}  # 하네스 -> 초과 중인 실행의 elapsed_sec 최댓값 (미착수 추정의 바닥값)
@@ -310,6 +321,9 @@ def _estimate(req: dict, runs_by_id: dict, slot_harness: dict, eta: dict) -> dic
         # 분담 전에는 추정할 표본 자체가 없다. 0 을 내면 화면이 "지금 도착" 이라고 말한다
         eta_sec = None
         basis = "분담 전 - 관리자가 서브태스크로 나눈 뒤 추정됩니다"
+    elif not remaining and in_review:
+        eta_sec = None
+        basis = f"작업자 일은 끝남 - 관리자 확인 대기 {in_review}건 (다음 분담이 나오면 다시 추정됩니다)"
     elif not remaining:
         eta_sec = 0
         basis = "남은 서브태스크 없음"
@@ -334,12 +348,32 @@ def _estimate(req: dict, runs_by_id: dict, slot_harness: dict, eta: dict) -> dic
     return {"progress_pct": pct, "eta_sec": eta_sec, "eta_basis": basis}
 
 
-def _collect_requests(root, runs, slots, eta, errors) -> list[dict]:
+def _subtasks_from_tasks(req_id, tasks, slot_harness, last_run) -> list[dict]:
+    """요청 파일에 분담이 안 적혀 있을 때 운영 DB 의 태스크(`request_id` 가 이 요청)를 분담으로 본다.
+
+    관리자는 분담을 DB 태스크·그래프로만 남기고 요청 파일의 `subtasks` 는 비워 둔다. 그대로 두면 그래프가
+    도는 동안에도 요청 카드가 '분담 전'·0% 라고 말한다.
+    """
+    out = []
+    for t in tasks or []:
+        if not isinstance(t, dict) or not req_id or t.get("request_id") != req_id:
+            continue
+        tid, slot = _s(t.get("id")), _s(t.get("slot"))
+        out.append({"id": tid, "title": _s(t.get("title")), "slot": slot, "harness": slot_harness.get(slot),
+                    "status": _s(t.get("status")), "run_id": last_run.get(tid)})
+    return out
+
+
+def _collect_requests(root, runs, slots, eta, errors, tasks=None) -> list[dict]:
     qdir = root / ".aimem" / "requests"
     if not qdir.is_dir():
         return []
     runs_by_id = {r["id"]: r for r in runs}
     slot_harness = {s["slot"]: s["harness"] for s in slots}
+    last_run: dict = {}   # 태스크 -> 가장 늦게 시작한 실행
+    for r in sorted(runs, key=lambda r: _s(r.get("started"))):
+        if r.get("task"):
+            last_run[r["task"]] = r["id"]
     out = []
     try:
         files = sorted(qdir.glob("*.json"))
@@ -354,6 +388,8 @@ def _collect_requests(root, runs, slots, eta, errors) -> list[dict]:
         except (OSError, ValueError) as e:
             errors.append(f"요청 파일 {p.name} 을(를) 읽지 못했습니다: {str(e)[:60]}")
             continue
+        if not req.get("subtasks"):
+            req["subtasks"] = _subtasks_from_tasks(req.get("id"), tasks, slot_harness, last_run)
         req.update(_estimate(req, runs_by_id, slot_harness, eta))
         out.append(req)
     return out
@@ -473,7 +509,7 @@ def collect(root: pathlib.Path | None = None) -> dict:
     log = [e for _, e in sorted(pairs, key=lambda p: (p[0], p[1]["when"].replace("T", " ")), reverse=True)]
 
     runs = _collect_runs(root, now, errors)
-    requests = _collect_requests(root, runs, slots, median_durations(runs), errors)
+    requests = _collect_requests(root, runs, slots, median_durations(runs), errors, db.get("tasks"))
     # 기록에 프로젝트가 없는 실행(손으로 띄운 것)은 태스크 -> 요청 -> 프로젝트로 메운다
     proj_of_req = {q.get("id"): q.get("project") for q in requests if isinstance(q.get("project"), str)}
     req_of_task = {_s(t.get("id")): t.get("request_id") for t in db.get("tasks") or []}
@@ -696,7 +732,7 @@ def _fill_session_detail(d: dict, run_id: str, sdir: pathlib.Path) -> None:
         if "report.md" in linked or "events.jsonl" in linked:     # 보고가 없으면 사건 기록에서 뽑으므로 둘 다 본다
             errors.append("report.md·events.jsonl 가 심볼릭 링크라 보고를 읽지 않았습니다")
         else:
-            d["report"] = _redact((rt.report(sdir) or "").strip())
+            d["report"] = _redact(_live_report((rt.report(sdir) or "").strip(), status == "running"))
     except Exception as e:  # noqa: BLE001
         errors.append(f"보고를 읽지 못했습니다: {str(e)[:60]}")
 

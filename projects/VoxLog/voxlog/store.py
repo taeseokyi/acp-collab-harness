@@ -16,6 +16,7 @@ import tempfile
 import threading
 
 from .tags import tag_key, merge_tags
+from .stt_options import normalize
 
 MAX_AUDIO_BYTES = 50 * 1024 * 1024
 ALLOWED_MIME = {
@@ -49,6 +50,12 @@ def _fill_meta_defaults(meta):
         meta["tags_human"] = False
     if "autotag" not in meta:
         meta["autotag"] = None
+    if "stt_options" not in meta:
+        meta["stt_options"] = None
+    if "stt_used" not in meta:
+        meta["stt_used"] = None
+    if "prev_stt_used" not in meta:
+        meta["prev_stt_used"] = None
     return meta
 
 
@@ -188,9 +195,19 @@ class Store:
     def _transcript_path(self, meta):
         return self.transcripts_dir / self._record_date(meta) / (meta["id"] + ".txt")
 
+    def _prev_transcript_path(self, meta):
+        return self.transcripts_dir / self._record_date(meta) / (meta["id"] + ".prev.txt")
+
     def _read_transcript(self, meta):
         try:
             with open(self._transcript_path(meta), "r", encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    def _read_prev_transcript(self, meta):
+        try:
+            with open(self._prev_transcript_path(meta), "r", encoding="utf-8") as f:
                 return f.read()
         except OSError:
             return ""
@@ -370,6 +387,9 @@ class Store:
                 "tags_auto": [],
                 "tags_human": False,
                 "autotag": None,
+                "stt_options": None,
+                "stt_used": None,
+                "prev_stt_used": None,
             }
             # 3) 잠금 안: 메타 쓰기만
             with self._lock:
@@ -400,6 +420,7 @@ class Store:
             if "location" not in out:
                 out["location"] = None
             out["transcript"] = self._read_transcript(meta)
+            out["transcript_prev"] = self._read_prev_transcript(meta)
             return out
 
     def list(self, q=None, date_from=None, date_to=None, status=None, limit=200, tag=None):
@@ -496,18 +517,58 @@ class Store:
                 meta.pop("stt_job", None)
             self._write_json(self._meta_path(rid), meta)
 
-    def set_transcript(self, rid, text):
+    def set_transcript(self, rid, text, used=None):
         text = text or ""
         with self._lock:
             meta = self._load_meta(rid)
             path = self._transcript_path(meta)
+            old = self._read_transcript(meta)
+            if old and old != text:
+                prev = self._read_prev_transcript(meta)
+                if not prev or len(old.strip()) >= len(prev.strip()):
+                    self._atomic_write(self._prev_transcript_path(meta),
+                                       old.encode("utf-8"))
+                    meta["prev_stt_used"] = meta.get("stt_used")
             self._atomic_write(path, text.encode("utf-8"))
             self._drop_cache(path)
             meta["title"] = " ".join(text.split())[:40]     # 화자 구분 글은 여러 줄 - 제목은 한 줄로
             meta["chars"] = len(text)
             meta["status"] = "done"
             meta["error"] = None
+            meta["stt_used"] = dict(used, at=_now_iso()) if used is not None else None
             self._write_json(self._meta_path(rid), meta)
+
+    def set_stt_options(self, rid, opts):
+        norm = normalize(opts)
+        with self._lock:
+            meta = self._load_meta(rid)
+            if opts is None:
+                meta.pop("stt_options", None)
+            else:
+                meta["stt_options"] = norm
+            self._write_json(self._meta_path(rid), meta)
+
+    def effective_stt_options(self, meta):
+        if isinstance(meta, dict):
+            opts = meta.get("stt_options")
+            if isinstance(opts, dict) and opts:
+                return opts
+        return self.default_stt_options()
+
+    def default_stt_options(self):
+        raw = self._read_json(self.root / "stt_options.json")
+        if not isinstance(raw, dict):
+            return {}
+        try:
+            return normalize(raw)
+        except ValueError:
+            return {}
+
+    def set_default_stt_options(self, opts):
+        norm = normalize(opts)
+        with self._lock:
+            self._write_json(self.root / "stt_options.json", norm)
+        return norm
 
     def set_label_tags(self, rid, patch):
         with self._lock:
@@ -589,6 +650,13 @@ class Store:
                 if tpath.exists():
                     try:
                         os.unlink(tpath)
+                        removed = True
+                    except OSError:
+                        pass
+                ppath = self._prev_transcript_path(meta)
+                if ppath.exists():
+                    try:
+                        os.unlink(ppath)
                         removed = True
                     except OSError:
                         pass

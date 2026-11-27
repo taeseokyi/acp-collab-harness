@@ -25,6 +25,11 @@
     detailAutotag: null,
     detailLastLabel: '',
     detailLastTags: '',
+    detailSttOptions: null,
+    detailPrevText: null,
+    sttDefaults: null,
+    sttDefaultsReq: null,
+    sttFields: null,
     // 녹음
     rec: null, stream: null, chunks: [], startedAt: 0, startedIso: '', mime: '',
     timer: 0, wake: null, busy: false,
@@ -118,6 +123,252 @@
   function saveSetting(partial) {
     Object.assign(state.cfg, partial);
     return api().setConfig(partial);
+  }
+
+  /* ---------- 받아쓰기 옵션 (설정 기본값·상세 다시 받아쓰기) ---------- */
+
+  var STT_PREPROCESS = ['none', 'basic', 'level', 'dereverb', 'denoise'];
+  var STT_PREPROCESS_LABEL = {
+    none: 'none · 손대지 않음',
+    basic: 'basic · 고역 통과 등 기본 처리',
+    level: 'level · 기본 + 작은 목소리 음량 맞춤',
+    dereverb: 'dereverb · 기본 + 울림 제거',
+    denoise: 'denoise · 기본 + 잡음 제거'
+  };
+  var STT_CONTEXT_MAX = 4000;
+  var STT_SPEAKERS_MIN = 1, STT_SPEAKERS_MAX = 20;
+
+  // 두 묶음(설정·상세)이 같은 입력 모양을 쓰게 만드는 하나의 함수. 만든 입력을 돌려준다.
+  function buildSttFields(box, prefix) {
+    clear(box);
+    var els = {};
+    // 설정 묶음의 빈 칸은 서버 기본값, 상세 묶음의 빈 칸은 앱 설정(전체 기본값)을 따른다는 뜻이다.
+    var detailGroup = prefix === 'detail-stt';
+    var defaultLabel = detailGroup ? '기본(앱 설정 따름)' : '서버 기본';
+    function field(labelText, child, key) {
+      var label = document.createElement('label');
+      label.className = 'field';
+      label.textContent = labelText;
+      if (key) child.id = prefix + '-' + key;
+      label.appendChild(child);
+      box.appendChild(label);
+      return child;
+    }
+    function note(text) {
+      var p = document.createElement('p');
+      p.className = 'muted stt-why';
+      p.textContent = text;
+      box.appendChild(p);
+    }
+    function select(labelText, key, options) {
+      var sel = document.createElement('select');
+      options.forEach(function (pair) {
+        var o = document.createElement('option');
+        o.value = pair[0];
+        o.textContent = pair[1];
+        sel.appendChild(o);
+      });
+      return field(labelText, sel, key);
+    }
+
+    var preprocessLabel = detailGroup ? defaultLabel : '서버 기본(level)';
+    els.preprocess = select('전처리', 'preprocess', [['', preprocessLabel]].concat(
+      STT_PREPROCESS.map(function (v) { return [v, STT_PREPROCESS_LABEL[v]]; })));
+    note('잡음이 많은 녹음은 denoise 가 나을 수 있습니다(보장은 아님). 깨끗한 녹음에서는 오히려 나빠질 수 있습니다.');
+
+    var spk = document.createElement('input');
+    spk.type = 'number';
+    spk.min = String(STT_SPEAKERS_MIN);
+    spk.max = String(STT_SPEAKERS_MAX);
+    spk.step = '1';
+    spk.inputMode = 'numeric';
+    spk.placeholder = '빈칸 = 자동';
+    els.speakers = field('화자 수 (1~' + STT_SPEAKERS_MAX + ', 빈칸 = 자동)', spk, 'speakers');
+
+    var ctx = document.createElement('textarea');
+    ctx.rows = 3;
+    ctx.maxLength = STT_CONTEXT_MAX;
+    ctx.placeholder = '예: 참석자 이름, 회의 이름 (기본은 비움)';
+    els.context = field('문맥 글 (최대 ' + STT_CONTEXT_MAX + '자)', ctx, 'context');
+    note('문맥 글은 조용한 구간에 새어 나오거나 낱말이 끌려갈 수 있어 기본은 비워 둡니다.');
+
+    var tri = [['', defaultLabel], ['1', '켬'], ['0', '끔']];
+    els.auto = select('자동 추정', 'auto', tri);
+    els.review = select('LLM 검토', 'review', tri);
+    return els;
+  }
+
+  // 녹음에 저장된 옵션이 '비어 있지 않은 dict' 일 때만 그것을 쓴다(없음·{} 는 전체 기본값).
+  function hasSttOptions(o) {
+    return !!o && typeof o === 'object' && !Array.isArray(o) && Object.keys(o).length > 0;
+  }
+
+  function fillSttFields(els, opts) {
+    if (!els) return;
+    opts = opts && typeof opts === 'object' ? opts : {};
+    els.preprocess.value = STT_PREPROCESS.indexOf(opts.preprocess) >= 0 ? opts.preprocess : '';
+    els.speakers.value = (typeof opts.num_speakers === 'number' && isFinite(opts.num_speakers))
+      ? String(opts.num_speakers) : '';
+    els.context.value = typeof opts.context === 'string' ? opts.context : '';
+    els.auto.value = typeof opts.auto === 'boolean' ? (opts.auto ? '1' : '0') : '';
+    els.review.value = typeof opts.review === 'boolean' ? (opts.review ? '1' : '0') : '';
+  }
+
+  // 고른 것만 담는다. 틀린 값은 한국어 한 줄로 던진다(서버도 같은 규칙으로 거절한다).
+  function readSttFields(els) {
+    var opts = {};
+    var p = els.preprocess.value;
+    if (p) {
+      if (STT_PREPROCESS.indexOf(p) < 0) throw new Error('전처리 값이 올바르지 않습니다.');
+      opts.preprocess = p;
+    }
+    var sp = String(els.speakers.value || '').trim();
+    if (sp) {
+      if (!/^\d+$/.test(sp) || Number(sp) < STT_SPEAKERS_MIN || Number(sp) > STT_SPEAKERS_MAX) {
+        throw new Error('화자 수는 ' + STT_SPEAKERS_MIN + '~' + STT_SPEAKERS_MAX + ' 사이 정수여야 합니다.');
+      }
+      opts.num_speakers = Number(sp);
+    }
+    var ctx = String(els.context.value || '').trim();
+    if (ctx) {
+      if (ctx.length > STT_CONTEXT_MAX) throw new Error('문맥 글은 ' + STT_CONTEXT_MAX + '자까지입니다.');
+      opts.context = ctx;
+    }
+    if (els.auto.value === '1') opts.auto = true;
+    else if (els.auto.value === '0') opts.auto = false;
+    if (els.review.value === '1') opts.review = true;
+    else if (els.review.value === '0') opts.review = false;
+    return opts;
+  }
+
+  function sttDefaults() {
+    if (state.sttDefaults) return Promise.resolve(state.sttDefaults);
+    if (state.sttDefaultsReq) return state.sttDefaultsReq;
+    state.sttDefaultsReq = api().json('api/stt-options').then(function (d) {
+      var o = d && d.options;
+      state.sttDefaults = o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+      state.sttDefaultsReq = null;
+      return state.sttDefaults;
+    }, function (e) {
+      state.sttDefaultsReq = null;
+      throw e;
+    });
+    return state.sttDefaultsReq;
+  }
+
+  function loadSttSettings() {
+    var box = $('stt-defaults');
+    if (isolated()) { box.hidden = true; return; }
+    box.hidden = false;
+    var note = $('stt-defaults-note');
+    note.textContent = '';
+    $('stt-defaults-fields').hidden = false;
+    $('stt-defaults-save').hidden = false;
+    sttDefaults().then(function (opts) {
+      fillSttFields(state.sttFields.defaults, opts);
+    }, function (e) {
+      $('stt-defaults-fields').hidden = true;
+      $('stt-defaults-save').hidden = true;
+      note.textContent = '받아쓰기 옵션을 불러오지 못했습니다: ' + ((e && e.message) || '알 수 없음');
+    });
+  }
+
+  function saveSttDefaults() {
+    var opts;
+    try { opts = readSttFields(state.sttFields.defaults); }
+    catch (e) { toast(e.message); return; }
+    var st = $('stt-defaults-state');
+    st.textContent = '저장 중…';
+    api().json('api/stt-options', { method: 'PUT', body: { options: opts } }).then(function (d) {
+      var o = d && d.options;
+      state.sttDefaults = o && typeof o === 'object' && !Array.isArray(o) ? o : opts;
+      fillSttFields(state.sttFields.defaults, state.sttDefaults);
+      st.textContent = '';
+      toast('받아쓰기 기본값을 저장했습니다.');
+    }, function (e) {
+      st.textContent = '';
+      toast((e && e.message) || '받아쓰기 기본값을 저장하지 못했습니다');
+    });
+  }
+
+  function openSttPanel() {
+    var id = state.detailId;
+    if (!id) return;
+    var box = $('detail-stt');
+    var opening = box.hidden;
+    box.hidden = !opening;
+    $('detail-retry-opts').setAttribute('aria-expanded', opening ? 'true' : 'false');
+    if (!opening) return;
+    if (hasSttOptions(state.detailSttOptions)) {
+      fillSttFields(state.sttFields.detail, state.detailSttOptions);
+      return;
+    }
+    fillSttFields(state.sttFields.detail, {});
+    sttDefaults().then(function (opts) {
+      // 여는 사이 다른 녹취로 바뀌었거나 다시 닫았으면 건드리지 않는다 (폴링도 이 입력은 지우지 않는다)
+      if (state.detailId === id && !$('detail-stt').hidden) fillSttFields(state.sttFields.detail, opts);
+    }, function (e) {
+      if (state.detailId === id && !$('detail-stt').hidden) {
+        $('detail-stt-state').textContent = '기본값을 불러오지 못했습니다: ' + ((e && e.message) || '알 수 없음');
+      }
+    });
+  }
+
+  function retryWithOptions() {
+    var id = state.detailId;
+    if (!id) return;
+    var opts;
+    try { opts = readSttFields(state.sttFields.detail); }
+    catch (e) { toast(e.message); return; }
+    var st = $('detail-stt-state');
+    st.textContent = '요청 중…';
+    api().json('api/recordings/' + encodeURIComponent(id) + '/retry', { method: 'POST', body: { options: opts } }).then(function () {
+      st.textContent = '';
+      $('detail-stt').hidden = true;
+      $('detail-retry-opts').setAttribute('aria-expanded', 'false');
+      toast('옵션을 바꿔 다시 받아쓰기를 요청했습니다. 바뀌기 전 글 중 가장 긴 것 한 벌이 남습니다.');
+      loadDetail(id);
+      loadList();
+    }, function (e) {
+      st.textContent = '';
+      onApiError(e); // 400 이면 서버가 준 까닭이 토스트로 간다
+    });
+  }
+
+  function sttUsedText(used) {
+    if (!used || typeof used !== 'object') return '';
+    var parts = [];
+    if (typeof used.preprocess === 'string' && used.preprocess) parts.push('전처리 ' + used.preprocess);
+    if (typeof used.speakers === 'number' && isFinite(used.speakers)) parts.push('화자 ' + used.speakers);
+    if (typeof used.auto === 'boolean') parts.push('자동 추정 ' + (used.auto ? '켬' : '끔'));
+    if (typeof used.review === 'boolean') parts.push('검토 ' + (used.review ? '켬' : '끔'));
+    return parts.length ? '받아쓴 옵션: ' + parts.join(' · ') : '';
+  }
+
+  function renderSttUsed(used) {
+    var el = $('detail-stt-used');
+    var text = sttUsedText(used);
+    el.textContent = text;
+    el.hidden = !text;
+  }
+
+  function renderPrev(text, used) {
+    var box = $('detail-prev');
+    var pre = $('detail-prev-text');
+    var sum = $('detail-prev-summary');
+    var prev = typeof text === 'string' ? text : '';
+    var p = used && typeof used === 'object' && typeof used.preprocess === 'string' ? used.preprocess : '';
+    sum.textContent = '이전 글 중 가장 긴 것' + (p ? ' (전처리 ' + p + ')' : '');
+    box.hidden = !prev;
+    if (!prev) {
+      if (state.detailPrevText !== null) { box.open = false; pre.textContent = ''; state.detailPrevText = null; }
+      return;
+    }
+    if (state.detailPrevText !== prev) { // 폴링이 펼쳐 둔 것을 접지 않게, 글이 바뀔 때만 다시 채운다
+      state.detailPrevText = prev;
+      box.open = false;
+      pre.textContent = prev;
+    }
   }
 
   // 서버가 살아 있는지(api/health, 토큰 없이 답함)와 넣은 토큰이 통하는지(토큰이 필요한 호출)를 따로 본다.
@@ -837,6 +1088,11 @@
         (r.error ? ' · ' + r.error : '');
       $('detail-meta').textContent = meta;
       renderLoc(r.location);
+      state.detailSttOptions = hasSttOptions(r.stt_options) ? r.stt_options : null;
+      $('detail-retry-opts').hidden = isolated();
+      if (isolated()) $('detail-stt').hidden = true;
+      renderSttUsed(r.stt_used);
+      renderPrev(r.transcript_prev, r.prev_stt_used);
       $('detail-delete').hidden = isolated();
       state.detailText = r.transcript || '';
       state.detailHead = (label || r.title || '녹취') + ' · ' + fmtTime(r.recorded_at || r.created);
@@ -899,6 +1155,17 @@
     renderDetailTagState(null);
     updateDetailRetag();
     $('detail-export').hidden = true;
+    state.detailSttOptions = null;
+    state.detailPrevText = null;
+    $('detail-stt').hidden = true;
+    $('detail-retry-opts').setAttribute('aria-expanded', 'false');
+    $('detail-retry-opts').hidden = isolated();
+    $('detail-stt-state').textContent = '';
+    $('detail-stt-used').hidden = true;
+    $('detail-stt-used').textContent = '';
+    $('detail-prev').hidden = true;
+    $('detail-prev-text').textContent = '';
+    fillSttFields(state.sttFields.detail, {});
     Array.prototype.forEach.call($('list').children, function (li) {
       li.classList.toggle('open', li.dataset.id === id);
     });
@@ -1224,6 +1491,10 @@
   /* ---------- 시작 ---------- */
 
   function bind() {
+    state.sttFields = {
+      defaults: buildSttFields($('stt-defaults-fields'), 'stt-defaults'),
+      detail: buildSttFields($('detail-stt-fields'), 'detail-stt')
+    };
     $('answer-copy').addEventListener('click', copyAnswer);
     $('answer-share').addEventListener('click', shareAnswer);
     $('detail-copy').addEventListener('click', copyDetail);
@@ -1241,7 +1512,11 @@
       var s = $('settings');
       s.hidden = !s.hidden;
       $('settings-btn').setAttribute('aria-expanded', s.hidden ? 'false' : 'true');
+      if (!s.hidden) loadSttSettings();
     });
+    $('stt-defaults-save').addEventListener('click', saveSttDefaults);
+    $('detail-retry-opts').addEventListener('click', openSttPanel);
+    $('detail-stt-run').addEventListener('click', retryWithOptions);
     function flushSoon() {
       clearTimeout(state.flushTimer);
       state.flushTimer = setTimeout(function () {

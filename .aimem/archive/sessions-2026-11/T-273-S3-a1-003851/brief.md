@@ -1,0 +1,38 @@
+SLOT=S3 T-273 시험: FIFO·큰 메타 회귀 + 한도 판정 시험 구멍 둘 (R22-P4·R22-S1·R22-S2) (G-055)
+확인토큰: 5b8c1e
+AIMEM REV: 164
+너는 S3 슬롯이다. 작업 폴더는 /home/tsyi/work/ai-fleet 다.
+쓰기는 다음 경로에만 한다: tests/test_fleet_graph.py, tests/test_rt_claude.py
+금지: git commit / push / 삭제 / 의존성 설치. 보고는 응답 본문에 직접 쓴다.
+보고 첫 줄은 상태(DONE / PARTIAL / BLOCKED / NEEDS-LOCK / NEEDS-APPROVAL), 이어서 한 일·고친 파일·실제로 돌린 검증 명령과 출력·다음 담당자가 알아야 할 것.
+검증 명령은 승인 없이 실행되는 형태로 쓴다: `python3 ...`, `PYTHONPATH=tools python3 ...`, `pytest ...`, `ls/cat/grep/sed -n/wc/diff/git status/git diff/curl ...`. 셸 변수 대입이나 다른 접두사를 앞에 붙이면 승인 요구로 막힌다. py_compile 이 만드는 __pycache__ 는 쓰기로 치지 않는다.
+
+# T-273 시험 메우기 (R22-P4·R22-S1·R22-S2)
+
+쓸 파일은 **둘**입니다: `tests/test_fleet_graph.py`, `tests/test_rt_claude.py`. 제품(`tools/**`)은 **읽기만**. 바로 파일을 고치십시오.
+
+## 앞 노드가 바꾼 것 (T-272)
+
+`tools/fleet.py` 에 `read_regular_bytes(path, limit)` (일반 파일이 아니거나 limit 초과면 `None`, `O_NONBLOCK` 으로 열어 FIFO 에서 안 막힘). `_run_meta`·`_session_meta` 는 256 KiB 상한, `fleet_graph.run_limit_signal` 의 `.out` 은 1 MiB 상한으로 이 도우미를 씁니다.
+
+## 할 일
+
+1. `tests/test_fleet_graph.py`
+   - FIFO: 임시 `fleet.RUNS` 에 claude 메타 `X.json` 과 `os.mkfifo` 로 만든 `X.out` → `run_limit_signal("X")` 가 **막히지 않고** `None`. 스레드로 돌리고 `join(3)` 뒤 살아 있으면 실패로 (시험이 영영 멈추지 않게).
+   - 큰 메타: 2 MiB 짜리 `Y.json` → `fleet._run_meta("Y")` 가 `None`. `read_regular_bytes` 를 직접: 일반 파일 → 바이트, 디렉터리 → `None`, 없는 경로 → `None`, limit 초과 → `None`.
+   - R22-S1: `test_q2_session_branch_context_window_text_is_not_true` 의 단언을 `assertIsNone` 으로.
+   - 이 파일의 다른 시험이 `fleet.RUNS`·`fleet._session_dir` 를 어떻게 갈아끼우는지 보고 같은 방식을 쓰십시오. 전체 discover 에서는 `AIFLEET_HARNESS=fake` 가 깔려 있다는 것을 기억하십시오(세션 갈래 시험은 이미 `fleet_rt.harness.get` 을 패치합니다).
+2. `tests/test_rt_claude.py`
+   - R22-S2: `limit_signal` 의 `except` 갈래를 타는 시험 하나 - 예: `ClaudeHarness._events` 를 `mock.patch.object` 로 예외를 던지게 하고 `None` 인지.
+
+## 제품 결함을 찾으면
+
+제품도 시험도 고치지 말고 첫 줄 `NEEDS-FIX: <무엇이 어디서>`.
+
+## 하지 말 것
+
+`tools/**` 고치기, `git commit`/`push`, 파일 삭제, 운영 모니터 부르기.
+
+## 검증 (엔진이 돌립니다)
+
+**전체** `python3 -m unittest discover -s tests` 통과(2~3분), `tests.test_fleet_graph` 80개 이상, `test_rt_claude.py` 29개 이상. 끝내기 전에 당신도 전체 discover 로 확인하십시오.

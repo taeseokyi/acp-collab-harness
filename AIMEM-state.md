@@ -1,102 +1,22 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-26T11:33:46 / REV 207
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-27T20:55:15 / REV 208
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | `a41f0c` | claude | opus | R50 쉼 (무료 중심) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
-| S2 | `d27e93` | codex | kisti/kistillm | R50 VoxLog 큐: app.js 폴링·webm 길이·test_ask | 무료 |
-| S3 | `5b8c1e` | opencode | kisti/kistillm | R50 VoxLog 큐: store.py 태그 표기·문서 정리 | 무료 |
-| S4 | `6cd650` | claude | sonnet | R50 쉼 (VoxLog 속도 우선 - 검수 없음) | 유료, 검수만 |
-| S5 | `61dfcc` | claude | sonnet | R50 쉼 (무료 중심) |  |
-| S6 | `47764b` | freebuff | (하네스 기본) | R50 VoxLog 큐: 브라우저 검사 t46~t48·sw.js | 무료 |
+| S1 | `a41f0c` | claude | opus | R51 쉼 (무료 중심) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S2 | `d27e93` | codex | kisti/kistillm | R51 VoxLog 받아쓰기 옵션: stt.py·serve.py·브라우저 검사 | 무료 |
+| S3 | `5b8c1e` | opencode | kisti/kistillm | R51 VoxLog 받아쓰기 옵션: stt_options.py·store.py·문서 | 무료 |
+| S4 | `6cd650` | claude | sonnet | R51 VoxLog 적대적 검수(부작용 중심) | 유료, 검수만 |
+| S5 | `61dfcc` | claude | sonnet | R51 쉼 (무료 중심) |  |
+| S6 | `47764b` | freebuff | (하네스 기본) | R51 VoxLog 받아쓰기 옵션: 화면(web/) | 무료 |
 
 ## 3. 작업 보드
 
 | ID | 요청 | 태스크 | 담당 | 상태 | 산출물 |
 | --- | --- | --- | --- | --- | --- |
-| T-213 | Q-261112-6ec6 | 검수 D1·D2: 무인증 거절이 감사 로그를 불리지 못하게, session-bad 는 세션 쿠키가 있을 때만 | S2 | DONE |  |
-| T-214 | Q-261112-6ec6 | 시험 구멍 다섯(M10·M12·M13·M15·M17)과 D1 회귀 시험 메우기 | S3 | DONE |  |
-| T-215 | Q-261112-6ec6 | 재검수: D1·D2 수정이 D5 감사 범위를 잃지 않았는가 | S1 | DONE | rounds/R16/REVIEW-ticket-url-2.md |
-| T-216 | Q-261112-bd33 | server.py: 감사 N1 - URL 이 주장한 티켓 주체를 인증된 주체로 치지 않는다 (+N2 생략 수 귀속, N3 경로 고정) | S2 | DONE |  |
-| T-217 | Q-261112-bd33 | test_monitor_ticket_regress.py: 감사 상한·창·생략 수·무인증 키 회귀 시험 (검수 N4 구멍 M21~M27) | S3 | DONE |  |
-| T-218 | Q-261112-bd33 | aimem_db.py: archive_plan 이 브리프 본문을 식별자로 삼아 미리보기가 15초 걸리는 것 | S2 | DONE |  |
-| T-219 | Q-261112-bd33 | test_aimem_db_cli.py: 긴 node.task 가 protected_ids 에 들어가지 않는다는 회귀 시험 | S3 | DONE |  |
-| T-220 | Q-261112-7a8e | 프로젝트를 별도 탭으로 분리 (index.html·app.js·style.css·sw.js) | S2 | DONE |  |
-| T-221 | Q-261112-a8be | 작업 요청 폼의 프로젝트: 있는 것은 고르고 없으면 새로 입력 (index.html·app.js·style.css·sw.js) | S2 | DONE |  |
-| T-222 | Q-261112-bd33 | browser_monitor_ui.py: 390px 그래프 제목 펼치기 실측 + 옮긴 정리 단추에 맞춰 갱신 | S3 | DONE |  |
-| T-223 | Q-261112-7a8e | browser_monitor_tabs.py(새): 프로젝트 탭·전역 정리 단추·프로젝트 고르기 실측 | S3 | DONE |  |
-| T-224 | Q-261112-bd33 | 적대적 검수: 감사 N1 수정 + 모니터 UI 변경 + archive 식별자 수정 | S1 | DONE | rounds/R17/REVIEW-r17.md |
-| T-225 | Q-261112-edfe | 끝난 것 정리 단추를 상단 전역 바로 옮김 (보드·요청 트리에서 제거) | S2 | DONE |  |
-| T-226 | Q-261112-bd33 | 검수 N9·M10 시험 구멍: 진짜 티켓으로 N1 수정을 지키는 회귀 시험 | S3 | DONE |  |
-| T-227 | Q-261112-bd33 | browser_monitor_ui.py: 그래프 제목 펼치기 검사를 임시 저장소 고정 그래프로 (끝난 그래프가 접혀 깨짐) | S3 | DONE | tests/browser_monitor_ui.py |
-| T-228 | Q-261112-7a8e | 프로젝트 탭 분리로 깨진 브라우저 검사: auth·preview_guard | S3 | DONE |  |
-| T-229 | Q-261112-7a8e | 프로젝트 탭 분리로 깨진 브라우저 검사: preview (S2 소유 파일) | S2 | DONE |  |
-| T-230 | Q-261112-bd33 | browser_monitor_ui.py: '프로젝트 칸의 볼드 기준' 도 임시 저장소 고정 실행 기록으로 | S3 | DONE |  |
-| T-231 | Q-261112-b1d2 | tests/test_monitor_claude_usage.py(새): server.claude_usage 계약 단위 시험 | S3 | DONE |  |
-| T-232 | Q-261112-b1d2 | server.py: .aimem/claude-usage.json 을 읽어 /api/state 에 claude_usage 로 | S2 | DONE |  |
-| T-233 | Q-261112-b1d2 | tests/browser_monitor_usage.py(새): 함대 탭 사용 한도 카드 브라우저 실측 | S3 | DONE |  |
-| T-234 | Q-261112-b1d2 | 함대 탭 맨 위 'Claude 사용 한도' 카드 (index.html·app.js·style.css·sw.js) | S2 | DONE |  |
-| T-235 | Q-261112-c3a1 | 감사 상한: 창마다 처음 보는 (event,subject) 1줄 보장 + 생략 수 보존·N7·N10 (큐 1·2) | S2 | DONE |  |
-| T-236 | Q-261112-c3a1 | test_monitor_ticket_regress.py: 창별 첫 줄 보장·생략 수 보존·상한 상수 못박기 (큐 1~3) | S3 | DONE |  |
-| T-237 | Q-261112-b1d2 | 엔진: 사용 한도로 끊긴 시도를 limit 으로 구분하고 재시도하지 않기 (+이어 달리기 까닭) | S2 | DONE |  |
-| T-238 | Q-261112-b1d2 | 적대적 검수: 사용 한도 표시·감사 상한 몫·한도 실패 구분 | S1 | DONE |  |
-| T-239 | Q-261112-b1d2 | browser_monitor_usage.py: 입력 자료를 진짜 claude-usage.json 꼴(dict)로 (T-234 NEEDS-FIX 후속) | S3 | DONE |  |
-| T-240 | Q-261112-c3a1 | test_monitor_ticket_regress.py: 상한 시험 4건을 첫 주체 보장에 맞추기 (T-235 NEEDS-FIX 후속) | S3 | DONE |  |
-| T-241 | Q-261112-b1d2 | SERVER_KEYS 에 claude_usage 계약 올리기 (/api/state 계약 시험 1건 빨강) | S2 | DONE |  |
-| T-242 | Q-261112-b1d2 | 엔진: 멀쩡한 보고를 '사용 한도'로 오인하는 거짓 양성 (R18 T-237 결함, 실측 run T-241) | S2 | DONE |  |
-| T-243 | Q-261112-b1d2 | test_fleet_graph.py: 한도 오인 회귀 시험 + 검증 통과 갈래 | S3 | DONE |  |
-| T-244 | Q-261112-b1d2 | server.py: 악성 사용 한도 파일이 /api/state 를 죽이는 것(N1·N2) + SIGTERM 감사 비우기(N4) | S2 | DONE |  |
-| T-245 | Q-261112-b1d2 | test_monitor_claude_usage.py: 악성 파일·64KiB·두 갈래 키 회귀 시험 (검수 M8·구멍 S3·S4·S5) | S3 | DONE |  |
-| T-246 | Q-261112-b1d2 | 엔진: 한도 판정을 rc != 0 일 때만 (검수 N3) | S2 | DONE |  |
-| T-247 | Q-261112-b1d2 | test_fleet_graph.py: rc 조건 회귀 시험 + 2000자 구멍(G3) | S3 | DONE |  |
-| T-248 | Q-261112-b1d2 | 재검수: N1·N2·N3·N4 수정이 정말 닫혔는가 | S1 | DONE |  |
-| T-249 | Q-261112-b1d2 | server.py: 서러게이트 한 글자가 /api/state 를 죽이는 것 (재검수 P1, 높음) | S2 | DONE |  |
-| T-250 | Q-261112-b1d2 | test_monitor_claude_usage.py: 서러게이트·곁다리 카드·갈래별 키 회귀 시험 (P1·P5·M2) | S3 | DONE |  |
-| T-251 | Q-261112-7d68 | server.py: SIGTERM 처리기 설치를 try 바로 앞으로 (재검수 R19-P6) | S2 | DONE |  |
-| T-252 | Q-261112-7d68 | tests/test_monitor_shutdown.py(새): 진짜 SIGTERM 으로 감사 비우기 실측 (큐 R19-P2) | S3 | DONE | T-261 이 이어받아 닫음 (R21 정리) |
-| T-253 | Q-261112-7d68 | fleet_graph.py: 한도 판정을 보고 글자보다 .out 의 구조 신호로 먼저 (큐 R19-P3) | S2 | DONE |  |
-| T-254 | Q-261112-7d68 | test_fleet_graph.py: 구조 신호 한도 판정 + rc!=0 verify 면제 분기 회귀 시험 (R18-G7) | S3 | DONE |  |
-| T-255 | Q-261112-7d68 | browser_monitor_ui.py: 저장소 현재 상태에 기대는 시나리오 넷을 고정 자료로 (큐 1) | S3 | DONE |  |
-| T-256 | Q-261112-7d68 | browser_monitor_tabs.py: 탭·프로젝트 고르개 검사를 고정 자료 저장소로 (큐 1) | S3 | DONE |  |
-| T-257 | Q-261112-7d68 | 시험 구멍 둘: 창 전환 때 seen 비우기(R18-A7)·미래 at 의 age(R18-S8) | S3 | DONE |  |
-| T-258 | Q-261112-7d68 | browser_monitor_usage.py: 퍼센트 반올림(R18-B10)·'N시간 전 기준' 경계(R18-B12) | S3 | DONE |  |
-| T-259 | Q-261112-7d68 | test_fleet_ctl.py: 연쇄 한도 로그 정규식의 앵커 부정 사례 (R18-C2) | S2 | DONE |  |
-| T-260 | Q-261112-7d68 | 적대적 검수: R20 의 SIGTERM 종료·한도 구조 신호·고정 자료 브라우저 검사·시험 구멍 넷 | S1 | DONE | T-262 가 같은 검수를 다시 해 rounds/R20/REVIEW-r20.md 로 닫음 (R21 정리) |
-| T-261 | Q-261112-7d68 | test_monitor_shutdown.py: 빨간 시험 둘 고치기 (T-252 이어받기) | S3 | DONE |  |
-| T-262 | Q-261112-7d68 | 적대적 검수: R20 의 SIGTERM 종료·한도 구조 신호·고정 자료 브라우저 검사·시험 구멍 넷 | S1 | DONE |  |
-| T-263 | Q-261112-7d68 | fleet_graph.py: 한도 판정 회귀 N3 + 너무 넓은 걸림말 N4·N5 + run_id 검사 N7 | S2 | DONE |  |
-| T-264 | Q-261112-7d68 | test_fleet_graph.py: N3·N4·N5·N7 회귀 + 변이 구멍 여섯 (M3~M8) | S3 | DONE |  |
-| T-265 | Q-261112-7d68 | browser_monitor_ui.py: 고정 자료가 아직 진짜 저장소를 읽는다 (N1·N2·M11) | S3 | DONE |  |
-| T-266 | Q-261112-7d68 | 재검수: N3·N4·N5·N7·N1·N2 수정이 정말 닫혔는가 | S1 | DONE |  |
-| T-267 | Q-261112-7d68 | claude 어댑터 한도 판정: N3·N4 수정 옮기기 + 판정 한 곳으로 (R22-P1·P2·P3) | S2 | DONE |  |
-| T-268 | Q-261112-7d68 | 시험: 어댑터 한도 판정 세션 갈래·옛 동작 못박기 걷기 (R22-Q1·Q2·Q5, V19) | S3 | DONE |  |
-| T-269 | Q-261112-7d68 | 재검수: R22-P1·P2·P3·Q1·Q2·Q5 가 정말 닫혔는가 | S1 | DONE |  |
-| T-270 | Q-261112-7d68 | test_fleet_graph: Q2 세션 시험 fake 우회 + Q1 디딤 폴더 (R22-R1·R2) | S3 | DONE |  |
-| T-271 | Q-261112-7d68 | 재검수: R22-R1·R2 가 닫혔는가 | S1 | DONE |  |
-| T-272 | Q-261113-a22b | 실행 기록 읽기: FIFO 막힘·메타 상한 (R20-N6·R20-N8 = R22-P4) | S2 | DONE |  |
-| T-273 | Q-261113-a22b | 시험: FIFO·큰 메타 회귀 + 한도 판정 시험 구멍 (R22-P4·R22-S1·R22-S2) | S3 | DONE |  |
-| T-274 | Q-261113-a22b | browser_monitor_ui.py: 이번 라운드 값 고정 자료 + 잘린 제목 펼침 (R22-Q3·R22-Q4) | S3 | DONE |  |
-| T-275 | Q-261113-a22b | 검수: R22-P4·S1·S2·Q3·Q4 수정 | S1 | DONE |  |
-| T-276 | Q-261113-bd56 | jamo.js: 칸 풀기·조합·두벌식 자판 표 | S2 | DONE |  |
-| T-277 | Q-261113-bd56 | 낱말 목록: 원본 + build_words.py → words.js + test_words.py | S3 | DONE |  |
-| T-278 | Q-261113-bd56 | game.js: 웹워들 로직을 6칸 자모로 | S2 | DONE |  |
-| T-279 | Q-261113-bd56 | ui.js: 자모 자판·e.code 입력·미리보기·날마다/연습 | S2 | DONE |  |
-| T-280 | Q-261113-bd56 | index.html·style.css·storage.js: 제목·도움말·모드·미리보기·6칸 | S3 | DONE |  |
-| T-281 | Q-261113-bd56 | 단위 검사: test_jamo.mjs + test_game.mjs | S3 | DONE |  |
-| T-282 | Q-261113-bd56 | 브라우저 검사 browser_game.py | S3 | DONE |  |
-| T-283 | Q-261113-bd56 | 적대적 검수: 자모맞히기 1차 | S1 | DONE |  |
-| T-284 | Q-261113-bd56 | 낱말 목록 손질 (R24-N1·N2·N3·N11) | S2 | DONE |  |
-| T-285 | Q-261113-bd56 | ui.js 모드 오가기 정리 (R24-N4·N5·N6·N7·N8·N13) | S3 | DONE |  |
-| T-286 | Q-261113-bd56 | storage.js 시스템 어두운 모드 + 접두어 시험 (R24-N9·N12) | S3 | DONE |  |
-| T-287 | Q-261113-bd56 | 브라우저 회귀 검사 browser_modes.py (R24-N4~N9·N12·N13) | S3 | DONE |  |
-| T-288 | Q-261113-bd56 | 재검수: R24-N1~N13 닫힘 + 목표 판정 | S1 | DONE |  |
-| T-289 | Q-261113-bd56 | ui.js: 끝난 연습 판 유지 (T-287 NEEDS-FIX) | S3 | DONE |  |
-| T-290 | Q-261113-bd56 | 추측 목록 보강 1000 + 오기·어근 빼기 (R24 재검수 N1·N2·N3) | S2 | DONE |  |
-| T-291 | Q-261113-bd56 | 새 날 연습 정답 토스트 + 시험 빈틈 셋 (R24 재검수 N4·N6) | S3 | DONE |  |
-| T-292 | Q-261113-bd56 | 3차 확인(가벼움) | S1 | DONE |  |
 | T-293 | Q-261113-bd56 | 하드 모드 설정이 빈 판에 바로 닿게 (R24-N5 하) + 시험 | S3 | DONE |  |
 | T-294 | Q-261113-bd56 | 추측 목록 갈래 1: 생활(음식·집·옷·몸·건강) 300개+ (R24-N1) | S2 | DONE |  |
 | T-295 | Q-261113-bd56 | 추측 목록 갈래 2: 사회(학교·일·돈·교통·장소) 300개+ (R24-N1) | S3 | DONE |  |
@@ -253,11 +173,32 @@
 | T-448 | Q-261126-902f | [VoxLog] R49-N11 store.set_label_tags - 대소문자만 바뀐 태그는 표기만 갱신 | S3 | DONE | projects/VoxLog/voxlog/store.py, projects/VoxLog/tests/test_store.py |
 | T-449 | Q-261126-902f | [VoxLog] 문서 큐 정리 - 설계 문서 R48-N9~N22 반영, R48-N23 결론, R47-N1 persisted 단서, R49-N7·N8 INTERFACE | S3 | DONE | projects/VoxLog/docs/DESIGN-next-features.md, projects/VoxLog/docs/RESEARCH-draft-owner.md, projects/VoxLog/docs/INTERFACE.md |
 | T-450 | Q-261126-902f | [VoxLog] 브라우저 검사 t46~t48 - webm 길이, 받아쓰기 끝 순간 AI 태그, 폴링 오류 뒤 이어짐 + 셸 캐시 VERSION | S6 | DONE | projects/VoxLog/tests/browser_voxlog.py, projects/VoxLog/web/sw.js |
+| T-451 | Q-261127-8d1e | [VoxLog] 받아쓰기 옵션 거르기 모듈 voxlog/stt_options.py + 단위 검사 | S3 | DONE |  |
+| T-452 | Q-261127-8d1e | [VoxLog] store.py - 녹음별·전체 기본 옵션, stt_used, 이전 글 한 벌 | S3 | DONE |  |
+| T-453 | Q-261127-8d1e | [VoxLog] stt.py - 옵션 필드 보내기, 400 글 읽기, 쓰인 옵션 받기, Transcriber options_fn | S2 | DONE |  |
+| T-454 | Q-261127-8d1e | [VoxLog] serve.py - GET/PUT /api/stt-options, retry 에 옵션 본문 | S2 | DONE |  |
+| T-455 | Q-261127-8d1e | [VoxLog] 화면 - 설정 칸 받아쓰기 기본 옵션, 상세 '옵션 바꿔 다시 받아쓰기', 쓰인 옵션·이전 글 | S6 | DONE |  |
+| T-456 | Q-261127-8d1e | [VoxLog] 브라우저 검사 t49~t52 - 옵션 화면이 실제 요청으로 나가는지, 이전 글, 320px | S2 | DONE |  |
+| T-457 | Q-261127-8d1e | [VoxLog] 문서 - INTERFACE.md·README 에 받아쓰기 옵션 | S3 | DONE |  |
+| T-458 | Q-261127-8d1e | [VoxLog] R51 적대적 검수 - 받아쓰기 옵션(부작용 중심) | S4 | DONE | rounds/R51/REVIEW-r51.md |
+| T-459 | Q-261127-8d1e | [VoxLog] R51-N1 이전 글은 밀려난 글 중 가장 긴 것을 지킴 + 실패해도 글이 남는 검사 | S3 | DONE |  |
+| T-460 | Q-261127-8d1e | [VoxLog] R51-N2 다시 받아쓰기는 남은 작업 id 를 지우고 새로 맡김, R51-N3 빈 옵션은 전체 기본값을 따름 | S2 | DONE |  |
+| T-461 | Q-261127-8d1e | [VoxLog] R51-N3 화면 - 옵션 묶음을 실제로 쓰일 값으로 채움, 이전 글 안내문 맞춤 | S6 | DONE |  |
+| T-462 | Q-261127-8d1e | [VoxLog] 브라우저 검사 t53~t55 - 폴링이 열어 둔 옵션 입력을 안 지움, 상세 옵션이 전체 기본값으로 채워짐, 재시도 400 의 서버 글 | S2 | DONE |  |
+| T-463 | Q-261127-8d1e | [VoxLog] R51 재검수 - N1~N3 고침이 맞는지, 고치며 생긴 새 문제, 변이 | S4 | DONE | rounds/R51/REVIEW-r51-2.md |
+| T-464 | Q-261127-8d1e | [VoxLog] 실물 확인 - 안내방송 녹음을 따로 띄운 서버의 웹에서 denoise 로 다시 받아쓰기 | S6 | DONE | rounds/R51/REAL-CHECK.md |
+| T-465 | Q-261127-8d1e | [VoxLog] R51-N9 화면 - '기본' 이름을 묶음마다 뜻대로, 녹음 옵션은 합치지 않음 안내, 이전 글 요약 이름 | S6 | DONE |  |
+| T-466 | Q-261127-8d1e | [VoxLog] R51-N9·N12·N10 - effective_stt_options 가 빈 옵션을 없음으로, 문서를 고친 동작에 맞춤 | S3 | DONE |  |
+| T-467 | Q-261127-8d1e | [VoxLog] R51 재검수 2 - N9 문구·빈 옵션 규칙·문서 | S4 | DONE | rounds/R51/REVIEW-r51-3.md |
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
+| 1 | [VoxLog] R51 검수 하 등급 묶음: R51-N4 깊은 중첩 JSON 이 400 대신 연결 끊김(RecursionError, PUT stt-options·retry·PATCH 세 곳), R51-N5 context 의 제로폭·제어 문자 거르기, R51-N6 설정 기본값 캐시가 낡음·설정 칸 다시 열면 입력 덮임, R51-N7 재시도 실패 시 옵션 되돌림의 좁은 틈·다른 녹취로 옮긴 뒤 묶음 숨김. 검사 구멍 넷(검수 변이 표의 폴링이 이전 글 펼침 접음·격리 출처 숨김·토스트 innerHTML·옵션 복구). 원문 rounds/R51/REVIEW-r51.md | S2/S3 무료 |  |
+| 2 | [VoxLog] 결정거리 R51-N8: 다시 받아쓰기의 이전 글 규칙. 지금은 '밀려난 글 중 가장 긴 것 한 벌'(R51-N1 고침) - 길고 나쁜 글 A → 짧고 좋은 글 B → C 면 B 가 사라짐. 같은 자리를 두 번째로 지적받아 이번 라운드엔 갈아엎지 않음. 안: (가) 지난 글 여러 벌(예: 5벌) 기록 = 판 기록이라는 흔한 방식, 덮는 규칙이 없어짐, store·화면 목록 필요 (나) 지금 규칙 유지(문구로 알림). 태석님이 고르면 구현. 원문 rounds/R51/REVIEW-r51-2.md | 결정 뒤 S3·S6 |  |
+| 3 | [VoxLog] R51 재검수 하 등급 묶음: R51-N11 겹친 두 재시도가 진행 중 작업 id 를 지울 수 있는 좁은 틈(set_job(None) 을 resubmit 잠금 안으로), R51-N12 resubmit 실패 시 옵션 복구 검사 없음. 원문 rounds/R51/REVIEW-r51-2.md | S2 무료 |  |
+| 4 | [VoxLog] R51 재검수 2 하 등급 묶음: R51-N13 녹음에 다른 옵션이 있을 때 상세 칸의 '기본(앱 설정 따름)' 이름이 틀림, R51-N14 INTERFACE.md 한 곳이 옛 이전 글 규칙을 말함, R51-N15 새 문구를 잡는 검사 없음. 원문 rounds/R51/REVIEW-r51-3.md | S3·S6 무료 |  |
 
 ## 6. 파일 소유권
 
@@ -281,38 +222,40 @@
 | `CLAUDE.md` | 관리자 | 부트스트랩. 자동 주입되는 유일한 파일 |
 | `README.md` | 관리자 | 저장소 소개 |
 | `projects/**` | 관리자 | 프로젝트 결과물 projects/<이름>/ - 여러 라운드에 걸쳐 쌓임 (REV 142). 관리자가 하위 경로를 슬롯에 배정 |
-| `projects/VoxLog/README.md` | S6 | R49 |
+| `projects/VoxLog/README.md` | S3 | R51 |
 | `projects/VoxLog/docs/**` | S6 | R39 |
 | `projects/VoxLog/docs/DESIGN-next-features.md` | S3 | R50 |
-| `projects/VoxLog/docs/INTERFACE.md` | S3 | R50 |
+| `projects/VoxLog/docs/INTERFACE.md` | S3 | R51 |
 | `projects/VoxLog/docs/RESEARCH-draft-owner.md` | S3 | R50 |
-| `projects/VoxLog/serve.py` | S3 | R49 |
+| `projects/VoxLog/serve.py` | S2 | R51 |
 | `projects/VoxLog/settings.example.json` | S2 | R44 |
 | `projects/VoxLog/tests/**` | S6 | R39 |
-| `projects/VoxLog/tests/browser_voxlog.py` | S6 | R49 |
+| `projects/VoxLog/tests/browser_voxlog.py` | S2 | R51 |
 | `projects/VoxLog/tests/fake_llm.py` | S3 | R49 |
 | `projects/VoxLog/tests/fake_tag_llm.py` | S2 | R49 |
 | `projects/VoxLog/tests/test_ask.py` | S2 | R49 |
-| `projects/VoxLog/tests/test_serve.py` | S3 | R49 |
+| `projects/VoxLog/tests/test_serve.py` | S2 | R51 |
 | `projects/VoxLog/tests/test_serve_ask_body.py` | S2 | R46 |
-| `projects/VoxLog/tests/test_store.py` | S3 | R43 |
-| `projects/VoxLog/tests/test_stt.py` | S2 | R49 |
+| `projects/VoxLog/tests/test_store.py` | S3 | R51 |
+| `projects/VoxLog/tests/test_stt.py` | S2 | R51 |
+| `projects/VoxLog/tests/test_stt_options.py` | S3 | R51 |
 | `projects/VoxLog/tests/test_tags.py` | S2 | R49 |
 | `projects/VoxLog/voxlog/**` | S6 | R39 |
 | `projects/VoxLog/voxlog/__init__.py` | S3 | R33 |
 | `projects/VoxLog/voxlog/ask.py` | S2 | R49 |
-| `projects/VoxLog/voxlog/store.py` | S3 | R43 |
-| `projects/VoxLog/voxlog/stt.py` | S2 | R49 |
+| `projects/VoxLog/voxlog/store.py` | S3 | R51 |
+| `projects/VoxLog/voxlog/stt.py` | S2 | R51 |
+| `projects/VoxLog/voxlog/stt_options.py` | S3 | R51 |
 | `projects/VoxLog/voxlog/tags.py` | S2 | R49 |
 | `projects/VoxLog/web/**` | S4 | R34 |
 | `projects/VoxLog/web/api.js` | S6 | R41 |
-| `projects/VoxLog/web/app.js` | S2 | R49 |
+| `projects/VoxLog/web/app.js` | S6 | R51 |
 | `projects/VoxLog/web/icons/**` | S5 | R33 |
-| `projects/VoxLog/web/index.html` | S6 | R49 |
+| `projects/VoxLog/web/index.html` | S6 | R51 |
 | `projects/VoxLog/web/manifest.webmanifest` | S5 | R33 |
 | `projects/VoxLog/web/queue.js` | S3 | R46 |
-| `projects/VoxLog/web/style.css` | S6 | R49 |
-| `projects/VoxLog/web/sw.js` | S6 | R49 |
+| `projects/VoxLog/web/style.css` | S6 | R51 |
+| `projects/VoxLog/web/sw.js` | S6 | R51 |
 | `projects/웹워들/README.md` | S3 | R10 |
 | `projects/웹워들/app.json` | S3 | R10 |
 | `projects/웹워들/docs/**` | S1 | R12 T-152 미리보기 기록 저장 설계 문서 (새 경로) |
@@ -431,6 +374,9 @@
 | `rounds/R35/REVIEW-r35.md` | S1 | R35 |
 | `rounds/R36/REVIEW-r36.md` | S1 | R36 |
 | `rounds/R39/REVIEW-r39.md` | S1 | R39 |
+| `rounds/R51/REAL-CHECK.md` | S6 | R51 실물 확인 |
+| `rounds/R51/REVIEW-r51*.md` | S4 | R51 적대적 검수 |
+| `rounds/R51/REVIEW-r51-3.md` | S4 | R51 재검수 2 |
 | `skills/**` | 관리자 | **현재 비어 있음** (REV 101 에서 `acp-slot-lifecycle` 제거). 되살아나면 이 행이 그대로 적용된다 |
 | `tests/browser_monitor_app.py` | S3 | R10 T-131 |
 | `tests/browser_monitor_app_server.py` | S5 | R32 |
@@ -539,3 +485,4 @@
 | Q-261125-5fa4 | [VoxLog] 작업자마다 써 보고 추가 기능 아이디어 둘씩 → 관리자가 검토·확정 → 설계 문서 (구현하지 않음) | 태석 (클로드 코드 전달) | DONE | 2026-11-25T00:31:34 |
 | Q-261125-76c8 | [VoxLog] F2 녹취 이름·태그 구현 - AI 가 자동으로 태그를 달고 사람이 고치거나 더함 | 태석 (클로드 코드 전달) | DONE | 2026-11-25T11:21:26 |
 | Q-261126-902f | [VoxLog] 대기 큐의 VoxLog 항목 다섯 모두 정리 | 태석 (클로드 코드 전달) | DONE | 2026-11-26T10:21:43 |
+| Q-261127-8d1e | [VoxLog] 웹에서 받아쓰기 설정 옵션 바꾸기 (전처리 denoise 등) | 태석 (클로드 코드 전달) | DONE | 2026-11-27T16:17:01 |

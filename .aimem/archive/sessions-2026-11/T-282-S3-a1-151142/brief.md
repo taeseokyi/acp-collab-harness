@@ -1,0 +1,52 @@
+SLOT=S3 T-282 브라우저 검사 browser_game.py: 완주·자판·모드·저장·공유·도움말·폭·어두운 모드 (그려진 것) (G-056)
+확인토큰: 5b8c1e
+AIMEM REV: 170
+너는 S3 슬롯이다. 작업 폴더는 /home/tsyi/work/ai-fleet 다.
+쓰기는 다음 경로에만 한다: projects/자모맞히기/tests/browser_game.py, projects/자모맞히기/tests/README.md
+금지: git commit / push / 삭제 / 의존성 설치. 보고는 응답 본문에 직접 쓴다.
+보고 첫 줄은 상태(DONE / PARTIAL / BLOCKED / NEEDS-LOCK / NEEDS-APPROVAL), 이어서 한 일·고친 파일·실제로 돌린 검증 명령과 출력·다음 담당자가 알아야 할 것.
+
+# T-282 브라우저 검사 `tests/browser_game.py`
+
+쓸 파일: `projects/자모맞히기/tests/browser_game.py` (새 파일), `tests/README.md` (새 파일). 제품은 **읽기만**. **바로 파일을 쓰십시오.**
+
+먼저 `.aimem/graph/inputs/r24/CONTRACT.md` 의 '화면' 절을 읽으십시오. 시험은 그 약속을 봅니다. `tests/browser_harness.py`(웹워들에서 가져옴: `server()`·`new_page()`·`Checks`·`shot()`)를 import 해서 씁니다 - 본보기는 `projects/웹워들/tests/browser_core.py`(구조만, 전부 읽지 마십시오). 파이썬 Playwright(크로미움, 이미 설치됨), 임시 포트 서버. 마지막 줄은 `Checks.finish()` 가 찍는 `통과 N / 전체 M`, 실패가 있으면 rc 1.
+
+## 화면 검사 규칙
+
+**그려진 것을 묻습니다**: 보이는지 → `is_visible()`, 색 → `getComputedStyle`, 자리·겹침·잘림 → `bounding_box()`. 속성만 보고 통과시키지 마십시오. 뒤집기 애니메이션이 끝나기를 기다릴 때는 `wait_for_function` 으로 칸의 `data-state` 를 기다리되 2초 안.
+
+## 정답 알아내기
+
+오늘 정답은 `page.evaluate` 에서 `await import('./js/game.js')`·`'./js/words.js'`·`'./js/jamo.js'` 를 불러 `toUnits(answerForDate(new Date(), ANSWERS))` 로 구합니다. 연습 판 정답은 `Math.random` 을 `page.add_init_script` 로 고정해 정합니다.
+
+## 검사 (20개 이상)
+
+1. 첫 방문 도움말 보임 → 닫힘 → `#btn-help` 로 다시 보임, 도움말에 겹모음·겹받침 표가 보임
+2. 실물 자판 `e.code`: `KeyG KeyK KeyS` → ㅎㅏㄴ, `Shift+KeyR` → ㄲ, `Control+KeyA` 는 아무것도 안 넣음
+3. 화면 Shift: 누르면 ㄱ 키 글자가 ㄲ 으로 **보이고**, 한 번 넣으면 돌아옴
+4. `#preview` 가 조합 글자를 보여 줌(`한ㄲ` 등), 제출 뒤 비움
+5. 모자란 입력·목록에 없는 낱말: 안내 토스트가 **보이고**, 줄이 그대로
+6. 틀린 낱말 제출 → 칸 색이 `correct/present/absent` 중 판정대로(정답과 비교해 기대값을 파이썬에서 계산), 자판 키 색도
+7. 오늘 정답으로 이김 → 통계 창이 보이고 판수 1·승률 100, 새로 고쳐도 끝난 판과 줄이 그대로
+8. 공유: 클립보드 글 첫 줄 `자모맞히기 N k/6`, 줄마다 이모지 6개, 정답 낱말이 안 들어감
+9. 여섯 번 틀려 짐 → `정답: <낱말>` 이 **한글 낱말**로 보임 (새 브라우저 문맥에서)
+10. 연습: `#mode-practice` → 빈 판·`#btn-new` 보임, 이기고 나서도 날마다 통계 판수가 늘지 않음, `#btn-new` 로 새 판, 날마다로 돌아가면 오늘 판 그대로
+11. 폭 320·375·430·1280 에서: 보드·자판·`#modes` 가 화면 밖으로 안 나가고 서로 안 겹침, 자판 3줄 각 키가 잘리지 않음(`bounding_box` 너비 > 0, 줄 끝 키의 오른쪽 ≤ 화면 폭), 6칸을 다 친 뒤에도 넘치지 않음
+12. 어두운 테마: 설정에서 켜면 `body` 배경이 어두워짐(계산된 색의 밝기), 새로 고쳐도 유지, `prefers-color-scheme: dark` 문맥의 첫 방문도 어두움(웹워들이 그렇게 하지 않으면 그 사실을 보고에 적고 이 한 검사는 빼십시오)
+13. 키보드만으로 완주: Tab 으로 화면 단추에 가 Enter 로 창을 열고 Escape 로 닫음, 결과가 `aria-live` 영역(`#toasts`)에 글로 남음
+14. 페이지 오류(`page._errors`) 없음
+
+## tests/README.md
+
+시험 파일별 돌리는 명령(`node --test projects/자모맞히기/tests/*.mjs`, `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'`, `python3 projects/자모맞히기/tests/browser_game.py`)과, `PROGRESS.md` 목표별로 그것을 증명하는 검사 이름 표.
+
+## 제품 결함을 찾으면
+
+제품을 고치지 말고, 그 검사는 실패로 남긴 채 보고 첫 줄을 `NEEDS-FIX: <무엇이 어디서>` 로 (여럿이면 `;` 로 이어서).
+
+## 하지 말 것
+
+제품 파일 쓰기, `git commit`/`push`, 파일 삭제, 의존성 설치, 운영 모니터 부르기. 스크린숏은 `tests/screenshots/` 아래(하네스의 `shot`)만.
+
+보고 첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` / `NEEDS-FIX: …`, 그다음 마지막 줄 `통과 N / 전체 M` 과 실패 목록.

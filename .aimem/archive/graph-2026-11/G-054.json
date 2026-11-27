@@ -1,0 +1,68 @@
+{
+ "id": "G-054",
+ "request": "Q-261112-7d68",
+ "created": "2026-11-13T00:15:48",
+ "rev": 164,
+ "round": 22,
+ "concurrency": 3,
+ "nodes": [
+  {
+   "id": "T-270",
+   "slot": "S3",
+   "deps": [],
+   "project": "",
+   "title": "test_fleet_graph: Q2 세션 시험이 전체 discover 에서 fake 로 가는 것 + Q1 디딤 폴더 (재검수 R22-R1·R2)",
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "write": [
+    "tests/test_fleet_graph.py"
+   ],
+   "task": "# T-270 `tests/test_fleet_graph.py` 의 시험 둘 고치기 (재검수 R22-R1·R2)\n\n쓸 파일은 **하나**입니다: `tests/test_fleet_graph.py`. 다른 파일은 **읽기만** 하십시오(`tests/_fleet_env.py`·`tools/**` 고치기 금지).\n바로 파일을 고치십시오. 근거는 `rounds/R22/REVIEW-r22-2.md` 의 R1·R2 행(30~31줄)입니다.\n\n## R1 (중간) - 전체 시험이 빨갛다\n\n`python3 -m unittest discover -s tests` (프로젝트의 정식 명령) 에서 `test_q2_session_branch_429_is_true` 가 FAIL 합니다. 까닭: `tests/_fleet_env.py` 가 `AIFLEET_HARNESS=fake` 를 깔고, `tools/fleet_rt/harness/__init__.py` 의 `get()` 이 그때 무엇을 청하든 `fake` 어댑터를 줍니다. 그래서 `_session()` 도우미(535행 근처)가 `meta.json` 에 `harness_effective: \"claude\"` 를 써도 `fleet_graph.run_limit_signal` 이 fake 로 갑니다. 모듈 하나만 돌리면 통과해서 놓쳤습니다. 나머지 `test_q2_*` 둘은 fake 에서도 우연히 통과해 아무것도 재지 않습니다.\n\n**고치는 법:** fake 강제 장치(환경변수)는 **풀지 마십시오** - 진짜 하네스가 뜨는 것을 막는 안전 장치입니다. 대신 `test_q2_*` (와 아래 Q1 시험) 안에서 `unittest.mock.patch(\"fleet_rt.harness.get\", lambda name: claude_adapter)` 처럼 **어댑터 고르기만** claude 어댑터(`from fleet_rt.harness import claude` 의 `claude.ADAPTER`)로 바꾸십시오. claude 어댑터의 `limit_signal` 은 파일만 읽으므로 안전합니다. `fleet_graph` 가 `rt_harness.get` 을 어떻게 부르는지(`tools/fleet_graph.py` 의 `run_limit_signal`)를 보고 패치 자리를 맞추십시오. 그리고 시험 하나는 `get` 이 정말 `\"claude\"` 로 불렸는지도 단언하십시오.\n\n## R2 (낮음) - Q1 시험이 `/` 허용 변이를 못 잡는다\n\n`test_q1_run_id_with_path_segments_is_none` 의 반례는 디딤 폴더가 없어 OS 가 경로를 못 풀고 실패하므로, 정규식이 `/` 를 허용해도 `None` 이 나옵니다. 시험 안에서 임시 세션 자리(`_session()` 이 쓰는 자리)에 `T-1-S1-a1-000000/meta.json` 과, 그 바깥에 `outside/evil/meta.json`(`{\"harness_effective\": \"claude\"}`)·`outside/evil/events.jsonl`(429 result 사건 한 줄) 을 실제로 만들고, `T-1-S1-a1-000000/../../outside/evil` 꼴(자리에 맞게 `..` 수를 맞추십시오)이 `None` 인지 단언하십시오. 디딤 폴더가 있으면 정규식이 `/` 를 허용하는 순간 그 경로가 풀려 `True` 가 나와야 이 시험이 의미가 있습니다 - 정규식을 직접 바꿔 보지 말고(제품 고치기 금지) 경로가 실제로 풀리는지는 `pathlib` 으로 `exists()` 를 단언해 확인하십시오.\n\n## 제품 결함을 찾으면\n\n제품도 시험도 고치지 말고 보고 첫 줄을 `NEEDS-FIX: <무엇이 어디서>` 로.\n\n## 하지 말 것\n\n`tools/**`·`tests/_fleet_env.py` 고치기, `git commit`/`push`, 파일 삭제, 운영 모니터 부르기.\n\n## 검증 (엔진이 돌립니다)\n\n**전체** `python3 -m unittest discover -s tests` 가 통과(약 2~3분)하고, `tests.test_fleet_graph` 단독도 통과하며 시험이 77개 이상. 끝내기 전에 당신도 전체 discover 로 확인하십시오.\n",
+   "verify": "python3 -m unittest discover -s tests > /tmp/r22-t270a.txt 2>&1 && python3 -m unittest tests.test_fleet_graph > /tmp/r22-t270b.txt 2>&1 && python3 - <<'PY'\nimport re, sys\nb = re.search(r'Ran (\\d+) test', open('/tmp/r22-t270b.txt').read())\nn = int(b.group(1))\nprint('test_fleet_graph', n)\nsys.exit(0 if n >= 77 else 1)\nPY",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-270-S3-a1-001552",
+     "started": "2026-11-13T00:15:52",
+     "ended": "2026-11-13T00:18:43",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE. 시험 둘을 고쳤고, 전체 discover 가 통과합니다.\n\n**고친 파일:** `tests/test_fleet_graph.py` 만.\n\n**R1 (전체 discover 에서 빨갛던 것)**\n- `_session()` 도우미가 `fleet_rt.harness.get` 을 `Mock` 으로 패치합니다. 이 Mock 은 어떤 이름을 청해도 `claude.ADAPTER` 를 돌려줍니다.\n- `fleet_graph.run_limit_signal` 이 호출 시점에 `rt_harness.get` 을 속성으로 찾으므로 이 자리에서 패치가 먹습니다.\n- `AIFLEET_HARNESS=fake` 환경변수는 건드리지 않았습니다.\n- `_session()` 은 `test_q2_*` 셋과 Q1 시험이 씁니다.\n- `test_q2_session_branch_429_is_true` 에 `self.harness_get.assert_called_once_with(\"claude\")` 를 더했습니다.\n\n**R2 (Q1 시험이 `/` 허용을 못 잡던 것)**\n- `test_q1_run_id_with_path_segments_is_none` 이 디딤 폴더를 실제로 만듭니다.\n  - 세션 `T-1-S1-a1-000000` 에는 `meta.json` 과 429 사건이 든 `events.jsonl` 이 있습니다.\n  - 바깥 `outside/evil` 에는 `meta.json`(`harness_effective: claude`)과 429 result 한 줄짜리 `events.jsonl` 이 있습니다.\n- 반례 id 는 `T-1-S1-a1-000000/../../outside/evil` 입니다.\n- 이 경로가 실제로 풀리는지 `(root / bad / \"meta.json\").exists()` 로 단언했습니다.\n- `fleet._session_dir(bad) is not None` 도 단언했습니다.\n- 정상 id 가 `True` 를 내는지도 대조로 단언했습니다.\n- 이 사전 조건이 있어서, 정규식이 `/` 를 허용하면 `run_limit_signal(bad)` 가 `True` 가 되어 시험이 실패합니다.\n- 정규식을 직접 바꿔서 이 실패를 재현해 보지는 않았습니다. 제품 수정 금지 때문입니다.\n\n**실제로 돌린 검증**\n- `python3 -m unittest tests.test_fleet_graph` → `Ran 77 tests ... OK`\n- `python3 -m unittest discover -s tests` → `Ran 940 tests in 135.044s ... OK (skipped=1)`\n\n제품 결함은 찾지 못했습니다. `tools/**` 와 `tests/_fleet_env.py` 는 읽기만 했습니다. commit, push, 삭제도 하지 않았습니다.",
+     "verify_rc": 0,
+     "verify_tail": "test_fleet_graph 77\n"
+    }
+   ]
+  },
+  {
+   "id": "T-271",
+   "slot": "S1",
+   "deps": [
+    "T-270"
+   ],
+   "project": "",
+   "title": "재검수: R22-R1·R2 가 닫혔는가 (전체 discover·변이 V08·V21·W01)",
+   "timeout_sec": 2400,
+   "max_attempts": 1,
+   "write": [
+    "rounds/R22/REVIEW-r22-3.md"
+   ],
+   "task": "# T-271 **재검수** - R22 2차 재검수의 R1·R2 가 닫혔는가\n\n쓸 파일은 **하나**입니다: `rounds/R22/REVIEW-r22-3.md` (새 파일). 저장소의 다른 파일은 고치지 마십시오. 변이는 저장소 사본에만.\n먼저 `rounds/R22/REVIEW-r22-2.md` (당신이 쓴 보고서)의 R1·R2 행과 변이표를 읽으십시오. 고친 곳은 `tests/test_fleet_graph.py` 하나입니다(T-270): Q2 시험이 `fleet_rt.harness.get` 을 claude 어댑터로 패치, Q1 시험이 디딤 폴더를 실제로 만듦.\n\n## 방법\n\n1. 저장소를 `/tmp` 로 복사(`.aimem/tls/` 제외, `.git`·`.aimem/runs`·`__pycache__` 도 빼도 됨). 끝나면 그 `/tmp` 폴더를 `rm -rf`\n2. 사본에서 **전체** `python3 -m unittest discover -s tests` 가 초록인지\n3. **전체 discover 아래에서** 변이 V08(`_RUN_ID_RE` 몸에 `/` 허용)·V21(세션 갈래 끄기)·W01(어댑터 끝 `return None`→`False`) 이 빨개지는지. 모듈 단독 실행이 아니라 전체 discover(또는 `_fleet_env` 를 먼저 들인 상태)로 재십시오\n4. 패치가 fake 안전 장치를 풀어 진짜 하네스가 뜰 길이 생기지 않았는지(패치 범위가 시험 안으로 한정되는지)\n\n## 보고서\n\n1. 닫힘표 `| 번호 | 닫혔나 | 근거 |` 2. 새 결함표(없으면 \"없음\") 3. 변이표, 마지막 줄 `합계 <n>개: 잡힘 <a>, 생존 <b>` 4. 한 문단 총평\n\n## 하지 말 것\n\n제품·시험 고치기, `git commit`/`push`, 저장소 파일 삭제, 운영 모니터 부르기.\n",
+   "verify": "python3 - > /tmp/r22-t271.txt 2>&1 <<'PY'\nimport pathlib\np = pathlib.Path('rounds/R22/REVIEW-r22-3.md')\nassert p.exists(), '보고서가 없다'\nt = p.read_text(encoding='utf-8')\nrows = [l for l in t.splitlines() if l.strip().startswith('|')]\nprint('chars', len(t), 'rows', len(rows))\nassert len(t) >= 1200, len(t)\nassert len(rows) >= 8, len(rows)\nassert '합계' in t\nPY",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-271-S1-a1-002059",
+     "started": "2026-11-13T00:20:59",
+     "ended": "2026-11-13T00:34:25",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\nR22-R1 and R22-R2 are both closed. In a copy of the repo, the full `python3 -m unittest discover -s tests` passes, and all three mutations fail it.\n\n**What I did**\n- Confirmed the slot: `python3 tools/aimem_db.py check --slot S1 --token a41f0c --rev 164` → `일치: S1 토큰 a41f0c 하네스 claude 모델 opus REV 164`. The allowed write paths include `rounds/R22/REVIEW-r22-3.md`.\n- Copied the repo to `/tmp/r22c-review`, leaving out `.git`, `__pycache__` and `.aimem/{tls,runs,sessions}`. The three changed files have the same md5 in the copy and the repo.\n- Ran the mutations with a script at `/tmp/r22c-tools/mut.py`. It swaps in one code change, runs the tests, then puts the original back.\n- Removed both `/tmp` folders when done (checked: both gone).\n\n**Changed files:** `rounds/R22/REVIEW-r22-3.md` only (new). No product or test code was touched.\n\n**Verification run (all in the copy)**\n\n| Run | Result |\n|---|---|\n| Baseline, full discover | `Ran 940 tests in 134.608s`, `OK (skipped=3)` (in the 2nd review it was `FAILED (failures=1)`) |\n| V08 (`/` allowed inside `_RUN_ID_RE`), full | FAIL 1: `test_q1_run_id_with_path_segments_is_none (run_id='T-1-S1-a1-000000/../../outside/evil')` |\n| V21 (session branch turned off), full | FAIL 2: `test_q2_session_branch_429_is_true`, `test_q1_...` |\n| W01 (adapter end `... or False`), full | FAIL 3: `test_q2_session_branch_n3_record_is_none`, `test_other_error_none`, `test_error_without_marker_even_with_limit_text_is_none` |\n\n- **Mutation total:** 3 run, 3 caught, 0 survived.\n- **Patch scope:** I ran the four Q1/Q2 tests in one process with `_fleet_env` loaded first. Afterwards `fleet_rt.harness.get` was the original function again. `AIFLEET_HARNESS` was still `fake`, and `get(\"claude\"/\"codex\"/\"opencode\")` all returned the `fake` adapter. No test changes the environment (checked with grep). Inside these tests the real claude adapter is only used for `limit_signal`, which just reads files, so no real harness can start.\n- **Skipped 3 instead of 1:** two of the skips say `실제 기록 없음: 20261109-172618-S3`. They happen because I left `.aimem/runs` out of the copy, not because of this fix.\n\n**For the next owner**\n- **S1 (low):** `test_q2_session_branch_context_window_text_is_not_true` still uses `assertIsNot(..., True)`. On its own it would not notice a change from `None` to `False`. The n3 test catches that change instead, so nothing survives today. Switching it to `assertIsNone` is optional.\n- **S2 (info, outside this task):** one extra mutation survives — changing the adapter `limit_signal`'s `except Exception: return None` to `return False`. No test reaches that branch. I left it out of the total.\n- Nothing found should block the commit. Committing is for whoever is told to do it.",
+     "verify_rc": 0,
+     "verify_tail": ""
+    }
+   ]
+  }
+ ],
+ "followup": "G-053 재검수(rounds/R22/REVIEW-r22-2.md) R1·R2 수정과 재검수",
+ "updated": "2026-11-13T00:34:27"
+}

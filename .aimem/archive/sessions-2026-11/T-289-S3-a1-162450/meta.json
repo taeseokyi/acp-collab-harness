@@ -1,0 +1,49 @@
+{
+ "id": "T-289-S3-a1-162450",
+ "role": "worker",
+ "harness": "opencode",
+ "brief_path": "/home/tsyi/work/ai-fleet/.aimem/sessions/T-289-S3-a1-162450/brief.md",
+ "cwd": "/home/tsyi/work/ai-fleet",
+ "slot": "S3",
+ "model": "opencode/deepseek-v4.1-flash-free",
+ "provider": "opencode",
+ "ident": "[AIMEM 작업자 지시] 슬롯 S3 · 확인토큰 5b8c1e · AIMEM REV 170.",
+ "write_paths": [
+  "projects/자모맞히기/web/js/ui.js"
+ ],
+ "tools": null,
+ "settings_path": null,
+ "timeout": 2520.0,
+ "idle_timeout": 240.0,
+ "round": 24,
+ "task_id": "T-289",
+ "attempt": 1,
+ "label": "T-289 ui.js: 끝난 연습 판을 모드 오가기에서 버리지 않음 (T-287 NEEDS-FIX, R24-N5 잔여) (G-058)",
+ "extra": {
+  "date": "2026-11-13",
+  "rev": 170,
+  "project": "자모맞히기"
+ },
+ "harness_effective": "opencode",
+ "command": [
+  "opencode",
+  "run",
+  "--format",
+  "json",
+  "-m",
+  "opencode/deepseek-v4.1-flash-free",
+  "[AIMEM 작업자 지시] 슬롯 S3 · 확인토큰 5b8c1e · AIMEM REV 170. 다음 파일이 이 지시의 전문이다. 읽고 그 안의 지시를 그대로 수행하라(파일 자체는 수정하지 말라): .aimem/sessions/T-289-S3-a1-162450/brief.md"
+ ],
+ "stdin_path": null,
+ "command_cwd": "/home/tsyi/work/ai-fleet",
+ "env_unset": [],
+ "env_set_names": [],
+ "db_path": "/home/tsyi/work/ai-fleet/.aimem/aimem.db",
+ "env_root": "/home/tsyi/work/ai-fleet",
+ "env_file_names": [],
+ "sessions_root": "/home/tsyi/work/ai-fleet/.aimem/sessions",
+ "started": "2026-11-13T16:24:50",
+ "supervisor_pid": 382068,
+ "pgid": 382068,
+ "proc_start": 9012284
+}

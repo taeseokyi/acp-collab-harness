@@ -3,7 +3,7 @@
 
 실행: python3 projects/VoxLog/tests/browser_voxlog.py
 서버는 이 검사가 임시 data 폴더로 직접 띄우고(subprocess) 끝나면 내린다.
-검사는 모두 47개입니다.
+검사는 모두 54개입니다.
 마지막 줄 `N/M 통과`, 하나라도 실패면 종료 코드 1.
 """
 import json
@@ -1980,6 +1980,375 @@ def run_all(browser, base, data, tmp, procs):
         pg.unroute("**/api/recordings/r-*", detail_route)
         c.close()
     check("48 폴링 오류(abort) 뒤에도 태그가 붙으면 안내가 사라지고 AI 칩", t48)
+
+
+    def t49():
+        b, _ = new_server("d49")
+        c = new_ctx()
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        opts_get = {"n": 0}
+
+        def track_opts_get(resp):
+            if resp.request.method == "GET" and resp.url.endswith("/api/stt-options"):
+                opts_get["n"] += 1
+
+        pg.on("response", track_opts_get)
+        pg.click("#settings-btn")
+        need(wait_for(lambda: pg.is_visible("#stt-defaults") and pg.is_visible("#stt-defaults-fields"), 10, pg=pg),
+             "설정 칸의 받아쓰기 옵션 묶음이 보이지 않음")
+        need(wait_for(lambda: opts_get["n"] >= 1, 10, pg=pg), "설정 칸이 GET /api/stt-options 를 읽지 않음")
+        pg.wait_for_timeout(100)
+        pg.select_option("#stt-defaults-preprocess", "denoise")
+        pg.fill("#stt-defaults-speakers", "2")
+        pg.click("#stt-defaults-save")
+        expected = {"preprocess": "denoise", "num_speakers": 2}
+        need(wait_for(lambda: api_get(b, "/api/stt-options")["options"] == expected, 10, pg=pg),
+             "저장한 기본값이 서버 GET 에 없음: %r" % api_get(b, "/api/stt-options")["options"])
+        pg.reload()
+        pg.wait_for_selector("#rec")
+        pg.click("#settings-btn")
+
+        def reloaded_values():
+            return (pg.is_visible("#stt-defaults-fields") and
+                    pg.evaluate("document.querySelector('#stt-defaults-preprocess').value") == "denoise" and
+                    pg.evaluate("document.querySelector('#stt-defaults-speakers').value") == "2")
+
+        need(wait_for(reloaded_values, 10, pg=pg),
+             "새로고침 뒤 설정 칸에 denoise·화자 2 가 그대로가 아님")
+        need(api_get(b, "/api/stt-options")["options"] == expected,
+             "새로고침 뒤 서버 GET 값이 바뀜: %r" % api_get(b, "/api/stt-options")["options"])
+        c.close()
+    check("49 설정 칸 저장 → 새로고침·서버 GET 에 그대로", t49)
+
+
+    def t50():
+        b, _ = new_server("d50")
+        c = new_ctx()
+        pg = c.new_page()
+        bodies = []
+
+        def track_retry(req):
+            url = req.url.split("?")[0]
+            if req.method == "POST" and "/api/recordings/" in url and url.endswith("/retry"):
+                bodies.append(req.post_data)
+
+        pg.on("request", track_retry)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        rec_cycle(pg)
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 20, pg=pg), "목록 항목이 생기지 않음")
+        need(wait_for(lambda: pg.locator("#list .rec-item .status").first.inner_text().strip() == "완료", 20, pg=pg),
+             "받아쓰기가 끝나지 않음")
+        rid = server_items(b)[0]["id"]
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.is_visible("#detail-edit") and detail_ready(pg), 10, pg=pg),
+             "상세 편집 칸이 보이지 않거나 첫 읽기가 끝나지 않음")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.is_visible("#detail-stt"), 5, pg=pg), "옵션 바꿔 다시 받아쓰기 묶음이 열리지 않음")
+        pg.select_option("#detail-stt-preprocess", "denoise")
+        pg.click("#detail-stt-run")
+        need(wait_for(lambda: len(bodies) >= 1, 10, pg=pg), "옵션 바꿔 다시 받아쓰기 POST 가 나가지 않음")
+        first_body = bodies[0]
+        need(first_body is not None, "옵션 바꿔 다시 받아쓰기 POST 본문이 없음")
+        need(json.loads(first_body) == {"options": {"preprocess": "denoise"}},
+             "옵션 바꿔 다시 받아쓰기 본문이 다름: %r" % first_body)
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["stt_options"] == {"preprocess": "denoise"}, 10, pg=pg),
+             "상세 GET 의 stt_options 가 denoise 가 아님: %r" % api_get(b, "/api/recordings/" + rid)["stt_options"])
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.evaluate("document.querySelector('#detail-stt-preprocess').value") == "denoise", 10, pg=pg),
+             "상세 옵션 묶음이 녹음의 stt_options 로 채워지지 않음")
+
+        open_tab(pg, "rec")
+        rec_cycle(pg)
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 2, 20, pg=pg), "두 번째 녹취가 목록에 없음")
+        rid2 = [item["id"] for item in server_items(b) if item["id"] != rid][0]
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid2).click()
+        need(wait_for(lambda: pg.is_visible("#detail-edit") and detail_ready(pg), 10, pg=pg),
+             "두 번째 녹취 상세가 준비되지 않음")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.is_visible("#detail-stt"), 5, pg=pg), "두 번째 녹취의 옵션 묶음이 열리지 않음")
+        start = len(bodies)
+        pg.click("#detail-stt-run")
+        need(wait_for(lambda: len(bodies) > start, 10, pg=pg), "기본 옵션 POST 가 나가지 않음")
+        empty_body = bodies[start]
+        need(json.loads(empty_body) == {"options": {}},
+             "아무것도 안 고른 옵션 POST 본문이 {} 가 아님: %r" % empty_body)
+
+        start = len(bodies)
+        pg.click("#detail-retry")
+        need(wait_for(lambda: len(bodies) > start, 10, pg=pg), "기존 다시 받아쓰기 POST 가 나가지 않음")
+        plain_body = bodies[start]
+        need(plain_body in (None, ""), "기존 다시 받아쓰기가 본문을 보냄: %r" % plain_body)
+        c.close()
+    check("50 옵션 바꿔 다시 받아쓰기 본문·상세 GET·기존 재시도 본문 없음", t50)
+
+
+    def t51():
+        counter = tmp / "t51-count.txt"
+        stt_code = ("import pathlib, sys\n"
+                    "p = pathlib.Path(sys.argv[1])\n"
+                    "n = int(p.read_text(encoding='utf-8')) if p.exists() else 0\n"
+                    "p.write_text(str(n + 1), encoding='utf-8')\n"
+                    "print('첫 받아쓰기' if n == 0 else '두 번째 받아쓰기')\n")
+        stt_cmd = "%s -c %s %s" % (sys.executable, shlex.quote(stt_code), shlex.quote(str(counter)))
+        b, _ = new_server("d51", stt_cmd=stt_cmd)
+        c = new_ctx()
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        rec_cycle(pg)
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 20, pg=pg), "목록 항목이 생기지 않음")
+        rid = server_items(b)[0]["id"]
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.inner_text("#transcript").strip() == "첫 받아쓰기", 20, pg=pg),
+             "첫 받아쓰기 글이 상세에 없음: %r" % pg.inner_text("#transcript"))
+        pg.click("#detail-retry")
+        need(wait_for(lambda: pg.inner_text("#transcript").strip() == "두 번째 받아쓰기", 30, pg=pg),
+             "두 번째 받아쓰기 글이 상세에 없음: %r" % pg.inner_text("#transcript"))
+        need(wait_for(lambda: pg.is_visible("#detail-prev"), 10, pg=pg), "#detail-prev 가 보이지 않음")
+        pg.click("#detail-prev summary")
+        need(wait_for(lambda: pg.is_visible("#detail-prev-text"), 5, pg=pg), "#detail-prev 를 펼쳐도 글칸이 보이지 않음")
+        need(pg.inner_text("#detail-prev-text").strip() == "첫 받아쓰기",
+             "이전 글이 앞 글과 다름: %r" % pg.inner_text("#detail-prev-text"))
+        got = api_get(b, "/api/recordings/" + rid)
+        need(got["transcript"] == "두 번째 받아쓰기" and got["transcript_prev"] == "첫 받아쓰기",
+             "서버의 새 글·이전 글이 다름: %r / %r" % (got["transcript"], got["transcript_prev"]))
+
+        def inject_used(route):
+            if route.request.method != "GET" or "/audio" in route.request.url:
+                route.continue_()
+                return
+            data = api_get(b, "/api/recordings/" + rid)
+            data["stt_used"] = {"preprocess": "denoise", "speakers": 1, "auto": True, "review": False}
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(data, ensure_ascii=False))
+
+        pg.route("**/api/recordings/r-*", inject_used)
+        pg.reload()
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 10, pg=pg), "새로고침 뒤 목록 항목이 없음")
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.is_visible("#detail-stt-used") and "전처리 denoise" in pg.inner_text("#detail-stt-used"), 10, pg=pg),
+             "#detail-stt-used 가 보이지 않거나 옵션 문구가 없음: %r" % pg.inner_text("#detail-stt-used"))
+        need(pg.is_visible("#detail-prev"), "주입한 상세 응답에서 #detail-prev 가 보이지 않음")
+        pg.unroute("**/api/recordings/r-*", inject_used)
+        c.close()
+    check("51 두 번 받아쓰기 뒤 이전 글·받아쓴 옵션 표시", t51)
+
+
+    def t52():
+        b, _ = new_server("d52")
+        c = new_ctx(viewport={"width": 320, "height": 800})
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        rec_cycle(pg)
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 20, pg=pg), "목록 항목이 생기지 않음")
+        need(wait_for(lambda: pg.locator("#list .rec-item .status").first.inner_text().strip() == "완료", 20, pg=pg),
+             "받아쓰기가 끝나지 않음")
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.is_visible("#detail-edit") and detail_ready(pg), 10, pg=pg),
+             "상세 편집 칸이 보이지 않거나 첫 읽기가 끝나지 않음")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.is_visible("#detail-stt"), 5, pg=pg), "상세 옵션 묶음이 열리지 않음")
+        pg.click("#settings-btn")
+        need(wait_for(lambda: pg.is_visible("#stt-defaults") and pg.is_visible("#stt-defaults-fields"), 10, pg=pg),
+             "설정 옵션 묶음이 보이지 않음")
+        need(pg.is_visible("#detail-stt"), "상세 옵션 묶음이 설정을 열 때 숨겨짐")
+
+        rects = pg.evaluate("""() => {
+            function r(sel) { var e = document.querySelector(sel); if (!e) return null; var b = e.getBoundingClientRect();
+                return {x: b.x, y: b.y, width: b.width, height: b.height, right: b.right, bottom: b.bottom}; }
+            return {defaults: r('#stt-defaults'), detail: r('#detail-stt'), vw: window.innerWidth};
+        }""")
+        vw = rects["vw"]
+        for name, key in (("설정", "defaults"), ("상세", "detail")):
+            box = rects[key]
+            need(box is not None and box["width"] > 0 and box["height"] > 0,
+                 "320px %s 옵션 묶음이 보이지 않음: %r" % (name, box))
+            need(box["x"] >= -0.5 and box["right"] <= vw + 0.5,
+                 "320px %s 옵션 묶음이 화면 밖으로 넘침: %r (폭 %s)" % (name, box, vw))
+        need(not overlap(rects["defaults"], rects["detail"]), "320px 두 옵션 묶음이 겹침")
+        children_out = pg.evaluate("""() => {
+            var out = [];
+            ['#stt-defaults', '#detail-stt'].forEach(function (sel) {
+                var box = document.querySelector(sel), br = box.getBoundingClientRect();
+                box.querySelectorAll('input, select, textarea, button').forEach(function (e) {
+                    var r = e.getBoundingClientRect();
+                    if (r.left < br.left - 1 || r.right > br.right + 1) out.push(sel + ':' + (e.id || e.tagName));
+                });
+            });
+            return out;
+        }""")
+        need(not children_out, "320px 옵션 묶음 안의 입력칸이 묶음 밖으로 넘침: %r" % children_out)
+
+        def put_400(route):
+            if route.request.method != "PUT":
+                route.continue_()
+                return
+            route.fulfill(status=400, content_type="application/json",
+                          body=json.dumps({"error": "받아쓰기 옵션 저장 거절 - 서버 글"}, ensure_ascii=False))
+
+        pg.route("**/api/stt-options", put_400)
+        pg.click("#stt-defaults-save")
+        need(wait_for(lambda: pg.is_visible("#toast") and "받아쓰기 옵션 저장 거절 - 서버 글" in pg.inner_text("#toast"), 5, pg=pg),
+             "PUT 400 뒤 서버 글이 토스트로 보이지 않음: %r" % pg.inner_text("#toast"))
+        pg.unroute("**/api/stt-options", put_400)
+        c.close()
+    check("52 320px 두 옵션 묶음 넘침·겹침 없음, PUT 400 서버 글 토스트", t52)
+
+
+    def t53():
+        # 폴링이 상세를 다시 그리는 동안 열어 둔 옵션 입력을 지우지 않는다(F3)
+        slow = "import sys, time\nprint('느린 받아쓰기', flush=True)\ntime.sleep(22)\n"
+        b, _ = new_server("d53", stt_cmd="%s -c %s" % (sys.executable, shlex.quote(slow)))
+        c = new_ctx()
+        pg = c.new_page()
+        detail_gets = {"n": 0}
+        opts_gets = {"n": 0}
+
+        def track(resp):
+            if resp.request.method != "GET":
+                return
+            url = resp.url.split("?")[0]
+            if url.endswith("/api/stt-options"):
+                opts_gets["n"] += 1
+            elif re.search(r"/api/recordings/[^/]+$", url) and "/audio" not in url:
+                detail_gets["n"] += 1
+
+        pg.on("response", track)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        rec_cycle(pg)
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 20, pg=pg), "목록 항목이 생기지 않음")
+        need(wait_for(lambda: pg.locator("#list .rec-item .status").first.inner_text().strip() in ("대기", "받아쓰는 중"),
+                      15, pg=pg), "받아쓰기가 끝나 버려 상세 폴링이 돌지 않음")
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.is_visible("#detail-edit") and detail_ready(pg), 10, pg=pg),
+             "상세 편집 칸이 보이지 않거나 첫 읽기가 끝나지 않음")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.is_visible("#detail-stt"), 5, pg=pg), "옵션 묶음이 열리지 않음")
+        need(wait_for(lambda: opts_gets["n"] >= 1, 5, pg=pg),
+             "옵션 묶음이 기본값 GET 을 마치기 전에 채워짐")
+        pg.fill("#detail-stt-context", "회의 참석자: 김, 박")
+        pg.fill("#detail-stt-speakers", "2")
+        before = detail_gets["n"]
+        need(wait_for(lambda: detail_gets["n"] >= before + 2, 16, pg=pg),
+             "상세 폴링이 두 번 다시 그리지 않음(%d회)" % (detail_gets["n"] - before))
+        pg.wait_for_timeout(160)
+        need(pg.evaluate("document.querySelector('#detail-stt-context').value") == "회의 참석자: 김, 박",
+             "폴링 뒤 문맥 입력이 지워짐: %r" % pg.evaluate("document.querySelector('#detail-stt-context').value"))
+        need(pg.evaluate("document.querySelector('#detail-stt-speakers').value") == "2",
+             "폴링 뒤 화자 수 입력이 지워짐: %r" % pg.evaluate("document.querySelector('#detail-stt-speakers').value"))
+        need(pg.is_visible("#detail-stt"), "폴링 뒤 옵션 묶음이 닫힘")
+        c.close()
+    check("53 받아쓰는 중 상세 폴링이 옵션 입력을 지우지 않음", t53)
+
+
+    def t54():
+        # 전체 기본값 denoise: 옵션 없는 녹취의 묶음은 denoise 로 채워지고,
+        # 전부 기본으로 실행하면 녹취별 stt_options 는 저장되지 않는다(N3)
+        b, _ = new_server("d54")
+        c = new_ctx()
+        pg = c.new_page()
+        bodies = []
+        opts_gets = {"n": 0}
+
+        def track_opts(resp):
+            if resp.request.method == "GET" and resp.url.split("?")[0].endswith("/api/stt-options"):
+                opts_gets["n"] += 1
+
+        def track_retry(req):
+            url = req.url.split("?")[0]
+            if req.method == "POST" and "/api/recordings/" in url and url.endswith("/retry"):
+                bodies.append(req.post_data)
+
+        pg.on("response", track_opts)
+        pg.on("request", track_retry)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        pg.click("#settings-btn")
+        need(wait_for(lambda: pg.is_visible("#stt-defaults") and pg.is_visible("#stt-defaults-fields"), 10, pg=pg),
+             "설정 칸의 받아쓰기 옵션 묶음이 보이지 않음")
+        need(wait_for(lambda: opts_gets["n"] >= 1, 10, pg=pg),
+             "설정 칸이 기본값 GET 을 마치기 전에 채워짐")
+        pg.wait_for_timeout(100)
+        pg.select_option("#stt-defaults-preprocess", "denoise")
+        pg.click("#stt-defaults-save")
+        need(wait_for(lambda: api_get(b, "/api/stt-options")["options"] == {"preprocess": "denoise"}, 10, pg=pg),
+             "전체 기본값 denoise 가 저장되지 않음: %r" % api_get(b, "/api/stt-options")["options"])
+        pg.click("#settings-btn")
+
+        rec_cycle(pg)
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 20, pg=pg), "목록 항목이 생기지 않음")
+        need(wait_for(lambda: pg.locator("#list .rec-item .status").first.inner_text().strip() == "완료", 20, pg=pg),
+             "받아쓰기가 끝나지 않음")
+        rid = server_items(b)[0]["id"]
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.is_visible("#detail-edit") and detail_ready(pg), 10, pg=pg),
+             "상세 편집 칸이 보이지 않거나 첫 읽기가 끝나지 않음")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.is_visible("#detail-stt"), 5, pg=pg), "옵션 묶음이 열리지 않음")
+        need(wait_for(lambda: pg.evaluate("document.querySelector('#detail-stt-preprocess').value") == "denoise", 10, pg=pg),
+             "옵션 없는 녹취의 묶음이 전체 기본값 denoise 로 채워지지 않음")
+
+        pg.select_option("#detail-stt-preprocess", "")
+        start = len(bodies)
+        pg.click("#detail-stt-run")
+        need(wait_for(lambda: len(bodies) > start, 10, pg=pg), "기본 옵션 재시도 POST 가 나가지 않음")
+        need(json.loads(bodies[start]) == {"options": {}},
+             "전부 기본인 재시도 본문이 {} 가 아님: %r" % bodies[start])
+        got = api_get(b, "/api/recordings/" + rid)
+        need(got.get("stt_options") is None,
+             "기본만 실행했는데 녹취별 stt_options 가 남음: %r" % got.get("stt_options"))
+        c.close()
+    check("54 옵션 없는 녹취는 전체 기본값으로 열리고, 기본 실행 뒤 stt_options 없음", t54)
+
+
+    def t55():
+        # 재시도 400 의 토스트는 고정 문구가 아니라 서버가 준 error 글(F5)
+        b, _ = new_server("d55")
+        c = new_ctx()
+        pg = c.new_page()
+        server_text = "재시도 거절 - 서버가 준 문구"
+
+        def retry_400(route):
+            req = route.request
+            url = req.url.split("?")[0]
+            if req.method == "POST" and "/api/recordings/" in url and url.endswith("/retry"):
+                route.fulfill(status=400, content_type="application/json",
+                              body=json.dumps({"error": server_text}, ensure_ascii=False))
+            else:
+                route.continue_()
+
+        pg.route("**/api/recordings/*/retry", retry_400)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        rec_cycle(pg)
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 20, pg=pg), "목록 항목이 생기지 않음")
+        need(wait_for(lambda: pg.locator("#list .rec-item .status").first.inner_text().strip() == "완료", 20, pg=pg),
+             "받아쓰기가 끝나지 않음")
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.is_visible("#detail-edit") and detail_ready(pg), 10, pg=pg),
+             "상세 편집 칸이 보이지 않거나 첫 읽기가 끝나지 않음")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.is_visible("#detail-stt"), 5, pg=pg), "옵션 묶음이 열리지 않음")
+        pg.click("#detail-stt-run")
+        need(wait_for(lambda: pg.is_visible("#toast") and server_text in pg.inner_text("#toast"), 5, pg=pg),
+             "재시도 400 뒤 서버 글이 토스트로 보이지 않음: %r" % pg.inner_text("#toast"))
+        pg.unroute("**/api/recordings/*/retry", retry_400)
+        c.close()
+    check("55 재시도 400 뒤 서버 error 글을 토스트로 보임", t55)
 
 
 if __name__ == "__main__":

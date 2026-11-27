@@ -1,0 +1,9 @@
+G-045: 100.0%  남은 ETA 0s  상태 {'done': 8}
+  T-237  done     S2  시도 1  run T-237-S2-a1-143243  rc 0/0  엔진: 사용 한도로 끊긴 시도를 limit 으로 구분
+  T-231  done     S3  시도 1  run T-231-S3-a1-143243  rc 0/0  tests/test_monitor_claude_usage.py(새): claude_usage 계약 시험
+  T-232  done     S2  시도 1  run T-232-S2-a1-144732  rc 0/0  server.py: claude_usage() 와 /api/state
+  T-233  done     S3  시도 1  run T-233-S3-a1-143746  rc 0/0  tests/browser_monitor_usage.py(새): 사용 한도 카드 실측
+  T-234  done     S2  시도 2  run T-234-S2-a2-153420  rc 0/None  함대 탭 'Claude 사용 한도' 카드
+  T-236  done     S3  시도 2  run T-236-S3-a2-153420  rc 0/0  감사 상한 몫 회귀 시험 + 상수 못박기 (큐 1~3)
+  T-235  done     S2  시도 1  run T-235-S2-a1-154644  rc 0/None  감사 상한: 창마다 처음 보는 주체에 한 줄 보장 (큐 1·2)
+  T-238  done     S1  시도 1  run T-238-S1-a1-161707  rc 0/0  적대적 검수: 사용 한도·감사 몫·한도 실패 구분

@@ -82,7 +82,7 @@ from . import (AUTH_EXEMPT_PATHS, AUTH_UNAUTH_REDIRECT_PATHS, AUTH_UNAUTH_REDIRE
                REQUEST_RATE_MAX, REQUEST_RATE_WINDOW_SEC,
                PROJECT_APP_FILE_MAX_BYTES, PROJECT_APP_MANIFEST, PROJECT_APP_URL_PREFIX,
                PROJECT_APP_TICKET_PREFIX, PROJECT_APP_TICKET_TTL_SEC,
-               REQUEST_STATES, RUN_DETAIL_KEYS, RUN_ID_RE, SECURITY_HEADERS,
+               REQUEST_CLOSED_STATES, REQUEST_STATES, RUN_DETAIL_KEYS, RUN_ID_RE, SECURITY_HEADERS,
                SESSION_COOKIE, SESSION_SUBJECT_GITHUB_PREFIX, SESSION_SUBJECT_TOKEN,
                SESSION_TTL_SEC, SESSION_VERSION, TLS_DIR, TOKEN_FILE, REQUEST_ROW_KEYS,
                PROJECTS_DIR, PROJECT_NAME_RE)
@@ -874,6 +874,37 @@ class RequestRateLimiter:
                 dq.pop()
 
 
+def _requests_eta_from_graphs(requests, graphs):
+    """열린 요청에 아직 안 끝난 그래프가 있으면 남은 시간은 그래프의 것을 쓴다.
+
+    요청 쪽 추정은 서브태스크가 모두 한꺼번에 돈다고 본다. 그래프는 의존 순서를 따라 재므로, 같은 요청을
+    두고 요청 카드와 그래프 카드가 서로 다른 남은 시간을 말하지 않게 그래프 값을 정본으로 삼는다.
+    """
+    if not isinstance(requests, list) or not isinstance(graphs, list):
+        return
+    left: dict = {}
+    for g in graphs:
+        if not isinstance(g, dict):
+            continue
+        eta, pct = g.get("eta_seconds"), g.get("percent")
+        if isinstance(eta, bool) or not isinstance(eta, (int, float)) or eta <= 0:
+            continue
+        if isinstance(pct, (int, float)) and pct >= 100:
+            continue
+        head = str(g.get("request") or "").split()
+        if head:
+            left.setdefault(head[0], []).append((str(g.get("id")), eta))
+    for req in requests:
+        if not isinstance(req, dict) or str(req.get("status") or "").upper() in REQUEST_CLOSED_STATES:
+            continue
+        gs = left.get(req.get("id"))
+        if gs:
+            # 그래프가 여럿이면 함께 돈다고 보고 가장 오래 남은 것을 쓴다 (더하면 동시에 도는 동안 실제보다 길게 나온다)
+            req["eta_sec"] = int(max(e for _, e in gs))
+            req["eta_basis"] = ("그래프 " + ", ".join(i for i, _ in gs) + " 의 남은 시간 (의존 순서대로 잰 값"
+                                + (", 여럿이면 가장 오래 남은 것)" if len(gs) > 1 else ")"))
+
+
 def _empty_state(root, errors):
     """실패 분기의 상태. **정상 분기와 최상위 키가 같아야 합니다.**
 
@@ -1164,6 +1195,7 @@ def collect_state(root=ROOT):
     for k, v in _blank_keys(root).items():
         state.setdefault(k, v)
     state["graphs"] = collect_graphs(root, state["errors"])
+    _requests_eta_from_graphs(state.get("requests"), state["graphs"])
     state["projects"] = list_projects(root, state.get("requests") if isinstance(state.get("requests"), list) else None)
     state["managers"] = manager_status(root)
     state["fleet"] = fleet_state(root)

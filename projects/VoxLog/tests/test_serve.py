@@ -44,6 +44,24 @@ def llm_false():
     return False
 
 
+class FakeJobPostOpener:
+    """맡기기(POST)를 세는 가짜 받아쓰기 서버. 조회는 어떤 작업 id 든 done 으로 답한다."""
+
+    def __init__(self):
+        self.posts = []
+        self.gets = []
+
+    def __call__(self, req, timeout):
+        if req.get_method() == "POST":
+            self.posts.append(req)
+            jid = "job%d" % len(self.posts)
+            return json.dumps({"id": jid, "status": "queued"}).encode("utf-8")
+        if req.get_method() == "DELETE":
+            return json.dumps({"id": "deleted", "status": "deleted"}).encode("utf-8")
+        self.gets.append(req.full_url.rsplit("/", 1)[1])
+        return json.dumps({"status": "done", "result": {"text": "받아 적음"}}).encode("utf-8")
+
+
 class Base(unittest.TestCase):
     token = None
     max_uploads = 2
@@ -486,6 +504,296 @@ class TestServe(Base):
             self.assertEqual(self.raw_host("GET", "/", host)[0], 200, host)
 
 
+class TestSttOptions(Base):
+    """R51 G-108: GET/PUT /api/stt-options 와 retry 의 옵션 본문."""
+
+    def make_stt(self):
+        self.calls = []
+
+        def stt(path, mime, env):
+            self.calls.append(path.name)
+            return "가짜 글 " + str(len(self.calls))
+        return stt
+
+    def drain(self):
+        end = time.time() + 10
+        while time.time() < end and not self.server.transcriber.idle():
+            time.sleep(0.02)
+        self.assertTrue(self.server.transcriber.idle())
+
+    def test_get_defaults_and_choices(self):
+        status, body = self.jreq("GET", "/api/stt-options")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["options"], {})
+        self.assertEqual(body["choices"]["preprocess"],
+                         ["none", "basic", "level", "dereverb", "denoise"])
+        self.assertEqual(body["choices"]["speakers_max"], 20)
+        self.assertEqual(body["choices"]["context_max"], 4000)
+        self.assertEqual(body["stt"], "none")
+
+    def test_put_saves_get_shows_and_file_holds_it(self):
+        opts = {"preprocess": "denoise", "num_speakers": 2,
+                "context": "회의 이름", "auto": True, "review": False}
+        status, body = self.jreq("PUT", "/api/stt-options", {"options": opts})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["options"], opts)
+        status, got = self.jreq("GET", "/api/stt-options")
+        self.assertEqual(status, 200)
+        self.assertEqual(got["options"], opts)
+        path = Path(self.tmp.name) / "stt_options.json"
+        self.assertTrue(path.is_file())
+        self.assertEqual(json.loads(path.read_text("utf-8")), opts)
+        raw = json.dumps(got)
+        for key in ("VOXLOG_STT_URL", "VOXLOG_STT_MODEL", "VOXLOG_STT_API_KEY"):
+            self.assertNotIn(key, raw)
+
+    def test_put_bad_value_400_korean_and_not_saved(self):
+        self.jreq("PUT", "/api/stt-options", {"options": {"preprocess": "denoise"}})
+        status, body = self.jreq("PUT", "/api/stt-options", {"options": {"preprocess": "wrong"}})
+        self.assertEqual(status, 400)
+        self.assertIn("preprocess", body["error"])
+        self.assertIn("중 하나여야", body["error"])
+        _, got = self.jreq("GET", "/api/stt-options")
+        self.assertEqual(got["options"], {"preprocess": "denoise"})
+
+    def test_put_missing_options_400(self):
+        status, body = self.jreq("PUT", "/api/stt-options", {"preprocess": "denoise"})
+        self.assertEqual(status, 400)
+        self.assertIn("options", body["error"])
+
+    def test_put_over_32k_413(self):
+        raw_body = json.dumps({"options": {"context": "가" * 40000}},
+                              ensure_ascii=False).encode("utf-8")
+        self.assertGreater(len(raw_body), 32 * 1024)
+        status, _, raw = self.req("PUT", "/api/stt-options", raw_body,
+                                  {"Content-Type": "application/json"})
+        self.assertEqual(status, 413)
+        _, got = self.jreq("GET", "/api/stt-options")
+        self.assertEqual(got["options"], {})
+
+    def test_put_foreign_origin_403(self):
+        status, _ = self.jreq("PUT", "/api/stt-options",
+                              {"options": {"preprocess": "denoise"}},
+                              headers={"Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        _, got = self.jreq("GET", "/api/stt-options")
+        self.assertEqual(got["options"], {})
+
+    def test_retry_without_body_keeps_meta_options(self):
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.server.store.set_stt_options(rid, {"preprocess": "denoise"})
+        self.wait_done(rid)
+        self.drain()
+        _, body = self.jreq("GET", "/api/recordings/" + rid)
+        for key in ("stt_options", "stt_used", "prev_stt_used", "transcript_prev"):
+            self.assertIn(key, body)
+        status, again = self.jreq("POST", "/api/recordings/%s/retry" % rid)
+        self.assertEqual(status, 200)
+        self.assertEqual(again["stt_options"], {"preprocess": "denoise"})
+        self.drain()
+        self.assertEqual(self.server.store.get(rid)["stt_options"],
+                         {"preprocess": "denoise"})
+
+    def test_retry_options_saved_and_transcribes_again(self):
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.wait_done(rid)
+        self.drain()
+        self.assertEqual(len(self.calls), 1)
+        status, again = self.jreq("POST", "/api/recordings/%s/retry" % rid,
+                                  {"options": {"preprocess": "denoise"}})
+        self.assertEqual(status, 200)
+        self.assertEqual(again["stt_options"], {"preprocess": "denoise"})
+        self.drain()
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(self.wait_done(rid)["transcript"], "가짜 글 2")
+
+    def test_retry_options_null_clears_key(self):
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.server.store.set_stt_options(rid, {"preprocess": "denoise"})
+        self.wait_done(rid)
+        self.drain()
+        status, again = self.jreq("POST", "/api/recordings/%s/retry" % rid,
+                                  {"options": None})
+        self.assertEqual(status, 200)
+        self.assertIsNone(again["stt_options"])
+        self.drain()
+        self.assertIsNone(self.server.store.get(rid)["stt_options"])
+
+    def test_retry_empty_options_follows_defaults(self):
+        status, body = self.jreq("PUT", "/api/stt-options", {"options": {"preprocess": "denoise"}})
+        self.assertEqual(status, 200)
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.wait_done(rid)
+        self.drain()
+        status, again = self.jreq("POST", "/api/recordings/%s/retry" % rid,
+                                  {"options": {}})
+        self.assertEqual(status, 200)
+        self.assertIsNone(again["stt_options"])
+        meta = self.server.store.get(rid)
+        self.assertIsNone(meta["stt_options"])
+        self.assertEqual(self.server.store.effective_stt_options(meta),
+                         {"preprocess": "denoise"})
+        self.drain()
+
+    def test_retry_bad_options_400_and_nothing_changes(self):
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.server.store.set_stt_options(rid, {"preprocess": "denoise"})
+        self.wait_done(rid)
+        self.drain()
+        before = self.server.store.get(rid)
+        status, body = self.jreq("POST", "/api/recordings/%s/retry" % rid,
+                                 {"options": {"preprocess": "wrong"}})
+        self.assertEqual(status, 400)
+        self.assertIn("preprocess", body["error"])
+        after = self.server.store.get(rid)
+        self.assertEqual(after["stt_options"], before["stt_options"])
+        self.assertEqual(after["status"], before["status"])
+        self.assertEqual(len(self.calls), 1)
+
+    def test_retry_over_32k_413_and_options_unchanged(self):
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.server.store.set_stt_options(rid, {"preprocess": "denoise"})
+        self.wait_done(rid)
+        self.drain()
+        raw_body = json.dumps({"options": {"context": "가" * 40000}},
+                              ensure_ascii=False).encode("utf-8")
+        status, _, _ = self.req("POST", "/api/recordings/%s/retry" % rid, raw_body,
+                                {"Content-Type": "application/json"})
+        self.assertEqual(status, 413)
+        self.assertEqual(self.server.store.get(rid)["stt_options"],
+                         {"preprocess": "denoise"})
+
+
+class TestSttOptionsNoKeyLeak(Base):
+    env = {
+        "VOXLOG_STT_URL": "https://stt.example.org/v1/audio/diarize/jobs",
+        "VOXLOG_STT_MODEL": "some-model",
+        "VOXLOG_STT_API_KEY": "sk-secret-test-key",
+    }
+
+    def test_response_does_not_leak_settings(self):
+        status, body = self.jreq("GET", "/api/stt-options")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["stt"], "api")
+        raw = json.dumps(body)
+        for secret in ("sk-secret-test-key", "VOXLOG_STT_API_KEY",
+                       "VOXLOG_STT_URL", "VOXLOG_STT_MODEL", "some-model"):
+            self.assertNotIn(secret, raw)
+
+
+class TestRetryStaleJobApi(Base):
+    """R51-N2: 사람이 누른 재시도는 남은 stt_job 을 지우고 새 작업을 맡긴다."""
+
+    env = {
+        "VOXLOG_STT_URL": "https://stt.example.org/v1/audio/diarize/jobs",
+        "VOXLOG_STT_MODEL": "test-model",
+    }
+
+    def make_stt(self):
+        return None  # api 백엔드 + 가짜 opener 를 쓰게 한다
+
+    def setUp(self):
+        self.fake = FakeJobPostOpener()
+        self.patch = mock.patch.object(serve.stt_mod, "_default_opener", self.fake)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+        super().setUp()
+
+    def drain(self):
+        end = time.time() + 10
+        while time.time() < end and not self.server.transcriber.idle():
+            time.sleep(0.02)
+        self.assertTrue(self.server.transcriber.idle())
+
+    def retry_with_stale_job(self, body):
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.wait_done(rid)
+        self.drain()
+        self.server.store.set_job(rid, "job-stale")
+        before = len(self.fake.posts)
+        status, _ = self.jreq("POST", "/api/recordings/%s/retry" % rid, body)
+        self.assertEqual(status, 200)
+        self.drain()
+        self.assertEqual(len(self.fake.posts), before + 1)
+        self.assertNotIn("stt_job", self.server.store.get(rid))
+
+    def test_retry_with_options_clears_stale_job_and_resubmits(self):
+        self.retry_with_stale_job({"options": {"preprocess": "denoise"}})
+
+    def test_retry_without_body_clears_stale_job_and_resubmits(self):
+        self.retry_with_stale_job(None)
+
+
+class TestSttOptionsToken(Base):
+    token = TOKEN
+
+    def test_token_required_for_get_and_put(self):
+        self.assertEqual(self.jreq("GET", "/api/stt-options")[0], 401)
+        self.assertEqual(self.jreq("PUT", "/api/stt-options",
+                                   {"options": {"preprocess": "denoise"}})[0], 401)
+        self.assertEqual(self.jreq("GET", "/api/stt-options", token="wrong")[0], 401)
+        status, body = self.jreq("GET", "/api/stt-options", token=TOKEN)
+        self.assertEqual(status, 200)
+        status, body = self.jreq("PUT", "/api/stt-options",
+                                 {"options": {"preprocess": "denoise"}}, token=TOKEN)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["options"], {"preprocess": "denoise"})
+
+
+class TestSttOptionsPassed(Base):
+    """Transcriber 가 실제 transcribe 로 전체 기본값·녹음 옵션을 넘기는지."""
+
+    def make_stt(self):
+        return None
+
+    def setUp(self):
+        self.seen = []
+
+        def fake(path, mime, env, job=None, options=None, used=None):
+            self.seen.append(dict(options or {}))
+            if isinstance(used, dict):
+                used.update({"preprocess": (options or {}).get("preprocess"),
+                             "mode": "context", "speakers": 1,
+                             "auto": False, "review": False})
+            return "옵션 글 " + str(len(self.seen))
+
+        self.transcribe_patch = mock.patch.object(serve.stt_mod, "transcribe", fake)
+        self.transcribe_patch.start()
+        self.addCleanup(self.transcribe_patch.stop)
+        super().setUp()
+
+    def test_default_options_then_recording_options_reach_transcribe(self):
+        self.server.store.set_default_stt_options(
+            {"preprocess": "level", "num_speakers": 3})
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.wait_done(rid)
+        self.assertEqual(self.seen, [{"preprocess": "level", "num_speakers": 3}])
+        self.assertEqual(self.server.store.get(rid)["stt_used"]["preprocess"], "level")
+        status, _ = self.jreq("POST", "/api/recordings/%s/retry" % rid,
+                              {"options": {"preprocess": "denoise"}})
+        self.assertEqual(status, 200)
+        end = time.time() + 10
+        while len(self.seen) < 2 and time.time() < end:
+            time.sleep(0.02)
+        self.assertEqual(len(self.seen), 2)
+        self.assertEqual(self.seen[1], {"preprocess": "denoise"})
+        self.assertEqual(self.server.store.get(rid)["stt_options"],
+                         {"preprocess": "denoise"})
+
+    def test_no_options_sends_empty(self):
+        _, meta = self.upload()
+        self.wait_done(meta["id"])
+        self.assertEqual(self.seen, [{}])
+
+
 class TestHealthWhitespaceLlmCmd(Base):
     """VOXLOG_LLM_CMD 가 공백뿐이면 llm_command 가 빈 목록 -> health 가 IndexError 로 끊기지 않아야 한다."""
     env = {"VOXLOG_LLM_CMD": "   "}
@@ -555,6 +863,22 @@ class TestRetryUpload(Base):
         status, body = self.jreq("POST", "/api/recordings/%s/retry" % meta["id"])
         self.assertEqual(status, 409)
         self.assertIn("받아쓰는 중", body["error"])
+        self.gate.set()
+        self.drain()
+        self.assertEqual(len(self.calls), 1)
+
+    def test_retry_options_while_transcribing_409_and_options_unchanged(self):
+        self.gate.clear()
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.assertTrue(self.started.wait(5))
+        self.server.store.set_stt_options(rid, {"preprocess": "denoise"})
+        status, body = self.jreq("POST", "/api/recordings/%s/retry" % rid,
+                                 {"options": {"preprocess": "basic"}})
+        self.assertEqual(status, 409)
+        self.assertIn("받아쓰는 중", body["error"])
+        self.assertEqual(self.server.store.get(rid)["stt_options"],
+                         {"preprocess": "denoise"})
         self.gate.set()
         self.drain()
         self.assertEqual(len(self.calls), 1)

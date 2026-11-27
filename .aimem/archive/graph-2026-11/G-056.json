@@ -1,0 +1,308 @@
+{
+ "id": "G-056",
+ "request": "Q-261113-bd56",
+ "created": "2026-11-13T14:49:41",
+ "rev": 170,
+ "round": 24,
+ "concurrency": 3,
+ "nodes": [
+  {
+   "id": "T-276",
+   "slot": "S2",
+   "deps": [],
+   "project": "자모맞히기",
+   "title": "jamo.js: 칸 풀기·조합·두벌식 자판 표 (새 파일)",
+   "timeout_sec": 3000,
+   "max_attempts": 2,
+   "write": [
+    "projects/자모맞히기/web/js/jamo.js"
+   ],
+   "task": "# T-276 `web/js/jamo.js` 새로 만들기\n\n쓸 파일은 **하나**: `projects/자모맞히기/web/js/jamo.js` (새 파일). 다른 파일은 읽기만. **바로 파일을 쓰십시오.**\n\n먼저 `.aimem/graph/inputs/r24/CONTRACT.md` 의 '칸(unit) 규칙' 과 '`web/js/jamo.js`' 두 절을 읽으십시오 - 거기 적힌 export 이름·꼴·예시가 정답입니다. 다른 노드들이 이 이름으로 import 합니다.\n\n## 만드는 법 (힌트)\n\n- 순수 ES 모듈, import 없음, DOM·window 모름. 150줄 안팎.\n- `toUnits`: 음절 코드 `c = ch.codePointAt(0) - 0xAC00` (0~11171 밖이면 null) → 초성 `c/588`, 중성 `(c%588)/28`, 종성 `c%28`. 중성 21개·종성 28개 표에서 겹모음·겹받침을 두 칸 문자열로 적어 두면 됩니다(`ㅘ`→`'ㅗㅏ'`, `ㄺ`→`'ㄹㄱ'`). 초성 19개는 모두 한 칸.\n- `composeUnits`: 왼쪽부터 칸을 하나씩 넣는 두벌식 오토마타. 상태 = 지금 음절의 (초성, 중성, 종성). 자음이 오면: 중성 없으면 낱자로 내보내고 새로 시작 / 종성 없으면 종성으로(종성이 될 수 없는 ㄸㅃㅉ 이면 새 음절) / 종성과 겹받침이 되면 합침 / 아니면 새 음절. 모음이 오면: 초성만 있으면 중성 / 중성과 겹모음이 되면 합침 / 종성이 있으면 종성의 **뒤쪽 하나**를 떼어 새 음절의 초성으로 / 아니면 낱자. 끝나면 음절을 `String.fromCharCode(0xAC00 + (cho*21 + jung)*28 + jong)` 으로, 초성만 있거나 모음만 있으면 호환 자모 낱자 그대로.\n- `KEYMAP` 은 두벌식 표준 배치(Q ㅂ/ㅃ, W ㅈ/ㅉ, E ㄷ/ㄸ, R ㄱ/ㄲ, T ㅅ/ㅆ, Y ㅛ, U ㅕ, I ㅑ, O ㅐ/ㅒ, P ㅔ/ㅖ, A ㅁ, S ㄴ, D ㅇ, F ㄹ, G ㅎ, H ㅗ, J ㅓ, K ㅏ, L ㅣ, Z ㅋ, X ㅌ, C ㅊ, V ㅍ, B ㅠ, N ㅜ, M ㅡ).\n\n## 스스로 확인\n\n`node .aimem/graph/inputs/r24/v_jamo.mjs` 가 `jamo: 모두 통과` 를 찍어야 합니다(엔진의 검증도 이것입니다). 이 스크립트는 관리자 것이니 고치지 마십시오.\n\n## 하지 말 것\n\n다른 파일 쓰기(시험 파일은 다른 노드가 씁니다), `git commit`/`push`, 파일 삭제, 의존성 설치, 운영 모니터 부르기. 외부 게임의 코드·문구를 가져오지 않기.\n\n보고 첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` 중 하나, 그다음 바꾼 파일과 v_jamo 출력 마지막 줄.\n",
+   "verify": "node .aimem/graph/inputs/r24/v_jamo.mjs > /tmp/r24-t276.txt 2>&1; r=$?; tail -20 /tmp/r24-t276.txt; exit $r",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-276-S2-a1-145005",
+     "started": "2026-11-13T14:50:05",
+     "ended": "2026-11-13T14:55:51",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n- 새 파일: `projects/자모맞히기/web/js/jamo.js` (185줄)\n- 구현: `UNITS`, `SHIFTED`, `KEY_ROWS`, `KEYMAP`, `toUnits`, `composeUnits`\n- 검증 1: `node .aimem/graph/inputs/r24/v_jamo.mjs` → 마지막 줄 `jamo: 모두 통과` (exit 0)\n- 검증 2: 전체 11172개 완성형 음절 `composeUnits(toUnits(ch)) === ch` 왕복 확인 → `roundtrip all syllables: OK`\n- 변경 파일은 위 하나뿐이며 다른 파일·테스트 파일은 건드리지 않았습니다.\n- 다음 담당자는 계약서에 적힌 이름 그대로 import하면 됩니다. `toUnits`는 빈 문자열·비음절 입력에서 `null`을 반환합니다.",
+     "session_state": "done",
+     "verify_rc": 0,
+     "verify_tail": "jamo: 모두 통과\n",
+     "fail_kind": null
+    }
+   ]
+  },
+  {
+   "id": "T-277",
+   "slot": "S3",
+   "deps": [],
+   "project": "자모맞히기",
+   "title": "낱말 목록: 손으로 고른 원본 + build_words.py → words.js + test_words.py",
+   "timeout_sec": 3000,
+   "max_attempts": 2,
+   "write": [
+    "projects/자모맞히기/data/answers.txt",
+    "projects/자모맞히기/data/allowed.txt",
+    "projects/자모맞히기/data/README.md",
+    "projects/자모맞히기/tools/build_words.py",
+    "projects/자모맞히기/web/js/words.js",
+    "projects/자모맞히기/tests/test_words.py"
+   ],
+   "task": "# T-277 낱말 목록\n\n쓸 파일: `projects/자모맞히기/data/answers.txt`, `data/allowed.txt`, `data/README.md`, `tools/build_words.py`, `web/js/words.js`(생성물), `tests/test_words.py` (모두 `projects/자모맞히기/` 아래, 새 파일). 다른 파일은 읽기만. **바로 파일을 쓰십시오.**\n\n먼저 `.aimem/graph/inputs/r24/CONTRACT.md` 의 '칸(unit) 규칙' 과 '`web/js/words.js`' 절을 읽으십시오. 본보기로 `projects/웹워들/tools/build_words.py`·`projects/웹워들/tests/test_words.py` 를 보면 됩니다(영어 사전에서 뽑는 부분은 버림).\n\n## 할 일\n\n1. `data/answers.txt` - 정답 후보. 한 줄에 낱말 하나, **일상에서 흔히 쓰는 한국어 낱말**(명사 위주)을 **당신이 직접 고릅니다**. 자모로 풀면 꼭 6칸인 것만 남으므로 이런 꼴이 잘 맞습니다: 받침 있는 두 음절(`한국`, `학생`, `낙엽`, `공책`), 받침 없는 세 음절(`코끼리`, `바나나`, `자두나무` 는 안 됨 - 8칸), 겹받침·겹모음 섞인 것(`까닭`, `과일`). 칸 세기는 CONTRACT 의 규칙(쌍자음·ㅐㅔㅒㅖ 한 칸, 겹모음·겹받침 두 칸). **고유명사·욕설·비하어·외래 상표·너무 드문 말은 넣지 않습니다.** 6칸이 아닌 줄이 섞여도 빌드가 걸러 내니 넉넉히 적으십시오 - 걸러진 뒤 **300개 이상**이어야 합니다.\n2. `data/allowed.txt` - 정답은 아니어도 추측으로 받을 낱말(덜 흔한 말, 동사·형용사 기본형 `읽다`·`없다` 등 포함). 빌드 뒤 ALLOWED(= answers ∪ allowed) 가 **1000개 이상**.\n3. `tools/build_words.py` (표준 라이브러리만): 두 파일을 읽어 앞뒤 공백·빈 줄·`#` 주석 줄을 버리고, 완성형 한글 음절만으로 되어 있고 칸으로 6칸인 것만 남기고, 중복 제거. `ANSWERS` 는 정답 후보를 정렬한 뒤 `random.Random(20261113).shuffle` 로 섞은 순서, `ALLOWED` 는 합집합을 정렬한 순서. `web/js/words.js` 를 **정확히 이 꼴로** 씁니다 (검증이 이 꼴을 읽습니다):\n   ```\n   // 생성물 - 손으로 고치지 말고 tools/build_words.py 로 다시 만드십시오\n   export const ANSWERS = [\"…\", \"…\"];\n   export const ALLOWED = [\"…\", \"…\"];\n   ```\n   배열은 `json.dumps(목록, ensure_ascii=False)`. 걸러 낸 수를 표준출력에 찍습니다. 같은 입력이면 매번 같은 파일(바이트 단위).\n4. `data/README.md` - 고른 기준, 출처('함대 작업자가 직접 고름, 외부 게임·사전 목록 복사 없음'), 이용 조건(저장소와 같음), 다시 만드는 명령.\n5. `tests/test_words.py` (unittest, 6개 이상): 모든 낱말 6칸, 중복 없음, ANSWERS ⊆ ALLOWED, 개수 하한, 다시 만들면 같은 파일, 칸 풀기 예시(`한국`→`ㅎㅏㄴㄱㅜㄱ`, `까닭`→`ㄲㅏㄷㅏㄹㄱ`, `과자`→`ㄱㅗㅏㅈㅏ`).\n\n## 스스로 확인\n\n`python3 projects/자모맞히기/tools/build_words.py` 뒤 `python3 .aimem/graph/inputs/r24/v_words.py` 가 `words: 모두 통과`, `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_words.py'` 가 OK. (v_words.py 는 관리자 것 - 고치지 마십시오.)\n\n## 하지 말 것\n\n다른 파일 쓰기, `git commit`/`push`, 파일 삭제, 의존성 설치, 네트워크에서 낱말 목록 내려받기, 외부 게임(꼬들 등)의 낱말 목록 쓰기, 운영 모니터 부르기.\n\n보고 첫 줄은 `DONE` / `PARTIAL` / `BLOCKED`, 그다음 ANSWERS·ALLOWED 개수와 검사 출력 마지막 줄.\n",
+   "verify": "python3 .aimem/graph/inputs/r24/v_words.py > /tmp/r24-t277.txt 2>&1 && python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_words.py' >> /tmp/r24-t277.txt 2>&1; r=$?; tail -20 /tmp/r24-t277.txt; exit $r",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-277-S3-a1-145005",
+     "started": "2026-11-13T14:50:05",
+     "ended": "2026-11-13T15:00:34",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n## 한 일\n\nT-277 낱말 목록을 손으로 고른 원본에서 생성하는 파이프라인을 만들었습니다. 6칸 규칙(쌍자음·ㅐㅔㅒㅖ 한 칸, 겹모음·겹받침 두 칸)에 맞는 일상 한국어 낱말을 직접 골랐고, 빌드가 완성형 한글 6칸만 남기도록 했습니다.\n\n- `data/answers.txt` — 정답 후보 416줄(빌드 후 **398개**)\n- `data/allowed.txt` — 추측 허용 1340줄. `answers ∪ allowed` = **1032개**\n- `tools/build_words.py` — 주석·빈 줄·비6칸·중복 제거, ANSWERS는 `random.Random(20261113).shuffle`, ALLOWED는 정렬, `json.dumps(ensure_ascii=False)`로 `web/js/words.js` 생성. 걸러 낸 수를 표준출력에 찍음\n- `data/README.md` — 고른 기준·출처(함대 작업자 직접 고름, 외부 목록 복사 없음)·이용 조건·재생성 명령\n- `tests/test_words.py` — unittest 8개: 6칸 검사, 중복 없음, 부분집합, 개수 하한, ALLOWED 정렬, ANSWERS 고정 씨앗 섞임, 재생성 바이트 동일, 칸 풀기 예시\n\n## 실제로 돌린 검증\n\n```\n$ python3 projects/자모맞히기/tools/build_words.py\nanswers: 398개 (걸러 냄 18줄)\nallowed: 1032개 (원본 1020개, 걸러 냄 320줄)\n\n$ python3 .aimem/graph/inputs/r24/v_words.py\nANSWERS 398 ALLOWED 1032\nwords: 모두 통과\n\n$ python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_words.py'\nRan 8 tests in 0.046s\nOK\n```\n\n## 다음 담당자가 알아야 할 것\n\n- `web/js/words.js`는 생성물이므로 손으로 고치지 말고 `python3 projects/자모맞히기/tools/build_words.py`로 다시 만드십시오. 같은 입력이면 바이트 단위로 같습니다.\n- 빌드 걸러 냄 수는 `answers` 18줄, `allowed` 320줄입니다(대부분 5칸이거나 7칸인 후보). 원본에 후보를 더 넣어도 빌드가 알아서 거릅니다.\n- 쓰기 범위 밖 파일은 건드리지 않았고, git commit/push/삭제/의존성 설치/네트워크는 하지 않았습니다.",
+     "session_state": "done",
+     "verify_rc": 0,
+     "verify_tail": "ANSWERS 398 ALLOWED 1032\nwords: 모두 통과\n........\n----------------------------------------------------------------------\nRan 8 tests in 0.045s\n\nOK\n",
+     "fail_kind": null
+    }
+   ]
+  },
+  {
+   "id": "T-278",
+   "slot": "S2",
+   "deps": [],
+   "project": "자모맞히기",
+   "title": "game.js: 웹워들 로직을 6칸 자모로 (API 그대로)",
+   "timeout_sec": 3000,
+   "max_attempts": 2,
+   "write": [
+    "projects/자모맞히기/web/js/game.js"
+   ],
+   "task": "# T-278 `web/js/game.js` 를 자모 6칸으로\n\n쓸 파일은 **하나**: `projects/자모맞히기/web/js/game.js`. 지금 이 파일은 **웹워들 game.js 를 그대로 복사한 것**입니다. 다른 파일은 읽기만. **바로 파일을 고치십시오.**\n\n먼저 `.aimem/graph/inputs/r24/CONTRACT.md` 의 '칸(unit) 규칙' 과 '`web/js/game.js`' 절을 읽으십시오. 할 일은 그 절에 적힌 것이 전부입니다:\n\n- export 이름·인자·반환 꼴(`scoreGuess`, `dailyIndex`, `answerForDate`, `keyboardState`, `hardModeViolation`, `createGame`, `fromJSON`, Game 의 메서드·getter)은 **바꾸지 않습니다** - 화면(ui.js)이 그대로 씁니다.\n- `WORD_LENGTH = 6`; 글자 검사(`LETTER`·`WORD` 정규식, `/^[a-z]*$/`)를 33글자 `UNITS` 기준으로 (이 파일 안에 상수로; import 없음). `toLowerCase` 는 자모에 영향이 없으니 둬도 됩니다.\n- `EPOCH_UTC` 를 2026-11-13 으로 (`dailyIndex` 가 그날 0).\n- 문구: short `자모 6개를 채워 주세요`, unknown `낱말 목록에 없는 낱말입니다`, 하드 모드 문구에서 `toUpperCase()` 를 빼고 '글자' → '칸', 오류 메시지의 `a-z` → `자모`.\n- `shareText`: `puzzleNumber > 0` 이면 `자모맞히기 ${n} …`, 0 이면 `자모맞히기 연습 …` (CONTRACT 그대로).\n- 다른 동작(판정 규칙, 저장·복원 방어, private 필드)은 그대로.\n\n## 스스로 확인\n\n`node .aimem/graph/inputs/r24/v_game.mjs` 가 `game: 모두 통과` (엔진의 검증도 이것; 관리자 스크립트라 고치지 마십시오). `tests/test_game.mjs` 는 아직 웹워들 시험이라 깨지는 것이 정상입니다 - 다른 노드가 고칩니다. 고치지 마십시오.\n\n## 하지 말 것\n\n다른 파일 쓰기, `git commit`/`push`, 파일 삭제, 의존성 설치, 운영 모니터 부르기.\n\n보고 첫 줄은 `DONE` / `PARTIAL` / `BLOCKED`, 그다음 v_game 출력 마지막 줄.\n",
+   "verify": "node .aimem/graph/inputs/r24/v_game.mjs > /tmp/r24-t278.txt 2>&1; r=$?; tail -20 /tmp/r24-t278.txt; exit $r",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-278-S2-a1-145553",
+     "started": "2026-11-13T14:55:54",
+     "ended": "2026-11-13T14:58:25",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\ngame: 모두 통과\n\n**한 일**\n`projects/자모맞히기/web/js/game.js`만 수정했습니다. API·export·Game 메서드/getter·판정 규칙·저장 복원 방어는 그대로 두고 다음을 바꿨습니다.\n\n- `WORD_LENGTH` 5 → 6\n- 파일 안에 33글자 `UNITS` 상수를 두고 `LETTER`/`WORD`/`CURRENT` 정규식을 자모 기준으로 변경 (`import` 없음)\n- `EPOCH_UTC = Date.UTC(2026, 10, 13)` — 2026-11-13이 0, 11-14가 1\n- 실패 문구: `자모 6개를 채워 주세요`, `낱말 목록에 없는 낱말입니다`\n- 하드 모드 문구에서 `toUpperCase()` 제거, `1번째 칸은 ㄴ 이어야 합니다` 형태로 변경\n- 오류 메시지의 `a-z` → `자모`\n- `shareText`: `puzzleNumber > 0`이면 `자모맞히기 N n/6`, 0이면 `자모맞히기 연습 n/6`\n- `fromJSON`의 정답·추측·`current` 검사를 UNITS 기준으로 변경\n\n**검증**\n```bash\npython3 tools/aimem_db.py check --slot S2 --token d27e93 --rev 170\n# 일치 ... 소유 경로에 projects/자모맞히기/web/js/game.js 포함\n\nnode .aimem/graph/inputs/r24/v_game.mjs\n# game: 모두 통과\n# rc=0\n```\n\n**다음 담당자에게**\n- `tests/test_game.mjs`는 아직 웹워들 시험이라 깨지는 것이 정상이며, 지시대로 고치지 않았습니다.\n- `git status`의 `.aimem/requests/Q-261113-bd56.json`, `AIMEM-state.md`, `rounds/R24/` 변경은 제 작업 전부터 있던 상태이며 건드리지 않았습니다. 커밋·삭제·설치도 하지 않았습니다.",
+     "session_state": "done",
+     "verify_rc": 0,
+     "verify_tail": "game: 모두 통과\n",
+     "fail_kind": null
+    }
+   ]
+  },
+  {
+   "id": "T-280",
+   "slot": "S3",
+   "deps": [],
+   "project": "자모맞히기",
+   "title": "index.html·style.css·storage.js: 제목·도움말·모드 줄·미리보기·6칸·jamo. 접두어",
+   "timeout_sec": 3000,
+   "max_attempts": 2,
+   "write": [
+    "projects/자모맞히기/web/index.html",
+    "projects/자모맞히기/web/css/style.css",
+    "projects/자모맞히기/web/js/storage.js",
+    "projects/자모맞히기/tests/test_storage.mjs"
+   ],
+   "task": "# T-280 화면 뼈대(HTML·CSS)와 저장소 접두어\n\n쓸 파일: `projects/자모맞히기/web/index.html`, `web/css/style.css`, `web/js/storage.js`, `tests/test_storage.mjs`. 넷 다 지금은 **웹워들 것을 그대로 복사한 것**입니다. `web/js/ui.js` 는 다른 노드(T-279)가 고칩니다 - 읽기만. **바로 파일을 고치십시오.**\n\n먼저 `.aimem/graph/inputs/r24/CONTRACT.md` 의 '칸(unit) 규칙' 과 '화면' 절을 읽으십시오. 웹워들의 모양·색·애니메이션·창은 **그대로** 두고 아래만 바꿉니다.\n\n## index.html\n\n- `<title>`·`<h1>` → `자모맞히기`.\n- 머리글(`header`) 바로 아래 `<nav id=\"modes\">`: `<button id=\"mode-daily\" aria-pressed=\"true\">날마다</button>`, `<button id=\"mode-practice\" aria-pressed=\"false\">연습</button>`, `<button id=\"btn-new\" hidden>새 판</button>` (모두 `type=\"button\"`).\n- `#board` 바로 위 `<div id=\"preview\" class=\"preview\" aria-live=\"off\"></div>`.\n- 도움말(`#modal-help`)을 새로 씁니다 (웹워들 문구는 남기지 않음): 자모 여섯 칸 낱말을 여섯 번 안에 맞히기 / 한 칸 = 자판 한 번 / **쌍자음**(ㄲㄸㅃㅆㅉ)과 ㅐㅔㅒㅖ 는 한 칸, **Shift**(화면 ⇧ 또는 실물 Shift)로 넣음 / **겹모음**은 두 칸(ㅘ=ㅗㅏ … CONTRACT 표 전부) / **겹받침**도 두 칸(ㄺ=ㄹㄱ … 표 전부) / 예시 세 줄(6칸 자모 타일, 각각 자리 맞음·들어 있음·없음 한 칸씩 색) / 같은 자모가 여러 번이면 정답에 있는 개수만큼만 색 / 날마다(누구에게나 같은 하루 하나)와 **연습**(무제한, 기록 안 남음).\n- 통계 창·설정 창은 그대로(하드 모드 설명의 '글자' → '자모').\n\n## style.css\n\n- 보드 6칸: `repeat(5` → `repeat(6`, 그리고 칸 크기·보드 너비 계산이 5칸 기준이면 6칸으로(320px 폭에서 보드가 화면 밖으로 나가지 않게).\n- `#modes` 한 줄(가운데 정렬, 작은 단추, `aria-pressed=\"true\"` 인 단추는 칠해진 모양), `#preview`(보드 위 한 줄, 글자 크게, 비어도 높이 유지해 보드가 들썩이지 않게).\n- 자판: 1줄 10키, 2줄 Shift+9키 = 10키, 3줄 입력+7키+지우기. 웹워들의 2줄 양옆 `.spacer` 는 더 안 씀. `#keyboard[data-shift=\"on\"] .key[data-key=\"shift\"]` 는 눌린 모양. 320px 에서 3줄이 넘치지 않게 키 너비를 맞추십시오.\n- 어두운 테마·색약 모드는 웹워들 그대로 새 요소에도 적용(`#modes` 단추, `#preview` 글자색).\n\n## storage.js · test_storage.mjs\n\n- `const PREFIX = 'webwordle.';` → `const PREFIX = 'jamo.';` 만. 나머지는 그대로.\n- `tests/test_storage.mjs` 에서 `webwordle.` 를 `jamo.` 로 맞추고 `node --test projects/자모맞히기/tests/test_storage.mjs` 가 모두 통과하게.\n\n## 스스로 확인\n\n`python3 .aimem/graph/inputs/r24/v_static.py` 가 `static: 모두 통과` (관리자 스크립트 - 고치지 마십시오), 그리고 위 node 시험 통과. 화면 전체 동작은 ui.js 가 바뀐 뒤 다른 노드가 잽니다.\n\n## 하지 말 것\n\n`web/js/ui.js`·`game.js`·`jamo.js` 쓰기, `git commit`/`push`, 파일 삭제, 의존성 설치(CDN·웹 글꼴 포함), 운영 모니터 부르기. 외부 게임의 이름·문구·색을 가져오지 않기.\n\n보고 첫 줄은 `DONE` / `PARTIAL` / `BLOCKED`, 그다음 바꾼 파일과 검사 출력 마지막 줄.\n",
+   "verify": "python3 .aimem/graph/inputs/r24/v_static.py > /tmp/r24-t280.txt 2>&1 && node --test projects/자모맞히기/tests/test_storage.mjs >> /tmp/r24-t280.txt 2>&1; r=$?; tail -20 /tmp/r24-t280.txt; exit $r",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-280-S3-a1-150036",
+     "started": "2026-11-13T15:00:36",
+     "ended": "2026-11-13T15:03:55",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n**한 일**\n- `projects/자모맞히기/web/index.html`: `<title>`·`<h1>` → `자모맞히기`. `header` 바로 아래 `<nav id=\"modes\">`(`#mode-daily` aria-pressed=true, `#mode-practice` false, `#btn-new` hidden, 모두 type=button) 추가. `#board` 바로 위 `#preview.preview[aria-live=\"off\"]` 추가. 도움말 전면 교체(6칸·한 칸=자판 1회·쌍자음/ㅐㅔㅒㅖ 한 칸, Shift, 겹모음 ㅘ=ㅗㅏ 등 표, 겹받침 ㄺ=ㄹㄱ 등 표, 6칸 예시 3줄 자리맞음/들어있음/없음, 중복 자모 개수 제한, 날마다/연습). 통계·설정 창 구조 유지, 하드 모드 설명 '글자'→'자모'.\n- `web/css/style.css`: 보드 `.row` `repeat(6, 1fr)`. `--board-width`/`--board-height`를 6×6 정사각 기준으로 재계산(세로·가로·dvh). `#modes`(한 줄·가운데·작은 알약 단추, aria-pressed=true 채움, 어두운 테마)와 `#preview`(보드 위, 큰 글자, `min-height:2.2rem`으로 빈 줄에도 높이 유지, 테마 색) 추가. `.spacer` 제거, `.key.wide` flex 1.4, `#keyboard[data-shift=\"on\"] .key[data-key=\"shift\"]` 눌린 모양. 예시 타일 6칸 폭.\n- `web/js/storage.js`: `const PREFIX = 'jamo.';` 한 줄만 변경.\n- `tests/test_storage.mjs`: `webwordle.` 문자열이 원래 없어(테스트는 접두를 직접 참조하지 않음) 수정 불필요. 변경 없음.\n\n**실제로 돌린 검증**\n- `python3 .aimem/graph/inputs/r24/v_static.py` → `static: 모두 통과` (rc=0)\n- `node --test projects/자모맞히기/tests/test_storage.mjs` → `tests 12 / pass 12 / fail 0`\n- (참고) Playwright 배치 확인 320×568·360×740·430×932·1280×800·900×420: `#modes`·`#preview`·`#board`·`#keyboard` 모두 화면 안, 서로 겹침 없음. 보드 228/348/350/350/230px, 320px에서 타일 33.8px.\n\n**다음 담당자에게**\n- 지금 `ui.js`는 아직 웹워들 판(영어 키·완성형 낱말 전달)이라 로드 시 `정답은 자모 6글자여야 합니다: \"학력\"` 오류가 납니다. 내 파일 문제가 아니며 T-279가 ui.js를 고치면 사라집니다. `v_smoke.py`는 그 전까지 실패하는 게 정상입니다.\n- 새 HTML은 `#modes`/`#preview`를 제공하지만 모드 전환·Shift·`data-shift`·미리보기 채우기는 ui.js(T-279) 몫입니다. 자판 키 수는 계약대로 1줄 10 / 2줄 Shift+9 / 3줄 입력+7+지우기이며 `.spacer`는 쓰지 않습니다.\n- `--board-width`는 세로 `calc(100vh - 340px)`, 가로(높이≤560·폭≥760) `calc(100vh - 190px)`로 잡았습니다. 화면 높이가 극단적으로 낮으면 이 값을 조정하십시오.\n- 소유 경로 밖 파일은 건드리지 않았고 commit/push/삭제/설치도 하지 않았습니다.",
+     "session_state": "done",
+     "verify_rc": 0,
+     "verify_tail": "✔ ready 를 보낸다: {aimem:'store.v1',op:'ready'} 와 부모 오리진 (30.897506ms)\n✔ 스냅숏이 읽기에 반영된다 (13.37559ms)\n✔ 쓰기가 put 으로 나간다 (5.076633ms)\n✔ 지우기는 value 가 null 이다 (7.850352ms)\n✔ 딴 데서 온 메시지는 무시한다 (7.51445ms)\n✔ 스냅숏이 안 오면 500ms 안에 포기한다 (503.100458ms)\n✔ init 은 지난 daily 기록을 daily. 접두까지 붙여 지운다 (4.342629ms)\n✔ 스냅숏이 안 오면 put 을 하나도 안 보낸다 (503.682273ms)\n✔ 거절되는 키는 부모에게 아무것도 보내지 않는다 (1.405376ms)\n✔ 경계 키는 부모에게 그대로 보낸다 (1.005882ms)\n✔ 8,192자 값은 가고 8,193자는 가지 않는다 (0.520791ms)\n✔ null 값 지우기는 길이 검사에 걸리지 않고 그대로 간다 (0.445193ms)\nℹ tests 12\nℹ suites 0\nℹ pass 12\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1203.376799\n",
+     "fail_kind": null
+    }
+   ]
+  },
+  {
+   "id": "T-281",
+   "slot": "S3",
+   "deps": [
+    "T-276",
+    "T-278"
+   ],
+   "project": "자모맞히기",
+   "title": "단위 검사: test_jamo.mjs 새로 + test_game.mjs 를 자모로",
+   "timeout_sec": 3000,
+   "max_attempts": 3,
+   "write": [
+    "projects/자모맞히기/tests/test_jamo.mjs",
+    "projects/자모맞히기/tests/test_game.mjs"
+   ],
+   "task": "# T-281 로직 단위 검사\n\n쓸 파일: `projects/자모맞히기/tests/test_jamo.mjs` (새 파일), `tests/test_game.mjs` (지금은 **웹워들 시험을 복사한 것** - 자모로 고쳐 씀). 제품(`web/js/*.js`)은 **읽기만**. **바로 파일을 쓰십시오.**\n\n먼저 `.aimem/graph/inputs/r24/CONTRACT.md` 의 '칸(unit) 규칙'·'jamo.js'·'game.js' 절을 읽으십시오. 시험은 **그 약속**을 봅니다(구현을 베끼지 말 것). `node:test` + `node:assert/strict`, 의존성 없음.\n\n## test_jamo.mjs (15개 이상)\n\n- `toUnits`: 쌍자음 한 칸(`까닭`), ㅐㅔㅒㅖ 한 칸(`얘기`), 겹모음 일곱 각각 두 칸(`과 괘 괴 궈 궤 귀 의`), 겹받침 열하나 각각 두 칸(`넋 앉 않 닭 삶 넓 곬 핥 읊 앓 값`), 음절 아닌 입력 null(`''`, `'abc'`, `'ㄱ'`, `'한 국'`).\n- `composeUnits`: 모든 위 낱말의 되돌림(`composeUnits(toUnits(w)) === w`), 입력 중 꼴(`'ㅎㅏㄴㄱ'`→`'한ㄱ'`), 받침 넘어가기(`'ㄷㅏㄹㄱㅏ'`→`'달가'`, `'ㄱㅏㅂㅅㅣ'`→`'갑시'`), 낱자(`'ㄱㄱ'`, `'ㅏ'`), 빈 문자열.\n- `KEYMAP` 26키·`SHIFTED` 일곱·`KEY_ROWS` 의 모든 글자가 `UNITS` 안이고 KEYMAP 의 보통 글자 집합과 같음.\n- `words.js` 가 있으면(`import` 실패 시 건너뜀은 **하지 말 것** - T-277 이 이미 만듦) ALLOWED 모든 낱말이 6칸이고 되돌림이 같음.\n\n## test_game.mjs (웹워들 시험 꼴 그대로, 20개 이상)\n\n- 영어 낱말을 6칸 칸 문자열로 바꿔 씁니다(예 `crane` → `'ㅎㅏㄴㄱㅜㄱ'`, `slate` → `'ㄲㅏㄷㅏㄹㄱ'` 처럼 - 낱말은 당신이 고름). 겹치는 자모 판정(정답에 남은 개수만큼만 present), 키 상태, 하드 모드(웹워들 시험의 갈래 모두), 판 진행, 지는 판, 공유 글(날마다 `자모맞히기 N k/6`, 연습 `자모맞히기 연습 k/6`, 진 판 `X/6`, 하드 `*`), 저장과 복원(손상된 저장값 거절 포함), 날짜(`dailyIndex` 2026-11-13 → 0, 다음 날 1), 자모 아닌 입력 거절(`a`, `ㅘ`, `ㄳ`, `가`), 실패 문구(`자모 6개를 채워 주세요`, `낱말 목록에 없는 낱말입니다`).\n\n## 제품 결함을 찾으면\n\n제품도 시험도 고치지 말고 보고 첫 줄을 `NEEDS-FIX: <무엇이 어디서>` 로. 실패하는 시험은 그대로 두십시오.\n\n## 스스로 확인\n\n`node --test projects/자모맞히기/tests/test_jamo.mjs projects/자모맞히기/tests/test_game.mjs` (엔진은 '돌았고 시험이 35개 이상인가' 를 봅니다).\n\n## 하지 말 것\n\n제품 파일 쓰기, `git commit`/`push`, 파일 삭제, 의존성 설치, 운영 모니터 부르기.\n\n보고 첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` / `NEEDS-FIX: …`, 그다음 `# tests`·`# pass` 수.\n",
+   "verify": "node --test projects/자모맞히기/tests/test_jamo.mjs projects/자모맞히기/tests/test_game.mjs > /tmp/r24-t281.txt 2>&1; python3 .aimem/graph/inputs/r24/count.py /tmp/r24-t281.txt node 35 > /tmp/r24-t281c.txt 2>&1; r=$?; grep -E '^not ok|^# (tests|pass|fail)' /tmp/r24-t281.txt | tail -15; cat /tmp/r24-t281c.txt; exit $r",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-281-S3-a1-150353",
+     "started": "2026-11-13T15:03:53",
+     "ended": "2026-11-13T15:07:21",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n# tests 49 · # pass 49 · # fail 0\n\n한 일\n- `projects/자모맞히기/tests/test_jamo.mjs` 새로 씀 (19 tests): UNITS 33글자, SHIFTED 일곱 쌍, KEYMAP 26키/UNITS 안/Shift 꼴 일치, KEY_ROWS↔KEYMAP 보통 글자 집합 일치, toUnits(쌍자음·ㅐㅔㅒㅖ·겹모음 7·겹받침 11·null 입력), composeUnits(왕복·입력 중·받침 넘어가기·낱자·빈 문자열·겹 합치기), words.js ALLOWED/ANSWERS 6칸·왕복(import 실패 시 건너뛰지 않고 그대로 실패).\n- `projects/자모맞히기/tests/test_game.mjs` 웹워들 복사본을 자모 판으로 고쳐 씀 (30 tests): 상수 6/6, scoreGuess(겹침은 남은 개수만큼만 present·초록 우선·길이 예외), keyboardState, hardModeViolation 일곱 갈래, addLetter 거절(`a`/`ㅘ`/`ㄳ`/`가`)·7칸 거절, submit 문구 두 가지, 진행/이김/끝난 판, 지는 판, shareText(날마다·연습·진 판 X/6·하드 `*`), 저장·복원(왕복, scores 재판정, 손상값 거절 9종, current 자모 아닌 글자 제거), dailyIndex 2026-11-13→0/다음 날→1, answerForDate.\n\n고친 파일\n- `projects/자모맞히기/tests/test_jamo.mjs` (신규)\n- `projects/자모맞히기/tests/test_game.mjs` (전면 교체)\n- 제품 파일은 읽기만 함. 삭제·commit·push·의존성 설치 없음.\n\n실제로 돌린 검증\n- `node --test projects/자모맞히기/tests/test_jamo.mjs projects/자모맞히기/tests/test_game.mjs`\n- 출력: `tests 49 / pass 49 / fail 0 / skipped 0`\n- 파일별: test_jamo 19 pass, test_game 30 pass.\n\n다음 담당자가 알아야 할 것\n- 제품 결함은 발견하지 못함(`web/js/jamo.js`, `web/js/game.js`, `web/js/words.js` 모두 시험 통과). `NEEDS-FIX` 없음.\n- `test_jamo.mjs` 는 `words.js` 를 정적 import 하므로 생성물이 없거나 깨지면 곧바로 실패한다(의도된 동작).\n- 브라우저/화면 시험은 이 작업 범위 밖이며 돌리지 않았다.",
+     "session_state": "done",
+     "verify_rc": 1,
+     "verify_tail": "node: 통과 0 / 전체 0 (최소 35)\n",
+     "fail_kind": "work"
+    },
+    {
+     "run_id": "T-281-S3-a2-150724",
+     "started": "2026-11-13T15:07:24",
+     "ended": "2026-11-13T15:08:12",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n# tests 49 / # pass 49\n\n확인 사항\n- 직전 시도 산출물이 이미 남아 있었고, 두 파일 모두 계약(r24 CONTRACT.md)과 지시 항목을 충족하는 상태였습니다. 새로 고칠 필요 없이 그대로 검증했습니다.\n- 이전 검증의 `통과 0 / 전체 0` 은 재현되지 않았습니다. 파일 작성이 끝나기 전에 검증이 돌았던 것으로 보입니다.\n\n고친 파일\n- `projects/자모맞히기/tests/test_jamo.mjs` (신규, 19 tests)\n- `projects/자모맞히기/tests/test_game.mjs` (웹워들 복사본을 자모 판으로 교체, 30 tests)\n- 제품 파일(`web/js/*.js`)은 읽기만 함. commit/push/삭제/의존성 설치 없음.\n\n실제로 돌린 검증\n- `node --test projects/자모맞히기/tests/test_jamo.mjs projects/자모맞히기/tests/test_game.mjs`\n- 출력: `tests 49 / pass 49 / fail 0 / cancelled 0 / skipped 0`\n\n다음 담당자가 알아야 할 것\n- 제품 결함 발견 없음. `NEEDS-FIX` 없음.\n- `test_jamo.mjs` 는 `web/js/words.js` 를 정적 import 하므로 생성물이 없거나 깨지면 즉시 실패합니다(의도된 동작).\n- 커버리지: `toUnits`/`composeUnits`(겹모음 7·겹받침 11·받침 넘어감·낱자), `UNITS`/`SHIFTED`/`KEYMAP`/`KEY_ROWS`, ALLOWED·ANSWERS 6칸/왕복, 점수·키 상태·하드 모드 7갈래, addLetter 거절, submit 문구, 진행/승/패, shareText 4종, 저장·복원 및 손상값 거절, dailyIndex/answerForDate.\n- 브라우저·화면 시험은 범위 밖이라 돌리지 않았습니다.",
+     "session_state": "done",
+     "verify_rc": 1,
+     "verify_tail": "node: 통과 0 / 전체 0 (최소 35)\n",
+     "fail_kind": "work"
+    },
+    {
+     "run_id": "T-281-S3-a3-150917",
+     "started": "2026-11-13T15:09:17",
+     "ended": "2026-11-13T15:11:40",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n# tests 49 · # pass 49\n\n**한 일**\n- 재시도 산출물(`test_jamo.mjs` 19 tests, `test_game.mjs` 30 tests)이 이미 남아 있어 먼저 계약(`r24/CONTRACT.md`의 칸 규칙·jamo.js·game.js 절)과 지시 항목에 비추어 직접 검토했습니다.\n- 두 파일 모두 요구 항목을 충족해 **고친 파일 없음**(제품 `web/js/*.js`도 읽기만).\n\n**검증(실제로 돌린 명령과 출력)**\n- `node --test projects/자모맞히기/tests/test_jamo.mjs projects/자모맞히기/tests/test_game.mjs`\n  → `ℹ tests 49 / ℹ pass 49 / ℹ fail 0`, rc=0 (3회 반복 모두 동일)\n- 파일별: `test_jamo` 19 pass/19, `test_game` 30 pass/30\n- 엔진 모사: 출력 파일 + `python3 .aimem/graph/inputs/r24/count.py <out> node 35 all`\n  → `node: 통과 49 / 전체 49 (최소 35, 전부 통과 요구)`, rc=0\n\n**직전 0/0 진단**\n- 현재 재현되지 않습니다. node는 **존재하지 않는 경로를 조용히 건너뛰고** `tests 0`으로 rc=0을 낼 수 있음을 실험으로 확인했습니다. 직전 검증 시점(15:07:24)에는 `web/js/words.js`(mtime 15:09)와 파일 기록이 끝나지 않아 경로가 비어 있었던 것으로 보입니다.\n- 현재 `words.js`는 ANSWERS 398 / ALLOWED 1032로 존재하고, 경로는 모두 NFC로 일관됩니다.\n\n**다음 담당자가 알아야 할 것**\n- 제품 결함 발견 없음 → `NEEDS-FIX` 없음.\n- `test_jamo.mjs`는 `web/js/words.js`를 정적 import하므로 생성물이 없거나 깨지면 즉시 실패합니다(의도). `words.js`를 다시 만드는 슬롯과 동시에 검증하면 경합할 수 있습니다.\n- 커버리지: toUnits/composeUnits(겹모음 7·겹받침 11·받침 넘어감·낱자·빈 문자열·null), UNITS/SHIFTED/KEYMAP/KEY_ROWS, ALLOWED 6칸·왕복, 점수(잔여 개수 present)·키 상태·하드 모드 8갈래·진행/승/패·addLetter 거절·submit 문구·shareText 4종·저장/복원 및 손상값 거절·dailyIndex/answerForDate.\n- 브라우저·화면 시험은 범위 밖이라 돌리지 않았습니다.",
+     "session_state": "done",
+     "verify_rc": 0,
+     "verify_tail": "node: 통과 49 / 전체 49 (최소 35)\n",
+     "fail_kind": null
+    }
+   ]
+  },
+  {
+   "id": "T-279",
+   "slot": "S2",
+   "deps": [
+    "T-276",
+    "T-277",
+    "T-278",
+    "T-280"
+   ],
+   "project": "자모맞히기",
+   "title": "ui.js: 자모 자판(Shift)·e.code 입력·조합 미리보기·날마다/연습 모드",
+   "timeout_sec": 3600,
+   "max_attempts": 2,
+   "write": [
+    "projects/자모맞히기/web/js/ui.js"
+   ],
+   "task": "# T-279 `web/js/ui.js` 를 자모맞히기로\n\n쓸 파일은 **하나**: `projects/자모맞히기/web/js/ui.js`. 지금은 **웹워들 ui.js 를 그대로 복사한 것**입니다. `index.html`·`style.css`·`storage.js`·`game.js`·`jamo.js`·`words.js` 는 앞 노드들이 이미 바꿔 두었습니다 - 읽기만. **바로 파일을 고치십시오.** 웹워들의 흐름(뒤집기·흔들기·토스트·창·통계·공유·설정·새 날 감지·이어 하기)은 그대로 둡니다.\n\n먼저 `.aimem/graph/inputs/r24/CONTRACT.md` 의 '화면' 절을 읽으십시오. 그 절이 할 일 목록입니다. 요약:\n\n1. `import { KEY_ROWS, KEYMAP, SHIFTED, toUnits, composeUnits } from './jamo.js'`. 웹워들의 `KEY_ROWS` 상수는 지웁니다. `ALLOWED`·`ANSWERS` 는 한글 낱말이므로 게임에는 칸 문자열을 줍니다: `ALLOWED_SET = new Set(ALLOWED.map(toUnits))`, `WORD_OF = new Map(ALLOWED.map(w => [toUnits(w), w]))`, 정답은 `toUnits(answerForDate(now, ANSWERS))`.\n2. `buildKeyboard`: 1줄 `KEY_ROWS[0]` / 2줄 `shift` 키(`⇧`, `aria-label=\"쌍자음\"`, `aria-pressed`) + `KEY_ROWS[1]` (spacer 없음) / 3줄 `enter`(글자 `입력`) + `KEY_ROWS[2]` + `back`. 자모 키 `data-key` 는 보통 글자.\n3. Shift 한 번: `shiftOn` 상태. shift 키를 누르면 뒤집고, `#keyboard` 의 `data-shift` 를 `on`/없음, SHIFTED 일곱 키의 글자·aria-label 을 쌍 꼴로. 자모 키가 눌리면 shiftOn 이면 `SHIFTED[id] ?? id` 를 넣고 Shift 를 끔. `renderKeyboard` 는 키에 **지금 보이는 글자**의 상태를 `data-state` 로.\n4. 실물 자판: 웹워들의 `/^[a-zA-Z]$/.test(e.key)` 갈래를 `KEYMAP[e.code]` 로 바꿈 → `e.shiftKey ? 쌍 : 보통` 을 그대로 넣음(화면 Shift 상태와 무관, 넣은 뒤 화면 Shift 도 끔). Enter/Backspace/Escape·Ctrl/Alt/Meta 무시·포커스 처리는 웹워들 그대로. 자모를 넣었으면 `e.preventDefault()`.\n5. `#preview`: 지금 줄을 바꿀 때마다(`renderCurrentRow`·`renderAll`·제출 뒤) `composeUnits(game.current)`. 끝난 판이면 빈 글.\n6. 정답을 보일 때(`정답: …` 토스트 두 곳) `WORD_OF.get(game.answer) ?? composeUnits(game.answer)`. `toUpperCase` 는 모두 뺌. 타일 aria-label 은 그 자모 그대로.\n7. 모드: `mode = 'daily'|'practice'`, `dailyGame`·`practiceGame` 을 따로 들고 `game` 은 지금 모드의 것. `#mode-daily`/`#mode-practice` 클릭(뒤집기 중이면 무시) → 그 모드로, `aria-pressed` 갱신, `#btn-new.hidden = mode !== 'practice'`, `renderAll()`. 연습 판이 없거나 끝났으면 새로: `puzzleNumber 0`, 정답 `toUnits(ANSWERS[Math.floor(Math.random()*ANSWERS.length)])`. `#btn-new` → 새 연습 판. **연습 판은 `saveDaily`·`recordResult` 를 부르지 않음**(submit 안에서 `mode === 'daily'` 일 때만). 날마다는 `puzzleNumber = dailyIndex(now) + 1`. 통계 창의 공유 단추는 지금 판의 `shareText()`. `checkNewDay` 는 날마다 판만 새로 시작.\n8. 문구: `새로운 날, 새로운 단어!` → `새로운 날, 새로운 낱말!`. 그 밖의 '단어' → '낱말'.\n\n## 스스로 확인\n\n`python3 .aimem/graph/inputs/r24/v_smoke.py` 가 마지막 줄 `통과 N / 전체 N` (엔진의 검증도 이것; 관리자 스크립트 - 고치지 마십시오). 실패 줄이 무엇을 기대하는지 읽고 ui.js 를 고치십시오. **index.html·style.css 쪽 결함이라 ui.js 로는 못 고치면** 첫 줄 `NEEDS-FIX: <무엇이 어디서>` 로 보고하십시오.\n\n## 하지 말 것\n\n다른 파일 쓰기, `git commit`/`push`, 파일 삭제, 의존성 설치, 운영 모니터 부르기.\n\n보고 첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` / `NEEDS-FIX: …`, 그다음 v_smoke 마지막 줄.\n",
+   "verify": "python3 .aimem/graph/inputs/r24/v_smoke.py > /tmp/r24-t279.txt 2>&1; r=$?; grep -E 'FAIL|통과|Error' /tmp/r24-t279.txt | tail -20; exit $r",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-279-S2-a1-150359",
+     "started": "2026-11-13T15:03:59",
+     "ended": "2026-11-13T15:11:11",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n통과 24 / 전체 24\n\n**고친 파일**\n- `projects/자모맞히기/web/js/ui.js`만 수정했습니다.\n\n**한 일**\n- `jamo.js`의 `KEY_ROWS`·`KEYMAP`·`SHIFTED`·`toUnits`·`composeUnits`를 사용하도록 바꿨습니다.\n- 자판을 3줄 구조로 다시 만들었습니다: `KEY_ROWS[0]` / `⇧` + `KEY_ROWS[1]` / `입력` + `KEY_ROWS[2]` + `⌫`.\n- 화면 Shift는 한 번만 유지되고, 자모 입력 뒤 꺼지며 `#keyboard[data-shift=\"on\"]`, `aria-pressed`, 일곱 키의 표시 글자를 갱신합니다.\n- 실물 자판은 `e.code`와 `KEYMAP`을 사용하고 `e.shiftKey`로 쌍자음을 넣습니다.\n- `#preview`에 현재 줄의 `composeUnits(game.current)`를 표시하고, 끝난 판은 빈 글입니다.\n- 정답 안내는 `WORD_OF.get(...) ?? composeUnits(...)`로 낱말 형태이며, 타일은 자모 그대로 표시합니다.\n- 날마다/연습 모드를 분리했습니다. 연습 판은 저장·통계를 남기지 않고 `새 판`으로 다시 시작합니다.\n- `새로운 날, 새로운 낱말!` 문구로 바꿨고, 남은 `단어`·`toUpperCase` 흔적을 제거했습니다.\n\n**검증**\n- `python3 .aimem/graph/inputs/r24/v_smoke.py` → `통과 24 / 전체 24`, 실패 없음.\n- `python3 -m unittest discover -s projects/자모맞히기/tests` → `Ran 8 tests`, `OK`.\n- `node projects/자모맞히기/tests/test_jamo.mjs` → 19/19 통과.\n- `node projects/자모맞히기/tests/test_game.mjs` → 30/30 통과.\n- `node projects/자모맞히기/tests/test_storage.mjs` → 12/12 통과.\n- 추가 브라우저 확인: 진 판의 토스트가 `정답: 학력`으로 나왔고, 연습 제출 뒤 localStorage에는 `jamo.seenHelp`만 남았습니다.\n\n**다음 담당자에게**\n- `ui.js`는 현재 git에서 untracked(`??`) 상태이며, 금지 규칙에 따라 commit/push는 하지 않았습니다.\n- `index.html`·`style.css` 쪽 결함은 발견되지 않았고, v_smoke 기준 화면 배치도 두 뷰포트에서 통과했습니다.",
+     "session_state": "done",
+     "verify_rc": 0,
+     "verify_tail": "통과 24 / 전체 24\n",
+     "fail_kind": null
+    }
+   ]
+  },
+  {
+   "id": "T-282",
+   "slot": "S3",
+   "deps": [
+    "T-279"
+   ],
+   "project": "자모맞히기",
+   "title": "브라우저 검사 browser_game.py: 완주·자판·모드·저장·공유·도움말·폭·어두운 모드 (그려진 것)",
+   "timeout_sec": 3600,
+   "max_attempts": 2,
+   "write": [
+    "projects/자모맞히기/tests/browser_game.py",
+    "projects/자모맞히기/tests/README.md"
+   ],
+   "task": "# T-282 브라우저 검사 `tests/browser_game.py`\n\n쓸 파일: `projects/자모맞히기/tests/browser_game.py` (새 파일), `tests/README.md` (새 파일). 제품은 **읽기만**. **바로 파일을 쓰십시오.**\n\n먼저 `.aimem/graph/inputs/r24/CONTRACT.md` 의 '화면' 절을 읽으십시오. 시험은 그 약속을 봅니다. `tests/browser_harness.py`(웹워들에서 가져옴: `server()`·`new_page()`·`Checks`·`shot()`)를 import 해서 씁니다 - 본보기는 `projects/웹워들/tests/browser_core.py`(구조만, 전부 읽지 마십시오). 파이썬 Playwright(크로미움, 이미 설치됨), 임시 포트 서버. 마지막 줄은 `Checks.finish()` 가 찍는 `통과 N / 전체 M`, 실패가 있으면 rc 1.\n\n## 화면 검사 규칙\n\n**그려진 것을 묻습니다**: 보이는지 → `is_visible()`, 색 → `getComputedStyle`, 자리·겹침·잘림 → `bounding_box()`. 속성만 보고 통과시키지 마십시오. 뒤집기 애니메이션이 끝나기를 기다릴 때는 `wait_for_function` 으로 칸의 `data-state` 를 기다리되 2초 안.\n\n## 정답 알아내기\n\n오늘 정답은 `page.evaluate` 에서 `await import('./js/game.js')`·`'./js/words.js'`·`'./js/jamo.js'` 를 불러 `toUnits(answerForDate(new Date(), ANSWERS))` 로 구합니다. 연습 판 정답은 `Math.random` 을 `page.add_init_script` 로 고정해 정합니다.\n\n## 검사 (20개 이상)\n\n1. 첫 방문 도움말 보임 → 닫힘 → `#btn-help` 로 다시 보임, 도움말에 겹모음·겹받침 표가 보임\n2. 실물 자판 `e.code`: `KeyG KeyK KeyS` → ㅎㅏㄴ, `Shift+KeyR` → ㄲ, `Control+KeyA` 는 아무것도 안 넣음\n3. 화면 Shift: 누르면 ㄱ 키 글자가 ㄲ 으로 **보이고**, 한 번 넣으면 돌아옴\n4. `#preview` 가 조합 글자를 보여 줌(`한ㄲ` 등), 제출 뒤 비움\n5. 모자란 입력·목록에 없는 낱말: 안내 토스트가 **보이고**, 줄이 그대로\n6. 틀린 낱말 제출 → 칸 색이 `correct/present/absent` 중 판정대로(정답과 비교해 기대값을 파이썬에서 계산), 자판 키 색도\n7. 오늘 정답으로 이김 → 통계 창이 보이고 판수 1·승률 100, 새로 고쳐도 끝난 판과 줄이 그대로\n8. 공유: 클립보드 글 첫 줄 `자모맞히기 N k/6`, 줄마다 이모지 6개, 정답 낱말이 안 들어감\n9. 여섯 번 틀려 짐 → `정답: <낱말>` 이 **한글 낱말**로 보임 (새 브라우저 문맥에서)\n10. 연습: `#mode-practice` → 빈 판·`#btn-new` 보임, 이기고 나서도 날마다 통계 판수가 늘지 않음, `#btn-new` 로 새 판, 날마다로 돌아가면 오늘 판 그대로\n11. 폭 320·375·430·1280 에서: 보드·자판·`#modes` 가 화면 밖으로 안 나가고 서로 안 겹침, 자판 3줄 각 키가 잘리지 않음(`bounding_box` 너비 > 0, 줄 끝 키의 오른쪽 ≤ 화면 폭), 6칸을 다 친 뒤에도 넘치지 않음\n12. 어두운 테마: 설정에서 켜면 `body` 배경이 어두워짐(계산된 색의 밝기), 새로 고쳐도 유지, `prefers-color-scheme: dark` 문맥의 첫 방문도 어두움(웹워들이 그렇게 하지 않으면 그 사실을 보고에 적고 이 한 검사는 빼십시오)\n13. 키보드만으로 완주: Tab 으로 화면 단추에 가 Enter 로 창을 열고 Escape 로 닫음, 결과가 `aria-live` 영역(`#toasts`)에 글로 남음\n14. 페이지 오류(`page._errors`) 없음\n\n## tests/README.md\n\n시험 파일별 돌리는 명령(`node --test projects/자모맞히기/tests/*.mjs`, `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'`, `python3 projects/자모맞히기/tests/browser_game.py`)과, `PROGRESS.md` 목표별로 그것을 증명하는 검사 이름 표.\n\n## 제품 결함을 찾으면\n\n제품을 고치지 말고, 그 검사는 실패로 남긴 채 보고 첫 줄을 `NEEDS-FIX: <무엇이 어디서>` 로 (여럿이면 `;` 로 이어서).\n\n## 하지 말 것\n\n제품 파일 쓰기, `git commit`/`push`, 파일 삭제, 의존성 설치, 운영 모니터 부르기. 스크린숏은 `tests/screenshots/` 아래(하네스의 `shot`)만.\n\n보고 첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` / `NEEDS-FIX: …`, 그다음 마지막 줄 `통과 N / 전체 M` 과 실패 목록.\n",
+   "verify": "python3 projects/자모맞히기/tests/browser_game.py > /tmp/r24-t282.txt 2>&1; python3 .aimem/graph/inputs/r24/count.py /tmp/r24-t282.txt browser 20 > /tmp/r24-t282c.txt 2>&1; r=$?; grep -E 'FAIL|Error|Traceback' /tmp/r24-t282.txt | tail -15; cat /tmp/r24-t282c.txt; exit $r",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-282-S3-a1-151713",
+     "started": "2026-11-13T15:17:14",
+     "ended": "2026-11-13T15:25:08",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n## 한 일\n- `projects/자모맞히기/tests/browser_game.py` 새로 작성: 임시 포트 서버 + 파이썬 Playwright(크로미움)로 계약서 `화면` 절의 14개 항목을 검사. 속성이 아니라 `is_visible()`·`getComputedStyle`·`bounding_box()` 로 그려진 것을 확인.\n- `projects/자모맞히기/tests/README.md` 새로 작성: 세 벌 명령, `PROGRESS.md` 목표→검사 표, 스크린숏 목록, 이 검사가 일부러 보지 않는 것.\n- 제품 파일은 읽기만 했고, `git commit`/`push`/삭제/의존성 설치 없음.\n\n## 고친 파일\n- `projects/자모맞히기/tests/browser_game.py` (새 파일)\n- `projects/자모맞히기/tests/README.md` (새 파일)\n- 실행 산출물: `projects/자모맞히기/tests/screenshots/game/{help-first,win-stats,share,lose,theme-dark,layout-320}.png`\n\n## 실제로 돌린 검증\n- `python3 -m py_compile projects/자모맞히기/tests/browser_game.py` → 통과\n- `node --test projects/자모맞히기/tests/*.mjs` → `ℹ pass 61`, `ℹ fail 0`\n- `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'` → `Ran 8 tests`, `OK`\n- `python3 projects/자모맞히기/tests/browser_game.py` → rc 0, `통과 121 / 전체 121` (두 번 연속 같은 수)\n\n## 다음 담당자가 알아야 할 것\n- 제품 결함은 찾지 못했습니다. 실패 검사 없음.\n- **시스템 어두운 모드(`prefers-color-scheme`)는 제품이 구현하지 않아** 그 검사는 뺐고 README 에 적었습니다(웹워들도 안 따름). 설정 단추로 켜는 어두운 테마·저장·새로고침 유지는 검사합니다.\n- 쌍자음 키 색은 계약상 `data-key` 가 보통 글자라 Shift 가 꺼진 상태에서 화면에 존재하지 않습니다. 그래서 키 색 대조는 보통 글자 26키만 봅니다.\n- `wait_settled` 는 마지막 `.flip` 뒤 140ms 만 기다립니다(`busy` 가 50ms 늦게 풀리는 것을 메우기 위함). 고정 sleep 으로 판정하지 않습니다.\n- 스크린숏은 브리프 50줄에 따라 `projects/자모맞히기/tests/screenshots/` 아래에 썼지만, `check` 가 찍은 소유 경로 목록에는 이 경로가 없었습니다. 필요하면 관리자가 정리·gitignore 여부를 정하십시오.\n- 자정 무렵 실행은 날짜 바꿈 처리 때문에 흔들릴 수 있습니다.\n\n통과 121 / 전체 121 · 실패 없음",
+     "session_state": "done",
+     "verify_rc": 0,
+     "verify_tail": "browser: 통과 121 / 전체 121 (최소 20)\n",
+     "fail_kind": null
+    }
+   ],
+   "infra_attempts": [
+    {
+     "run_id": "T-282-S3-a1-151142",
+     "started": "2026-11-13T15:11:42",
+     "ended": "2026-11-13T15:17:13",
+     "rc": 125,
+     "state": "done",
+     "report": "",
+     "session_state": "stalled",
+     "why": "침묵 240초 넘김",
+     "fail_kind": "infra",
+     "verify_rc": null,
+     "verify_tail": "기반 장애(침묵 240초 넘김) - 시도로 세지 않는다",
+     "provider": "opencode"
+    }
+   ]
+  },
+  {
+   "id": "T-283",
+   "slot": "S1",
+   "deps": [
+    "T-277",
+    "T-279",
+    "T-281",
+    "T-282"
+   ],
+   "project": "자모맞히기",
+   "title": "적대적 검수: 자모맞히기 1차 (규칙·판정·조합·자판·모드·저장·화면·낱말 목록·출처)",
+   "timeout_sec": 3600,
+   "max_attempts": 1,
+   "write": [
+    "rounds/R24/REVIEW-r24.md"
+   ],
+   "task": "# T-283 **적대적 검수** - 자모맞히기 1차\n\n쓸 파일은 **하나**: `rounds/R24/REVIEW-r24.md` (새 파일). 저장소의 다른 파일은 고치지 마십시오. 변이·실험은 `/tmp` 사본에서.\n\n## 무엇을 만들었나\n\n`projects/자모맞히기/` - 한글 낱말을 자모 여섯 칸으로 풀어 여섯 번 안에 맞히는 정적 웹 게임(요청 `Q-261113-bd56`: `.aimem/requests/Q-261113-bd56.json`). **`projects/웹워들/` 을 복사해 자모에 맞게 바꾼 것**입니다. 약속은 `.aimem/graph/inputs/r24/CONTRACT.md`, 규칙 정본은 `projects/자모맞히기/README.md` '규칙' 절. 바뀐 파일: `web/js/jamo.js`(새), `web/js/game.js`, `web/js/ui.js`, `web/index.html`, `web/css/style.css`, `web/js/storage.js`, `web/js/words.js`(생성물), `tools/build_words.py`, `data/*`, `tests/*`.\n\n## 방법\n\n1. 저장소를 `/tmp/r24-review/` 로 복사(`.aimem/tls/`·`.git`·`.aimem/runs` 제외). 끝나면 그 폴더를 `rm -rf`.\n2. 사본에서 `node --test projects/자모맞히기/tests/*.mjs`, `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'`, `python3 projects/자모맞히기/tests/browser_game.py` 를 돌려 수를 적음.\n3. 변이: `jamo.js` 의 겹받침·겹모음 표 한 줄 지우기, `composeUnits` 받침 넘김 끄기, `scoreGuess` 남은 개수 무시, KEYMAP 한 키 바꾸기, Shift 한 번 뒤 끄기 빼기, 연습 판이 통계에 기록되게, `#preview` 갱신 빼기, 320px 넘침(키 최소 너비 키우기) 등 **10개 이상** - 시험이 빨개지는지.\n4. 새 결함 찾기: 규칙과 도움말·README 가 일치하는가(겹받침 11·겹모음 7 표), 판정의 겹친 자모, 한/영 입력기 상태(`e.key === 'Process'`)에서도 실물 자판이 되는가, 저장값 손상, 날짜 경계, 연습/날마다 오가기·뒤집기 중 모드 바꿈, 접근성(aria-label·aria-live), 폰 폭·어두운 모드에서 대비, 낱말 목록의 질(**정답 후보에 어색한 말·비표준어·고유명사·비속어가 섞였는지 표본 50개를 직접 보고 비율을 적기**, 흔한 6칸 낱말이 ALLOWED 에서 빠져 추측이 거절되는 예), 외부 게임(꼬들)의 이름·문구·색·목록이 들어오지 않았는가, `app.json` 이 모니터 결과물 실행 규칙(`projects/웹워들/app.json` 과 같은 꼴)에 맞는가.\n\n## 보고서\n\n1. 요약(검사 수, 변이 잡힘 수) 2. 새 결함표 `| 번호 | 심각도 | 무엇이 | 어디 | 재현 | 고칠 방향 |` - 번호는 `N1`, `N2` … (없으면 \"없음\") 3. 변이표, 마지막 줄 `합계 <n>개: 잡힘 <a>, 생존 <b>` 4. 낱말 목록 표본 판정 5. `PROGRESS.md` 의 `## 목표` 15개 각각에 대해 `| 목표 | 닫아도 되나(예/아니오) | 근거 |` 6. 한 문단 총평.\n\n## 하지 말 것\n\n제품·시험 고치기, `git commit`/`push`, 저장소 파일 삭제, 의존성 설치, 운영 모니터 부르기.\n",
+   "verify": "python3 - > /tmp/r24-t283.txt 2>&1 <<'PY'\nimport pathlib\np = pathlib.Path('rounds/R24/REVIEW-r24.md')\nassert p.exists(), '보고서가 없다'\nt = p.read_text(encoding='utf-8')\nrows = [l for l in t.splitlines() if l.strip().startswith('|')]\nprint('chars', len(t), 'rows', len(rows))\nassert len(t) >= 2500, len(t)\nassert len(rows) >= 25, len(rows)\nassert '합계' in t\nPY\nr=$?; cat /tmp/r24-t283.txt; exit $r",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-283-S1-a1-152545",
+     "started": "2026-11-13T15:25:45",
+     "ended": "2026-11-13T15:52:01",
+     "rc": 0,
+     "state": "done",
+     "report": "All 23 mutation results were in before this watcher expired, so nothing is left to wait on. The status stands at DONE, and the report is in `rounds/R24/REVIEW-r24.md`.",
+     "session_state": "done",
+     "verify_rc": 0,
+     "verify_tail": "chars 10136 rows 69\n",
+     "fail_kind": null
+    }
+   ]
+  }
+ ],
+ "updated": "2026-11-13T15:52:03"
+}

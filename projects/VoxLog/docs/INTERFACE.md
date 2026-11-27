@@ -10,11 +10,12 @@ projects/VoxLog/
   voxlog/__init__.py       (빈 파일)                                - T-338
   voxlog/store.py          저장소                                   - T-338
   voxlog/tags.py           이름·태그 정규화와 모델 출력에서 태그 뽑기 - R49
+  voxlog/stt_options.py    받아쓰기 옵션 거르기·서버 필드·쓰인 값 읽기 - R51
   voxlog/stt.py            음성인식(백엔드 고르기 + 배경 작업자)     - T-339
   voxlog/ask.py            클로드 CLI 로 묻기(배경 작업자)           - T-340
   web/index.html web/style.css web/app.js web/api.js   화면         - T-341
   web/sw.js web/queue.js web/manifest.webmanifest web/icons/*       - T-343
-  tests/test_store.py tests/test_stt.py tests/test_ask.py tests/test_serve.py tests/test_tags.py
+  tests/test_store.py tests/test_stt.py tests/test_ask.py tests/test_serve.py tests/test_tags.py tests/test_stt_options.py
   tests/fake_stt.py tests/fake_llm.py   (가짜 명령 - 각 노드가 필요한 쪽이 씀, 아래 형식)
   tests/browser_voxlog.py  끝에서 끝 브라우저 검사                   - T-344
   data/                    실행 데이터(git 제외). 환경 변수 VOXLOG_DATA 로 바꿈
@@ -28,6 +29,8 @@ projects/VoxLog/
 - `audio/<id>.<ext>` 받은 녹음 원본 (ext: webm·ogg·m4a·mp3·wav)
 - `meta/<id>.json` 녹음 하나의 메타
 - `transcripts/<YYYY-MM-DD>/<id>.txt` 받아 적은 글 (날짜는 recorded_at 의 날짜) - **텍스트 파일로 쌓이는 것이 요청의 핵심**
+- `transcripts/<YYYY-MM-DD>/<id>.prev.txt` 다시 받아쓸 때 남긴 **밀려난 글 중 가장 긴 것 한 벌** (더 짧은 글은 남기지 않음 - 직전 글이 아닐 수 있음; 없으면 없음)
+- `stt_options.json` 앱 전체 받아쓰기 기본 옵션 (없거나 깨졌으면 옵션 없음). **settings.json 과 별개** - 키가 섞이지 않음
 - `answers/<aid>.json` 묻기 결과
 
 id 형식: 녹음 `r-YYYYMMDD-HHMMSS-xxxx`, 답 `a-YYYYMMDD-HHMMSS-xxxx` (xxxx 는 소문자 16진 4자리).
@@ -42,9 +45,13 @@ id 형식: 녹음 `r-YYYYMMDD-HHMMSS-xxxx`, 답 `a-YYYYMMDD-HHMMSS-xxxx` (xxxx �
  "label": 사람이 붙인 이름(str, 기본 ""), "tags": 보이는 태그 전부(list[str], 사람+AI, 최대 10, 기본 []),
  "tags_auto": tags 가운데 AI 가 단 것(list[str], 대소문자 무시 부분집합, 기본 []),
  "tags_human": 사람이 태그를 고친 적이 있음(bool, 기본 false),
- "autotag": null | "pending" | "done" | "failed" (자동 태그 진행 상태, 기본 null)}
+ "autotag": null | "pending" | "done" | "failed" (자동 태그 진행 상태, 기본 null),
+ "stt_options": dict|None (이 녹음만의 받아쓰기 옵션, 기본 None = 전체 기본값을 따름; 빈 dict {} 도 같다),
+ "stt_used": dict|None (마지막으로 받아쓸 때 실제 쓰인 옵션 + "at" ISO 시각, 기본 None),
+ "prev_stt_used": dict|None (이전 글을 남길 때 그 글을 받아쓴 옵션, 기본 None)}
 ```
-옛 meta 에 뒤 다섯 필드가 없으면 `Store.get`·`Store.list` 가 읽을 때 기본값으로 채운다.
+옛 meta 에 없는 필드(`label`·`tags`·`tags_auto`·`tags_human`·`autotag`·`stt_options`·`stt_used`·`prev_stt_used`)는
+`Store.get`·`Store.list` 가 읽을 때 기본값으로 채운다.
 
 ## 녹취 이름·태그 (F2)
 
@@ -66,6 +73,62 @@ meta 의 `label`/`tags`/`tags_auto`/`tags_human`/`autotag` 로 이름·태그·�
 서버 재시작 때 `autotag="pending"` 은 `failed` 로 바뀐다. 화면 요소 id·문구의 정본은
 `docs/DESIGN-next-features.md` F2 절이다.
 
+## 받아쓰기 옵션 (R51, 요청 Q-261127-8d1e)
+
+웹에서 고른 받아쓰기 옵션을 앱 전체 기본값(`data/stt_options.json`)과 녹음마다(`meta.stt_options`)에 둔다.
+값은 앱에서 먼저 거르고 받아쓰기 서버 작업 API 의 multipart 필드로 보낸다. 고르지 않은 키는 보내지 않는다.
+녹음 옵션이 비어 있지 않으면 그것만 쓰고 앱 전체 기본값과 합치지 않는다. 녹음 옵션이 비어 있으면(`None`·`{}`)
+앱 전체 기본값을 따르고, 그도 비어 있으면 예전과 같은 요청(`language`·`model` 만)을 내어 서버 기본값이 쓰인다.
+
+| 키 | 값 | 서버 필드 |
+| -- | -- | -- |
+| `preprocess` | `none`·`basic`·`level`·`dereverb`·`denoise` | `preprocess` |
+| `num_speakers` | 정수 1~20 (`bool` 은 안 됨) | `num_speakers` = `str(n)` |
+| `context` | 글. 앞뒤 공백을 자른 뒤 비면 없는 것, 4000자 넘으면 거절 | `context` |
+| `auto` | `true`/`false` | `auto` = `"1"`/`"0"` |
+| `review` | `true`/`false` | `review` = `"1"`/`"0"` |
+
+값이 `null` 인 키는 없는 것과 같다. 모르는 키·틀린 값은 `ValueError`(사람이 읽을 한국어 한 줄)이고,
+API 는 그것을 400 `{"error": …}` 로 그대로 돌려준다. 전처리 뜻(서버 쪽): `none` 손대지 않음 ·
+`basic` 고역 통과 등 기본 처리 · `level` basic + 작은 목소리 음량 맞춤(서버 기본) ·
+`dereverb` basic + 울림 제거 · `denoise` basic + 잡음 제거(받아쓰기용은 원본 30% 섞음).
+잡음이 많은 녹음은 `denoise` 가 나을 수 있지만 보장은 아니고, 깨끗한 녹음에서는 오히려 나빠질 수 있다.
+
+### voxlog/stt_options.py
+
+```python
+PREPROCESS = ("none", "basic", "level", "dereverb", "denoise")
+SPEAKERS_MIN, SPEAKERS_MAX = 1, 20
+CONTEXT_MAX = 4000
+def normalize(obj) -> dict       # None → {}. dict 아님·모르는 키·틀린 값 → ValueError.
+                                 # 고른 키만 담은 새 dict (null 값 키는 빠짐, context 는 strip 뒤 빈 값 빠짐)
+def form_fields(opts) -> dict    # normalize 결과 → 서버 multipart 필드 dict. {} → {}
+def used_from_result(result) -> dict
+    # 서버 결과에서 실제 쓰인 값. result 가 dict 가 아니면 {}
+    # {"preprocess": str|None(40자까지), "mode": str|None(40자까지),
+    #  "speakers": int|None (list 면 len, int 면 그대로),
+    #  "auto": bool (dict 면 True, 그 밖 값은 참·거짓으로 읽음),
+    #  "review": bool (값이 None/없음이 아니면 True)}
+```
+
+### voxlog/store.py 에 더한 것
+
+- `get(rid)` 는 메타에 `transcript`(글)와 `transcript_prev`(이전 글, 없으면 `""`)를 함께 돌려준다.
+- `set_transcript(rid, text, used=None)`: 있던 글이 비어 있지 않고 새 글과 다르면, 그 글을 `.prev.txt` 의 현재 이전 글과
+  견주어(공백 뺀 길이) 더 길거나 같을 때만 새 이전 글로 쓰고 `prev_stt_used` = 그 글을 받아쓴 `stt_used` 로 바꾼다.
+  더 짧으면 이전 글을 그대로 둔다 - 이전 글은 밀려난 글 중 가장 긴 것 한 벌이고, 직전 글이 아닐 수 있다.
+  그다음 새 글을 쓰고 `stt_used` = `dict(used, at=<지금 ISO>)`(used 가 None 이면 None). title·chars·status·error 는 지금과 같다.
+  이름·태그·사람이 고친 태그·묻기 답은 건드리지 않는다.
+- `set_stt_options(rid, opts)`: normalize 해서 메타 `stt_options` 에 쓴다. `opts is None` 이면 그 키를 지워
+  전체 기본값을 따르게 한다. 없는 녹음·틀린 옵션은 `ValueError`. 빈 dict `{}` 는 저장소에는 값으로 남지만
+  `effective_stt_options`·받아쓰기는 "옵션 없음"으로 보아 전체 기본값을 따른다. 화면·retry API 는 `{}` 를 null 로
+  바꿔 보내므로 메타 키는 지워진다.
+- `effective_stt_options(meta)`: meta 의 `stt_options` 가 비어 있지 않은 dict 면 그것만 쓰고, 아니면 `default_stt_options()`.
+  녹음 옵션이 있으면 앱 전체 기본값과 키 단위로 합치지 않는다.
+- `default_stt_options()`: `<자료 폴더>/stt_options.json` 을 읽어 normalize. 없거나 깨졌으면 `{}`.
+- `set_default_stt_options(opts)`: normalize 해서 `stt_options.json` 에 원자적으로 쓴다(`_atomic_write`).
+- `delete(rid)` 는 `<id>.prev.txt` 도 지운다. 목록·검색(`q`)·현황(`stats`)은 이전 글을 보지 않는다.
+
 ## voxlog/store.py
 
 ```python
@@ -84,7 +147,7 @@ class Store:
                            client_id=None, location=None) -> dict
         # incoming_path() 에 흘려 쓴 파일을 검사(mime·빈 파일·크기)하고 audio/ 로 옮김(복사 아님). 같은 인자·같은 오류(ValueError)·
         # 같은 duplicate 규칙. 실패·중복이면 그 파일은 지움. Store 를 만들 때 incoming/ 에 남은 찌꺼기는 치움
-    def get(self, rid) -> dict|None                      # 메타 + "transcript": 글(없으면 "")
+    def get(self, rid) -> dict|None                      # 메타 + "transcript": 글(없으면 "") + "transcript_prev": 이전 글(없으면 "")
     def list(self, q=None, date_from=None, date_to=None, status=None, limit=200, tag=None) -> list[dict]
         # recorded_at 최신순. q 는 받아 적은 글·title·label·tags 에서 대소문자 무시 부분 일치. date_* 는 "YYYY-MM-DD"(포함).
         # tag 는 tag_key(t) 가 같은 태그가 있는 것만, 다른 거르기와 AND.
@@ -93,8 +156,15 @@ class Store:
     def audio_path(self, rid) -> pathlib.Path|None
     def set_status(self, rid, status, error=None) -> None
     def set_job(self, rid, jid) -> None                  # 받아쓰기 서버에 맡긴 작업 id 를 메타 stt_job 에(None 이면 지움)
-    def set_transcript(self, rid, text) -> None          # txt 쓰기, status "done", title·chars 갱신, error None
+    def set_transcript(self, rid, text, used=None) -> None
+                                                        # 새 글이 있던 글과 다르면 그 글을 .prev.txt 로 남기고 prev_stt_used=있던 stt_used.
+                                                        # txt 쓰기, status "done", title·chars 갱신, error None,
+                                                        # stt_used = dict(used, at=ISO) (used None 이면 None).
                                                         #   label·tags·tags_auto·tags_human·autotag 는 건드리지 않음
+    def set_stt_options(self, rid, opts) -> None          # opts None 이면 메타 stt_options 키를 지움(전체 기본값), 아니면 normalize 해서 저장
+    def effective_stt_options(self, meta) -> dict         # meta.stt_options 가 dict 면 그것, 아니면 default_stt_options()
+    def default_stt_options(self) -> dict                 # <root>/stt_options.json 을 normalize. 없거나 깨졌으면 {}
+    def set_default_stt_options(self, opts) -> dict       # normalize 해서 stt_options.json 에 원자적으로 씀
     def set_label_tags(self, rid, patch) -> None
         # patch 는 서버가 정규화한 {"label": str} / {"tags": [str]} 중 온 키만. 잠금 안 read-modify-write.
         # "tags" 가 있으면 tags=patch["tags"], tags_auto=옛 tags_auto 중 새 tags 에 남은 것(새 표기), tags_human=True.
@@ -105,7 +175,7 @@ class Store:
     def set_autotag(self, rid, state) -> None             # state 는 None|"pending"|"done"|"failed" (아니면 ValueError)
     def autotag_pending_ids(self) -> list[str]            # meta 만 훑어 autotag=="pending" 인 id (재시작 때 failed 로)
     def pending_ids(self) -> list[str]                   # status 가 pending 또는 transcribing 인 것 (재시작 때 다시 넣기)
-    def delete(self, rid) -> bool                         # 오디오·메타·글 지움
+    def delete(self, rid) -> bool                         # 오디오·메타·글·이전 글(.prev.txt) 지움
     def stats(self) -> dict  # {"count","done","pending","failed","chars","by_date": {"YYYY-MM-DD": n}}
     def add_answer(self, kind, prompt, ids) -> dict      # {"id","kind","prompt","ids","created","status":"running","answer":None,"error":None}
     def set_answer(self, aid, status, answer=None, error=None) -> None   # status "done"|"failed"
@@ -113,7 +183,7 @@ class Store:
     def delete_answer(self, aid) -> bool|"running"   # 지웠으면 True, 없거나 잘못된 id 면 False, 아직 status "running" 이면 "running"(지우지 않음)
     def list_answers(self, limit=50) -> list[dict]       # 최신순. 항목마다 about = 첫 녹취의 {recorded_at, title} (지워졌으면 None)
 ```
-잘못된 id 는 get/audio_path/get_answer 가 None, delete_answer 가 False, set_*(set_status·set_job·set_transcript·set_answer·set_label_tags·set_auto_tags·set_autotag) 와 삭제 delete(녹음) 는 `ValueError`. 옛 meta 에 `label`·`tags`·`tags_auto`·`tags_human`·`autotag` 가 없으면 `get`·`list` 가 `""`/`[]`/`[]`/`false`/`null` 로 채운다.
+잘못된 id 는 get/audio_path/get_answer 가 None, delete_answer 가 False, set_*(set_status·set_job·set_transcript·set_stt_options·set_default_stt_options·set_answer·set_label_tags·set_auto_tags·set_autotag) 와 삭제 delete(녹음) 는 `ValueError`(set_stt_options·set_default_stt_options 는 틀린 옵션도 `ValueError`). 옛 meta 에 `label`·`tags`·`tags_auto`·`tags_human`·`autotag`·`stt_options`·`stt_used`·`prev_stt_used` 가 없으면 `get`·`list` 가 `""`/`[]`/`[]`/`false`/`null`/`null`/`null`/`null` 로 채운다.
 
 ## voxlog/stt.py
 
@@ -124,10 +194,13 @@ def backend_name(env=None) -> str  # VOXLOG_STT 값을 그대로 | "command" | "
     # VOXLOG_STT 가 있으면 그 값을 검사하지 않고 그대로 돌려줌("garbage" → "garbage"). 없으면 VOXLOG_STT_CMD 가 있으면 "command",
     # VOXLOG_STT_URL 이 있으면 "api", 아니면 "none"
 def to_audio(src: pathlib.Path, fmt: str) -> pathlib.Path   # ffmpeg 로 16kHz 모노 wav 임시 파일 - command 백엔드용 (ffmpeg 없으면 SttError)
-def transcribe(path: pathlib.Path, mime: str, env=None, opener=None, job=None) -> str
-    # command: VOXLOG_STT_CMD 를 shlex.split, "{wav}" 자리에 16k 모노 wav 경로, shell 없이 실행, stdout 이 글, 시간 상한 600초
+def transcribe(path: pathlib.Path, mime: str, env=None, opener=None, job=None,
+               options=None, used=None) -> str
+    # command: VOXLOG_STT_CMD 를 shlex.split, "{wav}" 자리에 16k 모노 wav 경로, shell 없이 실행, stdout 이 글, 시간 상한 600초.
+    #   command 백엔드는 options·used 를 무시한다.
     # api: 화자 구분 받아쓰기 서버의 작업 API. 받은 원본 그대로(다시 압축하지 않음)
-    #   POST VOXLOG_STT_URL (multipart: file, language=VOXLOG_STT_LANG(기본 "ko"), model=VOXLOG_STT_MODEL(있을 때)) → {"id"}
+    #   POST VOXLOG_STT_URL (multipart: file, language=VOXLOG_STT_LANG(기본 "ko"), model=VOXLOG_STT_MODEL(있을 때),
+    #   그리고 고른 옵션의 필드만 stt_options.form_fields(options or {})) → {"id"}
     #   작업 id 는 `[A-Za-z0-9._-]{1,128}` 이고 "."·".." 이 아니어야 함(UUID·job_1 꼴은 받고, `/`·`..` 로 경로를 벗어나는 것만 거절).
     #   꼴이 아니면 SttError("음성인식 서버 응답을 읽지 못했습니다")
     #   GET VOXLOG_STT_URL/<id> 를 POLL_SECONDS(10초)마다 → status done|failed|cancelled 까지 (상한 JOB_TIMEOUT 6시간,
@@ -135,17 +208,24 @@ def transcribe(path: pathlib.Path, mime: str, env=None, opener=None, job=None) -
     #   키는 VOXLOG_STT_API_KEY(Authorization: Bearer). result.segments([{speaker, text, …}])를 "화자 N: 글" 줄들로 적음
     #   (같은 화자가 이어지면 한 줄, 번호는 처음 나온 차례, 서버가 정하지 못한 "?" 는 "화자 ?"). segments 가 없으면 text 그대로
     #   job(get()·set(id)) 을 주면 맡긴 id 를 적어 두고, 적힌 id 가 있으면 다시 맡기지 않고 이어 기다림(서버에 없으면 새로 맡김)
+    #   맡기기가 400 이면 본문 {"error":{"message": …}} 의 message 를 읽어 SttError("음성인식 서버가 요청을 거절했습니다 - " + message[:160]).
+    #   읽지 못하면 지금처럼 SttError("음성인식 서버 400"). 다른 HTTP 오류의 판정은 그대로다(_call 이 HTTPError 본문을 객체로 돌려줌).
+    #   끝이 done 이면 used 가 dict 일 때 그 dict 에 stt_options.used_from_result(result) 를 update 한다(쓰인 옵션 기록용).
 class Transcriber:
-    def __init__(self, store, env=None, transcribe_fn=transcribe, on_done=None)
+    def __init__(self, store, env=None, transcribe_fn=transcribe, on_done=None, options_fn=None)
         # on_done(rid) 는 set_transcript 가 성공하고 글이 비지 않았을 때만 부름(no-stt·failed·빈 글에는 없음).
         # on_done 이 던진 예외는 삼켜 받아쓰기 결과·상태에 영향을 주지 않는다. serve 는 자동 태그용으로 넘긴다.
+        # options_fn(meta) 는 그 녹음에 쓸 옵션 dict 를 돌려준다(serve 는 store.effective_stt_options).
+        # 없거나 예외면 옵션 없이 받아쓴다.
     def start(self)            # 데몬 스레드 하나, store.pending_ids() 를 먼저 넣음
     def submit(self, rid)      # 큐에 넣음 (같은 id 중복 무시)
     def busy(self, rid) -> bool      # 그 id 가 큐에 있거나 지금 받아쓰는 중
     def resubmit(self, rid) -> bool  # busy 면 False(retry 는 409). 아니면 잠금 안에서 status "pending" 으로 바꾸고 큐에 넣고 True
     def stop(self, timeout=5)
     def idle(self) -> bool     # 큐가 비고 처리 중인 것이 없음 (검사용)
-    # 처리: set_status(rid,"transcribing") → transcribe → set_transcript / no-stt / failed
+    # 처리: set_status(rid,"transcribing") → options_fn(meta) 로 옵션 → transcribe(options=, used=새 dict)
+    #       → set_transcript(rid, text, used=used) / no-stt / failed
+    #       (transcribe_fn 이 진짜 transcribe 가 아니면 예전처럼 (path, mime, env) 로 부르고 used 는 None)
 ```
 
 ## voxlog/ask.py
@@ -201,17 +281,31 @@ API (JSON, 오류는 `{"error": "한국어 까닭"}` + 4xx/5xx). 토큰이 있�
 | 요청 | 답 |
 | ---- | -- |
 | `GET /api/health` | `{"ok":true,"auth":bool,"stt":backend_name,"llm":bool(명령 있음),"version":"0.1"}` (+ `"llm_error": str`, `VOXLOG_LLM_CMD` 가 비었거나 따옴표가 안 맞을 때) — 판정은 `ask.llm_status(env)` |
+| `GET /api/stt-options` | `{"options": <전체 기본값>, "choices": {"preprocess": [...], "speakers_max": 20, "context_max": 4000}, "stt": <backend_name>}` |
+| `PUT /api/stt-options` 본문 `{"options": {…}}` (32 KiB 까지) | 200 `{"options": …}` / 400(본문이 JSON 객체가 아님·`options` 없음·틀린 옵션) / 413(32 KiB 초과) |
 | `POST /api/recordings` 본문=오디오 그대로, 머리 `Content-Type`, `X-Recorded-At`, `X-Duration-Ms`, `X-Client-Id` | 201 메타(새 것) / 200 메타(duplicate) / 400 / 408(업로드 마감 넘김) / 413 / 500(저장 실패) / 503(동시 업로드 2개 넘음, `Retry-After: 5`) / 507(디스크 여유 부족) |
 | `GET /api/recordings?q=&from=&to=&status=&limit=&tag=` | `{"items":[…],"stats":{…}}` / 400(`from`·`to` 가 실제 날짜가 아님·`limit` 가 정수가 아님·`tag` 가 20자 초과) |
-| `GET /api/recordings/<id>` | 메타+transcript / 404 |
+| `GET /api/recordings/<id>` | 메타+transcript+transcript_prev(그리고 `stt_options`·`stt_used`·`prev_stt_used`) / 404 |
 | `PATCH /api/recordings/<id>` 본문 `{"label"?, "tags"?}` | 200 메타+transcript / 400(본문·타입·40자·20자·10개) / 404 / 413(6 KiB 초과) |
 | `POST /api/recordings/<id>/autotag` (본문 없음) | 202 `{"ok":true,"autotag":"pending"}` / 404 / 409(글이 없음) / 503(LLM 없음) |
 | `GET /api/recordings/<id>/audio` | 오디오 바이트(그 mime) |
-| `POST /api/recordings/<id>/retry` | 음성인식 다시 넣음 → 200 메타 / 404 / 409(이미 큐에 있거나 받아쓰는 중) |
+| `POST /api/recordings/<id>/retry` 본문 없음 또는 `{"options": {…}|null}` (32 KiB 까지) | 음성인식 다시 넣음 → 200 메타 / 400(본문·옵션) / 404 / 409(이미 큐에 있거나 받아쓰는 중; 옵션도 안 바뀜) / 413(32 KiB 초과) |
 | `DELETE /api/recordings/<id>` | `{"ok":true}` |
 | `DELETE /api/answers/<id>` | `{"ok":true}` · 없으면 404 · 아직 묻는 중이면 409 |
 | `POST /api/ask` `{"kind","prompt","ids":[…]}` | 202 답 메타 / 400(본문이 JSON 객체가 아님·`prompt` 나 `kind` 가 문자열이 아님·`ids` 가 1~200개 문자열이 아님·받아 적은 글이 없음·본문이 `Content-Length` 보다 덜 옴) |
 | `GET /api/answers` · `GET /api/answers/<aid>` | 목록 `{"items":[…]}` · 답 하나 |
+
+`GET/PUT /api/stt-options` 는 전체 기본값을 `data/stt_options.json` 에서 읽고 쓴다. `settings.json` 은 건드리지 않으므로
+API 키가 응답·자료 파일로 나가지 않는다. `GET` 은 토큰이 설정된 서버에서도 토큰을 요구한다(`/api/*` 공통 규칙).
+`PUT` 은 `STT_OPTIONS_JSON_MAX = 32 * 1024` 로 본문을 읽고, `options` 키가 있어야 하며, `stt_options.normalize` 의
+`ValueError` 글을 400 으로 그대로 돌려준다(저장하지 않음). 성공하면 저장된 정규화 옵션을 200 으로 돌려준다.
+
+`POST …/retry` 는 본문이 없으면 지금처럼 녹음의 `stt_options` 를 그대로 두고 다시 받아쓴다. 본문이 있으면 먼저 받아쓰는 중인지
+보고(409 면 옵션도 바꾸지 않음), `options` 가 온 경우에만 normalize 해서 `Store.set_stt_options` 로 저장한 뒤 다시 넣는다.
+`"options": null` 은 그 녹음의 옵션 키를 지워 전체 기본값을 따르게 한다; 화면이 항상 보내는 `"options": {}` 도 같은 뜻이다
+(서버가 null 로 바꿔 저장하므로 메타 키가 지워진다). `options` 키가 없으면 옵션을 바꾸지 않는다. 녹음 옵션이 남아 있으면
+그 옵션만 쓰고 앱 전체 기본값과 키 단위로 합치지 않는다. 틀린 옵션이면 400 이고 상태·옵션 모두 그대로다. 응답은
+`Store.get` 꼴의 메타(글·이전 글 포함)다.
 
 `GET /api/recordings`·`GET /api/recordings/<id>` 의 항목에는 `label`·`tags`·`tags_auto`·`tags_human`·`autotag` 가
 붙고(`q` 가 있으면 `match` 도), `tag` 는 `q`·날짜·`status` 와 AND 로 거른다. `PATCH` 는 `PATCH_JSON_MAX = 6 * 1024` 로
@@ -336,6 +430,32 @@ Error(서버의 error 글)), `VoxApi.audioUrl(id) -> Promise<blobURL>`.
 `.rec-item[data-id]`, 상태 뱃지 `.status`, 상세 `#detail` 의 글 `#transcript`, 묻기 `#ask-kind`·`#ask-prompt`·`#ask-go`,
 답 `#answer`, 설정 `#settings`(토큰·`#auto-record`; 서버 주소 칸은 없음). 끝에서 끝 검사(T-344)가 이 선택자를 씁니다.
 
+**받아쓰기 옵션 화면(R51)** - 두 묶음은 같은 입력 모양(`buildSttFields`·`fillSttFields`·`readSttFields`)으로 만든다:
+전처리 select(빈 칸 이름은 설정 묶음 `서버 기본(level)`, 상세 묶음 `기본(앱 설정 따름)` + 다섯 값과 짧은 뜻),
+화자 수 number(빈칸 = 자동, 1~20), 문맥 글 textarea(maxlength 4000, 기본 비움, 밑에 "문맥 글은 조용한 구간에
+새어 나오거나 낱말이 끌려갈 수 있어 기본은 비워 둡니다."), 자동 추정·LLM 검토 select(빈 칸 이름은 설정 묶음
+`서버 기본`, 상세 묶음 `기본(앱 설정 따름)`; `켬`·`끔`). 빈 칸(`''`)은 그 키를 빼고 보낸다. 상세 묶음 밑에
+"이 녹음에 옵션을 하나라도 고르면 앱 설정 대신 이 녹음 옵션만 씁니다(합치지 않음)." 를 적는다. 전처리 설명에
+잡음이 많은 녹음은 denoise 가 나을 수 있지만 보장은 아니고 깨끗한 녹음에서는 오히려 나빠질 수 있다고 적는다.
+- 설정 칸: `#stt-defaults` 안 `#stt-defaults-fields`·`#stt-defaults-save`·`#stt-defaults-state`·`#stt-defaults-note`.
+  열 때 `GET api/stt-options` 로 채우고 저장은 `PUT api/stt-options`(`{options: …}`). 격리 출처(`isolated()`)면 숨기고,
+  불러오기 실패면 입력·저장 단추를 숨기고 까닭 한 줄을 보인다. 저장 뒤 `state.sttDefaults` 를 갱신한다.
+- 상세: 기존 `#detail-retry`(옵션 그대로 다시)는 그대로 두고, 옆의 `#detail-retry-opts`(`옵션 바꿔 다시 받아쓰기`)가
+  `#detail-stt` 묶음을 연다. 녹음의 `stt_options` 가 비어 있지 않으면 그것으로, 없거나 비어 있으면 전체 기본값으로
+  채운다. 폴링·재렌더는 열어 둔 이 입력을 지우지 않는다. `#detail-stt-run` 이 `POST api/recordings/<id>/retry` 에
+  `{"options": …}` 를 보내고, 성공하면 묶음을 닫고 상세·목록을 다시 읽는다. 묶음 안 뒤처리 한 줄: "다시 받아쓰면
+  글이 새 글로 바뀝니다(바뀌기 전 글 중 가장 긴 것 한 벌이 남음). 이름·직접 고친 태그·묻기 답은 그대로이고,
+  AI 태그는 새 글로 다시 답니다." (그 한 벌은 직전 글이 아니라 밀려난 글 중 가장 긴 것일 수 있다.)
+- 상세 메타: `stt_used` 가 있으면 `#detail-stt-used` 에 "받아쓴 옵션: 전처리 denoise · 화자 1 · 자동 추정 켬 · 검토 끔"
+  꼴로 보인다. `transcript_prev` 가 있으면 `<details id="detail-prev">` 의 `#detail-prev-summary`(요약에 `prev_stt_used`
+  의 전처리)와 `#detail-prev-text` 로 이전 글을 펼쳐 본다.
+- 400 이면 서버가 준 message 를 토스트로 보인다(글은 `textContent` 로만 쓴다). 320px 폭에서 두 묶음이 겹치거나 넘치지 않는다.
+
 ## 고친 이력
 
+- R51: 받아쓰기 옵션(`preprocess`·`num_speakers`·`context`·`auto`·`review`)을 전체 기본값(`data/stt_options.json`)과
+  녹음마다(`meta.stt_options`)에 두고, `GET/PUT /api/stt-options` 와 `POST …/retry` 의 선택 본문으로 바꾼다.
+  새 모듈 `voxlog/stt_options.py`, `Store` 의 옵션·`stt_used`·이전 글(`.prev.txt`), `stt.transcribe(options=, used=)`,
+  화면 `#stt-defaults`·`#detail-retry-opts`·`#detail-stt`·`#detail-stt-used`·`#detail-prev` 를 더했다.
+  아무것도 고르지 않은 녹음은 예전과 같은 요청(`language`·`model` 만)을 낸다.
 - R50: R49-N7·R49-N8 — `TAG_TEXT_MAX`가 긴 녹취의 앞 20000자만 본다는 단서와, 서버 casefold·화면 toLowerCase의 드문 글자 차이를 기록했다.

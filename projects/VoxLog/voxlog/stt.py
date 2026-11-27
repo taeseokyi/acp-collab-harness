@@ -18,6 +18,8 @@ import time
 import urllib.error
 import urllib.request
 
+from . import stt_options
+
 
 # "api" 백엔드: 화자 구분 받아쓰기 서버의 작업 API (맡기기 → 조회 → 결과).
 #   POST VOXLOG_STT_URL (multipart `file`·`language`·`model`) → 202 {"id"}
@@ -186,11 +188,21 @@ def _speaker_lines(segments, names):
 
 
 def _call(opener, req, timeout):
-    """한 번 부르고 JSON 을 돌려준다. (상태 코드, 객체) - 코드는 성공이면 200, HTTP 오류면 그 코드, 연결 실패면 0."""
+    """한 번 부르고 JSON 을 돌려준다. (상태 코드, 객체) - 코드는 성공이면 200, HTTP 오류면 그 코드, 연결 실패면 0.
+
+    HTTP 오류일 때도 본문을 읽어 JSON 객체면 함께 돌려준다. 코드는 그대로라 다른 호출의 판정은 바뀌지 않는다."""
     try:
         raw = opener(req, timeout)
     except urllib.error.HTTPError as exc:
-        return exc.code, None
+        try:
+            raw = exc.read()
+        except Exception:  # noqa: BLE001 - 본문을 읽지 못하면 객체 없이 코드만 돌려준다
+            raw = None
+        try:
+            obj = json.loads(_decode(raw))
+        except ValueError:
+            obj = None
+        return exc.code, obj if isinstance(obj, dict) else None
     except (urllib.error.URLError, OSError):
         return 0, None
     try:
@@ -210,7 +222,20 @@ def _http_reason(code):
     return "음성인식 서버 %d" % code
 
 
-def _transcribe_api(path, mime, env, opener, job=None) -> str:
+def _reject_message(obj):
+    """400 본문 {"error":{"message": …}} 에서 사람이 읽을 message 를 꺼낸다. 없으면 None."""
+    if not isinstance(obj, dict):
+        return None
+    err = obj.get("error")
+    if not isinstance(err, dict):
+        return None
+    message = err.get("message")
+    if not isinstance(message, str) or not message.strip():
+        return None
+    return " ".join(message.split())
+
+
+def _transcribe_api(path, mime, env, opener, job=None, options=None, used=None) -> str:
     """작업으로 맡기고 끝날 때까지 조회한다. `job` 은 맡긴 작업 id 를 적어 두는 곳(get()·set(id)) -
     있으면 앱 서버가 다시 떠도 같은 작업을 이어서 기다린다."""
     url = (env.get("VOXLOG_STT_URL") or "").rstrip("/")
@@ -230,11 +255,16 @@ def _transcribe_api(path, mime, env, opener, job=None) -> str:
         fields = {"language": env.get("VOXLOG_STT_LANG") or DEFAULT_LANG}
         if env.get("VOXLOG_STT_MODEL"):
             fields["model"] = env["VOXLOG_STT_MODEL"]
+        fields.update(stt_options.form_fields(options or {}))
         ext = path.suffix.lower().lstrip(".")
         body, ctype = _multipart(fields, "audio." + ext, path.read_bytes(), _UPLOAD_TYPES[ext])
         req = urllib.request.Request(url, data=body, headers=dict(headers, **{"Content-Type": ctype}), method="POST")
         code, obj = _call(opener, req, SUBMIT_TIMEOUT)
         if code != 200:
+            if code == 400:
+                message = _reject_message(obj)
+                if message is not None:
+                    raise SttError("음성인식 서버가 요청을 거절했습니다 - " + message[:160])
             raise SttError(_http_reason(code))
         jid = obj.get("id") if obj else None
         if not _job_id_ok(jid):
@@ -280,6 +310,8 @@ def _transcribe_api(path, mime, env, opener, job=None) -> str:
         reason = (" - " + " ".join(str(reason).split())[:120]) if reason else ""
         raise SttError(("음성인식이 취소됐습니다" if status == "cancelled" else "음성인식 서버가 받아쓰지 못했습니다") + reason)
     result = st.get("result")
+    if isinstance(used, dict):
+        used.update(stt_options.used_from_result(result))
     if not isinstance(result, dict) or not isinstance(result.get("text"), str):
         raise SttError("음성인식 서버 응답을 읽지 못했습니다")
     lines = _speaker_lines(result.get("segments"), {})
@@ -294,14 +326,16 @@ def _default_opener(req, timeout):
     return urllib.request.urlopen(req, timeout=timeout).read()
 
 
-def transcribe(path: pathlib.Path, mime: str, env=None, opener=None, job=None) -> str:
+def transcribe(path: pathlib.Path, mime: str, env=None, opener=None, job=None,
+               options=None, used=None) -> str:
+    """받아쓴다. options/used 는 api 백엔드만 쓴다(command 는 무시)."""
     if env is None:
         env = os.environ
     name = backend_name(env)
     if name == "command":
         return _transcribe_command(path, env)
     if name == "api":
-        return _transcribe_api(path, mime, env, opener, job)
+        return _transcribe_api(path, mime, env, opener, job, options=options, used=used)
     raise SttUnavailable(NO_BACKEND_MESSAGE)
 
 
@@ -331,11 +365,12 @@ class _JobRef:
 class Transcriber:
     """데몬 스레드 하나로 큐를 차례로 처리한다."""
 
-    def __init__(self, store, env=None, transcribe_fn=transcribe, on_done=None):
+    def __init__(self, store, env=None, transcribe_fn=transcribe, on_done=None, options_fn=None):
         self.store = store
         self.env = env
         self.transcribe_fn = transcribe_fn
         self.on_done = on_done
+        self.options_fn = options_fn
         self._queue = queue.Queue()
         self._seen = set()
         self._active = set()
@@ -418,9 +453,17 @@ class Transcriber:
         env = self.env if self.env is not None else os.environ
         mime = meta.get("mime", "")
         try:
+            opts = {}
+            if self.options_fn is not None:
+                try:
+                    opts = self.options_fn(meta) or {}
+                except Exception:  # noqa: BLE001 - 옵션을 읽지 못하면 옵션 없이 받아쓴다
+                    opts = {}
             if self.transcribe_fn is transcribe:
-                text = transcribe(path, mime, env, job=_JobRef(self.store, rid))
+                used = {}
+                text = transcribe(path, mime, env, job=_JobRef(self.store, rid), options=opts, used=used)
             else:
+                used = None
                 text = self.transcribe_fn(path, mime, env)
         except SttUnavailable as exc:
             self.store.set_status(rid, "no-stt", _short(exc))
@@ -429,7 +472,7 @@ class Transcriber:
         except Exception as exc:
             self.store.set_status(rid, "failed", _short(exc))
         else:
-            self.store.set_transcript(rid, text)
+            self.store.set_transcript(rid, text, used=used)
             if (text or "").strip() and self.on_done is not None:
                 try:
                     self.on_done(rid)

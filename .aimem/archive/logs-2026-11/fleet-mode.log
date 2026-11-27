@@ -40,3 +40,27 @@
 2026-11-12T06:28:42 클로드 코드(태석님 위임) ready -> running (실행) 라운드 R15 실행 (manager-round-standard.md)
 2026-11-12T08:04:17 이어 달리기 running -> ready (준비) 준비 점검 통과
 2026-11-12T08:04:20 이어 달리기 ready -> running (실행) 라운드 R16 실행 (manager-round-standard.md)
+2026-11-12T11:47:39 클로드 코드(태석님 위임) running -> ready (준비) 준비 점검 통과
+2026-11-12T11:47:42 클로드 코드(태석님 위임) ready -> running (실행) 라운드 R17 실행 (manager-round-standard.md)
+2026-11-12T14:17:49 이어 달리기 running -> ready (준비) 준비 점검 통과
+2026-11-12T14:17:53 이어 달리기 ready -> running (실행) 라운드 R18 실행 (manager-round-standard.md)
+2026-11-12T15:29:52 클로드 코드(태석님 지시: 끊긴 R18 이어 가기) running -> ready (준비) 준비 점검 통과
+2026-11-12T15:30:30 클로드 코드(태석님 지시: 끊긴 R18 이어 가기) ready -> running (실행) 라운드 R19 실행 (manager-round-standard.md)
+2026-11-12T17:35:26 이어 달리기 running -> ready (준비) 준비 점검 통과
+2026-11-12T17:35:29 이어 달리기 ready -> running (실행) 라운드 R20 실행 (manager-round-standard.md)
+2026-11-12T20:13:52 클로드 코드(태석님 지시: 함대 모든 작업 멈춤) running -> stopped (완전 중지) 작업자·그래프 즉시 종료
+2026-11-12T23:03:20 클로드 코드(R21 검증) stopped -> ready (준비) 준비 점검 통과
+2026-11-12T23:03:39 클로드 코드(R21 검증, 태석님 지시) ready -> running (실행) 라운드 R21 실행 (manager-round-standard.md, 관리자 M-R21-230339)
+2026-11-12T23:38:44 클로드 코드(R22 검증, 태석님 지시) running -> ready (준비) 준비 점검 통과
+2026-11-12T23:38:44 클로드 코드(R22 검증, 태석님 지시) ready -> running (실행) 라운드 R22 실행 (manager-round-standard.md, 관리자 M-R22-233844)
+2026-11-13T14:24:05 클로드 코드(태석님 지시) running -> ready (준비) 준비 점검 통과
+2026-11-13T14:24:13 클로드 코드(태석님 지시: 자모맞히기 완전 자율 종주) ready -> running (실행) 라운드 R23 실행 (manager-round-standard.md, 관리자 M-R23-142413)
+2026-11-13T14:33:21 클로드 코드(태석님 요청 덧붙임 반영을 위해 R23 재시작) running -> stopped (완전 중지) 관리자·작업자·그래프 즉시 종료
+2026-11-13T14:40:53 클로드 코드(태석님 지시) stopped -> ready (준비) 준비 점검 통과
+2026-11-13T14:40:53 클로드 코드(태석님 지시: 자모맞히기 완전 자율 종주, 웹워들 방식) ready -> running (실행) 라운드 R24 실행 (manager-round-standard.md, 관리자 M-R24-144053)
+2026-11-13T18:33:55 이어 달리기 running -> ready (준비) 준비 점검 통과
+2026-11-13T18:33:55 이어 달리기 ready -> running (실행) 라운드 R25 실행 (manager-round-standard.md, 관리자 M-R25-183355)
+2026-11-13T19:29:07 클로드 코드(R25 API 오류 뒤 재개) running -> ready (준비) 준비 점검 통과
+2026-11-13T19:29:07 클로드 코드(R25 API 오류 뒤 재개: 자모맞히기 완전 자율 종주) ready -> running (실행) 라운드 R26 실행 (manager-round-standard.md, 관리자 M-R26-192907)
+2026-11-13T19:54:33 클로드 코드(태석님 지시: 옵션 먼저 마무리) running -> paused (일시 중지) 새 작업자 투입 보류, 돌고 있는 작업자는 끝까지
+2026-11-13T20:06:56 클로드 코드(태석님 지시: 정밀 점검이 끝날 때까지 멈춤) paused -> stopped (완전 중지) 관리자·작업자·그래프 즉시 종료

@@ -817,10 +817,10 @@ class ClosedRequestContractTests(unittest.TestCase):
         self.assertEqual(out["progress_pct"], 100.0)
         self.assertIsNone(out["eta_sec"])
         self.assertIn("DONE", out["eta_basis"])
-        # 열린 요청은 예전 그대로 (REVIEW 0.8 + DONE 1.0 = 90%, ETA 있음)
+        # 열린 요청의 진행율은 그대로 (REVIEW 0.8 + DONE 1.0 = 90%). REVIEW 는 작업자 시간을 더 잡지 않는다
         out = self._estimate("IN-PROGRESS", subs)
         self.assertEqual(out["progress_pct"], 90.0)
-        self.assertEqual(out["eta_sec"], 100)
+        self.assertIsNone(out["eta_sec"])
 
     def test_rejected_request_has_no_eta(self):
         out = self._estimate("REJECTED", [{"id": "T-1", "status": "TODO", "slot": "S1"}])
@@ -833,6 +833,73 @@ class ClosedRequestContractTests(unittest.TestCase):
         out = reader._estimate({"status": "NEW", "subtasks": []}, {}, {}, eta)
         self.assertIsNone(out["eta_sec"])
         self.assertIn("분담 전", out["eta_basis"])
+
+    def test_empty_subtasks_filled_from_db_tasks(self):
+        # 요청 파일에 분담이 비어 있으면 운영 DB 태스크(request_id)가 분담이다 - 그래프가 도는데 '분담 전' 이라 하지 않는다
+        import json, pathlib, tempfile
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            (root / ".aimem" / "requests").mkdir(parents=True)
+            for rid, subs in (("Q-1", []), ("Q-2", []), ("Q-3", [{"id": "T-9", "status": "DONE", "slot": "S1"}])):
+                (root / ".aimem" / "requests" / (rid + ".json")).write_text(
+                    json.dumps(base_request(rid, subs)), encoding="utf-8")
+            tasks = [{"id": "T-1", "request_id": "Q-1", "title": "가", "slot": "S2", "status": "DONE"},
+                     {"id": "T-2", "request_id": "Q-1", "title": "나", "slot": "S3", "status": "IN-PROGRESS"},
+                     {"id": "T-3", "request_id": "Q-3", "title": "다", "slot": "S2", "status": "TODO"}]
+            runs = [{"id": "T-2-S3-a1", "task": "T-2", "started": "2026-11-27T10:00:00", "state": "failed", "elapsed_sec": 5},
+                    {"id": "T-2-S3-a2", "task": "T-2", "started": "2026-11-27T10:05:00", "state": "running", "elapsed_sec": 5}]
+            slots = [{"slot": "S2", "harness": "codex"}, {"slot": "S3", "harness": "opencode"}]
+            eta = {"by_harness": {}, "overall": {"median_sec": 100, "samples": 3}}
+            by = {r["id"]: r for r in reader._collect_requests(root, runs, slots, eta, [], tasks)}
+            none = {r["id"]: r for r in reader._collect_requests(root, runs, slots, eta, [])}
+        self.assertEqual([s["id"] for s in by["Q-1"]["subtasks"]], ["T-1", "T-2"])
+        self.assertEqual(by["Q-1"]["subtasks"][1], {"id": "T-2", "title": "나", "slot": "S3", "harness": "opencode",
+                                                   "status": "IN-PROGRESS", "run_id": "T-2-S3-a2"})
+        self.assertEqual(by["Q-1"]["progress_pct"], 75.0)
+        self.assertNotIn("분담 전", by["Q-1"]["eta_basis"])
+        self.assertEqual(by["Q-2"]["subtasks"], [])                          # 태스크가 없으면 그대로 분담 전
+        self.assertIn("분담 전", by["Q-2"]["eta_basis"])
+        self.assertEqual([s["id"] for s in by["Q-3"]["subtasks"]], ["T-9"])   # 파일에 적힌 분담이 있으면 그것이 정본
+        self.assertEqual(none["Q-1"]["subtasks"], [])
+
+    def test_open_request_takes_eta_from_unfinished_graph(self):
+        from aimem_monitor import server
+        reqs = [{"id": "Q-1", "status": "PLANNED", "eta_sec": 500, "eta_basis": "병렬 가정"},
+                {"id": "Q-2", "status": "DONE", "eta_sec": None, "eta_basis": "끝"},
+                {"id": "Q-3", "status": "PLANNED", "eta_sec": 500, "eta_basis": "병렬 가정"}]
+        graphs = [{"id": "G-1", "request": "Q-1", "percent": 100.0, "eta_seconds": 0},
+                  {"id": "G-2", "request": "Q-1 [앱] 제목", "percent": 10.0, "eta_seconds": 4000},
+                  {"id": "G-3", "request": "Q-2", "percent": 10.0, "eta_seconds": 4000},
+                  {"id": "G-4", "request": "Q-30", "percent": 10.0, "eta_seconds": 4000}]
+        server._requests_eta_from_graphs(reqs, graphs)
+        self.assertEqual(reqs[0]["eta_sec"], 4000)
+        self.assertIn("G-2", reqs[0]["eta_basis"])
+        self.assertNotIn("G-1", reqs[0]["eta_basis"])
+        self.assertIsNone(reqs[1]["eta_sec"])           # 닫힌 요청은 그대로
+        self.assertEqual(reqs[2]["eta_sec"], 500)       # 번호가 앞머리만 같은 그래프는 남의 것
+        graphs.append({"id": "G-5", "request": "Q-1", "percent": 50.0, "eta_seconds": 900})
+        server._requests_eta_from_graphs(reqs, graphs)
+        self.assertEqual(reqs[0]["eta_sec"], 4000)      # 여럿이면 더하지 않고 가장 오래 남은 것
+        self.assertIn("G-5", reqs[0]["eta_basis"])
+
+    def test_running_session_does_not_say_ended_before_report(self):
+        import sys
+        sys.path.insert(0, str(pathlib.Path(reader.__file__).resolve().parent.parent))
+        from fleet_rt import base
+        no = base.NO_REPORT + "\n작업자가 답을 맺지 못하고 도구 호출 도중에 끝났다."
+        self.assertEqual(reader._live_report(no, True), "")
+        self.assertEqual(reader._live_report(no, False), no)          # 끝난 세션은 그대로 보인다
+        self.assertEqual(reader._live_report("상태: DONE", True), "상태: DONE")
+
+    def test_review_subtasks_do_not_count_as_remaining_worker_time(self):
+        eta = {"by_harness": {}, "overall": {"median_sec": 100, "samples": 3}}
+        req = {"status": "PLANNED", "subtasks": [{"id": "T-1", "status": "REVIEW", "slot": "S2"},
+                                                 {"id": "T-2", "status": "DONE", "slot": "S2"}]}
+        out = reader._estimate(req, {}, {}, eta)
+        self.assertIsNone(out["eta_sec"])
+        self.assertIn("관리자 확인 대기 1건", out["eta_basis"])
+        req["subtasks"].append({"id": "T-3", "status": "TODO", "slot": "S2"})
+        self.assertEqual(reader._estimate(req, {}, {}, eta)["eta_sec"], 100)   # 남은 것은 T-3 하나
 
     def test_eta_zero_when_all_subtasks_done(self):
         # 서브태스크가 있고 전부 DONE 이면 ETA 0 이다

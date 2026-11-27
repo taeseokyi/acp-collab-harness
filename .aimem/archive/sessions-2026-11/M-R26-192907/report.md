@@ -1,0 +1,1 @@
+Fleet mode went to `paused` (Taeseok, via Claude Code: "새 작업자 투입 보류, 돌고 있는 작업자는 끝까지"). I won't start anything new. Giving the two in-flight workers one bounded window to be collected, per that note.

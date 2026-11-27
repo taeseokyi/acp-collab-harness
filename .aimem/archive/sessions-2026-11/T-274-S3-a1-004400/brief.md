@@ -1,0 +1,33 @@
+SLOT=S3 T-274 browser_monitor_ui.py: 이번 라운드 값도 고정 자료로 + 잘린 제목 펼침 갈래 (R22-Q3·R22-Q4) (G-055)
+확인토큰: 5b8c1e
+AIMEM REV: 164
+너는 S3 슬롯이다. 작업 폴더는 /home/tsyi/work/ai-fleet 다.
+쓰기는 다음 경로에만 한다: tests/browser_monitor_ui.py
+금지: git commit / push / 삭제 / 의존성 설치. 보고는 응답 본문에 직접 쓴다.
+보고 첫 줄은 상태(DONE / PARTIAL / BLOCKED / NEEDS-LOCK / NEEDS-APPROVAL), 이어서 한 일·고친 파일·실제로 돌린 검증 명령과 출력·다음 담당자가 알아야 할 것.
+검증 명령은 승인 없이 실행되는 형태로 쓴다: `python3 ...`, `PYTHONPATH=tools python3 ...`, `pytest ...`, `ls/cat/grep/sed -n/wc/diff/git status/git diff/curl ...`. 셸 변수 대입이나 다른 접두사를 앞에 붙이면 승인 요구로 막힌다. py_compile 이 만드는 __pycache__ 는 쓰기로 치지 않는다.
+
+# T-274 `tests/browser_monitor_ui.py` 시험 구멍 둘 (R22-Q3·R22-Q4)
+
+쓸 파일은 **하나**입니다: `tests/browser_monitor_ui.py`. 제품(`tools/**`)은 **읽기만**. 바로 파일을 고치십시오. 근거는 `rounds/R22/REVIEW-r22.md` 의 Q3·Q4 행(45~46줄).
+
+## R22-Q3
+
+임시 저장소로 옮긴 뒤에도 '이번 라운드' 값은 `fleet.RUNS` 기반이라 **진짜 저장소 상태**를 읽습니다 - `temporary_aimem_root` 가 `fleet.RUNS` 를 갈아끼우지 않습니다. 검사는 '내용이 있다' 만 봐서 어느 값이든 통과합니다.
+→ `temporary_aimem_root` 에서 `fleet.RUNS` 도 `root/.aimem/runs` 로 바꾸고(끝나면 되돌리기), 고정 자료에 `rounds/R1/round.json` 하나(무엇을 써야 하는지는 `tools/fleet_ctl.py` 가 그 파일을 어떻게 읽는지 보고 맞추십시오)를 두고, 화면에 보이는 '이번 라운드' 값이 그 고정 자료에서 나온 값인지까지 단언하십시오.
+
+## R22-Q4
+
+'생략된 제목' 검사는 카드 배치(좁은 폭) 대체 갈래로만 통과합니다. 넓은 폭(표 배치)에서 **옆으로 잘린 제목**이 있는 고정 자료(아주 긴 제목의 태스크/그래프)를 두고, 잘린 칸을 찾아(`scrollWidth > clientWidth` 를 `page.evaluate` 로) 누르면 전체 제목이 **보이는지**(`is_visible()`, `bounding_box()` 가 화면 안) 따로 재십시오.
+
+## 화면 검사 규칙
+
+그려진 것을 물으십시오: `hidden`/`display` → `is_visible()`, 자리·겹침·잘림 → `bounding_box()`. 진짜 저장소를 읽지 말고 임시 저장소 고정 자료만 쓰십시오. 서버는 이 파일이 이미 쓰는 방식(임시 포트)으로 띄웁니다 - 운영 모니터(https)를 부르지 마십시오.
+
+## 제품 결함을 찾으면
+
+제품도 시험도 고치지 말고 첫 줄 `NEEDS-FIX: <무엇이 어디서>`.
+
+## 검증 (엔진이 돌립니다)
+
+`projects/`·`.aimem` 을 뺀 저장소 사본에서 `python3 tests/browser_monitor_ui.py` 의 마지막 줄이 `통과 N / 전체 N` 꼴로 전부 통과이고 N 이 28 이상. 끝내기 전에 당신도 한 번 돌려 보십시오.

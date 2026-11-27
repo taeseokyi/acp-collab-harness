@@ -1,0 +1,41 @@
+{
+ "id": "G-058",
+ "request": "Q-261113-bd56",
+ "created": "2026-11-13T16:24:49",
+ "rev": 170,
+ "round": 24,
+ "concurrency": 3,
+ "nodes": [
+  {
+   "id": "T-289",
+   "slot": "S3",
+   "deps": [],
+   "project": "자모맞히기",
+   "title": "ui.js: 끝난 연습 판을 모드 오가기에서 버리지 않음 (T-287 NEEDS-FIX, R24-N5 잔여)",
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "write": [
+    "projects/자모맞히기/web/js/ui.js"
+   ],
+   "task": "# T-289 끝난 연습 판을 모드 오가기에서 버리지 않기 (T-287 이 찾은 결함)\n\n쓸 파일은 **하나**: `projects/자모맞히기/web/js/ui.js`. 다른 파일은 읽기만. **바로 파일을 고치십시오.**\n\n## 결함\n\n연습에서 진(또는 이긴) 판 → `#mode-daily` → `#mode-practice` 로 돌아오면 **빈 새 연습 판**이 뜨고 정답 토스트도 없습니다. 원인: `selectMode` (551행 근처) 의 `if (!practiceGame || practiceGame.status !== 'playing') startPractice();`. 약속(`.aimem/graph/inputs/r24/CONTRACT.md` '화면' 절)은 \"모드를 바꾸면 그 모드의 판을 보여 줌 - 연습 판도 마찬가지\" 입니다. (관리자의 앞 브리프가 '끝났으면 새로' 라고 잘못 적었습니다 - 약속이 맞습니다.)\n\n## 고칠 것\n\n- 연습 판은 **없을 때만** 새로 만듭니다(`if (!practiceGame) startPractice();`). 끝난 연습 판은 그대로 보여 주고, 진 판이면 그 판의 정답 토스트를 다시 띄웁니다(이미 있는 `showAnswerToast()` 흐름). 새 연습 판은 `#btn-new` 로만.\n- 다른 동작은 바꾸지 마십시오.\n\n## 스스로 확인 (엔진의 검증도 이것)\n\n`python3 projects/자모맞히기/tests/browser_modes.py` 전부 통과(지금 60/62 - 실패 둘이 이 결함), `python3 projects/자모맞히기/tests/browser_game.py` 전부 통과, `python3 .aimem/graph/inputs/r24/v_modes.py` 전부 통과. 시험 파일·관리자 스크립트는 고치지 마십시오.\n\n## 하지 말 것\n\n다른 파일 쓰기, `git commit`/`push`, 파일 삭제, 의존성 설치, 운영 모니터 부르기.\n\n보고 첫 줄은 `DONE` / `PARTIAL` / `BLOCKED`, 그다음 세 검사의 마지막 줄.\n",
+   "verify": "python3 projects/자모맞히기/tests/browser_modes.py > /tmp/r24-t289a.txt 2>&1 && python3 projects/자모맞히기/tests/browser_game.py > /tmp/r24-t289b.txt 2>&1 && python3 .aimem/graph/inputs/r24/v_modes.py > /tmp/r24-t289c.txt 2>&1; r=$?; grep -hE 'FAIL|Traceback|통과' /tmp/r24-t289a.txt /tmp/r24-t289b.txt /tmp/r24-t289c.txt 2>/dev/null | tail -15; exit $r",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-289-S3-a1-162450",
+     "started": "2026-11-13T16:24:50",
+     "ended": "2026-11-13T16:26:38",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n- 고친 파일: `projects/자모맞히기/web/js/ui.js` — `selectMode`의 554행 조건을 `if (!practiceGame || practiceGame.status !== 'playing') startPractice();` → `if (!practiceGame) startPractice();`로 변경. 끝난 연습 판은 그대로 보이고, `game=practiceGame` 후 기존 `clearAnswerToast()`/`showAnswerToast()` 흐름이 진 판의 정답 토스트를 다시 띄움. 새 판은 `#btn-new`로만.\n- 검증 (실제 실행):\n  - `python3 projects/자모맞히기/tests/browser_modes.py` → `통과 62 / 전체 62` (직전 60/62)\n  - `python3 projects/자모맞히기/tests/browser_game.py` → `통과 121 / 전체 121`\n  - `python3 .aimem/graph/inputs/r24/v_modes.py` → `통과 8 / 전체 8`\n- 다음 담당자: 쓰기 범위(소유 경로) 내 이 파일 한 곳만 변경함. git commit/push 안 함. 시험 파일·관리자 스크립트 무수정.",
+     "session_state": "done",
+     "verify_rc": 0,
+     "verify_tail": "통과 62 / 전체 62\n통과 121 / 전체 121\n통과 8 / 전체 8\n",
+     "fail_kind": null
+    }
+   ]
+  }
+ ],
+ "followup": "T-287(R24 재검사)이 찾은 NEEDS-FIX: 끝난 연습 판이 모드 오가기에서 버려짐",
+ "updated": "2026-11-13T16:27:55"
+}

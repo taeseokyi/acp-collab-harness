@@ -1,5 +1,7 @@
+import io
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -28,6 +30,7 @@ class FakeStore:
         self.paths = dict(paths or {})
         self.statuses = []
         self.transcripts = {}
+        self.used = {}
         self._lock = threading.Lock()
 
     def pending_ids(self):
@@ -52,12 +55,13 @@ class FakeStore:
         with self._lock:
             self.statuses.append((rid, status, error))
 
-    def set_transcript(self, rid, text):
+    def set_transcript(self, rid, text, used=None):
         if rid not in self.metas:
             raise ValueError(rid)
         self.metas[rid]["status"] = "done"
         with self._lock:
             self.transcripts[rid] = text
+            self.used[rid] = used
             self.statuses.append((rid, "done", None))
 
     def status_of(self, rid):
@@ -76,9 +80,10 @@ class FakeStore:
 
 
 class FakeOpener:
-    def __init__(self, response=b"", fail_code=None):
+    def __init__(self, response=b"", fail_code=None, body=b""):
         self.response = response
         self.fail_code = fail_code
+        self.body = body
         self.calls = []
         self.last_req = None
 
@@ -87,7 +92,7 @@ class FakeOpener:
         self.last_req = req
         if self.fail_code is not None:
             raise urllib.error.HTTPError(
-                req.full_url, self.fail_code, "boom", {}, None
+                req.full_url, self.fail_code, "boom", {}, io.BytesIO(self.body)
             )
         return self.response
 
@@ -292,6 +297,16 @@ class CommandBackendTest(unittest.TestCase):
         self.assertTrue(text.startswith("가짜 받아쓰기 "))
         self.assertTrue(text.endswith("바이트"))
 
+    def test_command_ignores_options_and_used(self):
+        env = {"VOXLOG_STT_CMD": "%s %s {wav}" % (sys.executable, FAKE_STT)}
+        used = {}
+        text = stt.transcribe(
+            self.src, "audio/webm", env=env,
+            options={"preprocess": "denoise", "num_speakers": 2}, used=used,
+        )
+        self.assertTrue(text.startswith("가짜 받아쓰기 "))
+        self.assertEqual(used, {})
+
     def test_command_fail_raises_stt_error(self):
         env = {
             "VOXLOG_STT_CMD": "%s %s {wav}" % (sys.executable, FAKE_STT),
@@ -334,10 +349,10 @@ class ApiBackendTest(unittest.TestCase):
         {"speaker": "B", "start": 3.0, "end": 3.1, "text": "  "},
         {"start": 3.1, "end": 3.2, "text": "화자 없음"}]}
 
-    def run_api(self, server, env=None, job=None):
+    def run_api(self, server, env=None, job=None, options=None, used=None):
         with mock.patch.object(stt, "_sleep", lambda s: server.slept.append(s)):
             return stt.transcribe(self.src, "audio/webm", env=dict({"VOXLOG_STT_URL": self.URL}, **(env or {})),
-                                  opener=server, job=job)
+                                  opener=server, job=job, options=options, used=used)
 
     def test_api_submits_a_job_polls_and_deletes_it(self):
         server = FakeJobServer(self.URL, states=["queued", "running", "done"], result=self.DONE)
@@ -361,6 +376,77 @@ class ApiBackendTest(unittest.TestCase):
         self.assertEqual({a for a in server.auths}, {"Bearer test-key-abc"})   # 맡기기·조회·지우기 모두 키를 싣는다
         self.assertIn(b'name="language"\r\n\r\nen\r\n', server.posts[0].data)
         self.assertNotIn(b'name="model"', server.posts[0].data)
+
+    def test_api_without_options_sends_only_language_and_model(self):
+        server = FakeJobServer(self.URL, result={"text": "hi"})
+        self.run_api(server, {"VOXLOG_STT_MODEL": "my/model"})
+        names = re.findall(rb'; name="([^"]+)"', server.posts[0].data)
+        self.assertEqual(names, [b"language", b"model", b"file"])
+
+    def test_api_five_options_become_server_fields(self):
+        server = FakeJobServer(self.URL, result={"text": "hi"})
+        options = {
+            "preprocess": "denoise",
+            "num_speakers": 3,
+            "context": "지출 안내방송",
+            "auto": True,
+            "review": False,
+        }
+        self.run_api(server, {"VOXLOG_STT_MODEL": "my/model"}, options=options)
+        body = server.posts[0].data
+        names = re.findall(rb'; name="([^"]+)"', body)
+        self.assertEqual(
+            names,
+            [b"language", b"model", b"preprocess", b"num_speakers", b"context", b"auto", b"review", b"file"],
+        )
+        self.assertIn(b'name="preprocess"\r\n\r\ndenoise\r\n', body)
+        self.assertIn(b'name="num_speakers"\r\n\r\n3\r\n', body)
+        self.assertIn('name="context"\r\n\r\n지출 안내방송\r\n'.encode("utf-8"), body)
+        self.assertIn(b'name="auto"\r\n\r\n1\r\n', body)
+        self.assertIn(b'name="review"\r\n\r\n0\r\n', body)
+        self.assertIn(b'name="language"\r\n\r\nko\r\n', body)
+
+    def test_api_done_result_fills_used(self):
+        result = {
+            "text": "받아 적음",
+            "preprocess": "denoise",
+            "mode": "context",
+            "speakers": ["A", "B"],
+            "auto": {"ran": True},
+            "review": 0,
+        }
+        server = FakeJobServer(self.URL, result=result)
+        used = {}
+        self.run_api(server, options={"preprocess": "denoise"}, used=used)
+        self.assertEqual(used["preprocess"], "denoise")
+        self.assertEqual(used["mode"], "context")
+        self.assertEqual(used["speakers"], 2)
+        self.assertTrue(used["auto"])
+        self.assertTrue(used["review"])
+
+    def test_api_400_message_is_shown(self):
+        message = "preprocess must be one of none, basic, level, dereverb, denoise"
+        opener = FakeOpener(
+            fail_code=400,
+            body=json.dumps({"error": {"type": "invalid_request_error", "message": message}}).encode("utf-8"),
+        )
+        with self.assertRaises(stt.SttError) as cm:
+            stt.transcribe(
+                self.src, "audio/webm",
+                env={"VOXLOG_STT_URL": self.URL},
+                opener=opener,
+                options={"preprocess": "denoise"},
+            )
+        text = str(cm.exception)
+        self.assertIn("음성인식 서버가 요청을 거절했습니다 - ", text)
+        self.assertIn(message, text)
+        self.assertEqual(len(opener.calls), 1)
+
+    def test_api_400_with_broken_body_falls_back(self):
+        opener = FakeOpener(fail_code=400, body=b"not json")
+        with self.assertRaises(stt.SttError) as cm:
+            stt.transcribe(self.src, "audio/webm", env={"VOXLOG_STT_URL": self.URL}, opener=opener)
+        self.assertEqual(str(cm.exception), "음성인식 서버 400")
 
     def test_unknown_speaker_is_not_counted_as_a_person(self):
         result = {"text": "x", "segments": [
@@ -491,6 +577,16 @@ class TranscriberTest(unittest.TestCase):
             paths={rid: pathlib.Path("/tmp/does-not-matter.wav")},
         )
 
+    def _real_audio_store(self, rid):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        src = pathlib.Path(tmp.name) / "sine.webm"
+        src.write_bytes(b"not-really-audio")
+        return FakeStore(
+            metas={rid: {"id": rid, "status": "pending", "mime": "audio/webm"}},
+            paths={rid: src},
+        )
+
     def test_marks_done_on_success(self):
         rid = "r-20260101-000000-aaaa"
         store = self._store(rid)
@@ -507,6 +603,77 @@ class TranscriberTest(unittest.TestCase):
         finally:
             tr.stop()
         self.assertEqual(calls, [(pathlib.Path("/tmp/does-not-matter.wav"), "audio/webm")])
+        self.assertEqual(store.status_of(rid), "done")
+        self.assertEqual(store.transcripts.get(rid), "받아 적음")
+        self.assertIsNone(store.used.get(rid))
+
+    def test_options_fn_options_passed_and_used_saved(self):
+        rid = "r-20260101-000000-opts"
+        store = self._real_audio_store(rid)
+        url = "https://stt.example/v1/audio/diarize/jobs"
+        server = FakeJobServer(
+            url,
+            result={
+                "text": "받아 적음",
+                "preprocess": "denoise",
+                "mode": "context",
+                "speakers": 1,
+                "auto": None,
+                "review": None,
+            },
+        )
+        seen = []
+
+        def options_fn(meta):
+            seen.append(meta)
+            return {"preprocess": "denoise", "auto": True}
+
+        with mock.patch.object(stt, "_default_opener", server), \
+                mock.patch.object(stt, "_sleep", lambda s: None):
+            tr = stt.Transcriber(store, env={"VOXLOG_STT_URL": url}, options_fn=options_fn)
+            tr.start()
+            try:
+                self.assertTrue(wait_idle(tr))
+            finally:
+                tr.stop()
+
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0]["id"], rid)
+        body = server.posts[0].data
+        self.assertIn(b'name="preprocess"\r\n\r\ndenoise\r\n', body)
+        self.assertIn(b'name="auto"\r\n\r\n1\r\n', body)
+        self.assertEqual(store.status_of(rid), "done")
+        used = store.used[rid]
+        self.assertEqual(used["preprocess"], "denoise")
+        self.assertEqual(used["mode"], "context")
+        self.assertEqual(used["speakers"], 1)
+        self.assertFalse(used["auto"])
+        self.assertFalse(used["review"])
+
+    def test_options_fn_exception_sends_no_options(self):
+        rid = "r-20260101-000000-opte"
+        store = self._real_audio_store(rid)
+        url = "https://stt.example/v1/audio/diarize/jobs"
+        server = FakeJobServer(url, result={"text": "받아 적음"})
+        seen = []
+
+        def options_fn(meta):
+            seen.append(meta)
+            raise RuntimeError("옵션을 읽지 못함")
+
+        with mock.patch.object(stt, "_default_opener", server), \
+                mock.patch.object(stt, "_sleep", lambda s: None):
+            tr = stt.Transcriber(store, env={"VOXLOG_STT_URL": url}, options_fn=options_fn)
+            tr.start()
+            try:
+                self.assertTrue(wait_idle(tr))
+            finally:
+                tr.stop()
+
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0]["id"], rid)
+        names = re.findall(rb'; name="([^"]+)"', server.posts[0].data)
+        self.assertEqual(names, [b"language", b"file"])
         self.assertEqual(store.status_of(rid), "done")
         self.assertEqual(store.transcripts.get(rid), "받아 적음")
 

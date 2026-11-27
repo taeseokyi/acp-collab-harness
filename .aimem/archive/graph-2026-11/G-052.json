@@ -1,0 +1,166 @@
+{
+ "id": "G-052",
+ "request": "R20 후속: 적대적 검수 결함 수정(N1·N2·N3·N4·N5·N7·M3~M8·M11) + 재검수",
+ "created": "2026-11-12T19:30:08",
+ "rev": 162,
+ "round": 20,
+ "concurrency": 2,
+ "nodes": [
+  {
+   "id": "T-263",
+   "slot": "S2",
+   "deps": [],
+   "project": "",
+   "title": "fleet_graph.py: 한도 판정 회귀 N3 + 너무 넓은 걸림말 N4·N5 + run_id 검사 N7",
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "write": [
+    "tools/fleet_graph.py"
+   ],
+   "task": "# T-263 `run_limit_signal` 의 결함 넷 (적대적 검수 N3·N4·N5·N7)\n\n쓸 파일은 **하나**입니다: `tools/fleet_graph.py`. `tests/**` 와 다른 `tools/**` 는 읽기만 하고\n**절대 고치지 마십시오**(특히 `tools/fleet.py`). 계획을 세우지 말고 바로 고치십시오.\n\n고칠 곳은 `run_limit_signal` (`:440` 근처) 과 `_LIMIT_PATTERNS` (`:418` 근처) 뿐입니다.\n`step()` 은 **건드리지 마십시오.**\n\n## N3 (중간) - **회귀**: 구조 신호 `False` 가 글자 판정을 덮어씁니다\n\n`step()` 은 `sig is None` 일 때만 보고 글자를 봅니다. 그런데 지금 `run_limit_signal` 은\n`is_error: true` 인데 `api_error_status`·`api_error`·`terminal_reason` 이 **하나도 없으면**\n`False` 를 돌려줍니다. 그러면 글자 판정이 **아예 안 돌아** 진짜 한도가 보통 실패로 재시도됩니다.\nR20 **이전에는 글자로 잡히던** 경우입니다.\n\n실측(검수): `{\"is_error\": true, \"result\": \"You've hit your 5-hour limit · resets 11:20am\"}`\n(메타 harness claude) → `run_limit_signal` = `False` 인데 `report_limit_hit(result)` = `True`.\n\n**고칠 것:** 마지막 `return False` 를 **`return None`** 으로 바꾸십시오.\n`False` 는 **`is_error` 가 거짓일 때만** (`if not data.get(\"is_error\"): return False`) 돌려줍니다.\n즉 \"JSON 은 읽혔고 오류가 아니다\" 만 `False`, \"오류인데 표지가 없다\" 는 `None`(글자 판정으로).\n주석 한 줄로 까닭을 적고 docstring 도 그에 맞게 고치십시오.\n\n## N4 (중간) - `terminal_reason == \"api_error\"` 갈래의 `\"limit\"` 부분 일치가 너무 넓다\n\n지금:\n\n```python\nif report_limit_hit(value) or \"limit\" in value.lower():\n```\n\n`\"Prompt exceeds the context window limit\"` 처럼 **재시도로 풀리는** API 오류까지 사용 한도로\n보고 blocked 시킵니다.\n\n**고칠 것:** `or \"limit\" in value.lower()` 를 **지우고** `report_limit_hit(value)` 만 쓰십시오.\n\n## N5 (낮음) - 글자 판정에 넣은 일반 낱말 둘\n\n`_LIMIT_PATTERNS` 에서 **`\"limit reached\"` 와 `\"too many requests\"` 를 지우십시오.**\n실측: `report_limit_hit(\"NEEDS-FIX: verify step time limit reached, test failed\")` → `True`,\n`report_limit_hit(\"DONE - added handler for HTTP 429 Too Many Requests\")` → `True`. 둘 다 오인입니다.\n**`\"hit your weekly limit\"` 와 `\"hit your usage limit\"` 는 하네스가 실제로 찍는 문구이니 남기십시오.**\n그 밖의 기존 항목도 건드리지 마십시오.\n\n## N7 (낮음) - `run_id` 검사가 없어 `runs/` 밖을 읽습니다\n\n`run_limit_signal(\"../outside/evil\")` 이 `runs/` 바깥의 `.json`·`.out` 을 읽습니다.\n`tools/aimem_monitor/reader.py` 의 `RUN_ID_RE` 가 같은 문제를 이미 막고 있습니다 - **읽어서**\n같은 꼴의 정규식을 `run_limit_signal` **맨 앞**에 두십시오(모듈 상수로). 꼴이 아니면 **`None`**.\n\n```python\n_RUN_ID_RE = re.compile(r\"\\A[A-Za-z0-9._-]+\\Z\")   # reader.RUN_ID_RE 와 같은 뜻\n...\n    if not isinstance(run_id, str) or not _RUN_ID_RE.fullmatch(run_id):\n        return None\n```\n\n`reader.py` 의 진짜 꼴을 먼저 보고 그와 **같은 엄격함**으로 쓰십시오(점·슬래시로 폴더를 벗어날 수\n없어야 합니다). 이 검사는 `try` **바깥**에 두어도 되고 안에 두어도 됩니다.\n\n## 하지 말 것\n\n- `step()` 의 `rc != 0` 조건과 `sig is None` 갈래를 **바꾸지 마십시오**\n- 1 MiB 읽기 상한, `harness != \"claude\"` → `None`, `try/except Exception: return None` 은 그대로\n- `tools/fleet.py` 는 읽기만\n\n## 검증\n\n검증 명령이 봅니다: `tests.test_fleet_graph`·`tests.test_fleet_ctl`·`tests.test_fleet` 가 초록이고,\n임시 폴더의 가짜 실행 기록 여섯에 대해 `run_limit_signal` 이\n`True / None / False / None / None / None` 이며 `report_limit_hit` 의 오인 둘이 사라진 것.\n",
+   "verify": "python3 -m unittest tests.test_fleet_graph tests.test_fleet_ctl tests.test_fleet > /tmp/r20-t263.txt 2>&1 && python3 - >> /tmp/r20-t263.txt 2>&1 <<'PY'\nimport json, pathlib, sys, tempfile\nsys.path.insert(0, 'tools')\nimport fleet, fleet_graph\nd = pathlib.Path(tempfile.mkdtemp(prefix='r20-t263-'))\nfleet.RUNS = d\ndef put(name, harness, obj):\n    (d / (name + '.json')).write_text(json.dumps({'harness': harness}), encoding='utf-8')\n    (d / (name + '.out')).write_text(obj if isinstance(obj, str) else json.dumps(obj), encoding='utf-8')\nput('A', 'claude', {'is_error': True, 'api_error_status': 429})\nput('B', 'claude', {'is_error': True, 'result': \"You've hit your 5-hour limit\"})\nput('C', 'claude', {'is_error': False, 'result': 'DONE 사용 한도 카드를 만들었다'})\nput('D', 'claude', {'is_error': True, 'terminal_reason': 'api_error',\n                    'result': 'Prompt exceeds the context window limit'})\nput('E', 'codex', 'DONE 한도에 걸렸습니다')\nput('F', 'claude', '{not json')\ngot = [fleet_graph.run_limit_signal(x) for x in 'ABCDEF']\nprint('signals', got)\nassert got == [True, None, False, None, None, None], got\nassert fleet_graph.run_limit_signal('../outside/evil') is None, 'run_id 검사 없음'\nassert fleet_graph.report_limit_hit(\"NEEDS-FIX: verify step time limit reached, test failed\") is False\nassert fleet_graph.report_limit_hit('DONE - added handler for HTTP 429 Too Many Requests') is False\nassert fleet_graph.report_limit_hit(\"You've hit your weekly limit\") is True\nPY",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-263-S2-a1-193012",
+     "started": "2026-11-12T19:30:12",
+     "kill_outcome": "killed",
+     "ended": "2026-11-12T20:10:17",
+     "rc": 124,
+     "state": "timeout",
+     "timeout": true,
+     "report": "(최종 보고문 없음 - 작업자가 보고 전에 끝남. stderr 꼬리:)\n**고칠 것:** `or \"limit\" in value.lower()` 를 **지우고** `report_limit_hit(value)` 만 쓰십시오.\n## N5 (낮음) - 글자 판정에 넣은 일반 낱말 둘\n`_LIMIT_PATTERNS` 에서 **`\"limit reached\"` 와 `\"too many requests\"` 를 지우십시오.**\n실측: `report_limit_hit(\"NEEDS-FIX: verify step time limit reached, test failed\")` → `True`,\n`report_limit_hit(\"DONE - added handler for HTTP 429 Too Many Requests\")` → `True`. 둘 다 오인입니다.\n**`\"hit your weekly limit\"` 와 `\"hit your usage limit\"` 는 하네스가 실제로 찍는 문구이니 남기십시오.**\n그 밖의 기존 항목도 건드리지 마십시오.\n## N7 (낮음) - `run_id` 검사가 없어 `runs/` 밖을 읽습니다\n`run_limit_signal(\"../outside/evil\")` 이 `runs/` 바깥의 `.json`·`.out` 을 읽습니다.\n`tools/aimem_monitor/reader.py` 의 `RUN_ID_RE` 가 같은 문제를 이미 막고 있습니다 - **읽어서**\n같은 꼴의 정규식을 `run_limit_signal` **맨 앞**에 두십시오(모듈 상수로). 꼴이 아니면 **`None`**.\n```python\n_RUN_ID_RE = re.compile(r\"\\A[A-Za-z0-9._-]+\\Z\")   # reader.RUN_ID_RE 와 같은 뜻\n...\n    if not isinstance(run_id, str) or not _RUN_ID_RE.fullmatch(run_id):\n        return None\n```\n`reader.py` 의 진짜 꼴을 먼저 보고 그와 **같은 엄격함**으로 쓰십시오(점·슬래시로 폴더를 벗어날 수\n없어야 합니다). 이 검사는 `try` **바깥**에 두어도 되고 안에 두어도 됩니다.\n## 하지 말 것\n## 검증\n검증 명령이 봅니다: `tests.test_fleet_graph`·`tests.test_fleet_ctl`·`tests.test_fleet` 가 초록이고,\n임시 폴더의 가짜 실행 기록 여섯에 대해 `run_limit_signal` 이\n`True / None / False / None / None / None` 이며 `report_limit_hit` 의 오인 둘이 사라진 것.\nERROR: Reconnecting... 1/5"
+    },
+    {
+     "run_id": "T-263-S2-a2-234000",
+     "started": "2026-11-12T23:40:00",
+     "ended": "2026-11-12T23:40:50",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n`run_limit_signal` 의 결함 넷(N3·N4·N5·N7)을 `tools/fleet_graph.py` 에서 고쳤습니다. 다른 파일은 건드리지 않았고 `step()` 도 그대로입니다.\n\n**고친 것**\n- **N3:** `is_error` 가 참인데 표지가 없으면 `False` 대신 `None` 을 돌려줍니다. `False` 는 `is_error` 가 거짓일 때만 나옵니다. 까닭은 주석 한 줄과 docstring 에 적었습니다.\n- **N4:** `terminal_reason == \"api_error\"` 갈래에서 `or \"limit\" in value.lower()` 를 지우고 `report_limit_hit(value)` 만 씁니다.\n- **N5:** `_LIMIT_PATTERNS` 에서 `\"limit reached\"` 와 `\"too many requests\"` 만 지웠습니다. `\"hit your weekly limit\"`·`\"hit your usage limit\"` 와 나머지 항목은 그대로입니다.\n- **N7:** `run_limit_signal` 맨 앞에 run_id 검사를 두었습니다. 문자열이 아니거나 128자를 넘거나 `_RUN_ID_RE` 에 안 맞으면 `None` 입니다.\n\n**정규식을 브리프와 다르게 썼습니다.** 브리프의 `[A-Za-z0-9._-]+` 는 `..` 를 통과시킵니다. 그러면 `fleet._session_dir(\"..\")` 가 세션 루트 밖으로 나갈 수 있어서, 첫 글자를 영숫자로 요구하는 `\\A[A-Za-z0-9][A-Za-z0-9._-]*\\Z` 로 했습니다.\n\n실제 `reader.RUN_ID_RE`(`aimem_monitor/__init__.py:125`)는 이보다 더 엄격합니다. `T-053-S3-a3-181328`, `20261109-172618-S3`, `M-R21-193012` 꼴만 받습니다. 그 꼴을 그대로 쓰면 임의 이름의 검증용 가짜 기록이 전부 `None` 이 될 수 있어 쓰지 않았습니다. 같은 엄격함이 필요하면 알려 주십시오.\n\n**돌린 검증**\n- `python3 -m unittest tests.test_fleet_graph tests.test_fleet_ctl tests.test_fleet` 결과는 `Ran 109 tests ... OK` 입니다.\n- 임시 폴더의 가짜 기록 여섯(429 / 5시간 문구만 있음 / 오류 아님 / 컨텍스트 창 한도 / codex 하네스 / 깨진 JSON)에 `run_limit_signal` 을 돌린 결과는 `[True, None, False, None, None, None]` 입니다.\n- `run_limit_signal(\"../outside/evil\")`, `\"..\"`, `None` 은 모두 `None` 입니다.\n- `report_limit_hit` 의 오인 둘(`\"...time limit reached...\"`, `\"...429 Too Many Requests\"`)은 `False` 가 되었고, `\"You've hit your weekly limit\"` 는 `True` 로 남았습니다.\n- 검증용 스크립트 `/tmp/s2_check.py` 는 저장소 밖에 둡니다.\n\n**다음 담당자가 알 것**\n- 현재 코드에는 브리프에 없던 세션 분기가 있습니다(`fleet._session_dir` → `rt_harness...limit_signal(sd)`). 이 분기는 그대로 두었습니다. 거기서 오는 `False` 가 글자 판정을 가리는지는 `fleet_rt/harness.py` 에서 따로 봐야 하며, 이번 범위 밖이라 읽지 않았습니다.\n- 5시간 한도 문구만 있는 `is_error` 기록은 이제 `None` 이 되어 `step()` 이 글자 판정으로 넘깁니다.\n- 처음에 CLAUDE.md 예시의 `--rev 114` 를 그대로 써서 불일치가 났습니다. 지시문의 REV 164 로 다시 돌려 일치했고, 그 전에는 파일을 쓰지 않았습니다.\n- 커밋·푸시는 하지 않았습니다.",
+     "verify_rc": 0,
+     "verify_tail": ""
+    }
+   ],
+   "stopped_attempts": [
+    {
+     "run_id": "T-263-S2-a2-201017",
+     "started": "2026-11-12T20:10:17",
+     "ended": "2026-11-12T20:14:03",
+     "state": "stopped",
+     "kill_outcome": "foreign",
+     "stopped_by": "완전 중지"
+    }
+   ]
+  },
+  {
+   "id": "T-264",
+   "slot": "S3",
+   "deps": [
+    "T-263"
+   ],
+   "project": "",
+   "title": "test_fleet_graph.py: N3·N4·N5·N7 회귀 + 변이 구멍 여섯 메우기 (M3~M8)",
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "write": [
+    "tests/test_fleet_graph.py"
+   ],
+   "task": "# T-264 `tests/test_fleet_graph.py`: 한도 판정의 회귀 시험과 변이 구멍 (검수 M3~M8)\n\n쓸 파일은 **하나**입니다: `tests/test_fleet_graph.py` (지금 **59건**).\n**`tools/**` 와 다른 `tests/**` 는 읽기만 하고 절대 고치지 마십시오.** 바로 보태십시오.\n\n적대적 검수가 `run_limit_signal` 에 변이를 넣었는데 시험이 못 잡은 자리들입니다.\n**T-263 이 제품을 이미 고쳤습니다** - 당신은 그 수정이 다시 무너지지 않도록 시험을 겁니다.\n기존 59건은 지우지도 고치지도 마십시오(다만 아래 **M5·M6** 때문에 기존 시험의 **자료**가\n바뀌어야 하면 그 자료만 바꾸십시오).\n\n## 보탤 시험\n\n### N3 회귀 (가장 중요) - `is_error: true` + 구조 표지 없음 → **`None`**\n- `{\"is_error\": true, \"result\": \"You've hit your 5-hour limit · resets 11:20am\"}` (harness claude)\n  → `run_limit_signal` 이 **`None`** (예전엔 `False` 였습니다)\n- 같은 기록으로 `step()` 을 태워 노드가 **`blocked` + `limit` 참**이 되는지 (= 글자 판정이 살아 있다)\n- `{\"is_error\": false, ...}` → `False` 는 그대로\n\n### M3 - `is_error` 검사가 살아 있는가\n- `{\"is_error\": false, \"api_error_status\": 429, \"terminal_reason\": \"api_error\", \"result\": \"limit\"}`\n  → **`False`** (`is_error` 를 안 보면 `True` 가 됩니다)\n\n### M4 - `terminal_reason == \"api_error\"` 갈래\n- 이 갈래만 타는 기록(429 도 `api_error` 칸도 없고 `terminal_reason: \"api_error\"` +\n  `result` 에 한도 문구) → **`True`**\n- **반례(N4):** `{\"is_error\": true, \"terminal_reason\": \"api_error\",\n  \"result\": \"Prompt exceeds the context window limit\"}` → **`None`**\n  (`\"limit\"` 부분 일치가 사라졌으니 표지 없음 → `None`)\n\n### M5 - `step()` 단에서 N3 을 막기\n위 N3 기록으로 `rc != 0` 실행을 꾸며 `step()` 을 돌리고 노드가 `limit` 으로 `blocked` 되는지\n\n### M6 - `harness == \"claude\"` 검사가 살아 있는가\n지금 codex 시험의 `.out` 은 JSON 이 아니라서 검사를 지워도 통과합니다.\n**codex·opencode 시험의 `.out` 을 claude 꼴 JSON**\n(`{\"is_error\": true, \"api_error_status\": 429}`)으로 바꾸고 그래도 **`None`** 인지 보십시오.\n\n### M7 - 1 MiB 읽기 상한\n`.out` 을 **1 MiB + 넉넉히** 넘게 만들되 앞머리에 `{\"is_error\": true, \"api_error_status\": 429` 가\n오게 하고(뒤는 공백이나 더미로 채워 JSON 이 잘리게) → **`None`**\n\n### M8 - 로그의 출처 표시\n`step()` 이 구조 신호로 막았을 때 그래프 로그에 **`(구조 신호)`**,\n보고 글자로 막았을 때 **`(보고 글자)`** 가 들어 있는지 각각 `assertIn`\n\n### N5·N7 (`report_limit_hit` / `run_id`)\n- `report_limit_hit(\"NEEDS-FIX: verify step time limit reached, test failed\")` → **`False`**\n- `report_limit_hit(\"DONE - added handler for HTTP 429 Too Many Requests\")` → **`False`**\n- `report_limit_hit(\"You've hit your weekly limit\")` → **`True`**\n- `run_limit_signal(\"../outside/evil\")` → **`None`** (`runs/` 밖에 `evil.json`·`evil.out` 을\n  진짜로 두고도 `None` 이어야 합니다). `run_id` 가 `str` 이 아닐 때도 `None`\n\n## 규칙\n\n- **제품 코드(`tools/**`)를 고치지 마십시오.** 제품이 틀리면 보고 첫 줄을 `NEEDS-FIX: …` 로\n- `fleet.RUNS` 는 임시 폴더로 바꿔 쓰십시오(이 파일에 이미 쓰는 방식이 있습니다 - 그대로 따르십시오)\n- 실제 작업자를 띄우지 마십시오\n\n## 검증\n\n검증 명령이 봅니다: `python3 -m unittest tests.test_fleet_graph` 가 **rc 0** 이고\n시험 수가 **72건 이상**인 것.\n",
+   "verify": "python3 -m unittest tests.test_fleet_graph > /tmp/r20-t264.txt 2>&1 && python3 - >> /tmp/r20-t264.txt 2>&1 <<'PY'\nimport sys, unittest\nsys.path.insert(0, '.')\nn = unittest.defaultTestLoader.loadTestsFromName('tests.test_fleet_graph').countTestCases()\nprint('tests', n)\nassert n >= 72, n\nPY",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-264-S3-a1-234216",
+     "started": "2026-11-12T23:42:16",
+     "ended": "2026-11-12T23:43:07",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n**한 일**\n- `tests/test_fleet_graph.py` 에 시험 14건을 보태 59건에서 **73건**이 됐습니다. 다른 파일은 건드리지 않았습니다.\n- 제품 코드 수정 없이 모두 통과했습니다. `NEEDS-FIX` 대상은 없습니다.\n- N3, M3~M8, N4, N5, N7 은 각각 아래 시험이 맡습니다.\n\n| 항목 | 시험 |\n|---|---|\n| N3 | `is_error` 참 + 표지 없음 → `None`, `is_error` 거짓 → `False`, `step()` 이 글자 판정으로 `blocked` + `limit` |\n| M3 | `is_error: false` 에 429 · `api_error` 를 섞어도 `False` |\n| M4 | `terminal_reason: \"api_error\"` + 한도 문구만 있는 기록 → `True` |\n| N4 | `api_error` + \"context window limit\" → `None` |\n| M5 | `step()` 단 N3 시험이 겸함. N3 기록으로 rc 1 실행을 꾸며 `blocked`, `limit` 참, `verify_rc` -4 를 확인 |\n| M6 | codex·opencode 의 `.out` 을 claude 꼴 JSON 으로 바꿔도 `None` |\n| M7 | 1 MiB + 4 KiB 파일, 끝까지 읽으면 올바른 JSON(`True`), 1 MiB 에서 자르면 깨짐(`None`) |\n| M8 | 로그에 `(구조 신호)` / `(보고 글자)` 가 각각 들어 있고 서로 상대를 포함하지 않음 |\n| N5 | `report_limit_hit` 에서 \"time limit reached\"·\"HTTP 429\" 보고는 `False`, \"weekly limit\" 은 `True` |\n| N7 | `../outside/evil` 은 `runs/` 밖에 `evil.json`·`evil.out` 을 실제로 두고도 `None`. `run_id` 가 `str` 이 아닌 값(`None`, 123, list, bytes, dict)도 `None` |\n\n- M7 은 앞머리만 맞추지 않고 끝까지 읽으면 `True` 가 되도록 올바른 JSON 으로 만들었습니다. 그래서 상한이 없어지면 시험이 실패합니다.\n- 기존 `test_run_limit_signal_is_none_for_text_only_harnesses` 의 `.out` 자료만 `{\"is_error\": true, \"api_error_status\": 429}` 로 바꿨습니다(M6 지시).\n- `fleet.RUNS` 와 `GRAPHS` 는 기존 `setUp` 의 임시 폴더 패치를 그대로 썼고, 실제 작업자는 띄우지 않았습니다.\n\n**검증**\n- 첫 줄: `python3 tools/aimem_db.py check --slot S3 --token 5b8c1e --rev 164` → `일치: S3 ... REV 164`.\n- `python3 -m unittest tests.test_fleet_graph` → `Ran 73 tests in 0.604s`, `OK` (rc 0).\n- 변이를 직접 넣어 시험이 실패하는지는 돌려 보지 않았습니다. 검수가 알려 준 구멍을 시험 설계로 메웠을 뿐입니다.\n\n**다음 담당자에게**\n- 시험 안의 `_step_rc1` 은 `verify` 가 불리지 않았는지도 함께 단정합니다. `step()` 이 한도 갈래에서 `verify` 를 건너뛰는 동작이 바뀌면 여러 시험이 한꺼번에 깨집니다.\n- 이번 시험은 구 방식(`.aimem/runs/<id>.json`) 경로만 다룹니다. `fleet._session_dir` 가 새 세션 폴더를 돌려주는 경로는 이 시험 밖입니다.",
+     "verify_rc": 0,
+     "verify_tail": ""
+    }
+   ]
+  },
+  {
+   "id": "T-265",
+   "slot": "S3",
+   "deps": [],
+   "project": "",
+   "title": "browser_monitor_ui.py: 고정 자료가 아직 진짜 저장소를 읽는다 (검수 N1·N2·M11)",
+   "timeout_sec": 3000,
+   "max_attempts": 2,
+   "write": [
+    "tests/browser_monitor_ui.py"
+   ],
+   "task": "# T-265 `browser_monitor_ui.py`: **아직 남은** 저장소 의존 (검수 N1 높음 · N2 높음 · M11)\n\n쓸 파일은 **하나**입니다: `tests/browser_monitor_ui.py` (지금 **27건 전부 통과**).\n**다른 `tests/**` 와 `tools/**` 는 읽기만 하고 절대 고치지 마십시오.** 바로 고치십시오.\n\n지난 노드가 시나리오 넷을 임시 저장소로 옮겼지만 적대적 검수가 **두 군데가 여전히 진짜\n저장소를 읽는다**고 실측했습니다. 이 노드가 그것을 닫습니다.\n\n## N1 (높음) - `write_fixed_project` 가 진짜 `projects/웹워들` 을 복사합니다\n\n`:415` 근처:\n\n```python\nsrc = ROOT / \"projects\" / \"웹워들\"\nshutil.copytree(src, dst)\n```\n\n검수 실측: 사본의 `projects/` 를 비우면 `FileNotFoundError` 로 **검사 전체가 무너집니다**\n(`통과 3 / 전체 4`). 웹워들이 다른 라운드에 바뀌거나 사라지면 이 검사가 깨집니다.\n\n**고칠 것:** 시험이 **스스로 만드는 최소 프로젝트**로 바꾸십시오. 진짜 `projects/` 를\n읽지 마십시오.\n\n- `root/projects/<이름>/app.json` - 지금 웹워들의 `app.json` 을 **읽어 꼴만 본보기로 삼아**\n  같은 꼴을 시험 안에 **글자로** 쓰십시오 (복사하지 말고 손으로 쓴 최소값)\n- `root/projects/<이름>/web/index.html` - `#board` 안에 `.tile` **30개**를 가진 최소 HTML.\n  `scenario` 의 `\"안쪽 보드가 진짜로 그려졌다\"` 가 타일 30개를 셉니다. 자바스크립트 없이\n  HTML 에 타일 30칸을 그대로 써 넣으면 됩니다\n- `narrow_scenario`·`short_scenario` 는 미리보기 칸의 **높이**만 보므로 같은 자료로 됩니다\n- 프로젝트 **둘**을 만드십시오 - 하나는 **진행 중**, 하나는 **끝남**.\n  그래야 `'전체'` 칩이 **반드시** 나타납니다 (아래 M11)\n\n## N2 (높음) - `changed_ui_scenario` 가 아직 진짜 저장소로 돕니다\n\n`main()` 의 첫 `with monitor_server() as base:` 에 남아 있습니다. 검수 실측: 사본의\n`.aimem/aimem.db` 를 치우면 `'생략된 제목을 눌러 펼칠 수 있다'` 가 빨개집니다(26/27).\n`'이번 라운드'` 검사가 읽는 값도 진짜 DB 의 것입니다.\n\n**고칠 것:** `changed_ui_scenario` 도 `temporary_aimem_root(temp_root)` +\n`monitor_server(root=temp_root)` 블록으로 옮기십시오. **`main()` 에 `monitor_server()` 를\n`root` 없이 부르는 자리가 하나도 남으면 안 됩니다.**\n그 시나리오가 보는 값(`.meta-goal`·`'이번 라운드'`·긴 제목)이 고정 자료에서 나오도록\n`write_fixed_*` 에 필요한 것을 보태십시오 - **단언을 느슨하게 바꾸지 말고 자료를 맞추십시오.**\n\n## M11 (낮음) - `'전체'` 칩 누르기가 \"있으면 누르기\" 로 느슨해졌습니다\n\n`:83` 근처. 칩이 버그로 사라져도 조용히 통과합니다.\nN1 에서 **진행 중 프로젝트**를 넣었으니 칩은 반드시 있습니다 - **무조건 누르게** 되돌리고,\n칩이 없으면 그 검사가 **빨개지게** 하십시오.\n\n## 지켜야 할 것\n\n- **검사 27건이 전부 그대로 있어야 하고 전부 통과해야 합니다.** 지우거나 느슨하게 바꾸지 마십시오\n- 검사는 그려진 것을 묻습니다 - `is_visible()`·`getComputedStyle`·`bounding_box()`\n- 제품(`tools/**`)이 틀려 빨개지면 고치지 말고 보고 첫 줄을 `NEEDS-FIX: <무엇이 어디서>` 로\n\n## 검증\n\n검증 명령이 봅니다: (1) `main()` 소스에 `root` 없는 `monitor_server()` 호출이 **없고**\n`write_fixed_project` 가 `ROOT` 를 **읽지 않으며**, (2) `projects/` 와 `.aimem` 을 통째로\n치운 저장소 사본에서도 `python3 tests/browser_monitor_ui.py` 가 **통과 27 / 전체 27** 인 것.\n",
+   "verify": "rm -rf /tmp/r20-t265 && mkdir -p /tmp/r20-t265\nrsync -a --exclude .git --exclude '.aimem' --exclude 'projects' --exclude __pycache__ ./ /tmp/r20-t265/ > /dev/null 2>&1\nmkdir -p /tmp/r20-t265/.aimem\n(cd /tmp/r20-t265 && python3 tests/browser_monitor_ui.py > /tmp/r20-t265.txt 2>&1)\npython3 - <<'PY'\nimport inspect, re, sys\nsys.path.insert(0, 'tests')\nimport browser_monitor_ui as m\nmain = inspect.getsource(m.main)\nassert re.search(r'monitor_server\\(\\s*\\)', main) is None, 'main() 에 root 없는 monitor_server() 가 남아 있다'\nwfp = inspect.getsource(m.write_fixed_project)\nassert 'ROOT' not in wfp, 'write_fixed_project 가 아직 ROOT 를 읽는다'\nlast = open('/tmp/r20-t265.txt', encoding='utf-8', errors='replace').read().strip().splitlines()[-1].split()\nprint('빈 저장소 사본 마지막 줄:', last)\nassert len(last) == 5 and last[1] == last[4] and int(last[4]) >= 27, last\nPY\n",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-265-S3-a1-193012",
+     "started": "2026-11-12T19:30:12",
+     "ended": "2026-11-12T20:01:30",
+     "rc": 1,
+     "state": "done",
+     "report": "(최종 보고문 없음 - 작업자가 보고 전에 끝남. stderr 꼬리:)\nError: Provider response headers timed out after 300000ms",
+     "verify_rc": -1,
+     "verify_tail": "실행 rc != 0"
+    },
+    {
+     "run_id": "T-265-S3-a2-234000",
+     "started": "2026-11-12T23:40:00",
+     "ended": "2026-11-12T23:41:54",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE — `tests/browser_monitor_ui.py` 한 파일만 고쳤고, `python3 tests/browser_monitor_ui.py` 가 **통과 27 / 전체 27** 입니다. 다만 `projects/`·`.aimem` 을 치운 사본에서 돌리는 검증은 이 환경에서 승인이 막혀 직접 못 돌렸습니다.\n\n**한 일**\n- **N1**: `write_fixed_project` 가 진짜 `projects/` 를 더는 읽지 않습니다. 이 함수에서 `ROOT` 와 `shutil` 이 사라졌습니다.\n  - 시험이 직접 프로젝트 둘을 만듭니다.\n  - `웹워들`: 끝남. 목표가 모두 `[x]` 이고, 손으로 쓴 `app.json` 과 `web/index.html` 이 있습니다. 이 html 은 `#board` 안에 `.tile` 30칸과 `.key` 단추 둘을 글자 그대로 담았습니다.\n  - `진행앱`: 진행 중. 목표 하나가 `[ ]` 입니다.\n- **N2**: `changed_ui_scenario` 를 `temporary_aimem_root` + `monitor_server(root=temp_root)` 블록 안으로 옮겼습니다. `main()` 에 `root` 없는 `monitor_server()` 호출은 없습니다. 소스를 정규식으로 확인했습니다.\n- **N2 자료**: 임시 DB 에 제목이 아주 긴 보드 태스크와 큐 항목을 하나씩 넣는 `write_fixed_board` 를 새로 만들었습니다. 이걸 빼면 `'생략된 제목을 눌러 펼칠 수 있다'` 가 빨개집니다. 단언은 느슨하게 바꾸지 않았습니다.\n- **M11**: `show_all_projects(page)` 가 `'전체'` 칩을 무조건 누릅니다. 칩이 없으면 타임아웃 예외가 나서 검사가 빨개집니다. `narrow_scenario` 와 `short_scenario` 에도 같은 클릭을 넣었습니다. 진행 중 프로젝트가 있으면 기본 필터가 `'진행 중'` 이라 `웹워들` 이 숨기 때문입니다.\n\n**돌린 명령**\n- `python3 tests/browser_monitor_ui.py | grep -v \"^\\[OK\\]\"` 의 출력은 `통과 27 / 전체 27` 한 줄뿐입니다.\n- 위 출력은 `write_fixed_board` 를 넣은 뒤 것이고, 그 전 실행은 26/27 이었습니다. 빨간 검사는 `'생략된 제목을 눌러 펼칠 수 있다'` 였습니다.\n- 정규식 확인 결과는 `root 없는 호출: []`, `ROOT in write_fixed_project: False` 입니다.\n\n**다음 담당자가 알아야 할 것**\n- **미검증**: `projects/`·`.aimem` 을 치운 사본 안에서 27/27 이 나오는지는 확인하지 못했습니다. `/tmp` 로 `cp`·`mkdir`·`rm` 하는 명령이 승인 대기에 걸렸습니다. 이 시험은 `projects/` 와 `.aimem` 을 읽을 길이 없다고 코드로 확인했을 뿐입니다. 사본 검증은 `tests` 와 `tools` 만 복사한 폴더에서 돌리면 됩니다.\n- 작업 트리에는 내가 건드리지 않은 `tools/fleet_graph.py` 변경이 있습니다. 다른 슬롯의 것으로 보입니다.\n- 제품 결함은 없었습니다.",
+     "verify_rc": 0,
+     "verify_tail": "빈 저장소 사본 마지막 줄: ['통과', '27', '/', '전체', '27']\n"
+    }
+   ],
+   "stopped_attempts": [
+    {
+     "run_id": "T-265-S3-a2-200131",
+     "started": "2026-11-12T20:01:31",
+     "ended": "2026-11-12T20:14:03",
+     "state": "stopped",
+     "kill_outcome": "foreign",
+     "stopped_by": "완전 중지"
+    }
+   ]
+  },
+  {
+   "id": "T-266",
+   "slot": "S1",
+   "deps": [
+    "T-263",
+    "T-264",
+    "T-265"
+   ],
+   "project": "",
+   "title": "재검수: N3·N4·N5·N7·N1·N2 수정이 정말 닫혔는가",
+   "timeout_sec": 3600,
+   "max_attempts": 1,
+   "write": [
+    "rounds/R22/REVIEW-r22.md"
+   ],
+   "task": "# T-266 **재검수** - R20 의 적대적 검수가 찾은 결함이 정말 닫혔는가\n\n쓸 파일은 **하나**입니다: `rounds/R22/REVIEW-r22.md` (새 파일).\n**저장소의 다른 파일은 단 하나도 고치지 마십시오.** 변이는 **저장소 사본**에만 넣습니다.\n먼저 `rounds/R20/REVIEW-r20.md` (당신이 쓴 1차 검수)를 읽으십시오.\n\n## 닫혔다고 보고된 것\n\n| 번호 | 무엇 | 고친 곳 |\n| - | --- | --- |\n| N3 (중간, 회귀) | `is_error` 참 + 구조 표지 없음 → `False` 가 아니라 **`None`** (글자 판정으로 넘김) | `tools/fleet_graph.py` |\n| N4 (중간) | `terminal_reason==\"api_error\"` 갈래의 `\"limit\"` 부분 일치 **삭제** | `tools/fleet_graph.py` |\n| N5 (낮음) | `_LIMIT_PATTERNS` 에서 `\"limit reached\"`·`\"too many requests\"` **삭제** | `tools/fleet_graph.py` |\n| N7 (낮음) | `run_id` 꼴 검사 추가 (`../` 로 `runs/` 밖을 못 읽음) | `tools/fleet_graph.py` |\n| M3~M8 | 위 갈래들의 변이 구멍 여섯 | `tests/test_fleet_graph.py` |\n| N1 (높음) | `write_fixed_project` 가 진짜 `projects/웹워들` 대신 **시험이 만든 최소 프로젝트** | `tests/browser_monitor_ui.py` |\n| N2 (높음) | `changed_ui_scenario` 도 임시 저장소로 (진짜 `aimem.db` 안 봄) | `tests/browser_monitor_ui.py` |\n| M11 | `'전체'` 칩 **무조건** 누르기 | `tests/browser_monitor_ui.py` |\n\n## 방법\n\n1. 저장소를 `/tmp` 로 복사하십시오 - **`.aimem/tls/` 는 빼십시오**(개인키·운영 토큰).\n   `.git`·`.aimem/runs`·`__pycache__` 도 빼면 빠릅니다. 끝나면 그 `/tmp` 폴더를 `rm -rf` 하십시오\n2. **1차 검수에서 당신이 쓴 재현을 그대로 다시 돌려** 각 번호가 정말 닫혔는지 확인하십시오\n   (특히 N3 의 `{\"is_error\": true, \"result\": \"You've hit your 5-hour limit\"}`,\n   N4 의 컨텍스트 한도 문구, N7 의 `../outside/evil`,\n   N1 의 **사본에서 `projects/` 를 통째로 지우고** `browser_monitor_ui.py` 돌리기,\n   N2 의 **사본에서 `.aimem/aimem.db` 치우고** 돌리기)\n3. 수정마다 **변이를 되돌려** 시험이 정말 잡는지 보십시오 - 고친 줄을 옛 모습으로 돌려놓고\n   해당 시험이 **빨개지는지**. 빨개지지 않으면 그 수정은 시험으로 지켜지지 않는 것입니다\n4. **새로 생긴 결함**도 찾으십시오 - 특히 `run_limit_signal` 이 `None` 을 더 자주 돌려주게 되면서\n   글자 판정이 더 자주 도는데, 그 글자 판정이 claude 보고에서 새로 오인하는 경우는 없는지\n   (`.aimem/runs/*.out` 에 쌓인 **진짜 기록 전수**로 재검해 보십시오 - 몇 건이 한도로 잡히는지.\n   `.aimem/runs` 를 사본에서 뺐다면 진짜 저장소의 것을 **읽기만** 하십시오)\n\n## 보고서 (`rounds/R22/REVIEW-r22.md`)\n\n1. **닫힘표** - `| 번호 | 닫혔나 | 근거(명령과 결과) |` - 위 표의 모든 번호\n2. **새 결함표** - `| 번호 | 심각도 | 무엇이 | 어디 | 재현 | 고칠 방향 |` (번호는 `P1`·`P2`…,\n   시험 구멍은 `Q1`·`Q2`…). 없으면 \"없음\" 한 줄\n3. **변이표** - `| 변이 | 잡혔나 |`. 마지막 줄에 `합계 <개수>개: 잡힘 <n>, 생존 <m>`\n4. **한 문단 총평**\n\n## 하지 말 것\n\n- 제품이나 시험을 고치지 마십시오. 찾아서 적기만 합니다\n- `git commit` / `git push` / 저장소 파일 삭제 금지. 운영 모니터(https, 인증)를 건드리지 마십시오\n\n## 검증\n\n검증 명령이 봅니다: `rounds/R22/REVIEW-r22.md` 가 있고 3,000자 이상이며 표 줄이 30줄 이상이고\n`합계` 줄이 있는 것.\n",
+   "verify": "python3 - > /tmp/r20-t266.txt 2>&1 <<'PY'\nimport pathlib\np = pathlib.Path('rounds/R22/REVIEW-r22.md')\nassert p.exists(), '보고서가 없다'\nt = p.read_text(encoding='utf-8')\nrows = [l for l in t.splitlines() if l.strip().startswith('|')]\nprint('chars', len(t), 'rows', len(rows))\nassert len(t) >= 3000, len(t)\nassert len(rows) >= 30, len(rows)\nassert '합계' in t\nPY",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-266-S1-a1-234309",
+     "started": "2026-11-12T23:43:09",
+     "ended": "2026-11-12T23:52:36",
+     "rc": 0,
+     "state": "done",
+     "report": "PARTIAL — the re-review is finished and `rounds/R22/REVIEW-r22.md` is written, but I couldn't delete the temporary copies in `/tmp` (see the end).\n\n**Result:** every fix is closed where it was made. But the limit-detection fixes for N3 and N4 don't reach the path workers actually use now, so those two defects are still live in production.\n\n## What I did\n- `python3 tools/aimem_db.py check --slot S1 --token a41f0c --rev 164` → `일치: S1 … REV 164`. The only file I wrote in the repo is `rounds/R22/REVIEW-r22.md` (11,712 characters, 61 table rows, `합계` line present).\n- Made a copy at `/tmp/r22-review`, leaving out `.git`, `__pycache__`, `.aimem/tls`, `.aimem/runs` and `.aimem/sessions`. Baseline in the copy: `test_fleet_graph` 73 OK, `test_rt_claude` 24 OK, `test_fleet` 10 OK, `test_fleet_ctl` 40 OK, `test_rt_integration` 18 OK, `python3 tests/browser_monitor_ui.py` 27/27.\n- Re-ran my R20 reproductions and put 28 mutations (code changes the tests should catch) into the copy, each reverted after its run. I also re-scored all 287 real run records (277 in `.aimem/runs`, 10 in `.aimem/sessions`), reading them only, under both the old (HEAD) and new rules.\n\n## What is closed\n- **N3, N4, N5, N7 (old `.aimem/runs` path):** the N3 record now returns `None` and falls through to the text check, which finds the limit. The context-window message returns `None` instead of a usage limit. The two common phrases no longer trigger. `../outside/evil` returns `None`.\n- **M3–M8:** reverting each fixed line turns the tests red.\n- **N1:** with `projects/` removed from the copy, the browser test still passes 27/27.\n- **N2:** with `.aimem/aimem.db` removed from the copy, it still passes 27/27.\n- **M11:** removing the '전체' chip now fails the test (`TimeoutError: Locator.click`).\n- **Real records:** the number of runs judged as hitting the limit is unchanged, 1 → 1 (T-215, a real 5-hour limit). Returning `None` more often caused no new misjudgments.\n\n## New defects\n- **P1 (medium, live path):** since REV 163 workers run as sessions, and `run_limit_signal` hands those to `tools/fleet_rt/harness/claude.py`. That adapter still returns `False` for the N3 record (line 237), so a real limit gets retried as an ordinary failure. `tests/test_rt_claude.py:196` (`test_other_error_false`) asserts this old wrong behaviour, so it goes red when the fix is applied there.\n- **P2 (medium):** the same adapter's `_limit_text` (lines 92–94) still matches any `\"limit\"`, so context-window errors are treated as usage limits and not retried.\n- **P3 (low):** limit detection exists in two copies (`fleet_graph` and the adapter) that have already drifted apart.\n- **Q2 (medium):** no `test_fleet_graph` test goes through the session path. Switching that branch off entirely still gives 73 OK.\n- **Q1 (low):** allowing `/` inside a run id is not caught by any test.\n- **Q3 (low):** in the browser test, the '이번 라운드' value still comes from the repo's own `rounds/` and fleet state, because the temporary repo setup doesn't redirect `fleet.RUNS`. The check only asks that the value is non-empty, so it passes either way.\n- **Q4 (low):** the '생략된 제목' check still only takes its fallback branch (unchanged from R20's M12).\n- N6 (FIFO hang) and N8 (no size cap on the meta file) were not in this round's scope and are still open.\n\n## Mutation totals\n28 mutations: 23 caught, 5 survived. The survivors:\n- **V08:** `/` allowed in run ids.\n- **V20:** narrowing the adapter's limit text check.\n- **V21:** switching off the session branch.\n- **B3:** test reverted to \"click the chip only if present\".\n- **B4:** N1 reverted. It only goes red once `projects/` is removed (B5).\n\nV10 was left out of the count because its result is identical (no-op). V19 goes red, but because the test protects the defect.\n\n## For the next owner\nFix P1–P3 first: move the N3/N4 fixes into the claude adapter, ideally by sharing one detection function, and update `test_other_error_false`. Then add session-path tests for the same records (Q2). ",
+     "verify_rc": 0,
+     "verify_tail": ""
+    }
+   ]
+  }
+ ],
+ "followup": "G-050/G-051 의 적대적 검수(T-262, rounds/R20/REVIEW-r20.md)가 찾은 결함 수정과 그 재검수",
+ "updated": "2026-11-12T23:52:38"
+}

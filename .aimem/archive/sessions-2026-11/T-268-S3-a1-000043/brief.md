@@ -1,0 +1,39 @@
+SLOT=S3 T-268 시험: 어댑터 한도 판정 세션 갈래·옛 동작 못박기 걷기 (재검수 R22-Q1·Q2·Q5, V19) (G-053)
+확인토큰: 5b8c1e
+AIMEM REV: 164
+너는 S3 슬롯이다. 작업 폴더는 /home/tsyi/work/ai-fleet 다.
+쓰기는 다음 경로에만 한다: tests/test_rt_claude.py, tests/test_fleet_graph.py
+금지: git commit / push / 삭제 / 의존성 설치. 보고는 응답 본문에 직접 쓴다.
+보고 첫 줄은 상태(DONE / PARTIAL / BLOCKED / NEEDS-LOCK / NEEDS-APPROVAL), 이어서 한 일·고친 파일·실제로 돌린 검증 명령과 출력·다음 담당자가 알아야 할 것.
+검증 명령은 승인 없이 실행되는 형태로 쓴다: `python3 ...`, `PYTHONPATH=tools python3 ...`, `pytest ...`, `ls/cat/grep/sed -n/wc/diff/git status/git diff/curl ...`. 셸 변수 대입이나 다른 접두사를 앞에 붙이면 승인 요구로 막힌다. py_compile 이 만드는 __pycache__ 는 쓰기로 치지 않는다.
+
+# T-268 한도 판정 시험 메우기 (재검수 R22-Q1·Q2·Q5, 변이 V19)
+
+쓸 파일은 **둘**입니다: `tests/test_rt_claude.py`, `tests/test_fleet_graph.py`. 제품 코드(`tools/**`)는 **읽기만** 하십시오.
+바로 파일을 고치십시오. 근거는 `rounds/R22/REVIEW-r22.md` 의 Q1·Q2·Q5 행(43~47줄)입니다.
+
+## 앞 노드가 바꾼 것 (T-267, `tools/fleet_rt/harness/claude.py`)
+
+한도 판정이 `claude.py` 한 곳으로 모였습니다: `LIMIT_PATTERNS`, `limit_text_hit(text)`, `result_limit_signal(res, events=())`. 오류인데 구조 표지도 거절 사건도 없으면 이제 `False` 가 아니라 **`None`** 이고, `terminal_reason=="api_error"` 갈래는 좁은 문구 목록만 봅니다("context window limit" 같은 문구는 한도 아님). `fleet_graph.report_limit_hit`·`_LIMIT_PATTERNS` 는 그것을 가리킵니다.
+
+## 할 일
+
+1. `tests/test_rt_claude.py`
+   - `test_other_error_false` 는 옛 잘못된 동작을 못박고 있습니다(V19). 이름을 `test_other_error_none` 으로 바꾸고 `assertIsNone` 으로.
+   - 새 시험: `is_error` 참 + `"You've hit your 5-hour limit"` (표지 없음) → `None` / `terminal_reason=api_error` + `"Prompt exceeds the context window limit"`·`"max_tokens limit: output token limit exceeded"`·`"API Error: 400 input length and max_tokens exceed context limit"` → 각각 **True 가 아님** / `result_limit_signal` 을 직접 부르는 시험 하나(dict 아님 → None).
+2. `tests/test_fleet_graph.py`
+   - **Q2:** 세션 갈래 시험. 임시 폴더를 `fleet` 의 세션 폴더 자리로 쓰게 하고(`fleet._session_dir` 를 `mock.patch` 하거나, 이 파일이 이미 쓰는 방식을 따르십시오), 그 안에 `meta.json`(`{"harness_effective": "claude"}`)과 `events.jsonl` 을 두고 `fleet_graph.run_limit_signal("T-1-S1-a1-000000")` 이 N3 기록에서 `None`, N4 문구에서 True 가 아님, 429 에서 `True` 인지 봅니다. `events.jsonl` 의 줄 꼴은 `tests/test_rt_claude.py` 의 `_session_dir` 를 보십시오(`<시각>\t<json>`).
+   - **Q1:** run_id 반례에 `"R-1/../../outside/evil"`, `"T-1-S1-a1-000000/../x"` 를 더합니다 (`None` 이어야 함).
+   - **Q5:** `test_run_limit_signal_is_none_for_text_only_harnesses` 는 claude 꼴 JSON 이 아니라 **글자 `.out`**(예: `"DONE: something"`) 으로 되돌려, 새 `test_m6_non_claude_harness_ignores_claude_shaped_json` 과 다른 것을 재게 합니다.
+
+## 제품 결함을 찾으면
+
+시험이 위 기대대로 썼는데 제품이 틀리면 제품도 시험도 고치지 말고 보고 첫 줄을 `NEEDS-FIX: <무엇이 어디서>` 로 쓰십시오.
+
+## 하지 말 것
+
+`tools/**` 고치기, `git commit`/`push`, 파일 삭제, 운영 모니터 부르기.
+
+## 검증 (엔진이 돌립니다)
+
+`tests/test_rt_claude.py` 와 `tests/test_fleet_graph.py` 가 **전부 통과**하고, 시험 수가 각각 지금(24, 73)보다 늘어야 합니다(28 이상, 76 이상).

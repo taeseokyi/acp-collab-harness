@@ -1,0 +1,5 @@
+2026-11-12T13:41:49 created 1 nodes, request='R17 후속: 그래프 제목 펼치기 검사가 끝난 그래프가 접히면 통째로 실패하는 것 (T-222 산출물의 결함, 관리자 실측)'
+2026-11-12T13:48:31 spawn T-227 attempt 1 -> T-227-S3-a1-134831 (S3)
+2026-11-12T13:52:25 retry-queued T-227 rc=0 verify_rc=1
+2026-11-12T13:52:25 spawn T-227 attempt 2 -> T-227-S3-a2-135225 (S3)
+2026-11-12T14:04:01 FAILED T-227 after 2 attempts

@@ -1,0 +1,6 @@
+함대 모드: stopped - 사람이 완전 중지 했습니다. 새 노드를 띄우지 않았습니다. 체크포인트를 남기고 PARTIAL 로 보고하십시오
+G-052: 0.0%  남은 ETA 1255s  상태 {'todo': 4}
+  T-263  todo     S2  시도 1  run T-263-S2-a1-193012  rc 124/-  fleet_graph.py: 한도 판정 회귀 N3 + 너무 넓은 걸림말 N4·N5 + run_id 검사 N7
+  T-264  todo     S3  시도 0  run -  rc -/-  test_fleet_graph.py: N3·N4·N5·N7 회귀 + 변이 구멍 여섯 메우기 (M3~M8)
+  T-265  todo     S3  시도 1  run T-265-S3-a1-193012  rc 1/-1  browser_monitor_ui.py: 고정 자료가 아직 진짜 저장소를 읽는다 (검수 N1·N2·M11)
+  T-266  todo     S1  시도 0  run -  rc -/-  재검수: N3·N4·N5·N7·N1·N2 수정이 정말 닫혔는가

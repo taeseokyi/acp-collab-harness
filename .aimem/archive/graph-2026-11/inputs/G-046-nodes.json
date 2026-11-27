@@ -1,0 +1,44 @@
+[
+ {
+  "id": "T-239",
+  "slot": "S3",
+  "deps": [],
+  "project": "",
+  "title": "browser_monitor_usage.py: 입력 자료를 진짜 claude-usage.json 꼴(dict)로",
+  "timeout_sec": 2400,
+  "max_attempts": 2,
+  "write": [
+   "tests/browser_monitor_usage.py"
+  ],
+  "task": "# T-239 `tests/browser_monitor_usage.py` 의 입력 자료를 **진짜 파일 꼴**로 고치십시오\n\n쓸 파일은 **하나**입니다: `tests/browser_monitor_usage.py`. **`tools/**` 와 다른 검사 파일은\n읽기만 하고 절대 고치지 마십시오.** 계획을 세우지 말고 바로 고치십시오.\n\n## 무엇이 틀렸나\n\n이 검사의 `usage_root()` 가 `.aimem/claude-usage.json` 에 써 넣는 `rate_limits` 가 **list** 이고,\n원소가 `{\"key\": ..., \"percent\": ..., \"resets_at_iso\": ...}` 입니다. 그런데 그 모양은 **서버가\n내놓는 결과** 이지 **파일에 들어 있는 모양이 아닙니다.** 파일은 Claude Code 상태줄이 그대로 옮겨\n적은 것이고(`tools/claude_usage_statusline.py`), `rate_limits` 는 **창 이름을 키로 하는 dict** 이며\n각 값이 `{\"used_percentage\": <숫자>, \"resets_at\": <ISO 문자열>}` 입니다.\n`tools/aimem_monitor/server.py` 의 `claude_usage()` 도 dict 만 받고 아니면 `None` 을 돌려줍니다.\n그래서 지금 화면에 행이 **0개**로 나와 13건 중 10건이 빨갛습니다. **제품이 맞고 검사가 틀렸습니다**\n(관리자가 Claude Code 2.1.80 변경 기록으로 확인했습니다: \"`rate_limits` ... 5-hour and 7-day windows\nwith `used_percentage` and `resets_at`\").\n\n## 할 일\n\n`base_rows()`(그리고 그것을 쓰는 자리들)를 아래 꼴로 바꾸십시오. **기대값은 그대로 둡니다** -\n`KEYS`·`LABELS`·`PCTS`·`CLASSES`·`RATIOS` 와 `초기화 HH:MM` 기대는 손대지 마십시오.\n\n```python\ndef base_rows():\n    t = dt.datetime.now().replace(hour=18, minute=0, second=0, microsecond=0)\n    return {\n        \"five_hour\": {\"used_percentage\": 40.0, \"resets_at\": t.isoformat()},\n        \"seven_day\": {\"used_percentage\": 85.0, \"resets_at\": t.replace(hour=20, minute=30).isoformat()},\n        \"seven_day_opus\": {\"used_percentage\": 97.0, \"resets_at\": t.replace(hour=21, minute=10).isoformat()},\n        \"seven_day_sonnet\": {\"used_percentage\": 12.0},\n    }\n```\n\n- `seven_day_sonnet` 에는 `resets_at` 을 **넣지 않습니다**(그래야 `.usage-reset` 요소가 없다는 기대가 삽니다)\n- `usage_root(rows, at=...)` 는 받은 것을 그대로 `{\"at\": at, \"rate_limits\": rows}` 로 씁니다 - 그대로 두십시오\n- 다른 시나리오(`stale_scenario`·`empty_scenario`·`narrow_scenario`·`scroll_scenario`)가 자료를 따로\n  만들고 있으면 **같은 dict 꼴로** 고치십시오. 빈 상태 시나리오는 파일을 아예 쓰지 않거나\n  `rate_limits` 를 `{}` 로 두면 됩니다\n- 검사 건수(13)를 줄이지 마십시오. 기대를 느슨하게 바꾸지 마십시오\n\n## 검증\n\n```bash\npython3 tests/browser_monitor_usage.py\n```\n\n마지막 줄이 `통과 13 / 전체 13` 이어야 합니다. 빨간 것이 남으면 **화면 쪽 결함일 수 있습니다** -\n그때는 `tools/**` 를 고치지 말고 보고 첫 줄을 `NEEDS-FIX: <무엇이 어디서>` 로 쓰십시오.\n",
+  "verify": "python3 tests/browser_monitor_usage.py > /tmp/r19-t239.txt 2>&1; rc=$?; tail -20 /tmp/r19-t239.txt; [ $rc -eq 0 ] || exit 1; tail -1 /tmp/r19-t239.txt | python3 -c \"import sys;p=sys.stdin.read().split();sys.exit(0 if len(p)==5 and p[1]==p[4] and int(p[4])>=13 else 1)\""
+ },
+ {
+  "id": "T-240",
+  "slot": "S3",
+  "deps": [],
+  "project": "",
+  "title": "test_monitor_ticket_regress.py: 상한 시험 4건을 첫 주체 보장에 맞추기",
+  "timeout_sec": 2400,
+  "max_attempts": 2,
+  "write": [
+   "tests/test_monitor_ticket_regress.py"
+  ],
+  "task": "# T-240 `tests/test_monitor_ticket_regress.py` 의 상한 시험 네 개를 새 동작에 맞추십시오\n\n쓸 파일은 **하나**입니다: `tests/test_monitor_ticket_regress.py`. **`tools/**` 는 읽기만 하고 절대\n고치지 마십시오.** 계획을 세우지 말고 바로 고치십시오.\n\n## 제품이 바뀌었습니다 (의도된 변경입니다)\n\n`tools/aimem_monitor/server.py` 의 거절 감사에 **창마다 처음 보는 `(event, subject)` 한 줄 보장**이\n들어갔습니다(`_DENIED_AUDIT_FIRST_MAX = 256`, `_denied_window_seen`). 분당 상한\n(`_DENIED_AUDIT_MAX_PER_MIN = 60`)에 걸려도, 그 창에서 **처음 보는 주체**는 한 줄을 받습니다.\n회수된 계정 하나가 상한을 혼자 다 써서 다른 주체가 0줄이 되던 것을 막으려는 것입니다.\n\n## 그래서 아래 네 시험이 실패합니다 (지금 `Ran 38 tests ... FAILED (failures=4)`)\n\n- `tests/test_monitor_ticket_regress.py:276` `...global_cap...` : 100 != 60\n- `:289` `test_window_reopens_after_a_minute` : 101 != 62\n- `:308` `...capped_denial...` : 61 != 60\n- `:385` `...cap_skipped_count...` : 80 != 60\n\n네 시험 모두 **반복마다 다른 주체**를 넣어 첫 주체 보장을 의도치 않게 발동시킵니다.\n\n## 할 일\n\n네 시험이 **순수한 분당 상한**을 재도록 고치십시오. 둘 중 편한 쪽으로:\n\n1. 같은 `(event, subject)` 쌍을 **다시 써서** 두 번째 줄부터는 상한의 지배를 받게 한다, 또는\n2. 반복 전에 `server._denied_window_seen` 에 그 쌍을 미리 넣어 \"이미 본 주체\" 로 만든다\n\n**첫 주체 보장 자체를 끄거나, 상수를 바꾸거나, 단언을 느슨하게 지우지 마십시오.** 이미 있는\n새 계약 시험(창별 첫 줄 보장·생략 수 보존·상한 상수 못박기)은 통과하고 있으니 건드리지 마십시오.\n시험 수는 **38건 이상**이어야 합니다 - 지우지 말고 고치십시오.\n\n## 검증\n\n```bash\npython3 -m unittest tests.test_monitor_ticket_regress\n```\n\n`OK` 여야 하고 `Ran` 이 38 이상이어야 합니다. 제품이 틀렸다고 판단되면 고치지 말고 보고 첫 줄을\n`NEEDS-FIX: <무엇이 어디서>` 로 쓰십시오.\n",
+  "verify": "python3 -m unittest tests.test_monitor_ticket_regress > /tmp/r19-t240.txt 2>&1; rc=$?; tail -20 /tmp/r19-t240.txt; [ $rc -eq 0 ] || exit 1; python3 -c \"import re,sys;t=open('/tmp/r19-t240.txt').read();m=re.search(r'Ran (\\d+) tests',t);sys.exit(0 if m and int(m.group(1))>=38 else 1)\""
+ },
+ {
+  "id": "T-241",
+  "slot": "S2",
+  "deps": [],
+  "project": "",
+  "title": "SERVER_KEYS 에 claude_usage 계약 올리기",
+  "timeout_sec": 1800,
+  "max_attempts": 2,
+  "write": [
+   "tools/aimem_monitor/__init__.py"
+  ],
+  "task": "# T-241 `/api/state` 계약표에 `claude_usage` 를 올리십시오\n\n쓸 파일은 **하나**입니다: `tools/aimem_monitor/__init__.py`. **`server.py` 와 `tests/**` 는 읽기만\n하고 절대 고치지 마십시오.** 계획을 세우지 말고 바로 고치십시오.\n\n## 무엇이 틀렸나\n\n`server.collect_state()` 가 최상위 키 `claude_usage` 를 내보내는데(정상 분기와 실패 분기 모두),\n계약표 `SERVER_KEYS` 에는 그 키가 없습니다. 그래서\n`tests/test_aimem_monitor_detail.py:489 test_collect_state_failure_branch_keys_match_normal` 이\n`'claude_usage' : 정상 분기 키 집합이 계약과 다릅니다` 로 **빨갛습니다**. 계약표는 공개면의 정본이라\n(파일 머리말) 키가 늘면 여기에도 적어야 합니다.\n\n## 할 일\n\n`SERVER_KEYS` 의 `projects` 항목 뒤에 `claude_usage` 를 한 항목 더하십시오. 다른 항목들처럼\n**주석 한두 줄 + 값 모양**을 적습니다. 값 모양은 이렇습니다 (`server.claude_usage()` 가 돌려주는 것):\n\n```\n\"claude_usage\": \"{at, age_seconds, rows:[{key, label, percent, resets_at_iso}]} 또는 null\"\n```\n\n주석에는 \"Claude Code 상태줄이 적어 둔 `.aimem/claude-usage.json` 을 읽어 만든 사용 한도\n(2026-11-12, R18). 파일이 없거나 읽을 수 없으면 `null`\" 정도를 적으십시오.\n`STATE_KEYS`·`PUBLIC_FORBIDDEN`·`REQUEST_ROW_KEYS` 는 건드리지 마십시오.\n\n## 검증\n\n```bash\npython3 -m unittest tests.test_aimem_monitor_detail tests.test_aimem_monitor_app tests.test_aimem_monitor_projects\n```\n\n`OK` 여야 합니다 (지금은 실패 1건).\n",
+  "verify": "python3 -m unittest tests.test_aimem_monitor_detail tests.test_aimem_monitor_app tests.test_aimem_monitor_projects > /tmp/r19-t241.txt 2>&1; rc=$?; tail -20 /tmp/r19-t241.txt; exit $rc"
+ }
+]

@@ -239,14 +239,18 @@ def progress(g, durations=None):
     total_w = sum(est.values()) or 1.0
     # 실행 중인 노드는 경과만큼 부분 반영
     running_w = 0.0
+    spent = {}    # 실행 중인 노드가 이미 쓴 몫 - 진행율과 ETA 가 같은 값을 본다
     for k, n in nodes.items():
         if n.get("status") == "running" and n.get("attempts"):
             el = _elapsed_since((n["attempts"][-1] or {}).get("started"))
             if el is not None:   # 깨진 started 하나로 status/list/step 출력이 죽지 않게
-                running_w += max(0.0, min(est[k], el))
+                # 추정의 90% 까지만 - 추정보다 오래 도는 노드가 있는데 100%·남은 0초라고 말하지 않게
+                spent[k] = max(0.0, min(0.9 * est[k], el))
+                running_w += spent[k]
     pct = round(100.0 * (done_w + running_w) / total_w, 1)
     # 임계 경로(남은 노드만) = ETA 하한. 병렬이 충분하면 이 값에 수렴한다.
-    remaining = {k: (0.0 if n.get("status") == "done" else est[k]) for k, n in nodes.items()}
+    # 실행 중인 노드는 쓴 만큼 뺀다 - 안 빼면 진행율은 오르는데 남은 시간은 노드가 끝날 때까지 그대로 서 있다.
+    remaining = {k: (0.0 if n.get("status") == "done" else est[k] - spent.get(k, 0.0)) for k, n in nodes.items()}
     longest = {}
 
     def lp(k):

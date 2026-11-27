@@ -33,6 +33,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from voxlog import ask as ask_mod  # noqa: E402
+from voxlog import stt_options  # noqa: E402
 from voxlog import stt as stt_mod  # noqa: E402
 from voxlog import tags as tags_mod  # noqa: E402
 from voxlog.store import ALLOWED_MIME, MAX_AUDIO_BYTES, Store  # noqa: E402
@@ -41,6 +42,7 @@ WEB = HERE / "web"
 VERSION = "0.1"
 JSON_BODY_MAX = 1024 * 1024
 PATCH_JSON_MAX = 6 * 1024
+STT_OPTIONS_JSON_MAX = 32 * 1024
 DRAIN_MAX = 64 * 1024  # 413 뒤 연결을 깨끗이 닫으려고 버리는(저장 안 함) 작은 본문의 상한
 BODY_GRACE_S = 30  # 본문(JSON) 마감 - 요청 시작부터 이만큼 안에 선언한 길이만큼 다 오지 않으면(느리게라도 계속 오는 경우 포함) 400 (R41-N5)
 CHUNK = 64 * 1024  # 업로드를 디스크로 흘려 쓰는 단위
@@ -287,6 +289,9 @@ class Handler(BaseHTTPRequestHandler):
             route = (("GET",), self._health, ())
         elif parts == ["api", "recordings"]:
             route = (("GET", "POST"), self._rec_list if method == "GET" else self._rec_upload, (u,))
+        elif parts == ["api", "stt-options"]:
+            route = (("GET", "PUT"),
+                     self._stt_options_get if method == "GET" else self._stt_options_put, ())
         elif n == 3 and parts[1] == "recordings":
             allowed = ("GET", "PATCH", "DELETE")
             fn = {"GET": self._rec_get, "PATCH": self._rec_patch, "DELETE": self._rec_delete}.get(method)
@@ -521,6 +526,37 @@ class Handler(BaseHTTPRequestHandler):
             return self._err(404, "없는 녹음입니다")
         self._json(200, meta)
 
+    def _stt_options_get(self):
+        store = self.server.store
+        self._json(200, {
+            "options": store.default_stt_options(),
+            "choices": {
+                "preprocess": list(stt_options.PREPROCESS),
+                "speakers_max": stt_options.SPEAKERS_MAX,
+                "context_max": stt_options.CONTEXT_MAX,
+            },
+            "stt": stt_mod.backend_name(self.server.env),
+        })
+
+    def _stt_options_put(self):
+        data = self._read_body(STT_OPTIONS_JSON_MAX)
+        if data is None:
+            return
+        try:
+            body = json.loads(data.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            body = None
+        if not isinstance(body, dict):
+            return self._err(400, "본문은 JSON 객체여야 합니다")
+        if "options" not in body:
+            return self._err(400, "본문에는 options 가 있어야 합니다")
+        try:
+            norm = stt_options.normalize(body["options"])
+        except ValueError as exc:
+            return self._err(400, str(exc))
+        saved = self.server.store.set_default_stt_options(norm)
+        self._json(200, {"options": saved})
+
     def _rec_patch(self, rid):
         data = self._read_body(PATCH_JSON_MAX)
         if data is None:
@@ -592,14 +628,54 @@ class Handler(BaseHTTPRequestHandler):
 
     def _rec_retry(self, rid):
         store = self.server.store
-        if store.get(rid) is None:
+        meta = store.get(rid)
+        if meta is None:
             return self._err(404, "없는 녹음입니다")
         tr = self.server.transcriber
+        if tr.busy(rid):
+            return self._err(409, "받아쓰는 중입니다")
+        has_change = False
+        new_opts = None
+        if self.headers.get("Content-Length") is not None:
+            data = self._read_body(STT_OPTIONS_JSON_MAX)
+            if data is None:
+                return
+            if data:
+                try:
+                    body = json.loads(data.decode("utf-8"))
+                except (ValueError, UnicodeDecodeError):
+                    body = None
+                if not isinstance(body, dict):
+                    return self._err(400, "본문은 JSON 객체여야 합니다")
+                if "options" in body:
+                    raw_opts = body["options"]
+                    try:
+                        norm = stt_options.normalize(raw_opts)
+                    except ValueError as exc:
+                        return self._err(400, str(exc))
+                    has_change = True
+                    new_opts = norm or None
+        prev_opts = meta.get("stt_options")
+        if has_change:
+            try:
+                store.set_stt_options(rid, new_opts)
+            except ValueError:  # 본문을 읽는 동안 녹음이 지워짐
+                return self._err(404, "없는 녹음입니다")
+
+        try:
+            store.set_job(rid, None)  # 사람이 누른 재시도는 옛 작업을 잇지 않는다(앱 재시작 이어받기는 그대로)
+        except ValueError:  # 옵션을 저장한 뒤 녹음이 지워짐
+            return self._err(404, "없는 녹음입니다")
         try:
             ok = tr.resubmit(rid)
         except ValueError:  # 위 get 과 resubmit 사이에 녹음이 지워짐
             return self._err(404, "없는 녹음입니다")
         if not ok:
+            if has_change:
+                try:
+                    store.set_stt_options(rid, prev_opts)
+                except ValueError:
+                    pass
             return self._err(409, "받아쓰는 중입니다")
         self._json(200, store.get(rid))
 
@@ -683,6 +759,7 @@ def make_server(host, port, data_dir, token=None, env=None, stt_fn=None, llm_run
         server.llm_ready = llm_ready or (lambda: ask_mod.llm_status(env)[0])
         server.transcriber = stt_mod.Transcriber(
             server.store, env, transcribe_fn=stt_fn or stt_mod.transcribe,
+            options_fn=server.store.effective_stt_options,
             on_done=lambda rid: server.asker.submit_tag(rid) if server.llm_ready() else None)
         server.asker.start()
         server.transcriber.start()

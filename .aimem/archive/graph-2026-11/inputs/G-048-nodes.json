@@ -1,0 +1,81 @@
+[
+ {
+  "id": "T-244",
+  "slot": "S2",
+  "deps": [],
+  "project": "",
+  "title": "server.py: 악성 사용 한도 파일이 /api/state 를 죽이는 것(N1·N2) + SIGTERM 감사 비우기(N4)",
+  "timeout_sec": 2700,
+  "max_attempts": 2,
+  "write": [
+   "tools/aimem_monitor/server.py"
+  ],
+  "task": "# T-244 `server.py`: 사용 한도 카드가 `/api/state` 를 죽이는 것 둘과, SIGTERM 때 감사 비우기\n\n쓸 파일은 **하나**입니다: `tools/aimem_monitor/server.py`. **`tests/**` 와 다른 `tools/**` 는 읽기만\n하고 절대 고치지 마십시오.** 계획을 세우지 말고 바로 고치십시오. (적대적 검수 N1·N2·N4)\n\n## N1 (높음) 깊은 중첩 JSON 이 `/api/state` 를 통째로 죽입니다\n\n`.aimem/claude-usage.json` 이 `{\"at\": ..., \"rate_limits\": {...}, \"pad\": \"[\"*1500 + \"]\"*1500}` 처럼\n깊게 중첩돼 있으면(3 KB 면 충분, 64 KiB 상한 안) `claude_usage()` 의 `json.loads` 가\n**`RecursionError`** 를 던집니다. `except (OSError, ValueError, UnicodeDecodeError)` 가 못 잡아\n`/api/state` 가 응답 없이 연결을 끊습니다(실측 `RemoteDisconnected`). 실패 분기 `_empty_state()` 도\n**같은 함수를 부르므로** 대체 화면도 못 뜹니다. 함수 설명문의 \"로그도 예외도 없습니다\" 도 거짓이 됩니다.\n\n고치는 법 (둘 다 하십시오):\n1. `claude_usage()` 안의 `except` 를 `except (OSError, ValueError, UnicodeDecodeError, RecursionError)` 로 넓히기\n2. **부르는 자리 둘을 한 번 더 감싸기** - `collect_state()`(`:1135` 근처)와 `_empty_state()`(`:895` 근처)에서\n   ```python\n   try:\n       state[\"claude_usage\"] = claude_usage(root)\n   except Exception:  # noqa: BLE001 - 곁다리 카드가 상태 전체를 죽이지 않게\n       state[\"claude_usage\"] = None\n   ```\n   (작은 도우미 하나로 묶어 두 자리에서 불러도 좋습니다.) **키는 두 갈래 모두 반드시 남아야 합니다.**\n\n## N2 (높음) `at` 의 시간대 변환이 `OverflowError` 를 던집니다\n\n`at=\"0001-01-01T00:00:00+05:00\"` 이나 `\"9999-12-31T23:59:59-05:00\"` 이면 `:988` 근처\n`parsed_at.astimezone()` 가 **`OverflowError: date value out of range`** 를 던지는데 `except (TypeError, ValueError)`\n가 못 잡습니다. → `except (TypeError, ValueError, OverflowError)`. (같은 파일의 `_usage_resets_at` 은\n이미 `OverflowError` 를 잡고 있습니다 - 그 꼴에 맞추는 것입니다.)\n\n## N4 (중간) SIGTERM 으로 내리면 `flush_denied_audit` 이 안 돕니다\n\n`serve()` 의 `finally:` 에 `flush_denied_audit(root)` 가 있지만, 운영은 `monitorctl.sh` 가\n`kill \"$pid\"`(**SIGTERM**)로 내립니다. 서버에 SIGTERM 처리기가 없어 기본 동작으로 **즉사**하고\n`finally` 가 돌지 않습니다. 그래서 거절 감사의 '상한 생략 N건' 이 영영 안 나갑니다.\n\n고치는 법: `serve()` 안에서 `httpd` 를 만든 뒤 SIGTERM 처리기를 걸고, 끝날 때 **원래 처리기로\n되돌리십시오**(`signal.signal` 의 반환값을 보관). 처리기는 `KeyboardInterrupt` 를 일으키거나\n`httpd.shutdown()` 을 불러 `finally` 로 가게 하면 됩니다. `signal` 모듈이 이미 import 돼 있지\n않으면 파일 맨 위 import 들에 더하십시오. **주 스레드가 아니면 `signal.signal` 이\n`ValueError` 를 던지므로** 그 경우는 조용히 건너뛰십시오(시험이 스레드에서 서버를 띄웁니다).\n`once=True` 갈래도 그대로 돌아야 합니다.\n\n## 하지 말 것\n\n- 감사 상한·티켓·인증 쪽 코드는 건드리지 마십시오\n- `claude_usage()` 가 돌려주는 모양(`{at, age_seconds, rows:[...]}`)을 바꾸지 마십시오\n- 시험 파일은 다음 노드(다른 슬롯)가 씁니다\n\n## 검증\n\n검증 명령이 아래를 봅니다: 시험 다섯 묶음이 전부 초록이고, 악성 파일 둘에서\n`claude_usage()` 가 **예외 없이 `None`** 이며 `collect_state()`·`_empty_state()` 가 `claude_usage`\n키를 그대로 들고 돌아오는 것.\n",
+  "verify": "python3 -m unittest tests.test_monitor_claude_usage tests.test_aimem_monitor_detail tests.test_aimem_monitor_access tests.test_aimem_monitor_auth tests.test_monitor_ticket_regress > /tmp/r19-t244.txt 2>&1; rc=$?; python3 - >> /tmp/r19-t244.txt 2>&1 <<'PY' || rc=1\nimport json, pathlib, sys, tempfile\nfrom unittest import mock\nsys.path.insert(0, 'tools')\nfrom aimem_monitor import server, reader\nd = pathlib.Path(tempfile.mkdtemp(prefix='r19-t244-'))\n(d / '.aimem').mkdir()\nbad = '{\"at\": \"2026-11-12T10:00:00\", \"rate_limits\": {\"five_hour\": {\"used_percentage\": 40}}, \"pad\": '\nbad += '[' * 1500 + ']' * 1500 + '}'\n(d / '.aimem' / 'claude-usage.json').write_text(bad, encoding='utf-8')\nserver.claude_usage(d)\ns1 = server.collect_state(d)\nassert 'claude_usage' in s1, 'collect_state 에 claude_usage 키가 없다'\nwith mock.patch.object(reader, 'collect', side_effect=RuntimeError('boom')):\n    s2 = server.collect_state(d)\nassert 'claude_usage' in s2, '실패 갈래에 claude_usage 키가 없다'\nfor at in ('0001-01-01T00:00:00+05:00', '9999-12-31T23:59:59-05:00'):\n    (d / '.aimem' / 'claude-usage.json').write_text(json.dumps(\n        {'at': at, 'rate_limits': {'five_hour': {'used_percentage': 40}}}), encoding='utf-8')\n    server.claude_usage(d)\nprint('N1/N2 contract ok')\nPY\ntail -25 /tmp/r19-t244.txt; exit $rc"
+ },
+ {
+  "id": "T-245",
+  "slot": "S3",
+  "deps": [
+   "T-244"
+  ],
+  "project": "",
+  "title": "test_monitor_claude_usage.py: 악성 파일·64KiB·두 갈래 키 회귀 시험",
+  "timeout_sec": 2700,
+  "max_attempts": 2,
+  "write": [
+   "tests/test_monitor_claude_usage.py"
+  ],
+  "task": "# T-245 `tests/test_monitor_claude_usage.py`: 악성 사용 한도 파일 회귀 시험\n\n쓸 파일은 **하나**입니다: `tests/test_monitor_claude_usage.py`. **`tools/**` 는 읽기만 하고 절대\n고치지 마십시오.** 계획을 세우지 말고 바로 고치십시오. 지금 18건이고 **23건 이상**이 돼야 합니다.\n\n## 왜 (적대적 검수가 찾은 구멍)\n\n앞 노드 T-244 가 고친 것을 **시험이 지키지 못합니다.** 검수가 제품에 결함을 일부러 넣었는데\n시험이 초록이었습니다: 64 KiB 상한을 지워도, `_empty_state`/`collect_state` 에서 `claude_usage`\n키를 빼도 초록이었습니다. 악성 입력 시험은 아예 없었습니다.\n\n## 더할 시험 (적어도 다섯)\n\n1. **깊은 중첩** - `{\"at\": <정상 ISO>, \"rate_limits\": {\"five_hour\": {\"used_percentage\": 40}},\n   \"pad\": \"[\" * 1500 + \"]\" * 1500}` 을 임시 저장소의 `.aimem/claude-usage.json` 에 쓰고\n   `server.claude_usage(root)` 가 **예외 없이** 돌아오는 것(값은 `None` 이어도 됩니다)\n2. **범위 밖 `at`** - `at=\"0001-01-01T00:00:00+05:00\"` 과 `\"9999-12-31T23:59:59-05:00\"` 둘 다\n   예외 없이 돌아오고 `rows` 는 정상으로 만들어지는 것\n3. **`/api/state` 가 그래도 200** - 1번 파일을 둔 임시 저장소로 서버를 띄워\n   `/api/state` 가 200 이고 본문이 JSON 이며 `claude_usage` 키가 있는 것.\n   서버 띄우는 꼴은 `tests/test_aimem_monitor_access.py` 나 `tests/browser_monitor_usage.py` 의\n   `monitor_server()` 를 베끼십시오(`http.server.ThreadingHTTPServer` + 0번 포트 + 데몬 스레드,\n   `require_auth=False`). **운영 서버(10443)를 부르지 마십시오.**\n4. **64 KiB 상한** - `rate_limits` 는 **정상**인데 파일 전체가 64 KiB 를 넘도록 군더더기를 채운\n   파일에서 `claude_usage()` 가 `None` 인 것 (상한을 지우면 빨개져야 합니다 - 지금 시험 파일에는\n   `rate_limits` 가 없어서 상한을 지워도 초록이었습니다)\n5. **두 갈래 모두 키가 있다** - `server.collect_state(root)` 와, `reader.collect` 가 예외를 던지게\n   `mock.patch` 한 실패 갈래 **둘 다** 결과에 `claude_usage` 키가 있는 것\n   (`tests/test_aimem_monitor_detail.py:489` 의 꼴을 참고하되 **그 파일은 고치지 마십시오**)\n\n이미 있는 18건은 그대로 두십시오. 임시 저장소는 `tempfile.mkdtemp` 로 만들고 `tearDown` 에서\n`shutil.rmtree` 로 치우십시오(자기가 만든 `/tmp` 폴더 삭제는 금지 대상이 아닙니다).\n\n## 검증\n\n```bash\npython3 -m unittest tests.test_monitor_claude_usage\n```\n`OK` 이고 `Ran` 이 23 이상. 제품이 틀렸다고 판단되면 고치지 말고 첫 줄을 `NEEDS-FIX: …` 로 쓰십시오.\n",
+  "verify": "python3 -m unittest tests.test_monitor_claude_usage > /tmp/r19-t245.txt 2>&1; rc=$?; tail -20 /tmp/r19-t245.txt; [ $rc -eq 0 ] || exit 1; python3 -c \"import re,sys;t=open('/tmp/r19-t245.txt').read();m=re.search(r'Ran (\\d+) tests',t);sys.exit(0 if m and int(m.group(1))>=23 else 1)\""
+ },
+ {
+  "id": "T-246",
+  "slot": "S2",
+  "deps": [
+   "T-244"
+  ],
+  "project": "",
+  "title": "엔진: 한도 판정을 rc != 0 일 때만 (검수 N3) + 놓치던 걸림말 둘",
+  "timeout_sec": 2400,
+  "max_attempts": 2,
+  "write": [
+   "tools/fleet_graph.py"
+  ],
+  "task": "# T-246 엔진: 한도 판정을 **rc != 0 일 때만** 하십시오 (검수 N3)\n\n쓸 파일은 **하나**입니다: `tools/fleet_graph.py`. **`tests/**` 는 읽기만 하고 절대 고치지\n마십시오.** 계획을 세우지 말고 바로 고치십시오.\n\n## 왜\n\n적대적 검수가 저장된 작업자 보고 250건을 전수로 재 봤습니다. 지금 판정에 걸리는 4건 중\n**3건이 멀쩡한 `DONE` 보고**(rc 0)였고 진짜 한도는 1건(rc 1)이었습니다. 글자만 보면 \"분당 60줄\n한도를 초과한 거절은…\" 같은 **일을 설명하는 문장**도 걸립니다. 반대로 진짜 한도 문구\n`\"Session limit reached ∙ resets 3pm\"` 과 `\"You've reached your usage limit\"` 은 **놓칩니다.**\n\n## 고칠 것 둘\n\n### (1) `step()` (`:819` 근처): 한도로 보는 조건에 `rc != 0` 을 더하십시오\n\n지금은 `rc == 0` 이어도 한도로 봅니다. 바꾸십시오:\n\n- `rc != 0` 이고 보고가 한도 꼴이면 → 지금처럼 `att[\"limit\"]=True`, `n[\"limit\"]=True`,\n  `att[\"verify_rc\"]=-4`, `blocked`, 로그\n- `rc == 0` 이면 → **한도로 보지 않습니다.** 보통 경로(검증 → done/재시도)로 갑니다.\n  T-242 가 넣은 \"`verify` 가 있으면 먼저 돌려 통과하면 한도로 보지 않는다\" 갈래는, 이 조건이\n  들어가면 `rc == 0` 에서는 쓰이지 않습니다 - **죽은 가지를 남기지 말고 깔끔하게 정리하십시오**\n  (`rc != 0` 경로에는 애초에 검증이 돌지 않습니다). 설명문(docstring)과 주석도 새 규칙에 맞추고,\n  **왜 rc 를 보는지**(실데이터 250건 전수에서 오인 3건이 전부 사라지고 진짜 1건은 남는다)를 한 줄 적으십시오\n\n### (2) `_LIMIT_PATTERNS` 에 놓치던 두 꼴을 더하십시오\n\n`session limit reached`, `reached your usage limit`. 지금 있는 걸림말은 그대로 두십시오.\n\n## 지키십시오 (이미 있는 계약)\n\n- True: `\"상태: DONE\\nClaude hit your 5-hour limit\"` · `\"5-hour limit reached\"` ·\n  `\"주간 한도에 걸렸습니다\"` · `\"사용 한도로 끝났습니다\"` · `\"x\"*2500 + \"\\n사용 한도로 끊겼습니다\"`\n- False: `\"상태: DONE\\n- 검증 통과\"` · `\"DONE\\n- 함대 탭에 Claude 사용 한도 카드를 넣었습니다\"` ·\n  `\"DONE\\n- rate limit 글자를 설명에 적었습니다\"`\n- `report_limit_hit` 자체는 **글자만 봅니다** (rc 는 `step()` 이 봅니다) - 함수 서명을 바꾸지 마십시오\n\n`tests/test_fleet_graph.py` 의 한도 시험 몇은 rc 0 고정이라 **빨개질 수 있습니다. 그대로 두십시오** -\n다음 노드(T-247, 다른 슬롯)가 고칩니다. `tests/test_fleet_ctl.py` 는 초록이어야 합니다.\n\n## 검증\n\n검증 명령이 `tests.test_fleet_ctl` 과 위 여덟 줄 계약을 봅니다.\n",
+  "verify": "python3 -m unittest tests.test_fleet_ctl > /tmp/r19-t246.txt 2>&1; rc=$?; python3 - >> /tmp/r19-t246.txt 2>&1 <<'PY' || rc=1\nimport sys\nsys.path.insert(0, 'tools')\nimport fleet_graph as fg\nyes = ['\\uc0c1\\ud0dc: DONE\\nClaude hit your 5-hour limit', '5-hour limit reached',\n       '\\uc8fc\\uac04 \\ud55c\\ub3c4\\uc5d0 \\uac78\\ub838\\uc2b5\\ub2c8\\ub2e4', '\\uc0ac\\uc6a9 \\ud55c\\ub3c4\\ub85c \\ub05d\\ub0ac\\uc2b5\\ub2c8\\ub2e4',\n       'x'*2500 + '\\n\\uc0ac\\uc6a9 \\ud55c\\ub3c4\\ub85c \\ub04a\\uaca8\\uc2b5\\ub2c8\\ub2e4',\n       'Session limit reached \\u2219 resets 3pm', \"You've reached your usage limit\"]\nno = ['\\uc0c1\\ud0dc: DONE\\n- \\uac80\\uc99d \\ud1b5\\uacfc',\n      'DONE\\n- \\ud568\\ub300 \\ud0ed\\uc5d0 Claude \\uc0ac\\uc6a9 \\ud55c\\ub3c4 \\uce74\\ub4dc\\ub97c \\ub123\\uc5c8\\uc2b5\\ub2c8\\ub2e4',\n      'DONE\\n- rate limit \\uae00\\uc790\\ub97c \\uc124\\uba85\\uc5d0 \\uc801\\uc5c8\\uc2b5\\ub2c8\\ub2e4']\nbad = [t for t in yes if not fg.report_limit_hit(t)] + [t for t in no if fg.report_limit_hit(t)]\nprint('contract bad:', bad)\nsys.exit(1 if bad else 0)\nPY\ntail -20 /tmp/r19-t246.txt; exit $rc"
+ },
+ {
+  "id": "T-247",
+  "slot": "S3",
+  "deps": [
+   "T-246"
+  ],
+  "project": "",
+  "title": "test_fleet_graph.py: rc 조건 회귀 시험 + 2000자 구멍(G3)",
+  "timeout_sec": 2400,
+  "max_attempts": 2,
+  "write": [
+   "tests/test_fleet_graph.py"
+  ],
+  "task": "# T-247 `tests/test_fleet_graph.py`: 한도 판정이 rc 를 본다는 시험\n\n쓸 파일은 **하나**입니다: `tests/test_fleet_graph.py`. **`tools/**` 는 읽기만 하고 절대 고치지\n마십시오.** 계획을 세우지 말고 바로 고치십시오. 지금 48건이고 **51건 이상**이 돼야 합니다.\n\n## 제품이 또 바뀌었습니다 (앞 노드 T-246, 의도된 변경)\n\n`step()` 은 이제 **`rc != 0` 일 때만** 보고를 한도로 봅니다. `rc == 0` 이면 보고에 한도 문구가\n있어도 보통 경로(검증 → done/재시도)로 갑니다. 실제 보고 250건 전수에서 오인 3건이 모두\nrc 0 이었기 때문입니다. 걸림말에 `session limit reached`, `reached your usage limit` 도 들어갔습니다.\n\n## 할 일\n\n1. **rc 0 짜리 한도 시험들을 새 규칙에 맞추십시오.** `test_step_limit_hit_blocks_without_retry`,\n   `test_step_limit_hit_keeps_attempt_count_at_two`, `test_step_limit_flag_remains_in_saved_graph_json`\n   같이 `fleet._run_state` 를 `(\"done\", 0)` 으로 모의하는 시험은 **rc 를 0 이 아닌 값**\n   (예: `(\"done\", 1)`)으로 바꾸면 그대로 삽니다. 단언은 그대로 두십시오\n2. **새 시험 둘**:\n   - `rc == 0` + 보고가 `\"상태: DONE\\n5-hour limit reached\"` + 노드에 `verify` 없음 →\n     노드가 **`blocked` 가 아니고** `attempt.get(\"limit\")` 이 참이 아닌 것 (오인 회귀)\n   - `rc != 0` + 같은 보고 → `blocked`, `attempt[\"limit\"] is True`, `attempt[\"verify_rc\"] == -4`\n3. **계약표에 True 두 줄 더하기** (`test_report_limit_hit_contract_table`):\n   `\"Session limit reached ∙ resets 3pm\"` · `\"You've reached your usage limit\"`\n4. **G3 구멍 메우기**: `test_report_limit_hit_only_reads_last_2000_chars` 의 **거짓 쪽** 사례가\n   앞부분에 진짜 한도 문구를 두지 않아 상한을 지워도 안 빨개집니다. 앞부분을\n   `\"5-hour limit reached\\n\" + \"x\"*2500 + \"\\n상태: DONE\"` 처럼 **진짜 문구**로 바꿔\n   `False` 를 단언하십시오\n\n시험을 지우지 마십시오.\n\n## 검증\n\n```bash\npython3 -m unittest tests.test_fleet_graph\n```\n`OK` 이고 `Ran` 이 51 이상. 제품이 틀렸다고 판단되면 고치지 말고 첫 줄을 `NEEDS-FIX: …` 로 쓰십시오.\n",
+  "verify": "python3 -m unittest tests.test_fleet_graph > /tmp/r19-t247.txt 2>&1; rc=$?; tail -20 /tmp/r19-t247.txt; [ $rc -eq 0 ] || exit 1; python3 -c \"import re,sys;t=open('/tmp/r19-t247.txt').read();m=re.search(r'Ran (\\d+) tests',t);sys.exit(0 if m and int(m.group(1))>=51 else 1)\""
+ },
+ {
+  "id": "T-248",
+  "slot": "S1",
+  "deps": [
+   "T-245",
+   "T-247"
+  ],
+  "project": "",
+  "title": "재검수: N1·N2·N3·N4 수정이 정말 닫혔는가",
+  "timeout_sec": 2700,
+  "max_attempts": 2,
+  "write": [
+   "rounds/R19/REVIEW-r19.md"
+  ],
+  "task": "# T-248 재검수 - R19 의 수정이 정말 닫혔는지 깨뜨려 보십시오\n\n쓸 파일은 **하나**입니다: `rounds/R19/REVIEW-r19.md` (새 파일). **제품도 검사도 고치지 마십시오.**\n\n## 무엇을\n\nR18 검수(`rounds/R18/REVIEW-r18.md` - 먼저 읽으십시오)가 낸 **N1·N2·N3·N4** 를 R19 가 고쳤습니다.\n\n1. **N1·N2** `tools/aimem_monitor/server.py` - `claude_usage()` 의 예외 넓히기 + 부르는 자리\n   (`collect_state`·`_empty_state`) 바깥 `try`, `at` 변환의 `OverflowError`\n2. **N4** 같은 파일 `serve()` 의 SIGTERM 처리기 (`flush_denied_audit` 이 돌게)\n3. **N3** `tools/fleet_graph.py` - 한도 판정에 `rc != 0` 조건, 걸림말 둘 추가\n4. 시험: `tests/test_monitor_claude_usage.py`(18→23+), `tests/test_fleet_graph.py`(48→51+)\n\n`git diff --stat` 과 해당 hunk 만 보십시오. **전체 파일을 통째로 읽지 마십시오.**\n\n## 어떻게\n\n**저장소를 `/tmp` 로 복사하지 마십시오** - R18 검수 때 `rsync` 가 승인 대기로 막혔습니다.\n그때 쓴 방법이 좋았습니다: **같은 프로세스에서 모듈 소스를 문자열로 한 군데 바꿔 `exec` 로 다시\n읽히고**(또는 `mock.patch`) 그 묶음의 시험을 돌리는 것. 디스크에 아무것도 쓰지 않습니다.\n\n적어도 이것을 물으십시오.\n\n- **N1 이 정말 닫혔는가:** 깊이 1500 중첩 + 정상 `rate_limits` 파일로 임시 포트 서버의\n  `/api/state` 가 **200** 인가? 더 깊게(5000) 하면? `rate_limits` 자체가 깊으면?\n  `_empty_state` 갈래(`reader.collect` 가 예외)도 200 인가?\n- **N2:** `at` 이 `0001-…+05:00`·`9999-…-05:00`·`\"+99999-01-01\"`·숫자·`None` 일 때 모두 무사한가?\n- **N4:** SIGTERM 처리기가 **주 스레드가 아닐 때** `ValueError` 로 죽지 않는가? 처리기를\n  **원래대로 되돌리는가**(안 되돌리면 같은 프로세스의 다음 서버가 영향을 받습니다)?\n  `once=True` 로도 도는가? 실제로 SIGTERM 을 보내 `audit-dropped` 줄이 남는지 재 보십시오\n  (**임시 저장소 + 임시 포트로만**. 운영 10443 을 건드리지 마십시오)\n- **N3:** 저장된 `.aimem/runs/*.report` 를 다시 전수로 재서, 새 규칙(rc != 0 + 글자)으로 걸리는\n  것이 **진짜 한도뿐**인가? 진짜 한도인데 rc 0 으로 끝나는 하네스가 있는가(`.out` 의\n  `api_error`·`terminal_reason` 과 대조)? 그렇다면 놓치는 비용은 얼마인가?\n- **시험 구멍(변이 시험, 적어도 여덟):** 위 수정을 하나씩 되돌리면 **반드시** 빨개지는가?\n  - `RecursionError` 를 `except` 에서 빼기 / 바깥 `try` 를 지우기 / `OverflowError` 빼기\n  - SIGTERM 처리기를 지우기 / 되돌리기를 지우기\n  - `rc != 0` 조건을 지우기 / 새 걸림말 둘을 지우기 / 64 KiB 상한 지우기\n  - `_empty_state` 에서만 `claude_usage` 키 빼기\n\n## 쓸 것 (`rounds/R19/REVIEW-r19.md`, 3,000자 이상)\n\n1. 맨 위 **표**: `번호 | 심각도(높음/중간/낮음/정보) | 무엇이 | 어디(파일:행) | 어떻게 재현 | 고칠 법`\n2. **변이 시험 표**: 넣은 변이 / 빨개진 시험 / 살아남았으면 그것이 구멍\n3. R18 의 N1·N2·N3·N4 가 **닫혔는지 하나씩 판정**(닫힘/부분/안 닫힘)\n4. 마지막에 **우선순위**\n\n첫 줄은 `DONE` 으로 시작하고, 아래에 가장 중요한 것 세 줄을 적으십시오.\n",
+  "verify": "python3 -c \"\nimport pathlib,sys\np=pathlib.Path('rounds/R19/REVIEW-r19.md')\nt=p.read_text(encoding='utf-8') if p.exists() else ''\nprint('길이', len(t), '변이', '변이' in t, '심각도', '심각도' in t)\nsys.exit(0 if len(t)>=3000 and '심각도' in t and '변이' in t else 1)\""
+ }
+]

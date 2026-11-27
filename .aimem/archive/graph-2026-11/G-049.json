@@ -1,0 +1,68 @@
+{
+ "id": "G-049",
+ "request": "R19: 재검수 P1(높음) 수정과 회귀 시험",
+ "created": "2026-11-12T17:14:33",
+ "rev": 160,
+ "round": 19,
+ "concurrency": 2,
+ "nodes": [
+  {
+   "id": "T-249",
+   "slot": "S2",
+   "deps": [],
+   "project": "",
+   "title": "server.py: 서러게이트 한 글자가 /api/state 를 죽이는 것 (재검수 P1)",
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "write": [
+    "tools/aimem_monitor/server.py"
+   ],
+   "task": "# T-249 `server.py`: 짝 없는 서러게이트 한 글자가 `/api/state` 를 죽이는 것 (재검수 P1, 높음)\n\n쓸 파일은 **하나**입니다: `tools/aimem_monitor/server.py`. **`tests/**` 와 다른 `tools/**` 는 읽기만\n하고 절대 고치지 마십시오.** 계획을 세우지 말고 바로 고치십시오.\n\n## 무엇이\n\n`.aimem/claude-usage.json` 이 `{\"at\": \"\\ud800\", \"rate_limits\": {\"five_hour\": {\"used_percentage\": 40}}}`\n(71 바이트, JSON 이스케이프 그대로) 이면 `claude_usage()` 는 **정상으로** `at='\\ud800'` 을 돌려줍니다.\n그 글자가 `/api/state` 응답에 그대로 실려 `_send()` 의 `body.encode(\"utf-8\")`(`:2489` 근처)에서\n**`UnicodeEncodeError: surrogates not allowed`** 가 터지고, 연결이 **응답 없이** 끊깁니다(실측\n`RemoteDisconnected`). 정상 갈래·실패 갈래(`_empty_state`) **둘 다** 죽습니다 - 바깥 `try` 는\n직렬화 단계를 감싸지 못합니다.\n\n## 고칠 것 둘 (둘 다 하십시오)\n\n1. **`_send()`** (`:2487` 근처): `body = body.encode(\"utf-8\")` 를 **`body.encode(\"utf-8\", \"replace\")`**\n   로. 이러면 상태 어디에 그런 글자가 들어와도(파일 이름, 요청 제목 등) 응답이 죽지 않습니다.\n   주석 한 줄로 까닭을 적으십시오 (재검수 P1)\n2. **`claude_utils` 쪽 근원도**: `claude_usage()` 가 `at` 을 담기 전에\n   **내보낼 수 없는 글자면 `None` 으로** 떨어뜨리십시오. 예:\n   ```python\n   if isinstance(at, str):\n       try:\n           at.encode(\"utf-8\")\n       except UnicodeEncodeError:\n           at = None\n   ```\n   (`at` 이 `str` 이 아닐 때 `None` 으로 두는 지금 동작은 그대로.)\n\n`rows`·`age_seconds` 계산과 돌려주는 모양(`{at, age_seconds, rows}`)은 **바꾸지 마십시오.**\n\n## 검증\n\n검증 명령이 봅니다: 시험 묶음 넷이 초록이고, 서러게이트 `at` 파일을 둔 임시 저장소로 띄운\n임시 포트 서버의 `/api/state` 가 **정상 갈래·`reader.collect` 예외 갈래 둘 다 200** 이며\n본문이 JSON 으로 읽히는 것.\n",
+   "verify": "python3 -m unittest tests.test_monitor_claude_usage tests.test_aimem_monitor_detail tests.test_aimem_monitor_access tests.test_aimem_monitor_auth > /tmp/r19-t249.txt 2>&1; rc=$?; python3 - >> /tmp/r19-t249.txt 2>&1 <<'PY' || rc=1\nimport http.server, json, pathlib, sys, tempfile, threading, urllib.request\nfrom unittest import mock\nsys.path.insert(0, 'tools')\nfrom aimem_monitor import server, reader\nd = pathlib.Path(tempfile.mkdtemp(prefix='r19-t249-'))\n(d / '.aimem').mkdir()\n(d / '.aimem' / 'claude-usage.json').write_text(\n    '{\"at\": \"\\\\ud800\", \"rate_limits\": {\"five_hour\": {\"used_percentage\": 40}}}', encoding='utf-8')\nh = type('H', (server.Handler,), {'root': d, 'require_auth': False, 'tls': False, 'access_token': None,\n                                  'guard': server.LoginGuard(), 'timeout': 5, 'log_message': lambda *a, **k: None})\nhttpd = http.server.ThreadingHTTPServer(('127.0.0.1', 0), h)\nhttpd.daemon_threads = True\nt = threading.Thread(target=httpd.serve_forever, daemon=True); t.start()\nurl = 'http://127.0.0.1:%d/api/state' % httpd.server_address[1]\ntry:\n    with urllib.request.urlopen(url, timeout=10) as r:\n        assert r.status == 200, r.status\n        json.loads(r.read().decode('utf-8'))\n    with mock.patch.object(reader, 'collect', side_effect=RuntimeError('boom')):\n        with urllib.request.urlopen(url, timeout=10) as r:\n            assert r.status == 200, r.status\n            json.loads(r.read().decode('utf-8'))\nfinally:\n    httpd.shutdown(); httpd.server_close(); t.join(timeout=3)\nprint('P1 contract ok')\nPY\ntail -25 /tmp/r19-t249.txt; exit $rc",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-249-S2-a1-171433",
+     "started": "2026-11-12T17:14:33",
+     "ended": "2026-11-12T17:23:41",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n- 고친 파일: `tools/aimem_monitor/server.py` 하나만 수정했습니다. `tests/**`·다른 `tools/**`는 변경하지 않았고 커밋도 하지 않았습니다.\n- 근원 수정: `claude_usage()`에서 `at`이 `str`이지만 UTF-8로 인코딩할 수 없으면 `None`으로 떨어뜨립니다. `rows`·`age_seconds` 계산과 반환 모양은 유지했습니다 (`tools/aimem_monitor/server.py:997`).\n- 응답 수정: `_send()`의 문자열 인코딩을 `body.encode(\"utf-8\", \"replace\")`로 바꿔 상태 어디에든 짝 없는 서러게이트가 있어도 응답이 죽지 않게 했습니다 (`tools/aimem_monitor/server.py:2494`).\n- 참고: 별도 `claude_utils` 모듈은 없었고, 해당 구현은 `server.py`의 `claude_usage()`입니다.\n\n검증 1\n```bash\npython3 -m unittest tests.test_aimem_monitor tests.test_monitor_claude_usage tests.test_aimem_monitor_state tests.test_monitor_state_speed\n```\n출력: `Ran 94 tests in 10.197s` / `OK`\n\n검증 2: 71바이트 `{\"at\": \"\\ud800\", ...}` 파일을 둔 임시 저장소로 임시 포트 서버를 띄워 `/api/state`를 호출했습니다.\n- 정상 갈래: `status=200`, `application/json; charset=utf-8`, 본문 `json.loads` 성공, `claude_usage`의 `at=None`, `rows`는 `five_hour` 40.0 유지\n- `reader.collect` 예외 갈래: `status=200`, JSON 본문 성공, `errors`에 `reader.collect() 실패: RuntimeError: boom` 포함\n\n다음 담당자가 알아야 할 것: 서러게이트 `at`은 이제 `None`으로 정규화되므로 `age_seconds`도 `None`입니다. 응답 인코딩은 대체 문자로 처리되므로 파일 이름·요청 제목 등 다른 경로의 서러게이트도 `/api/state`를 죽이지 않습니다.",
+     "verify_rc": 0,
+     "verify_tail": ".........................................................................................................................s...\n----------------------------------------------------------------------\nRan 125 tests in 9.937s\n\nOK (skipped=1)\nP1 contract ok\n"
+    }
+   ]
+  },
+  {
+   "id": "T-250",
+   "slot": "S3",
+   "deps": [
+    "T-249"
+   ],
+   "project": "",
+   "title": "test_monitor_claude_usage.py: 서러게이트·곁다리 카드·갈래별 키 회귀 시험 (P1·P5·M2)",
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "write": [
+    "tests/test_monitor_claude_usage.py"
+   ],
+   "task": "# T-250 `tests/test_monitor_claude_usage.py`: 서러게이트와 '곁다리 카드' 회귀 시험\n\n쓸 파일은 **하나**입니다: `tests/test_monitor_claude_usage.py`. **`tools/**` 는 읽기만 하고 절대\n고치지 마십시오.** 계획을 세우지 말고 바로 고치십시오. 지금 23건이고 **27건 이상**이 돼야 합니다.\n\n## 왜 (재검수가 찾은 것)\n\n앞 노드 T-249 가 고친 길과, 아직 시험이 못 잡는 변이 셋입니다.\n\n1. **P1** - `at` 에 짝 없는 서러게이트(`\"\\ud800\"`)가 있으면 `/api/state` 가 응답 없이 끊겼습니다\n2. **P5** - `collect_state`/`_empty_state` 의 바깥 `try`(곁다리 카드가 상태를 죽이지 않게)를 지워도\n   시험이 전부 초록이었습니다\n3. **M2** - `claude_usage` 를 **한쪽 갈래에서만** 빼도 초록이었습니다(지금 시험은 둘을 한꺼번에만 봅니다)\n\n## 더할 시험 (적어도 넷)\n\n1. **서러게이트 `at`** - 임시 저장소의 `.aimem/claude-usage.json` 에\n   `'{\"at\": \"\\\\ud800\", \"rate_limits\": {\"five_hour\": {\"used_percentage\": 40}}}'` 를 **글자 그대로**\n   써 두고(이스케이프가 파일에 남게), `server.claude_usage(root)` 가 예외 없이 돌아오는 것\n2. **그 파일로 `/api/state` 가 200** - 임시 포트 서버(`require_auth=False`)로 정상 갈래와,\n   `mock.patch.object(reader, \"collect\", side_effect=RuntimeError(\"boom\"))` 로 만든 **실패 갈래**\n   **둘 다** 200 이고 본문이 `json.loads` 되는 것. (서버 띄우는 꼴은 이 파일 안의 기존 시험이나\n   `tests/browser_monitor_usage.py` 의 `monitor_server()` 를 베끼십시오. **운영 서버를 부르지 마십시오.**)\n3. **곁다리 카드가 상태를 죽이지 않는다 (P5)** -\n   `mock.patch.object(server, \"claude_usage\", side_effect=RuntimeError(\"boom\"))` 인 채로\n   `server.collect_state(root)` 가 예외 없이 돌아오고 `state[\"claude_usage\"] is None` 인 것.\n   실패 갈래(`reader.collect` 도 예외)에서도 같은 것\n4. **갈래마다 따로 (M2)** - `claude_usage` 키가 **정상 갈래 결과에 있다**는 단언과\n   **실패 갈래 결과에 있다**는 단언을 **서로 다른 시험 두 개**로 나누십시오(한 시험이 둘을 함께\n   보면 한쪽만 지워도 안 빨개집니다)\n\n이미 있는 23건은 그대로 두십시오. 임시 폴더는 `tearDown` 에서 `shutil.rmtree` 로 치우십시오.\n\n## 검증\n\n```bash\npython3 -m unittest tests.test_monitor_claude_usage\n```\n`OK` 이고 `Ran` 이 27 이상. 제품이 틀렸다고 판단되면 고치지 말고 첫 줄을 `NEEDS-FIX: …` 로 쓰십시오.\n",
+   "verify": "python3 -m unittest tests.test_monitor_claude_usage > /tmp/r19-t250.txt 2>&1; rc=$?; tail -20 /tmp/r19-t250.txt; [ $rc -eq 0 ] || exit 1; python3 -c \"import re,sys;t=open('/tmp/r19-t250.txt').read();m=re.search(r'Ran (\\d+) tests',t);sys.exit(0 if m and int(m.group(1))>=27 else 1)\"",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-250-S3-a1-172354",
+     "started": "2026-11-12T17:23:54",
+     "ended": "2026-11-12T17:27:55",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n한 일: `tests/test_monitor_claude_usage.py`에 회귀 시험 7건 추가(기존 23건 유지, 총 30건). 추가 시험은 (1) 서러게이트 `at`(`\"\\\\ud800\"` 파일에 글자 그대로)에서 `claude_usage` 무예외, (2) 같은 파일로 `/api/state` 정상·실패 갈래 각각 200 및 `json.loads` 성공, (3) `server.claude_usage`가 `RuntimeError`인 채로 정상·실패 갈래 `collect_state` 무예외 및 `state[\"claude_usage\"] is None`, (4) 정상 갈래와 실패 갈래의 `claude_usage` 키 존재를 서로 다른 두 시험으로 분리(M2).\n\n고친 파일: `tests/test_monitor_claude_usage.py`만. `tools/**`는 읽기만 함.\n\n검증 명령과 출력:\n```\n$ python3 -m unittest tests.test_monitor_claude_usage\n..............................\nRan 30 tests in 1.600s\nOK\n```\n\n다음 담당자: 운영 서버 호출 없이 임시 포트 + `require_auth=False` 하네스만 사용했고, 임시 폴더는 기존 `TemporaryDirectory`/`addCleanup`으로 정리됨. 제품 코드는 고치지 않았고 시험만으로 P1·P5·M2 변이가 잡힘.",
+     "verify_rc": 0,
+     "verify_tail": "..............................\n----------------------------------------------------------------------\nRan 30 tests in 1.571s\n\nOK\n"
+    }
+   ]
+  }
+ ],
+ "followup": "재검수 T-248 이 찾은 P1(높음) 의 수정",
+ "updated": "2026-11-12T17:27:59"
+}

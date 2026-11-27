@@ -1,0 +1,68 @@
+{
+ "id": "G-051",
+ "request": "R20 후속: T-252 가 남긴 SIGTERM 종료 시험 고치기 + 적대적 검수",
+ "created": "2026-11-12T19:13:38",
+ "rev": 162,
+ "round": 20,
+ "concurrency": 2,
+ "nodes": [
+  {
+   "id": "T-261",
+   "slot": "S3",
+   "deps": [],
+   "project": "",
+   "title": "test_monitor_shutdown.py: 빨간 시험 둘 고치기 (T-252 이어받기)",
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "write": [
+    "tests/test_monitor_shutdown.py"
+   ],
+   "task": "# T-261 `tests/test_monitor_shutdown.py` 의 **빨간 시험 둘**을 고치십시오\n\n쓸 파일은 **하나**입니다: `tests/test_monitor_shutdown.py` (이미 있습니다, 시험 3건).\n**`tools/**` 와 다른 `tests/**` 는 읽기만 하고 절대 고치지 마십시오.**\n계획을 세우지 말고 바로 고치십시오. 앞 작업자가 만들다 만 파일을 **이어받는** 일입니다.\n\n지금 `python3 -m unittest tests.test_monitor_shutdown` 은 **3건 중 2건이 빨강**입니다.\n`test_sigterm_flushes_denied_audit` 은 **초록이고 손대지 마십시오.**\n\n## 빨강 1 - `test_serve_restores_sigterm_handler`\n\n```\nAssertionError: False is not true : health 200 이 되지 않았습니다. stderr=\n```\n\n**까닭 (관리자가 재현해 확인했습니다):** 이 시험은 자식에서 `serve(..., once=True)` 를 부르고\n부모가 `/api/health` 가 200 이 될 때까지 폴링합니다. 그런데 `once=True` 는\n`httpd.handle_request()` 를 **한 번만** 부르고, `ThreadingHTTPServer` 의 `handle_request` 는\n연결을 **받아 스레드에 넘기고 바로 돌아옵니다**. 그래서 `serve()` 가 끝나고\n`httpd.server_close()` 가 소켓을 닫아 버려 **응답이 영영 안 옵니다** - 20초를 꽉 채우고 빨강입니다.\n`health` 200 을 기다리는 방식으로는 이 시험을 세울 수 없습니다.\n\n**고칠 방향 (이렇게 하십시오):**\n\n- `_wait_health` 를 이 시험에서 **쓰지 마십시오.**\n- 자식이 `serve()` 를 부르기 **전에** `BEFORE\\t<repr(signal.getsignal(SIGTERM))>` 을 찍고\n  `flush=True` 하는 것은 지금 그대로 둡니다\n- 부모는 자식 stdout 에서 **`BEFORE` 줄을 읽어** 서버가 곧 뜬다는 것만 확인하고,\n  그 뒤 `/api/health` 에 **한 번만** 요청을 보냅니다. **응답이 오든 끊기든 상관없습니다** -\n  `try: urllib.request.urlopen(...) except Exception: pass` 로 감싸고, 그 한 번의 연결이\n  `handle_request()` 를 풀어 주는 **방아쇠**일 뿐입니다\n  - 연결이 바로 거부되면(아직 bind 전) 몇 번 더 시도하십시오 - 다만 **200 을 요구하지는 마십시오**.\n    `ConnectionRefusedError` 가 아닌 어떤 결과든(`200`·`RemoteDisconnected`·타임아웃) 방아쇠는\n    당겨진 것입니다\n- 그다음 `proc.communicate(timeout=20)` 으로 자식이 **스스로 끝나기를** 기다리고,\n  stdout 에서 **`AFTER` 줄**을 찾아 단언합니다:\n  - `AFTER` 줄이 **있어야** 합니다 (= `serve()` 가 정상으로 돌아왔다)\n  - `AFTER` 줄에 `SIG_DFL` 이 들어 있어야 합니다 (처리기가 되돌려졌다)\n  - `AFTER` 줄에 `_sigterm_interrupt` 가 **없어야** 합니다\n  - 참고로 `BEFORE` 줄과 비교해 같은 값인지도 보십시오\n- 실패 메시지(`msg=`)에 **자식의 stdout 과 stderr 전문**을 넣으십시오\n\n## 빨강 2 - `test_sigterm_handler_is_installed_right_before_the_serve_loop`\n\n```\nAssertionError: 2 != 1 : SIGTERM 설치 줄이 정확히 하나가 아닙니다: [42, 53]\n```\n\n**까닭:** `signal.signal(signal.SIGTERM` 이 `serve()` 안에 **두 번** 나옵니다 -\n42번째 줄은 **설치**(`signal.signal(signal.SIGTERM, _sigterm_interrupt)`),\n53번째 줄은 `finally` 안의 **되돌리기**(`signal.signal(signal.SIGTERM, old_sigterm)`) 입니다.\n시험이 둘을 구별하지 않습니다.\n\n**고칠 방향:** 설치 줄만 고르십시오 - 줄에 `signal.signal(signal.SIGTERM` **과**\n`_sigterm_interrupt` **가 함께 있는 줄**이 설치 줄입니다. 그 줄이 **정확히 하나**여야 하고,\n\n- 서버 루프 줄(`handle_request()` 또는 `serve_forever()`)보다 **앞**\n- 서버 루프보다 앞에 있는 `log_line(` 들 **모두보다 뒤**\n  (**주의:** `except KeyboardInterrupt:` 안의 `log_line(\"\\n내립니다.\")` 는 루프보다 **뒤**이니\n  세면 안 됩니다. `log_line` 을 셀 때 **서버 루프 줄보다 앞의 것만** 세십시오 -\n  앞 작업자가 여기서 걸렸습니다)\n- 설치 줄과 서버 루프 사이에 `log_line(` 이 **하나도 없어야** 합니다\n\n## 규칙\n\n- **제품 코드(`tools/**`)를 고치지 마십시오.** 제품이 정말 틀렸으면 보고 첫 줄을\n  `NEEDS-FIX: <무엇이 어디서>` 로 쓰고 멈추십시오\n- 시험 **3건을 유지**하십시오. 줄이거나 단언을 지워 초록으로 만들지 마십시오\n- 자식 프로세스·임시 폴더는 `finally` 에서 반드시 거두십시오(`proc.kill()`, `shutil.rmtree`).\n  자기가 만든 `/tmp` 폴더를 지우는 것은 괜찮습니다\n- 모듈 전체가 **30초 안**에 끝나야 합니다. 20초짜리 폴링을 남기지 마십시오\n\n## 검증\n\n검증 명령이 봅니다: `python3 -m unittest tests.test_monitor_shutdown` 이 **rc 0** 이고\n그 모듈의 **시험이 3건 이상**인 것.\n",
+   "verify": "python3 -m unittest tests.test_monitor_shutdown > /tmp/r20-t261.txt 2>&1 && python3 - >> /tmp/r20-t261.txt 2>&1 <<'PY'\nimport sys, unittest\nsys.path.insert(0, '.')\nn = unittest.defaultTestLoader.loadTestsFromName('tests.test_monitor_shutdown').countTestCases()\nprint('tests', n)\nassert n >= 3, n\nPY",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-261-S3-a1-191342",
+     "started": "2026-11-12T19:13:42",
+     "ended": "2026-11-12T19:15:27",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n고친 파일: `tests/test_monitor_shutdown.py` (유일)\n\n- `test_serve_restores_sigterm_handler`: `_wait_health` 제거. 자식 stdout의 `BEFORE` 줄을 먼저 읽고, `/api/health`를 방아쇠로 **한 번** 요청(연결 거부일 때만 몇 번 재시도, 200은 요구하지 않음). 그 뒤 `proc.communicate(timeout=20)`으로 자식 종료를 기다리고 `AFTER` 줄 존재, `SIG_DFL` 포함, `_sigterm_interrupt` 부재, `BEFORE == AFTER`를 단언. 실패 메시지에 stdout/stderr 전문 포함.\n- `test_sigterm_handler_is_installed_right_before_the_serve_loop`: `signal_lines`를 `signal.signal(signal.SIGTERM`과 `_sigterm_interrupt`가 함께 있는 줄로 한정해 설치 줄 하나만 선택. 루프 앞/뒤 및 `log_line` 간격 단언은 그대로 유지.\n- `test_sigterm_flushes_denied_audit`는 손대지 않음. 시험 3건 유지, 단언 삭제 없음.\n\n검증:\n```\npython3 -m unittest -v tests.test_monitor_shutdown\n```\n출력: 세 시험 모두 `ok`, `Ran 3 tests in 0.248s`, `RC=0`. 모듈 전체 30초 이내.\n\n다음 담당자가 알아야 할 것: 제품 코드(`tools/**`)와 다른 `tests/**`는 수정하지 않았고, `_wait_health`는 첫 시험에서만 남아 있다. 추가 조치 없음.",
+     "verify_rc": 0,
+     "verify_tail": ""
+    }
+   ]
+  },
+  {
+   "id": "T-262",
+   "slot": "S1",
+   "deps": [
+    "T-261"
+   ],
+   "project": "",
+   "title": "적대적 검수: R20 의 SIGTERM 종료·한도 구조 신호·고정 자료 브라우저 검사·시험 구멍 넷",
+   "timeout_sec": 3600,
+   "max_attempts": 1,
+   "write": [
+    "rounds/R20/REVIEW-r20.md"
+   ],
+   "task": "# T-262 **적대적 검수** - R20 이 만든 것이 정말 지켜지는가\n\n쓸 파일은 **하나**입니다: `rounds/R20/REVIEW-r20.md` (새 파일).\n**저장소의 다른 파일은 단 하나도 고치지 마십시오.** 변이는 **저장소 사본**에만 넣습니다.\n\n## 검수 대상 (R20 이 이번 라운드에 고친 것)\n\n| # | 무엇 | 파일 |\n| - | --- | --- |\n| 1 | `serve()` 의 SIGTERM 처리기를 `try:` 바로 앞으로 (재검수 R19-P6) | `tools/aimem_monitor/server.py` |\n| 2 | 진짜 자식 프로세스 + 진짜 SIGTERM 종료 시험 (재검수 R19-P2) | `tests/test_monitor_shutdown.py` (새) |\n| 3 | 한도 판정의 **구조 신호** `run_limit_signal()` (재검수 R19-P3) | `tools/fleet_graph.py` |\n| 4 | 3 의 회귀 시험 + `rc != 0` verify 면제 분기 (R18-G7) | `tests/test_fleet_graph.py` |\n| 5 | 저장소 현재 상태에 기대던 브라우저 검사를 고정 자료로 (큐 1) | `tests/browser_monitor_ui.py`, `tests/browser_monitor_tabs.py` |\n| 6 | 시험 구멍 넷 (R18-A7·S8·B10·B12·C2) | `tests/test_monitor_ticket_regress.py`, `tests/test_monitor_claude_usage.py`, `tests/browser_monitor_usage.py`, `tests/test_fleet_ctl.py` |\n\n바뀐 자리는 `git diff` 와 `git status` 로 보십시오(**읽기만** - 커밋하지 마십시오).\n\n## 방법 - 변이 시험\n\n1. 저장소를 `/tmp` 로 복사하십시오. **`.aimem/tls/` 는 빼십시오**(개인키·운영 토큰).\n   `.git` 도 빼면 빠릅니다. 예:\n   `rsync -a --exclude .aimem/tls --exclude .git --exclude .aimem/runs --exclude __pycache__ ./ /tmp/r20-review/`\n   인증이 필요한 곳은 사본 안에서 **임시 토큰**을 만들어 쓰십시오. 운영 서버(https)를 `curl` 로\n   부르지 마십시오 - 401 입니다\n2. 사본에서 **제품 코드에 변이를 하나씩 넣고** 그 변이를 잡아야 할 시험·검사를 돌리십시오.\n   **잡히면 ○, 안 잡히면 ×(= 구멍)** 입니다. 최소 이 변이들을 포함하십시오:\n   - `serve()` 의 `signal.signal(SIGTERM, _sigterm_interrupt)` 설치 **지우기**\n   - `finally` 의 처리기 되돌리기 **지우기**\n   - `finally` 의 `flush_denied_audit(root)` **지우기**\n   - 처리기 설치를 **다시 `log_line` 들 앞으로** 되돌리기\n   - `run_limit_signal` 이 늘 `None` 을 돌려주게 하기 / 늘 `True` 를 돌려주게 하기\n   - `step()` 에서 `rc != 0` 조건 **풀기**(rc 0 도 한도로 보기)\n   - `run_limit_signal` 의 `is_error` 검사 **지우기**, `429` 검사 **지우기**\n   - `claude_usage` 의 `age_seconds = max(0, ...)` 에서 `max(0, ...)` **지우기**\n   - `_audit_denied` 에서 창이 바뀔 때 `_denied_window_seen` **안 비우기**\n   - `app.js` 의 `Math.round(pct)` → `Math.floor(pct)`\n   - `app.js` 의 `usageStaleText` 경계 `minutes > 60` → `minutes >= 60`\n   - `fleet_ctl._round_hit_limit` 의 정규식 **앵커 풀기**\n   - **5 번(고정 자료 옮기기)에 대한 변이:** 사본의 `projects/` 를 비우거나 `.aimem/requests/` 를\n     비워 **진짜 저장소를 텅 비게** 만든 뒤 `browser_monitor_ui.py`·`browser_monitor_tabs.py` 를\n     돌리십시오. **여전히 전부 통과해야 합니다** - 통과하지 않으면 그 검사는 아직 저장소\n     상태에 기대고 있는 것이고, 그게 이번 라운드의 핵심 결함입니다\n3. 변이는 **반드시 되돌리고** 다음 변이를 넣으십시오. 끝나면 `/tmp/r20-review` 를 `rm -rf`\n   하십시오 (자기가 만든 `/tmp` 폴더를 지우는 것은 허용됩니다)\n\n## 변이 말고도 볼 것\n\n- `run_limit_signal` 이 **예외를 밖으로 내보내는 길**이 정말 없는가 - 깨진 `.out`(아주 깊은 중첩\n  JSON, 수백 MiB, 짝 없는 서러게이트, 심볼릭 링크, 디렉터리)로 직접 때려 보십시오\n- 새 종료 시험이 **느리거나 들쭉날쭉(flaky)** 하지 않은가 - 세 번 이어 돌려 보십시오.\n  자식 프로세스와 포트를 흘리지는 않는가(`ps`, 포트 점유)\n- 고정 자료로 옮긴 브라우저 검사가 **검사 수를 유지**했는가, 느슨해진 단언은 없는가\n  (`is_visible()` 을 `count()>0` 으로 바꾸는 식)\n- `.aimem/runs/` 를 읽는 새 코드가 **임의 경로를 읽게** 될 길은 없는가(`run_id` 에 `../`)\n\n## 보고서 (`rounds/R20/REVIEW-r20.md`)\n\n마크다운. 이 차례로 쓰십시오.\n\n1. **결함표** - `| 번호 | 심각도 | 무엇이 | 어디(파일:줄) | 재현 | 고칠 방향 |`.\n   번호는 결함 `N1`·`N2`…, 시험 구멍 `M1`·`M2`…. **심각도는 높음/중간/낮음/정보**\n2. **변이표** - `| 변이 | 잡혔나 |` 전부. 마지막 줄에 `합계 <개수>개: 잡힘 <n>, 생존 <m>`\n3. **한 문단 총평** - 이번 라운드가 닫으려던 것이 정말 닫혔는가\n\n## 하지 말 것\n\n- 제품이나 시험을 **고치지 마십시오.** 당신은 찾아서 적기만 합니다(수정은 무료 슬롯이 합니다)\n- `git commit` / `git push` / 저장소 파일 삭제 금지\n- 운영 모니터(https, 인증)를 건드리지 마십시오\n\n## 검증\n\n검증 명령이 봅니다: `rounds/R20/REVIEW-r20.md` 가 있고, 결함표와 변이표가 들어갈 만큼 길고\n(3,000자 이상), 표 줄이 **40줄 이상**이며 `합계` 줄이 있는 것.\n",
+   "verify": "python3 - > /tmp/r20-t262.txt 2>&1 <<'PY'\nimport pathlib, sys\np = pathlib.Path('rounds/R20/REVIEW-r20.md')\nassert p.exists(), '보고서가 없다'\nt = p.read_text(encoding='utf-8')\nrows = [l for l in t.splitlines() if l.strip().startswith('|')]\nprint('chars', len(t), 'table rows', len(rows))\nassert len(t) >= 3000, len(t)\nassert len(rows) >= 40, len(rows)\nassert '합계' in t, '변이 합계 줄이 없다'\nPY",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-262-S1-a1-191529",
+     "started": "2026-11-12T19:15:30",
+     "ended": "2026-11-12T19:27:16",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n이번 라운드의 핵심인 큐 1(브라우저 검사를 저장소 상태에서 떼어 내기)은 닫히지 않았습니다. SIGTERM 종료 처리는 닫혔고, 한도 구조 신호는 예외를 밖으로 내보내지 않지만 회귀가 하나 생겼습니다.\n\n**한 일**\n- `check --slot S1 --token a41f0c --rev 162` 는 일치로 나왔고, 소유 경로에 `rounds/R20/REVIEW-r20.md` 가 들어 있습니다.\n- 저장소를 `python3 shutil.copytree` 로 `/tmp/r20-review` 에 복사했습니다. `.git`·`.aimem/tls`·`.aimem/runs`·`__pycache__` 는 뺐습니다. `rsync` 는 승인 요구로 막혔습니다.\n- 변경 전 기준선(사본): unittest 5개 모듈 173건 OK, `browser_monitor_usage` 17/17, `browser_monitor_ui` 27/27, `browser_monitor_tabs` 10/10.\n- 코드 변이 29개를 하나씩 넣고 돌린 뒤 매번 되돌렸습니다. 이 가운데 M24·M25 는 원래 코드와 결과가 같은 변이라 합계에서 뺐습니다.\n- 저장소 비우기 변이 10개를 돌렸습니다: `projects/`, `.aimem/requests/`, 둘 다, `.aimem/graph` 까지, `aimem.db` 를 각각 비운 뒤 ui·tabs 실행.\n- 사본의 `tools` 를 불러 `run_limit_signal` 을 깨진 `.out` 로 직접 때렸습니다.\n- 종료 시험을 이어서 세 번, 동시에 다섯 벌 돌렸습니다.\n\n**고친 파일:** `rounds/R20/REVIEW-r20.md` (새 파일, 13,390자, 표 줄 68, 결함 N1~N11·시험 구멍 M1~M13). 다른 파일은 손대지 않았습니다. `git status` 에는 이 파일만 `??` 로 새로 생겼습니다.\n\n**변이 결과: 합계 37개: 잡힘 21, 생존 16**\n\n**주요 결함**\n- **N1 (높음):** `browser_monitor_ui.py:415` 의 `write_fixed_project` 가 진짜 저장소의 `projects/웹워들` 을 복사합니다. 사본의 `projects/` 를 비우면 `FileNotFoundError` 로 3/4 에서 멈춥니다.\n- **N2 (높음):** `changed_ui_scenario` 는 아직 진짜 저장소 경로와 진짜 `aimem.db` 로 돕니다(`browser_monitor_ui.py:814`). DB 를 치우면 26/27 로 실패합니다.\n- **N3 (중간, 회귀):** `is_error: true` 인데 구조 표지(`api_error_status`·`api_error`·`terminal_reason`)가 없으면 `run_limit_signal` 이 `False` 를 돌려줍니다. 이 `False` 가 글자 판정을 덮어서, R20 전에는 한도로 잡히던 \"You've hit your 5-hour limit\" 가 보통 실패로 재시도됩니다(`fleet_graph.py:455-472, :869`).\n- **N4·N5 (중간·낮음):** 한도 판정이 너무 넓습니다. `terminal_reason` 갈래의 `\"limit\"` 부분 일치 때문에 컨텍스트 길이 오류도 한도로 봅니다. 새로 넣은 `\"limit reached\"`·`\"too many requests\"` 는 일반 낱말이라 오인합니다.\n- **N6~N8 (낮음):**\n  - `.out`·`.json` 이 FIFO 면 `run_limit_signal` 이 영영 멈춥니다.\n  - `run_id` 를 검사하지 않아 `../` 로 `runs/` 밖 파일을 읽습니다.\n  - 메타 `.json` 은 크기 상한 없이 통째로 읽습니다.\n\n**주요 시험 구멍**\n- **M1:** 순서 시험은 설치와 `try:` 사이에서 `log_line(` 글자만 찾습니다. `print` 를 끼워 틈을 되살려도 통과합니다.\n- **M2:** flush 단언 `\"5\" in line` 이 줄 안의 시각에 걸립니다. 생략 수를 55건으로 틀리게 써도 통과합니다.\n- **M3~M8:** 이 변이들이 살아남았습니다 — `is_error` 검사 지우기, `terminal_reason` 갈래 지우기, `harness` 검사 지우기, 1 MiB 상한 지우기, 로그 출처 표시 뒤집기.\n- **M11·M12:** ui 검사의 단언이 느슨해졌습니다. '생략된 제목' 검사는 지금 늘 대체 갈래로만 통과합니다.\n\n**검증 출력**\n- 종료 시험: 세 번 0.63s / 0.43s / 0.50s 모두 3/3 ok, 동시 다섯 벌 모두 rc 0. 끝난 뒤 `ps` 에 남은 서버 자식 프로세스는 없습니다.\n- 브라우저 검사 수(`checks.ok(` 호출 수, 이전→지금): ui 30→30, tabs 11→11, usage 14→18.\n- 보고서 검사: 13,390자, 표 줄 68, `합계` 줄 있음.\n\n**다음 담당자가 알아야 할 것**\n- N1·N2·N3 을 먼저 고치고, 이어서 M1~M5 를 닫으십시오. 재현 방법과 고칠 방향은 보고서 결함표에 있습니다.\n- 내가 만든 `/tmp/r20-review` 와 탐침 스크립트는 지웠습니다. `/tmp` 에 남은 `r20-t25x*`·`r20-t26x*` 파일들은 다른 작업자 것이라 손대지 않았습니다.",
+     "verify_rc": 0,
+     "verify_tail": ""
+    }
+   ]
+  }
+ ],
+ "followup": "G-050 의 실패 노드 T-252(재검수 R19-P2 시험) 이어받기와 R20 전체의 적대적 검수",
+ "updated": "2026-11-12T19:27:18"
+}

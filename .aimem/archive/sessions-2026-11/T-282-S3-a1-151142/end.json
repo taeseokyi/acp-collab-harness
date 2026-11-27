@@ -1,0 +1,7 @@
+{
+ "state": "stalled",
+ "rc": -15,
+ "ended": "2026-11-13T15:17:13",
+ "fail_kind": "infra",
+ "why": "침묵 240초 넘김"
+}

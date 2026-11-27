@@ -1,0 +1,3 @@
+G-051: 100.0%  남은 ETA 0s  상태 {'done': 2}
+  T-261  done     S3  시도 1  run T-261-S3-a1-191342  rc 0/0  test_monitor_shutdown.py: 빨간 시험 둘 고치기 (T-252 이어받기)
+  T-262  done     S1  시도 1  run T-262-S1-a1-191529  rc 0/0  적대적 검수: R20 의 SIGTERM 종료·한도 구조 신호·고정 자료 브라우저 검사·시험 구멍 넷

@@ -1,0 +1,22 @@
+G-050: 61.4%  남은 ETA 968s  상태 {'done': 6, 'failed': 1, 'running': 1, 'todo': 1, 'blocked': 1}
+  T-251  done     S2  시도 2  run T-251-S2-a2-180002  rc 0/0  server.py: SIGTERM 처리기 설치를 try 바로 앞으로 (재검수 R19-P6)
+  T-252  failed   S3  시도 2  run T-252-S3-a2-185555  rc 0/1  tests/test_monitor_shutdown.py(새): 진짜 SIGTERM 으로 감사 비우기 실측 (큐 R19-P2)
+  T-253  done     S2  시도 1  run T-253-S2-a1-180711  rc 0/0  fleet_graph.py: 한도 판정을 보고 글자보다 .out 의 구조 신호로 먼저 (큐 R19-P3)
+  T-254  done     S3  시도 1  run T-254-S3-a1-185833  rc 0/0  test_fleet_graph.py: 구조 신호 한도 판정 + rc!=0 verify 면제 분기 회귀 시험 (R18-G7)
+  T-255  done     S3  시도 2  run T-255-S3-a2-180713  rc 0/0  browser_monitor_ui.py: 저장소 현재 상태에 기대는 시나리오 넷을 고정 자료로 (큐 1)
+  T-256  done     S3  시도 1  run T-256-S3-a1-190137  rc 0/0  browser_monitor_tabs.py: 탭·프로젝트 고르개 검사를 고정 자료 저장소로 (큐 1)
+  T-257  running  S3  시도 1  run T-257-S3-a1-190512  rc -/-  시험 구멍 둘: 창 전환 때 seen 비우기(R18-A7)·미래 at 의 age(R18-S8)
+  T-258  todo     S3  시도 0  run -  rc -/-  browser_monitor_usage.py: 퍼센트 반올림(R18-B10)·'N시간 전 기준' 경계(R18-B12)
+  T-259  done     S2  시도 1  run T-259-S2-a1-181328  rc 0/0  test_fleet_ctl.py: 연쇄 한도 로그 정규식의 앵커 부정 사례 (R18-C2)
+  T-260  blocked  S1  시도 0  run -  rc -/-  적대적 검수: R20 의 SIGTERM 종료·한도 구조 신호·고정 자료 브라우저 검사·시험 구멍 넷
+G-050: 84.1%  남은 ETA 783s  상태 {'done': 8, 'failed': 1, 'blocked': 1}
+  T-251  done     S2  시도 2  run T-251-S2-a2-180002  rc 0/0  server.py: SIGTERM 처리기 설치를 try 바로 앞으로 (재검수 R19-P6)
+  T-252  failed   S3  시도 2  run T-252-S3-a2-185555  rc 0/1  tests/test_monitor_shutdown.py(새): 진짜 SIGTERM 으로 감사 비우기 실측 (큐 R19-P2)
+  T-253  done     S2  시도 1  run T-253-S2-a1-180711  rc 0/0  fleet_graph.py: 한도 판정을 보고 글자보다 .out 의 구조 신호로 먼저 (큐 R19-P3)
+  T-254  done     S3  시도 1  run T-254-S3-a1-185833  rc 0/0  test_fleet_graph.py: 구조 신호 한도 판정 + rc!=0 verify 면제 분기 회귀 시험 (R18-G7)
+  T-255  done     S3  시도 2  run T-255-S3-a2-180713  rc 0/0  browser_monitor_ui.py: 저장소 현재 상태에 기대는 시나리오 넷을 고정 자료로 (큐 1)
+  T-256  done     S3  시도 1  run T-256-S3-a1-190137  rc 0/0  browser_monitor_tabs.py: 탭·프로젝트 고르개 검사를 고정 자료 저장소로 (큐 1)
+  T-257  done     S3  시도 1  run T-257-S3-a1-190512  rc 0/0  시험 구멍 둘: 창 전환 때 seen 비우기(R18-A7)·미래 at 의 age(R18-S8)
+  T-258  done     S3  시도 1  run T-258-S3-a1-191029  rc 0/0  browser_monitor_usage.py: 퍼센트 반올림(R18-B10)·'N시간 전 기준' 경계(R18-B12)
+  T-259  done     S2  시도 1  run T-259-S2-a1-181328  rc 0/0  test_fleet_ctl.py: 연쇄 한도 로그 정규식의 앵커 부정 사례 (R18-C2)
+  T-260  blocked  S1  시도 0  run -  rc -/-  적대적 검수: R20 의 SIGTERM 종료·한도 구조 신호·고정 자료 브라우저 검사·시험 구멍 넷
