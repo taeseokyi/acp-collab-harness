@@ -1,6 +1,6 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-28T10:41:28 / REV 211
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-28T12:57:45 / REV 213
 
 ## 2. 세션 명부
 
@@ -8,10 +8,11 @@
 | --- | --- | --- | --- | --- | --- |
 | S1 | `a41f0c` | claude | opus | R54 쉼 (무료 중심) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
 | S2 | `d27e93` | codex | kisti/kistillm | R54 VoxLog 큐: serve.py N4·브라우저 검사 N3·N8·N11·N12 | 무료 |
-| S3 | `5b8c1e` | opencode | kisti/kistillm | R54 VoxLog 큐: stt_options.py N2·문서 | 무료 |
+| S3 | `5b8c1e` | opencode | opencode-go/deepseek-v4.1-flash | R54 VoxLog 큐: stt_options.py N2·문서 | 무료 |
 | S4 | `6cd650` | claude | sonnet | R54 VoxLog 적대적 검수(부작용 중심) | 유료, 검수만 |
 | S5 | `61dfcc` | claude | sonnet | R54 쉼 (무료 중심) |  |
 | S6 | `47764b` | freebuff | (하네스 기본) | R54 VoxLog 큐: 화면 N12·기본값 읽기 표준 방식 조사 | 무료 |
+| S7 | `120a3c` | opencode | opencode-go/glm-5.3-flash | 작업자 | opencode go 구독 (태석님 2026-11-28) |
 
 ## 3. 작업 보드
 

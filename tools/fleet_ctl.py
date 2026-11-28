@@ -74,6 +74,7 @@ POLICY_SLOTS_TAIL = """\
 ### 슬롯을 더하고 역할을 정하는 것은 관리자의 판단입니다
 - 역할: `python3 tools/aimem_db.py slot set --slot S<n> --role "<이번 라운드의 역할>"` (어느 슬롯이든).
 - 더하기: 일이 슬롯보다 넓으면 지금 **{extra_slots}개**까지 더할 수 있습니다({slot_tiers} 공급자). `python3 tools/aimem_db.py slot add --harness <하네스> --model <공급자/모델> --role "<역할>"` → 새 슬롯에 `ownership set` → 그래프에 배정. 엔진이 상한·모델·공급자 자리를 확인하고, 안 되면 까닭을 말합니다. 더한 슬롯은 다음 라운드에도 남으니 필요 없으면 `slot remove` 합니다. 보고 (6)에 더한 슬롯과 까닭을 적습니다.
+- 무료 작업자가 더 필요하면 `--harness opencode --model opencode-go/deepseek-v4.1-flash` 로 더합니다.
 """
 #: 관리 방식 (2026-11-24) - 프로젝트마다 사람이 찍어 두는 취향. 확인(검수·검사)을 얼마나 할지를 정한다. 운영 방식(슬롯을 어떻게
 #: 쓰나)과는 다른 축이다. 찍는 자리는 `.aimem/project-modes.json` `{"<프로젝트>": "<키>"}`, 없는 프로젝트는 `balance`.

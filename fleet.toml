@@ -41,6 +41,14 @@ max_concurrent = 1        # 동시에 띄울 세션 수
 idle_timeout_sec = 240
 models = ["deepseek-v4.1-flash-free"]
 
+[providers.opencode-go]   # 오픈코드 Go 구독(월 정액 - 한도에 닿으면 막힐 뿐 더 청구되지 않게 콘솔의 Extra Usage 는 꺼 둔다). 태석님 2026-11-28
+tier = "free"             # 정액제라 무료 중심 방식에서도 쓴다
+env_key = "OPENCODE_API_KEY"
+max_concurrent = 4        # S3·S7 에 관리자가 더하는 둘까지. 동시 4 응답 확인(2026-11-28) - 첫 주 사용량이 주 한도의 절반을 넘으면 줄인다
+idle_timeout_sec = 240
+# 슬롯에 찍힌 모델 말고 다른 것은 그래프 노드의 "model" 에 적어 고른다 (예 "opencode-go/glm-5.3" - flash 보다 무겁고 한 번에 한도를 더 쓴다)
+models = ["deepseek-v4.1-flash", "glm-5.3-flash", "glm-5.3"]   # 한도가 넉넉한 것만 (월 $100·$60·$200) - deepseek-v4-pro 따위 월 $15 짜리는 안 넣는다
+
 # 사람이 연 tmux 팬의 freebuff - 한 사람 한 세션이라 동시에 하나.
 # idle_timeout_sec 를 두지 않는다: 보내기를 기다리는 동안은 감독이 침묵으로 끊지 않는다. 보낸 뒤 멈춘 것은 하네스 운전기가
 # 본다 - 대화 파일도 안 자라고 freebuff 가 CPU 도 안 쓰는 채로 600초가 지나면 끊는다 (일하는 동안은 한도 없음).
@@ -64,7 +72,7 @@ providers = ["kisti", "openrouter"]
 default_model = "kisti/kistillm"
 
 [harness.opencode]        # ~/.config/opencode/opencode.jsonc 의 model 은 'kisti/kistillm'
-providers = ["kisti", "exaone", "openrouter", "opencode", "nvidia"]
+providers = ["kisti", "exaone", "openrouter", "opencode", "opencode-go", "nvidia"]
 default_model = "kisti/kistillm"
 
 [harness.freebuff]        # 지시는 사람이 한다 - 세션은 모니터의 '보내기' 를 기다렸다가 팬에 한 줄을 넣는다

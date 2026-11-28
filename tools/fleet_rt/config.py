@@ -22,6 +22,8 @@ DEFAULTS = {
         "openrouter": {"tier": "paid", "base_url": "https://openrouter.ai/api/v1", "env_key": "OPENROUTER_API_KEY",
                        "max_concurrent": 3, "idle_timeout_sec": 240, "models": ["deepseek/deepseek-v4.1-flash"]},
         "opencode": {"tier": "free", "max_concurrent": 1, "idle_timeout_sec": 240, "models": ["deepseek-v4.1-flash-free"]},
+        "opencode-go": {"tier": "free", "env_key": "OPENCODE_API_KEY", "max_concurrent": 4, "idle_timeout_sec": 240,
+                        "models": ["deepseek-v4.1-flash", "glm-5.3-flash", "glm-5.3"]},
         "nvidia": {"tier": "free", "base_url": "https://integrate.api.nvidia.com/v1", "env_key": "NVIDIA_API_KEY",
                    "max_concurrent": 1, "idle_timeout_sec": 240, "probe": "models", "models": ["z-ai/glm-5.3-flash"]},
         "freebuff": {"tier": "free", "max_concurrent": 1, "models": ["pane"]},
@@ -30,7 +32,7 @@ DEFAULTS = {
     "harness": {
         "claude": {"providers": ["anthropic"], "default_model": "sonnet"},
         "codex": {"providers": ["kisti", "openrouter"], "default_model": "kisti/kistillm"},
-        "opencode": {"providers": ["kisti", "exaone", "openrouter", "opencode", "nvidia"], "default_model": "kisti/kistillm"},
+        "opencode": {"providers": ["kisti", "exaone", "openrouter", "opencode", "opencode-go", "nvidia"], "default_model": "kisti/kistillm"},
         "freebuff": {"providers": ["freebuff"], "default_model": "freebuff/pane", "pane": "freebuff:0.0"},
     },
     "time": {"zone": DEFAULT_TIME_ZONE},

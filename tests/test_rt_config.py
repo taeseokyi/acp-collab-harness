@@ -137,7 +137,9 @@ class ConfigTest(unittest.TestCase):
                          [{"key": k, "name": k, "provider": "anthropic"} for k in ("opus", "sonnet", "haiku", "fable")])
         keys = [m["key"] for m in cfg.models_for("opencode")]
         self.assertEqual(keys, ["kisti/kistillm", "exaone/k-exaone_v2.5", "openrouter/deepseek/deepseek-v4.1-flash",
-                                "opencode/deepseek-v4.1-flash-free", "nvidia/z-ai/glm-5.3-flash"])
+                                "opencode/deepseek-v4.1-flash-free", "opencode-go/deepseek-v4.1-flash", "opencode-go/glm-5.3-flash",
+                                "opencode-go/glm-5.3",
+                                "nvidia/z-ai/glm-5.3-flash"])
         self.assertEqual(cfg.models_for("codex")[0], {"key": "kisti/kistillm", "name": "kistillm", "provider": "kisti"})
         self.assertEqual(cfg.models_for("nohar"), [])
 

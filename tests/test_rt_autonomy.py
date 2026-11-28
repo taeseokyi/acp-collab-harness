@@ -254,7 +254,8 @@ class ConfigTiers(unittest.TestCase):
     def test_repo_tiers_and_policy_limits(self):
         cfg = rt_config.load(pathlib.Path(__file__).resolve().parent.parent)
         self.assertEqual({p: cfg.tier(p) for p in cfg.providers()},
-                         {"kisti": "free", "exaone": "free", "opencode": "free", "freebuff": "free", "nvidia": "free",
+                         {"kisti": "free", "exaone": "free", "opencode": "free", "opencode-go": "free", "freebuff": "free",
+                          "nvidia": "free",
                           "anthropic": "paid", "openrouter": "paid"})
         self.assertEqual(cfg.policy("cost"), {"extra_slots": 2, "slot_tiers": ["free"]})
         self.assertEqual(cfg.policy("quality"), {"extra_slots": 2, "slot_tiers": ["free", "paid"]})
