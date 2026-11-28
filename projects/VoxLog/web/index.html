@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#1b6ef3">
 <title>VoxLog</title>
 <link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -32,7 +33,10 @@
     </label>
     <section id="stt-defaults" class="stt-box" aria-label="받아쓰기 기본 옵션">
       <h3>받아쓰기 옵션 (새 녹음과 '다시 받아쓰기' 의 기본값)</h3>
-      <p id="stt-defaults-note" class="muted" role="status"></p>
+      <div class="row">
+        <p id="stt-defaults-note" class="muted" role="status"></p>
+        <button id="stt-defaults-retry" type="button" hidden>다시 시도</button>
+      </div>
       <div id="stt-defaults-fields"></div>
       <div class="row">
         <button id="stt-defaults-save" type="button">기본값 저장</button>

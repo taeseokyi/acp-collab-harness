@@ -46,7 +46,7 @@
     timer: 0, wake: null, busy: false,
     rc: null, flushTimer: 0,
     // 묻기
-    askToken: 0, askTimer: 0,
+    askToken: 0, askTimer: 0, askPending: false,
     // 열기 신호
     loadedAt: Date.now(), initialOpenHandled: false, consumerCalls: 0
   };
@@ -112,6 +112,14 @@
     if (e && e.status === 401) setConn('bad', '인증 필요');
     else if (e && e.status === 0) setConn('bad', '연결 안 됨');
     toast((e && e.message) || '오류가 났습니다');
+  }
+
+  // 어느 API 호출이든 성공하면 '서버 오류'·'연결 안 됨' 을 '연결됨' 으로 돌린다(R57-N5).
+  // 인증 실패(401) 표시는 성공 알림이 덮지 않는다 - health 처럼 토큰 없이 되는 호출도 있기 때문이다.
+  function onAnyApiOk() {
+    var c = $('conn');
+    if (!c || c.textContent === '인증 필요') return;
+    if (c.dataset.state !== 'ok') setConn('ok', '연결됨');
   }
 
   /* ---------- 탭·설정 ---------- */
@@ -330,7 +338,10 @@
     var st = $('stt-defaults-state');
     var els = state.sttFields.defaults;
     var saveBtn = $('stt-defaults-save');
+    var retryBtn = $('stt-defaults-retry');
     note.textContent = '';
+    // 읽는 동안에는 앞 실패의 '다시 시도' 를 내린다 - 성공하면 그대로 숨은 채로 둔다.
+    if (retryBtn) retryBtn.hidden = true;
     $('stt-defaults-fields').hidden = false;
     saveBtn.hidden = false;
     var seq = ++state.sttSeq.defaults; // 이번에 연 묶음의 번호 - 이 번호의 응답만 채우고 푼다(R53-N6)
@@ -339,6 +350,7 @@
     readSttDefaults('defaults', seq, function (opts) {
       setSttFieldsBusy(els, false, saveBtn);
       st.textContent = '';
+      if (retryBtn) retryBtn.hidden = true;
       // 응답을 기다리는 사이 설정 칸을 닫았으면 채우지 않는다(다음에 열 때 새로 읽는다).
       if (!$('settings').hidden) fillSttFields(els, opts);
     }, function (e) {
@@ -347,6 +359,8 @@
       $('stt-defaults-fields').hidden = true;
       saveBtn.hidden = true;
       note.textContent = '받아쓰기 옵션을 불러오지 못했습니다: ' + ((e && e.message) || '알 수 없음');
+      // 안내 옆에서 바로 다시 읽을 수 있게 한다(B-D5) - 단추가 없으면(옛 화면) 그냥 안내만 남긴다.
+      if (retryBtn) retryBtn.hidden = false;
     });
   }
 
@@ -375,7 +389,7 @@
       if (ac) ac.abort();
       setSttFieldsBusy(els, false, saveBtn);
       st.textContent = '';
-      toast('받아쓰기 기본값을 저장하지 못했습니다: 시간이 지났습니다');
+      toast('받아쓰기 기본값이 저장됐는지 확인하지 못했습니다 - 칸을 다시 열어 확인해 주세요.');
     }, STT_DEFAULTS_TIMEOUT_MS);
     var init = { method: 'PUT', body: { options: opts } };
     if (ac) init.signal = ac.signal;
@@ -576,6 +590,13 @@
     else setConn('bad', '연결 안 됨');
   }
 
+  // 목록 실패는 목록 위 오류 줄(#list-error)이 까닭을 보여 주므로 토스트를 겹쳐 띄우지 않는다(R57-N6).
+  // 연결 표시는 다른 호출 실패와 같게 바꾼다(5xx '서버 오류' 는 부르는 쪽에서).
+  function onListError(e) {
+    if (e && e.status === 401) setConn('bad', '인증 필요');
+    else if (e && e.status === 0) setConn('bad', '연결 안 됨');
+  }
+
   /* ---------- 대기열 ---------- */
 
   function queueApi() { try { return window.VoxQueue || null; } catch (e) { return null; } }
@@ -586,7 +607,7 @@
   }
 
   function trackRecUpload(clientId, fileName, durationMs) {
-    state.recUpload = { clientId: clientId, fileName: fileName || '', durationMs: durationMs || 0 };
+    state.recUpload = { clientId: clientId, fileName: fileName || '', durationMs: durationMs || 0, shownFailed: false };
   }
 
   function applyRecUploadStatus(arr) {
@@ -598,13 +619,21 @@
     }
     var el = $('rec-result');
     if (!row) {
-      // 대기열에서 빠졌다 = 서버에 올라갔다
+      // 대기열에서 빠졌다 = 서버에 올라갔다. 지우기로 빠진 것은 지우기 처리기가 먼저 추적을 끝낸다.
       el.textContent = recUploadLabel(t) + ' · 올렸습니다. 받아쓰기는 기록 탭에서 볼 수 있습니다.';
       state.recUpload = null;
     } else if (row.state === 'failed') {
       // 영구 실패(4xx)로 '올리지 못한 녹음' 칸에 간 경우. 오프라인(waiting + lastError)은 그대로 둔다.
-      el.textContent = recUploadLabel(t) + " · 올리지 못했습니다 - 아래 '올리지 못한 녹음' 에서 다시 올릴 수 있습니다.";
-      state.recUpload = null;
+      // 추적은 남겨 두어 이 뒤의 다시 올리기·지우기를 따라가고, 같은 실패 글은 한 번만 쓴다.
+      if (!t.shownFailed) {
+        el.textContent = recUploadLabel(t) + " · 올리지 못했습니다 - 아래 '올리지 못한 녹음' 에서 다시 올릴 수 있습니다.";
+        t.shownFailed = true;
+      }
+    } else if (t.shownFailed) {
+      // 실패 안내를 보인 뒤 대기열 줄이 다시 올리는 중('failed' 아님)으로 돌아왔다. 없는 상자를
+      // 가리키는 옛 글을 남기지 않고 지금 하는 일을 쓴다. 다시 실패하면 위 가지가 새로 실패 안내를 쓴다(R58-N1).
+      el.textContent = recUploadLabel(t) + ' · 다시 올리는 중입니다.';
+      t.shownFailed = false;
     }
   }
 
@@ -677,7 +706,14 @@
       if (!iso) {
         btn('지우기', 'danger f-remove', function () {
           if (!window.confirm('이 녹음을 기기에서 지울까요? 서버에 올라가지 않은 녹음이라 되돌릴 수 없습니다.')) return;
-          Promise.resolve(queueApi().remove(r.clientId)).then(updateQueue, function (e) { toast((e && e.message) || '지우지 못했습니다'); });
+          Promise.resolve(queueApi().remove(r.clientId)).then(function () {
+            // 추적 중인 녹음을 지웠으면 '올렸습니다' 가 아니라 상태 글을 비운다(대기열에서 빠진 까닭 구분).
+            if (state.recUpload && state.recUpload.clientId === r.clientId) {
+              state.recUpload = null;
+              $('rec-result').textContent = '';
+            }
+            updateQueue();
+          }, function (e) { toast((e && e.message) || '지우지 못했습니다'); });
         });
       }
       li.appendChild(info); li.appendChild(why); li.appendChild(row);
@@ -1265,7 +1301,7 @@
     }, function (e) {
       if (seq !== state.listSeq) return;
       setListBusy(false);
-      onApiError(e);
+      onListError(e);
       if (e && e.status >= 500) setConn('bad', '서버 오류'); // 5xx 는 연결은 됐지만 서버가 실패
       showListError(e);
       if (wasBusy && !(e && e.status === 401)) state.listTimer = setTimeout(loadList, 5000);
@@ -1603,12 +1639,17 @@
     if (!window.confirm('이 답을 지울까요? 되돌릴 수 없습니다. (녹취는 그대로 남습니다)')) return;
     api().json('api/answers/' + encodeURIComponent(aid), { method: 'DELETE' }).then(function () {
       if (state.shownAnswer === aid) { // 화면에 펼쳐 둔 답이면 같이 치운다
+        // 묻는 POST 가 아직 도는 중이면 이 지우기가 그 묻기를 버린다 - 조용히 버리지 않고 안내한다(R57-N7).
+        var wasAsking = state.askPending;
         state.askToken++;                // 진행 중인 묻기를 버린다 - 단추도 여기서 풀어야 잠긴 채 남지 않는다
+        state.askPending = false;
         $('ask-go').disabled = false;
         state.shownAnswer = null;
         state.shownText = '';
         $('answer-actions').hidden = true;
-        $('answer-status').textContent = '';
+        $('answer-status').textContent = wasAsking
+          ? '지운 답 대신 새로 물은 결과는 지난 답 목록에서 볼 수 있습니다.'
+          : '';
         $('answer').classList.remove('md');
         $('answer').textContent = '';
       }
@@ -1679,14 +1720,17 @@
       }
       $('answer-status').textContent = '요청 중…';
       $('answer').textContent = '';
+      state.askPending = true;
       return api().json('api/ask', { method: 'POST', body: { kind: kind, prompt: prompt, ids: ids }, timeoutMs: ASK_TIMEOUT_MS }).then(function (a) {
-        if (token !== state.askToken) return;
+        if (token !== state.askToken) return; // 지우기·다른 답 열기로 버려진 묻기 - 그쪽이 안내를 맡는다
+        state.askPending = false;
         showAnswer(a);
         if (a.status === 'done' || a.status === 'failed') { $('ask-go').disabled = false; loadAnswers(); }
         else pollAnswer(a.id, token);
       });
     }).catch(function (e) {
       if (token !== state.askToken) return;
+      state.askPending = false;
       $('ask-go').disabled = false;
       if (e && e.timeout) {
         // 시간이 지나도 빈 글로 지우지 않는다. 서버에는 답이 만들어졌을 수 있으니 지난 답을 다시 읽어 보여 준다.
@@ -1727,6 +1771,7 @@
         b.appendChild(top); b.appendChild(sub);
         b.addEventListener('click', function () {
           var token = ++state.askToken;
+          state.askPending = false; // 다른 답을 여는 것도 도는 묻기를 버린다 - 새 묻기가 단추를 맡는다
           $('ask-go').disabled = false;
           api().json('api/answers/' + encodeURIComponent(a.id)).then(function (full) {
             if (token !== state.askToken) return;
@@ -1776,6 +1821,7 @@
       if (!s.hidden) loadSttSettings();
     });
     $('stt-defaults-save').addEventListener('click', saveSttDefaults);
+    $('stt-defaults-retry').addEventListener('click', loadSttSettings);
     $('detail-retry-opts').addEventListener('click', openSttPanel);
     $('detail-stt-run').addEventListener('click', retryWithOptions);
     function flushSoon() {
@@ -1821,10 +1867,17 @@
         if (state.rec) lockScreen();
       }
     });
+
+    // 브라우저의 표준 offline/online 이벤트를 따른다(R57 B-D4). online 이면 목록을 다시 읽어
+    // 성공하는 순간 위 공통 성공 처리로 '연결됨' 이 된다.
+    window.addEventListener('offline', function () { setConn('bad', '연결 안 됨'); });
+    window.addEventListener('online', function () { loadList(); });
   }
 
   function init() {
+    window.__voxApiOk = onAnyApiOk;
     bind();
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) setConn('bad', '연결 안 됨');
     updateSelCount();
     applyRecSupport(); // 설정을 읽기 전에도 안내는 바로 보이게
     var q = queueApi();

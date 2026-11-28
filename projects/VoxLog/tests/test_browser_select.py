@@ -97,33 +97,35 @@ class ExpandNeedsTest(unittest.TestCase):
     def test_real_needs_numbers_sane(self):
         for num, deps in browser_voxlog.NEEDS.items():
             self.assertGreaterEqual(num, 1)
-            self.assertLessEqual(num, 86)
+            self.assertLessEqual(num, 95)
             for dep in deps:
                 self.assertGreaterEqual(dep, 1)
-                self.assertLessEqual(dep, 86)
+                self.assertLessEqual(dep, 95)
                 self.assertNotEqual(dep, num)
 
 
 class SummaryLineTest(unittest.TestCase):
     # 14
     def test_full_run_ends_with_full_pass(self):
-        line = browser_voxlog.summary_line(85, 85, 85, 0)
-        self.assertEqual(line, "85/85 통과")
-        self.assertTrue(line.endswith("85/85 통과"))
+        line = browser_voxlog.summary_line(89, 89, 89, 0)
+        self.assertEqual(line, "89/89 통과")
+        self.assertTrue(line.endswith("89/89 통과"))
 
     # 15
     def test_partial_run_is_not_full_pass(self):
-        line = browser_voxlog.summary_line(3, 85, 3, 82)
+        line = browser_voxlog.summary_line(3, 89, 3, 86)
         self.assertIn("부분 실행", line)
         self.assertIn("건너뜀", line)
+        self.assertIn("통과 3개", line)
         self.assertIn("전체 통과 아님", line)
-        self.assertIsNone(re.search(r"\d+/\d+ 통과$", line))
+        self.assertIsNone(re.search(r"\d+/\d+ 통과", line))
 
     # 16
     def test_partial_run_with_failure_still_not_full_pass(self):
-        line = browser_voxlog.summary_line(3, 85, 2, 82)
-        self.assertIn("2/3 통과", line)
-        self.assertIsNone(re.search(r"\d+/\d+ 통과$", line))
+        line = browser_voxlog.summary_line(3, 89, 2, 86)
+        self.assertIn("통과 2개", line)
+        self.assertIn("전체 통과 아님", line)
+        self.assertIsNone(re.search(r"\d+/\d+ 통과", line))
 
 
 class CheckSelectionTest(unittest.TestCase):
@@ -175,10 +177,10 @@ class RealNeedsTest(unittest.TestCase):
 
 class KnownNamesTest(unittest.TestCase):
     # 22
-    def test_collects_all_85_and_41_absent(self):
-        # 1~86 중 41번이 없어 실제 검사는 85개다.
+    def test_collects_all_94_and_41_absent(self):
+        # 1~95 중 41번이 없어 실제 검사는 94개다.
         names = browser_voxlog._known_names()
-        self.assertEqual(len(names), 85)
+        self.assertEqual(len(names), 94)
         self.assertNotIn(41, names)
 
 
@@ -205,6 +207,46 @@ class ApplySelectionTest(unittest.TestCase):
             self.assertIsNone(browser_voxlog.SELECTION)
         finally:
             browser_voxlog.SELECTION = saved
+
+
+class UnknownOnlyTest(unittest.TestCase):
+    # 26
+    def test_lists_only_numbers_this_file_does_not_have(self):
+        self.assertEqual(browser_voxlog.unknown_only_numbers({8, 999, 1000}), [999, 1000])
+        self.assertEqual(browser_voxlog.unknown_only_numbers({7}), [])
+        self.assertEqual(browser_voxlog.unknown_only_numbers({41}), [41])
+        self.assertEqual(browser_voxlog.unknown_only_numbers(None), [])
+
+    # 27
+    def test_apply_selection_rejects_missing_number_with_rc2(self):
+        saved = browser_voxlog.SELECTION
+        err = io.StringIO()
+        try:
+            browser_voxlog.SELECTION = "sentinel"
+            with contextlib.redirect_stderr(err):
+                with self.assertRaises(SystemExit) as caught:
+                    browser_voxlog.apply_selection(["--only", "8,999"])
+            self.assertEqual(caught.exception.code, 2)
+            self.assertIn("없는 검사 번호: 999", err.getvalue())
+            self.assertEqual(browser_voxlog.SELECTION, "sentinel")
+        finally:
+            browser_voxlog.SELECTION = saved
+
+
+class EmptyMatchTest(unittest.TestCase):
+    # 28
+    def test_match_with_no_hit_resolves_to_empty_before_server(self):
+        self.assertEqual(browser_voxlog.resolve_selection(None, ["없는이름"]), set())
+
+
+class MainSelectionTest(unittest.TestCase):
+    # 29
+    def test_main_applies_selection_before_playwright_and_server(self):
+        src = inspect.getsource(browser_voxlog.main)
+        self.assertIn("apply_selection(", src)
+        self.assertLess(src.index("apply_selection("), src.index("sync_playwright"))
+        self.assertLess(src.index("apply_selection("), src.index("start_server("))
+        self.assertLess(src.index("고른 검사가 없습니다"), src.index("sync_playwright"))
 
 
 if __name__ == "__main__":

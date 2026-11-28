@@ -95,9 +95,10 @@ textarea { resize: vertical; }
 .stats span { font-size: 13px; color: var(--muted); }
 .filters { display: grid; gap: 8px; }
 .list { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 8px; }
-.rec-item { display: grid; grid-template-columns: 44px minmax(0, 1fr); background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
+.rec-item { display: grid; grid-template-columns: auto minmax(0, 1fr); background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
 .rec-item.open { border-color: var(--accent); }
-.rec-pick { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; cursor: pointer; }
+/* 체크박스(22px) 둘레에 여백을 줘 누르는 자리가 44×44px 안팎이 되게 한다(A-D3). */
+.rec-pick { display: flex; align-items: center; justify-content: center; padding: 11px; min-height: 44px; cursor: pointer; }
 .rec-pick input { width: 22px; height: 22px; }
 .rec-main { padding: 8px 10px 8px 0; min-width: 0; }
 .rec-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 14px; }
@@ -116,6 +117,7 @@ textarea { resize: vertical; }
 .stt-box h3 { margin: 0 0 6px; font-size: 15px; }
 .stt-box .field { min-width: 0; }
 .stt-why { margin: -2px 0 10px; font-size: 13px; }
+#stt-defaults-note { margin: 0; }
 #stt-defaults-note:empty, #detail-stt-used:empty { display: none; }
 #detail-stt-used { margin: 4px 0; }
 #detail-prev { margin: 8px 0; }

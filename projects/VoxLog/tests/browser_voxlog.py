@@ -5,7 +5,7 @@
       python3 projects/VoxLog/tests/browser_voxlog.py --only 67,75-78
       python3 projects/VoxLog/tests/browser_voxlog.py --match "기본값 읽기"
 서버는 이 검사가 임시 data 폴더로 직접 띄우고(subprocess) 끝나면 내린다.
-검사는 모두 85개입니다.
+검사는 모두 94개입니다.
 
 `--only` 는 번호를 쉼표 목록·`a-b` 닫힌 범위로 받고(예: `--only 67,75-78`) 여러 번 줄 수
 있습니다. `--match` 는 검사 이름에 들어 있는 글을 받고 여러 번 줄 수 있습니다(대소문자 그대로).
@@ -14,9 +14,11 @@
 (예: `--only 3` 은 2 까지, `--only 7` 은 2·3 까지). 그래서 검사 하나만 골라도 1분 안에 돕니다.
 
 끝줄은 전체 실행이면 `N/M 통과`, 일부 실행이면
-`부분 실행: n/85 돌림 · m 건너뜀 · p/n 통과 (전체 통과 아님)` 입니다 - 일부 실행은 전체
-통과가 아닙니다. 실패가 있거나 고른 검사가 하나도 없으면(그때는 끝줄 앞에
-`고른 검사가 없습니다`) 종료 코드 1, 돌린 검사가 있고 실패가 없으면 0.
+`부분 실행: n/94 돌림 · m 건너뜀 · 돌린 것 중 통과 p개 (전체 통과 아님)` 입니다 - 일부
+실행은 전체 통과가 아닙니다. 실패가 있거나 고른 검사가 하나도 없으면(그때는 끝줄 앞에
+`고른 검사가 없습니다`, 서버·브라우저를 띄우기 전에) 종료 코드 1, 돌린 검사가 있고 실패가
+없으면 0. 이 파일에 없는 번호를 `--only` 로 고르면(`--only 8,999`) 그 번호를 stderr 에
+적고(`없는 검사 번호: 999`) 서버·브라우저를 띄우기 전에 종료 코드 2 로 끝납니다.
 """
 import argparse
 import json
@@ -107,8 +109,8 @@ def summary_line(ran, total, passed, skipped):
     """전체 실행이면 `N/M 통과`, 일부 실행이면 `부분 실행: … (전체 통과 아님)`."""
     if skipped == 0:
         return "%d/%d 통과" % (passed, total)
-    return "부분 실행: %d/%d 돌림 · %d 건너뜀 · %d/%d 통과 (전체 통과 아님)" % (
-        ran, total, skipped, passed, ran)
+    return "부분 실행: %d/%d 돌림 · %d 건너뜀 · 돌린 것 중 통과 %d개 (전체 통과 아님)" % (
+        ran, total, skipped, passed)
 
 
 def exit_code(ran, failed):
@@ -137,10 +139,26 @@ def resolve_selection(only, match):
     return expand_needs(chosen)
 
 
+def unknown_only_numbers(only):
+    """`--only` 에 온 번호 중 이 파일에 없는 번호를 정렬해 돌려준다."""
+    if not only:
+        return []
+    known = set(_known_names())
+    return sorted(num for num in only if num not in known)
+
+
 def apply_selection(argv):
-    """명령줄 인자로 SELECTION 을 정하고 돌려준다. 인자가 없으면 None(전체)."""
+    """명령줄 인자로 SELECTION 을 정하고 돌려준다. 인자가 없으면 None(전체).
+
+    이 파일에 없는 번호를 고르면 stderr 에 적고 서버를 띄우기 전에 SystemExit(2).
+    """
     global SELECTION
     only, match = parse_selection(argv)
+    unknown = unknown_only_numbers(only)
+    if unknown:
+        for num in unknown:
+            sys.stderr.write("없는 검사 번호: %d\n" % num)
+        raise SystemExit(2)
     SELECTION = resolve_selection(only, match)
     return SELECTION
 
@@ -445,6 +463,10 @@ def overlap(a, b):
 
 def main():
     apply_selection(sys.argv[1:])
+    if SELECTION is not None and not SELECTION:
+        # --match 가 하나도 안 맞은 경우: 서버·브라우저를 띄우기 전에 끝낸다.
+        print("고른 검사가 없습니다")
+        return 1
 
     from playwright.sync_api import sync_playwright
 
@@ -472,8 +494,6 @@ def main():
         print("실패한 항목: %s - %s" % (n, m))
     ran = len(RESULTS)
     total = ran + SKIPPED
-    if ran == 0:
-        print("고른 검사가 없습니다")
     print(summary_line(ran, total, ok, SKIPPED))
     return exit_code(ran, len(bad))
 
@@ -670,7 +690,8 @@ def run_all(browser, base, data, tmp, procs):
         pg.dispatch_event("#token", "change")
         open_tab(pg, "list")
         need(wait_for(lambda: "인증 필요" in pg.inner_text("#conn"), 8), "목록에서 '인증 필요' 안내가 없음: " + pg.inner_text("#conn"))
-        need(wait_for(lambda: pg.is_visible("#toast") and pg.inner_text("#toast").strip(), 5), "오류 토스트가 보이지 않음")
+        need(wait_for(lambda: pg.is_visible("#list-error") and pg.inner_text("#list-error").strip(), 5),
+             "목록 실패 오류 줄이 보이지 않음: %r" % pg.inner_text("#list-error"))
         need(list_count(pg) == 0, "토큰 없이 목록이 읽힘")
         pg.click("#settings-btn") if not pg.is_visible("#token") else None
         pg.fill("#token", "t1")
@@ -1326,8 +1347,11 @@ def run_all(browser, base, data, tmp, procs):
                 need(wait_for(lambda: pg.inner_text("#conn").strip() != "연결됨", 10, pg=pg),
                      label + " 인데 '연결됨' 으로 표시: " + pg.inner_text("#conn"))
                 open_tab(pg, "list")
-                need(wait_for(lambda: pg.is_visible("#toast") and pg.inner_text("#toast").strip(), 8, pg=pg),
-                     label + " 오류 토스트가 보이지 않음")
+                need(wait_for(lambda: pg.is_visible("#list-error") and pg.inner_text("#list-error").strip(), 8, pg=pg),
+                     label + " 목록 실패 오류 줄이 보이지 않음: %r" % pg.inner_text("#list-error"))
+                if status == 200:
+                    need("JSON 이 아닙니다" in pg.inner_text("#list-error"),
+                         label + " 오류 줄이 서버 응답이 JSON 이 아님을 말하지 않음: %r" % pg.inner_text("#list-error"))
                 need(pg.inner_text("#conn").strip() != "연결됨",
                      label + " 목록을 열어도 '연결됨' 그대로: " + pg.inner_text("#conn"))
                 need(list_count(pg) == 0, label + " 인데 목록 항목이 생김")
@@ -2527,6 +2551,8 @@ def run_all(browser, base, data, tmp, procs):
             ['#stt-defaults', '#detail-stt'].forEach(function (sel) {
                 var box = document.querySelector(sel), br = box.getBoundingClientRect();
                 box.querySelectorAll('input, select, textarea, button').forEach(function (e) {
+                    // hidden(display:none) 칸은 배치 상자가 없어 0,0 을 돌려준다 - 넘침으로 세지 않는다.
+                    if (!e.getClientRects().length) return;
                     var r = e.getBoundingClientRect();
                     if (r.left < br.left - 1 || r.right > br.right + 1) out.push(sel + ':' + (e.id || e.tagName));
                 });
@@ -4030,8 +4056,11 @@ def run_all(browser, base, data, tmp, procs):
              "시간 제한 뒤 상태 글이 비지 않음: %r" %
              pg.evaluate("document.querySelector('#stt-defaults-state').textContent"))
         need(pg.is_visible("#toast") and
-             "받아쓰기 기본값을 저장하지 못했습니다: 시간이 지났습니다" in pg.inner_text("#toast"),
-             "시간 제한 저장 실패 토스트가 보이지 않음: %r" % pg.inner_text("#toast"))
+             "확인하지 못했습니다" in pg.inner_text("#toast") and
+             "다시 열어" in pg.inner_text("#toast"),
+             "시간 제한 저장 안내 토스트가 보이지 않음: %r" % pg.inner_text("#toast"))
+        need("저장하지 못했습니다" not in pg.inner_text("#toast"),
+             "시간 제한 저장 안내가 저장 실패를 단정함: %r" % pg.inner_text("#toast"))
 
         before_gets = len(gets)
         pg.click("#settings-btn")
@@ -4122,6 +4151,10 @@ def run_all(browser, base, data, tmp, procs):
         pg.add_init_script("window.__VOX_LIST_TIMEOUT_MS__ = 1000;")
         pg.goto(b + "/")
         pg.wait_for_selector("#rec")
+        # 시작 연결 확인(health)이 끝나 '연결됨' 이 된 뒤에 503 을 건다 - 늦은 health 성공이
+        # '서버 오류' 를 '연결됨' 으로 덮지 않게(R57-N5 공통 성공 처리).
+        need(wait_for(lambda: pg.inner_text("#conn").strip() == "연결됨", 8, pg=pg),
+             "시작 연결 확인이 '연결됨' 이 되지 않음: %r" % pg.inner_text("#conn"))
 
         def list_503(route):
             req = route.request
@@ -4241,11 +4274,25 @@ def run_all(browser, base, data, tmp, procs):
         pg = c.new_page()
         pg.goto(b + "/")
         pg.wait_for_selector("#rec")
+        # 상태 글이 어떤 값을 거쳐 바뀌는지 남긴다 - 올림이 빨라도 '올리는 중' 을 놓치지 않게.
+        pg.evaluate("""() => {
+            const el = document.getElementById('rec-result');
+            window.__recTexts = [el.textContent];
+            const note = () => window.__recTexts.push(el.textContent);
+            new MutationObserver(note).observe(el, {childList: true, characterData: true, subtree: true});
+            return true;
+        }""")
 
         rec_cycle(pg)
         need(wait_for(lambda: ("올렸습니다" in pg.inner_text("#rec-result") and
                               "올리는 중" not in pg.inner_text("#rec-result")), 20, pg=pg),
              "녹음 업로드 뒤 상태 글이 '올렸습니다' 로 바뀌지 않음: %r" % pg.inner_text("#rec-result"))
+        texts = pg.evaluate("window.__recTexts || []")
+        mid = next((i for i, t in enumerate(texts) if "올리는 중" in t), None)
+        done = next((i for i, t in enumerate(texts) if "올렸습니다" in t), None)
+        need(mid is not None, "상태 글이 '올리는 중' 꼴 글을 거치지 않음: %r" % texts)
+        need(done is not None, "상태 글이 '올렸습니다' 로 바뀌지 않음: %r" % texts)
+        need(mid < done, "상태 글이 '올리는 중' → '올렸습니다' 순서가 아님: %r" % texts)
         text = pg.inner_text("#rec-result")
         need("마지막 녹음" in text, "녹음 상태 글에 '마지막 녹음' 이 없음: %r" % text)
         need("기록 탭에서 볼 수 있습니다" in text, "녹음 완료 안내가 없음: %r" % text)
@@ -4419,6 +4466,501 @@ def run_all(browser, base, data, tmp, procs):
              "'올리지 못한 녹음' 칸에 1 줄이 보이지 않음")
         c.close()
     check("86 올리기 영구 실패(400): 상태 글이 '올리지 못했습니다'", t86)
+
+
+    def t87():
+        # R57-N1: 영구 실패 안내 뒤에도 추적을 남겨, 다시 올려 성공하면 '올렸습니다' 로,
+        # '올리지 못한 녹음' 칸에서 지우면 상태 글을 비운다(대기열에서 빠진 까닭을 구분).
+        b, _ = new_server("d87")
+        c = new_ctx(service_workers="block")
+        pg = c.new_page()
+        pg.on("dialog", lambda dlg: dlg.accept())
+
+        def refuse(route):
+            if route.request.method == "POST" and route.request.url.split("?")[0].endswith("/api/recordings"):
+                route.fulfill(status=400, content_type="application/json",
+                              body=json.dumps({"error": "받을 수 없음"}, ensure_ascii=False))
+            else:
+                route.continue_()
+        pg.route("**/api/recordings", refuse)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+
+        # (a) 영구 실패 안내를 띄운 뒤 막기를 풀고 '다시' → '올렸습니다'
+        rec_cycle(pg)
+        need(wait_for(lambda: "올리지 못했습니다" in pg.inner_text("#rec-result"), 15, pg=pg),
+             "(a) 영구 실패 뒤 상태 글이 '올리지 못했습니다' 로 바뀌지 않음: %r" % pg.inner_text("#rec-result"))
+        need(wait_for(lambda: pg.locator("#failed-list .failed-item").count() == 1, 10, pg=pg),
+             "(a) '올리지 못한 녹음' 칸에 1 줄이 보이지 않음")
+        pg.unroute("**/api/recordings")
+        # 다시 올리는 POST 를 잠깐 붙잡아 그 사이 상태 글을 본다(R58-N1). 붙잡지 않으면 서버가
+        # 곧바로 받아 줄이 사라져 중간 글을 볼 틈이 없다.
+        mid_held = []
+
+        def hold_retry_post(route):
+            req = route.request
+            if req.method == "POST" and req.url.split("?")[0].endswith("/api/recordings"):
+                mid_held.append(route)
+            else:
+                route.continue_()
+
+        pg.route("**/api/recordings", hold_retry_post)
+        pg.locator("#failed-list .f-retry").first.click()
+        need(wait_for(lambda: len(mid_held) == 1, 8, pg=pg),
+             "(a) 다시 올리는 POST 가 붙잡히지 않음")
+        need(wait_for(lambda: ("다시 올리는 중" in pg.inner_text("#rec-result") and
+                              "올리지 못했습니다" not in pg.inner_text("#rec-result")), 8, pg=pg),
+             "(a) 다시 올리는 동안 상태 글이 '다시 올리는 중' 이 아님: %r" % pg.inner_text("#rec-result"))
+        mid_held[0].continue_()
+        pg.unroute("**/api/recordings", hold_retry_post)
+        need(wait_for(lambda: ("올렸습니다" in pg.inner_text("#rec-result") and
+                              "올리지 못했습니다" not in pg.inner_text("#rec-result")), 20, pg=pg),
+             "(a) 다시 올린 뒤 상태 글이 '올렸습니다' 로 바뀌지 않음: %r" % pg.inner_text("#rec-result"))
+        need(wait_for(lambda: pg.locator("#failed-list .failed-item").count() == 0, 10, pg=pg),
+             "(a) 다시 올린 뒤 '올리지 못한 녹음' 줄이 남음")
+        need(wait_for(lambda: len(server_items(b)) == 1, 10, pg=pg), "(a) 다시 올린 녹음이 서버에 없음")
+
+        # (b) 다른 녹음으로 실패 안내를 띄운 뒤 '지우기' → 상태 글 빈 글, '올렸습니다' 아님
+        pg.route("**/api/recordings", refuse)
+        rec_cycle(pg)
+        need(wait_for(lambda: "올리지 못했습니다" in pg.inner_text("#rec-result"), 15, pg=pg),
+             "(b) 두 번째 영구 실패 뒤 상태 글이 '올리지 못했습니다' 로 바뀌지 않음: %r" % pg.inner_text("#rec-result"))
+        need(wait_for(lambda: pg.locator("#failed-list .failed-item").count() == 1, 10, pg=pg),
+             "(b) '올리지 못한 녹음' 칸에 1 줄이 보이지 않음")
+        pg.locator("#failed-list .f-remove").first.click()
+        need(wait_for(lambda: pg.inner_text("#rec-result").strip() == "", 10, pg=pg),
+             "(b) 지운 뒤 상태 글이 비지 않음: %r" % pg.inner_text("#rec-result"))
+        need("올렸습니다" not in pg.inner_text("#rec-result"),
+             "(b) 지운 뒤 상태 글에 '올렸습니다' 가 남음: %r" % pg.inner_text("#rec-result"))
+        need(wait_for(lambda: pg.locator("#failed-list .failed-item").count() == 0, 10, pg=pg),
+             "(b) 지운 뒤 '올리지 못한 녹음' 줄이 남음")
+        need(len(server_items(b)) == 1, "(b) 지운 녹음이 서버에 올라가 버림(서버 %d건)" % len(server_items(b)))
+        c.close()
+    check("87 영구 실패 뒤 다시 올림·지우기: 상태 글이 따라감", t87)
+
+
+    def t88():
+        # R57-N5·B-D4: 목록 5xx 뒤 목록이 아닌 호출(설정 기본값 GET)의 성공만으로 '연결됨' 으로
+        # 돌아오고, offline 이벤트에 '연결 안 됨', 다시 online 이면 목록을 다시 읽어 '연결됨' 이 된다.
+        b, _ = new_server("d88")
+        c = new_ctx()
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        need(wait_for(lambda: pg.inner_text("#conn").strip() == "연결됨", 8, pg=pg),
+             "시작 연결 확인이 '연결됨' 이 되지 않음: %r" % pg.inner_text("#conn"))
+
+        def list_503(route):
+            req = route.request
+            if req.method == "GET" and req.url.split("?")[0].endswith("/api/recordings"):
+                route.fulfill(status=503, content_type="application/json",
+                              body=json.dumps({"error": "목록 실패"}, ensure_ascii=False))
+            else:
+                route.continue_()
+        pg.route("**/api/recordings?*", list_503)
+        open_tab(pg, "list")
+        need(wait_for(lambda: pg.inner_text("#conn").strip() == "서버 오류", 8, pg=pg),
+             "목록 503 뒤 연결 표시가 '서버 오류' 가 아님: %r" % pg.inner_text("#conn"))
+        pg.unroute("**/api/recordings?*", list_503)
+
+        # 목록이 아닌 호출(설정 기본값 GET)의 성공으로 '서버 오류' → '연결됨'
+        pg.click("#settings-btn")
+        need(wait_for(lambda: pg.inner_text("#conn").strip() == "연결됨", 8, pg=pg),
+             "설정 기본값 GET 성공 뒤에도 연결 표시가 '서버 오류' 그대로: %r" %
+             pg.inner_text("#conn"))
+        pg.click("#settings-btn")
+
+        # offline 이벤트 → '연결 안 됨'
+        c.set_offline(True)
+        pg.evaluate("window.dispatchEvent(new Event('offline'))")
+        need(wait_for(lambda: pg.inner_text("#conn").strip() == "연결 안 됨", 5, pg=pg),
+             "offline 이벤트 뒤 연결 표시가 '연결 안 됨' 이 아님: %r" % pg.inner_text("#conn"))
+
+        # 다시 online → 목록을 다시 읽어 성공하면 '연결됨'
+        c.set_offline(False)
+        pg.evaluate("window.dispatchEvent(new Event('online'))")
+        need(wait_for(lambda: pg.inner_text("#conn").strip() == "연결됨", 8, pg=pg),
+             "online 이벤트 뒤 연결 표시가 '연결됨' 이 아님: %r" % pg.inner_text("#conn"))
+        c.close()
+    check("88 연결 표시: 5xx 뒤 다른 API 성공이면 연결됨, offline/online 이벤트", t88)
+
+
+    def t89():
+        # R57-N4: 설정 저장 PUT 이 시간 제한으로 끝나면 '저장하지 못했습니다' 로 단정하지 않고
+        # '확인하지 못했습니다 - 칸을 다시 열어 확인해 주세요' 꼴로 알린다(서버엔 저장됐을 수 있음).
+        b, _ = new_server("d89")
+        c = new_ctx()
+        pg = c.new_page()
+        pg.add_init_script("window.__VOX_STT_TIMEOUT_MS__ = 1000;")
+        pg.add_init_script(STT_SAVE_HOLD_JS)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        pg.click("#settings-btn")
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults"), 10, pg=pg),
+             "설정 기본값 첫 읽기가 끝나지 않음")
+        pg.evaluate("window.__holdNextSave()")
+        pg.click("#stt-defaults-save")
+        need(wait_for(lambda: pg.evaluate("window.__saveHeld()"), 5, pg=pg),
+             "설정 저장 PUT 응답이 쥐어지지 않음")
+        need(wait_for(lambda: pg.is_visible("#toast") and
+                      "확인하지 못했습니다" in pg.inner_text("#toast"), 5, pg=pg),
+             "시간 제한 뒤 '확인하지 못했습니다' 안내가 없음: %r" % pg.inner_text("#toast"))
+        txt = pg.inner_text("#toast")
+        need("저장하지 못했습니다" not in txt,
+             "시간 제한 안내가 저장 실패를 단정함: %r" % txt)
+        need("다시 열어" in txt, "시간 제한 안내에 '다시 열어' 가 없음: %r" % txt)
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults"), 5, pg=pg),
+             "시간 제한 뒤 설정 칸·저장 단추가 풀리지 않음")
+        c.close()
+    check("89 저장 시간 제한 안내가 단정하지 않음", t89)
+
+
+    def t90():
+        # R57-N6: json() 이 opts.signal 에 단 'abort' 리스너를 성공·실패로 끝난 뒤 거둔다.
+        b, _ = new_server("d90")
+        c = new_ctx()
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        pg.evaluate("""() => {
+            window.__sigCtl = new AbortController();
+            const sig = window.__sigCtl.signal;
+            const origAdd = sig.addEventListener.bind(sig);
+            const origRem = sig.removeEventListener.bind(sig);
+            window.__sigAdd = 0;
+            window.__sigRem = 0;
+            sig.addEventListener = function (type, fn, opts) {
+                if (type === 'abort') window.__sigAdd += 1;
+                return origAdd(type, fn, opts);
+            };
+            sig.removeEventListener = function (type, fn, opts) {
+                if (type === 'abort') window.__sigRem += 1;
+                return origRem(type, fn, opts);
+            };
+            return true;
+        }""")
+        got = pg.evaluate("""async () => {
+            try {
+                await window.VoxApi.json('api/health',
+                                         {signal: window.__sigCtl.signal, timeoutMs: 5000});
+                return 'ok';
+            } catch (e) { return 'err:' + ((e && e.message) || e); }
+        }""")
+        need(got == 'ok', "성공 호출이 실패함: %r" % got)
+        need(pg.evaluate("window.__sigAdd") == 1 and pg.evaluate("window.__sigRem") == 1,
+             "성공 뒤 리스너 수가 다름: add=%r rem=%r" %
+             (pg.evaluate("window.__sigAdd"), pg.evaluate("window.__sigRem")))
+
+        got = pg.evaluate("""async () => {
+            try {
+                await window.VoxApi.json('api/recordings/__absent__',
+                                         {signal: window.__sigCtl.signal, timeoutMs: 5000});
+                return 'ok';
+            } catch (e) { return 'err'; }
+        }""")
+        need(got == 'err', "실패해야 할 호출이 성공함")
+        need(pg.evaluate("window.__sigAdd") == 2 and pg.evaluate("window.__sigRem") == 2,
+             "실패 뒤 리스너 수가 다름: add=%r rem=%r" %
+             (pg.evaluate("window.__sigAdd"), pg.evaluate("window.__sigRem")))
+        c.close()
+    check("90 json() 이 바깥 signal 리스너를 거둠", t90)
+
+
+    def t91():
+        # R57-N6: 목록 실패는 #list-error 가 까닭을 보여 주므로 같은 말을 토스트로도 띄우지 않는다.
+        # R57-N7: 묻는 POST 가 도는 중 펼친 답을 지워 결과를 버리면 조용히 버리지 않고 안내 한 줄을 남긴다.
+        b, _ = new_server("d91")
+        upload_rec(b, "askable91")
+
+        # (a) 목록 503: 오류 줄·연결 표시는 남고, 토스트는 뜨지 않는다. 다른 호출 실패 토스트는 그대로.
+        c = new_ctx()
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        need(wait_for(lambda: pg.inner_text("#conn").strip() == "연결됨", 8, pg=pg),
+             "(a) 시작 연결 확인이 '연결됨' 이 되지 않음: %r" % pg.inner_text("#conn"))
+
+        def list_503(route):
+            req = route.request
+            if req.method == "GET" and req.url.split("?")[0].endswith("/api/recordings"):
+                route.fulfill(status=503, content_type="application/json",
+                              body=json.dumps({"error": "목록 실패"}, ensure_ascii=False))
+            else:
+                route.continue_()
+
+        pg.route("**/api/recordings?*", list_503)
+        open_tab(pg, "list")
+        need(wait_for(lambda: pg.is_visible("#list-error"), 8, pg=pg),
+             "(a) 목록 503 뒤 오류 줄이 보이지 않음")
+        need(pg.inner_text("#conn").strip() == "서버 오류",
+             "(a) 목록 503 뒤 연결 표시가 '서버 오류' 가 아님: %r" % pg.inner_text("#conn"))
+        time.sleep(0.4)
+        need(not (pg.is_visible("#toast") and "목록 실패" in pg.inner_text("#toast")),
+             "(a) 목록 실패가 토스트로도 떠 같은 말을 두 번 함: %r" % pg.inner_text("#toast"))
+        pg.unroute("**/api/recordings?*", list_503)
+
+        # 다른 호출 실패 토스트는 그대로 - 상세 GET 503 으로 확인한다.
+        def detail_503(route):
+            route.fulfill(status=503, content_type="application/json",
+                          body=json.dumps({"error": "상세 실패"}, ensure_ascii=False))
+        pg.click("#list-retry")
+        need(wait_for(lambda: list_count(pg) >= 1, 8, pg=pg), "(a) 다시 시도 뒤 목록이 채워지지 않음")
+        pg.route("**/api/recordings/r-*", detail_503)
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.is_visible("#toast") and "상세 실패" in pg.inner_text("#toast"), 8, pg=pg),
+             "(a) 상세 실패 토스트가 뜨지 않음: %r" % pg.inner_text("#toast"))
+        pg.unroute("**/api/recordings/r-*", detail_503)
+        c.close()
+
+        # (b) 묻는 POST 가 응답 없이 도는 중 펼친 답을 지우면, 버려진 결과를 지난 답 목록에서 보라고 알린다.
+        c = new_ctx()
+        pg = c.new_page()
+        pg.on("dialog", lambda dlg: dlg.accept())
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "ask")
+        pg.select_option("#ask-scope", "today")
+        pg.select_option("#ask-kind", "summary")
+        pg.click("#ask-go")
+        need(wait_for(lambda: "가짜 답" in pg.inner_text("#answer"), 20, pg=pg), "(b) 답이 오지 않음")
+        need(wait_for(lambda: pg.locator("#answers .answer-del").count() == 1, 10, pg=pg),
+             "(b) 지난 답 '지우기' 단추가 없음")
+        pg.locator("#answers .answer-open").click()          # 답을 펼친다
+        need(wait_for(lambda: pg.is_visible("#answer-actions"), 5, pg=pg), "(b) 답이 펼쳐지지 않음")
+        pg.evaluate("""() => {
+            window.__origFetchAsk91 = window.fetch;
+            window.fetch = function (input, init) {
+                const url = typeof input === 'string' ? input : input.url;
+                const method = (init && init.method) || 'GET';
+                if (method === 'POST' && url.split('?')[0].endsWith('/api/ask')) {
+                    return new Promise(function () {});
+                }
+                return window.__origFetchAsk91(input, init);
+            };
+            return 'patched';
+        }""")
+        pg.click("#ask-go")
+        need(wait_for(lambda: pg.evaluate("document.querySelector('#ask-go').disabled"), 3, pg=pg),
+             "(b) 묻기 직후 단추가 잠기지 않음")
+        pg.click("#answers .answer-del")
+        need(wait_for(lambda: not pg.evaluate("document.querySelector('#ask-go').disabled"), 2, pg=pg),
+             "(b) 펼친 답을 지운 뒤 묻기 단추가 풀리지 않음")
+        st = pg.inner_text("#answer-status")
+        need("지운 답" in st and "지난 답" in st,
+             "(b) 버려진 묻기 결과를 알리는 안내가 없음: %r" % st)
+        c.close()
+    check("91 목록 실패 토스트 없음·묻기 도중 답 지움 안내", t91)
+
+
+    def t92():
+        # B-D5: 설정 칸 기본값 읽기가 실패하면 안내 옆 '다시 시도' 단추가 보이고,
+        # 누르면 다시 읽어 채운다. 320px 에서도 단추가 화면 안에 있고 44px 높이다.
+        b, _ = new_server("d92")
+        c = new_ctx(viewport={"width": 320, "height": 700})
+        pg = c.new_page()
+
+        def stt_503(route):
+            if route.request.method == "GET" and route.request.url.split("?")[0].endswith("/api/stt-options"):
+                route.fulfill(status=503, content_type="application/json",
+                              body=json.dumps({"error": "설정 실패"}, ensure_ascii=False))
+            else:
+                route.continue_()
+        pg.route("**/api/stt-options", stt_503)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        pg.click("#settings-btn")
+        need(wait_for(lambda: pg.is_visible("#stt-defaults-retry"), 10, pg=pg),
+             "설정 읽기 실패 뒤 '다시 시도' 단추가 보이지 않음")
+        need("불러오지 못했습니다" in pg.inner_text("#stt-defaults-note"),
+             "설정 읽기 실패 안내가 없음: %r" % pg.inner_text("#stt-defaults-note"))
+        need(pg.evaluate("document.querySelector('#stt-defaults-fields').hidden"),
+             "읽기 실패 뒤 기본값 칸이 숨겨지지 않음")
+        retry = pg.locator("#stt-defaults-retry").bounding_box()
+        need(retry is not None, "'다시 시도' 단추의 bounding box 가 없음")
+        need(retry["height"] >= 43.5, "'다시 시도' 단추 높이가 44px 안팎이 아님: %r" % retry["height"])
+        need(retry["x"] >= -0.5 and retry["x"] + retry["width"] <= 320 + 0.5,
+             "320px 에서 '다시 시도' 단추가 화면 밖: %r" % retry)
+        sw, vw = pg.evaluate("[document.documentElement.scrollWidth, window.innerWidth]")
+        need(sw <= vw + 0.5, "320px 에서 가로 넘침: %d > %d" % (sw, vw))
+
+        pg.unroute("**/api/stt-options", stt_503)
+        pg.click("#stt-defaults-retry")
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults"), 10, pg=pg),
+             "다시 시도 뒤 기본값 칸이 채워지지 않음")
+        need(not pg.is_visible("#stt-defaults-retry"),
+             "다시 시도 성공 뒤 '다시 시도' 단추가 숨지 않음")
+        need(pg.inner_text("#stt-defaults-note") == "",
+             "다시 시도 성공 뒤 실패 안내가 남음: %r" % pg.inner_text("#stt-defaults-note"))
+        c.close()
+    check("92 설정 읽기 실패 뒤 다시 시도", t92)
+
+
+    def t93():
+        # A-D3: 묻기용 체크박스를 감싼 label 의 누르는 자리가 44×44px 안팎이고 320px 에서 넘치지 않는다.
+        # A-D5: favicon 을 걸어 페이지 로드 중 404 응답·콘솔 오류가 없다.
+        b, _ = new_server("d93")
+        upload_rec(b, "pick93")
+        c = new_ctx(viewport={"width": 320, "height": 700})
+        pg = c.new_page()
+        bad_resp = []
+        errors = []
+        pg.on("response", lambda r: bad_resp.append(r.url) if r.status == 404 else None)
+        pg.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) >= 1, 10, pg=pg), "목록 항목이 보이지 않음")
+        lab = pg.locator("#list .rec-item .rec-pick").first
+        box = lab.bounding_box()
+        need(box is not None, "체크박스를 감싼 label 의 bounding box 가 없음")
+        need(box["width"] >= 43.5 and box["height"] >= 43.5,
+             "누르는 자리가 44×44px 안팎이 아님: %r" % box)
+        pad = pg.evaluate("""() => {
+            const cs = getComputedStyle(document.querySelector('#list .rec-item .rec-pick'));
+            return {x: parseFloat(cs.paddingLeft), y: parseFloat(cs.paddingTop)};
+        }""")
+        need(pad["x"] >= 8 and pad["y"] >= 8,
+             "체크박스를 감싼 label 에 누르는 여백이 없음: %r" % pad)
+        need(lab.locator("input[type=checkbox]").count() == 1,
+             "체크박스 자체가 label 안에 남아 있지 않음")
+        sw, vw = pg.evaluate("[document.documentElement.scrollWidth, window.innerWidth]")
+        need(sw <= vw + 0.5, "320px 에서 가로 넘침: %d > %d" % (sw, vw))
+        # 헤드리스 크롬은 favicon 을 스스로 받지 않아 404 가 드러나지 않는다 - 링크가 아이콘을
+        # 가리키고 그 파일이 응답하는지까지 본다(A-D5).
+        icon = pg.evaluate("""() => {
+            const l = document.querySelector('link[rel~="icon"]');
+            return l ? l.href : null;
+        }""")
+        need(icon, "favicon <link rel=icon> 이 없음")
+        need("/icons/" in icon, "favicon 이 icons/ 아이콘을 가리키지 않음: %r" % icon)
+        try:
+            with urllib.request.urlopen(icon, timeout=5) as res:
+                need(res.status == 200, "favicon 응답이 200 이 아님: %r" % res.status)
+        except urllib.error.URLError as exc:
+            need(False, "favicon 을 불러오지 못함: %r (%r)" % (icon, exc))
+        time.sleep(1)
+        need(not bad_resp, "페이지 로드 중 404 응답이 있음: %r" % bad_resp[:3])
+        need(not errors, "페이지 로드 중 콘솔 오류가 있음: %r" % errors[:3])
+        c.close()
+    check("93 체크박스 누르는 자리 44px·favicon 404 없음", t93)
+
+
+    def t94():
+        # R55-N3 ②: 상세를 닫으면 옵션 칸에 걸린 받아쓰기 기본값 읽기를 closeDetail 이 끊는다.
+        # 그리고 설정 칸 읽기와 상세 칸 읽기는 서로 다른 묶음이라, 하나를 쥔 채 다른 하나를 열어도
+        # 서로 끊지 않는다 - 풀면 각자 자기 칸을 채운다.
+        b, _ = new_server("d94")
+        rid = upload_rec(b, "d94-a")
+
+        # (a) 상세 옵션 칸의 읽기를 쥔 채 상세를 닫으면 그 읽기가 끊김으로 기록된다.
+        c1 = new_ctx()
+        pg = c1.new_page()
+        pg.add_init_script(STT_OPTIONS_HOLD_JS)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 10, pg=pg), "(a) 목록 항목이 1개가 아님")
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid).click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "(a) 상세가 준비되지 않음")
+        pg.evaluate("window.__holdNextSttOptions()")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.evaluate("window.__sttOptionsHeld()"), 5, pg=pg),
+             "(a) 상세 기본값 GET 응답이 쥐어지지 않음")
+        need(not pg.is_enabled("#detail-stt-preprocess") and not pg.is_enabled("#detail-stt-run"),
+             "(a) 기본값 응답 전 상세 칸·실행 단추가 잠기지 않음")
+        pg.click("#detail-close")
+        need(pg.evaluate("document.querySelector('#detail').hidden"), "(a) 상세를 닫지 못함")
+        need(wait_for(lambda: pg.evaluate("window.__heldFetchAborted") >= 1, 5, pg=pg),
+             "(a) 상세를 닫아도 걸린 기본값 읽기가 끊긴 것으로 기록되지 않음")
+        c1.close()
+
+        # (b) 설정 읽기를 쥔 채 상세 읽기를 열어도 두 읽기는 서로 끊지 않고, 풀면 각자 칸을 채운다.
+        api_put_json(b, "/api/stt-options", {"options": {"preprocess": "denoise"}})
+        c2 = new_ctx()
+        pg = c2.new_page()
+        pg.add_init_script(STT_OPTIONS_HOLD_JS)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+
+        pg.evaluate("window.__holdNextSttOptions()")
+        pg.click("#settings-btn")
+        need(wait_for(lambda: pg.evaluate("window.__sttOptionsHeldCount()") == 1, 5, pg=pg),
+             "(b) 설정 기본값 GET 이 쥐어지지 않음")
+
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 10, pg=pg), "(b) 목록 항목이 1개가 아님")
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid).click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "(b) 상세가 준비되지 않음")
+        aborted_before = pg.evaluate("window.__heldFetchAborted")
+        pg.evaluate("window.__holdNextSttOptions()")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.evaluate("window.__sttOptionsHeldCount()") == 2, 5, pg=pg),
+             "(b) 상세 기본값 GET 이 쥐어지지 않음")
+        need(pg.evaluate("window.__heldFetchAborted") == aborted_before,
+             "(b) 설정과 상세 읽기가 서로를 끊음: %r" % pg.evaluate("window.__heldFetchAborted"))
+
+        # 설정 읽기를 먼저 풀면 설정 칸만, 상세 읽기를 풀면 상세 칸만 채워진다.
+        need(pg.evaluate("window.__releaseSttOptions(0)"), "(b) 쥔 설정 기본값 응답을 놓지 못함")
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults") and
+                      pg.input_value("#stt-defaults-preprocess") == "denoise", 10, pg=pg),
+             "(b) 설정 칸이 자기 응답으로 채워지지 않음: %r" %
+             pg.input_value("#stt-defaults-preprocess"))
+        need(not pg.is_enabled("#detail-stt-preprocess"),
+             "(b) 설정 응답이 아직 쥔 상세 칸을 풀어 버림")
+        need(pg.evaluate("window.__releaseSttOptions(0)"), "(b) 쥔 상세 기본값 응답을 놓지 못함")
+        need(wait_for(lambda: stt_fields_ready(pg, "detail-stt") and
+                      pg.input_value("#detail-stt-preprocess") == "denoise", 10, pg=pg),
+             "(b) 상세 칸이 자기 응답으로 채워지지 않음: %r" %
+             pg.input_value("#detail-stt-preprocess"))
+        c2.close()
+    check("94 상세 닫기가 걸린 읽기를 끊음·설정과 상세 읽기 공존", t94)
+
+
+    def t95():
+        # R58-N2: 토큰 서버에서 잘못된 토큰으로 목록이 401 → '인증 필요'. 그 뒤 토큰 없이 되는
+        # api/health 가 성공해도 '연결됨' 으로 덮이지 않아야 한다(onAnyApiOk 의 보호).
+        b, _ = new_server("d95", token="t1")
+        c = new_ctx()
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        # 설정을 먼저 열어 둔다 - 이때 도는 stt-options 401 이 뒤늦게 '인증 필요' 를 다시 써서
+        # health 성공을 덮은 것처럼 보이지 않게.
+        pg.click("#settings-btn")
+        pg.fill("#token", "wrong")
+        pg.dispatch_event("#token", "change")
+        pg.wait_for_timeout(600)
+        open_tab(pg, "list")
+        need(wait_for(lambda: "인증 필요" in pg.inner_text("#conn"), 8, pg=pg),
+             "틀린 토큰으로 목록 401 뒤 '인증 필요' 가 아님: %r" % pg.inner_text("#conn"))
+        time.sleep(0.5)  # 앞선 401 들이 모두 끝나기를 기다린다
+
+        # health 성공이 마지막 성공이 되도록 연결 확인의 api/answers 응답을 붙잡는다.
+        answers_held = []
+
+        def hold_answers(route):
+            req = route.request
+            if req.method == "GET" and req.url.split("?")[0].endswith("/api/answers"):
+                answers_held.append(route)
+            else:
+                route.continue_()
+
+        pg.route("**/api/answers", hold_answers)
+        pg.click("#health-check")
+        need(wait_for(lambda: len(answers_held) == 1, 8, pg=pg),
+             "연결 확인의 api/answers 응답이 붙잡히지 않음")
+        time.sleep(0.5)
+        conn = pg.inner_text("#conn").strip()
+        need(conn == "인증 필요",
+             "토큰 없이 되는 health 성공 뒤 '인증 필요' 가 덮임: %r" % conn)
+        for r in answers_held:
+            r.abort()
+        pg.unroute("**/api/answers", hold_answers)
+        c.close()
+    check("95 인증 필요는 다른 성공으로 덮이지 않음", t95)
 
 
 if __name__ == "__main__":

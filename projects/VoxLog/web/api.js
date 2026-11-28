@@ -59,6 +59,13 @@
     return e;
   }
 
+  // 어느 호출이든 성공했다고 화면에 알린다(R57-N5). 화면이 없으면(단위 검사) 그냥 넘어간다.
+  function notifyOk() {
+    try {
+      if (typeof window.__voxApiOk === 'function') window.__voxApiOk();
+    } catch (e) { /* 알림 실패는 요청 결과에 영향 없음 */ }
+  }
+
   function json(path, opts) {
     opts = opts || {};
     var timeoutMs = opts.timeoutMs > 0 ? opts.timeoutMs : 0;
@@ -68,14 +75,28 @@
       try { ac = new AbortController(); } catch (e) { ac = null; }
     }
     var timedOut = false;
+    // 바깥 신호에 단 리스너를 요청이 끝나면(성공·실패·시간 제한) 거둔다(R57-N6).
+    var detachExternal = null;
+    function detach() {
+      if (!detachExternal) return;
+      var d = detachExternal;
+      detachExternal = null;
+      try { d(); } catch (e) { /* 무시 */ }
+    }
     var work = getConfig().then(function (cfg) {
       var init = { method: opts.method || 'GET', headers: authHeaders(cfg), cache: 'no-store' };
       if (ac) {
         init.signal = ac.signal;
         // 바깥 신호와 시간 제한을 함께 듣는다: 바깥이 끊기면 내부 컨트롤러도 끊는다.
         if (opts.signal) {
-          if (opts.signal.aborted) ac.abort();
-          else opts.signal.addEventListener('abort', function () { ac.abort(); }, { once: true });
+          if (opts.signal.aborted) {
+            ac.abort();
+          } else {
+            var external = opts.signal;
+            var onAbort = function () { ac.abort(); };
+            external.addEventListener('abort', onAbort, { once: true });
+            detachExternal = function () { external.removeEventListener('abort', onAbort); };
+          }
         }
       } else if (opts.signal) {
         init.signal = opts.signal;
@@ -94,9 +115,10 @@
           if (!res.ok) {
             throw fail((isJson && data && data.error) || String(res.status), res.status);
           }
-          if (res.status === 204) return {}; // 204 는 본문이 원래 없다
+          if (res.status === 204) { notifyOk(); return {}; } // 204 는 본문이 원래 없다
           // 200 인데 JSON 이 아니거나 본문이 빈 응답(캐티브 포털·프록시)은 성공으로 받지 않는다
           if (!isJson) throw fail('서버 응답이 JSON 이 아닙니다 (' + res.status + ')', res.status);
+          notifyOk();
           return data == null ? {} : data;
         });
       }, function () {
@@ -104,16 +126,19 @@
         throw fail('서버에 연결할 수 없습니다', 0);
       });
     });
-    if (!timeoutMs) return work;
+    var settled = work.then(function (v) { detach(); return v; },
+                             function (e) { detach(); throw e; });
+    if (!timeoutMs) return settled;
     // getConfig 대기부터 fetch 끝까지를 덮는다. 시간이 지나면 (내부 컨트롤러가 있으면) fetch 를 끊고 거절한다.
     return new Promise(function (resolve, reject) {
       var timer = setTimeout(function () {
         timedOut = true;
         if (ac) { try { ac.abort(); } catch (e) { /* 아래에서 거절한다 */ } }
+        detach();
         reject(timeoutError());
       }, timeoutMs);
-      work.then(function (v) { clearTimeout(timer); resolve(v); },
-                function (e) { clearTimeout(timer); reject(e); });
+      settled.then(function (v) { clearTimeout(timer); resolve(v); },
+                   function (e) { clearTimeout(timer); reject(e); });
     });
   }
 

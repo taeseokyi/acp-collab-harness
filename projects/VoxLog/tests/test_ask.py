@@ -1,6 +1,8 @@
 import os
 import shlex
+import shutil
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -275,6 +277,82 @@ class CommandTest(unittest.TestCase):
     def test_run_llm_missing_command(self):
         with self.assertRaises(ask.AskUnavailable):
             ask.run_llm("x", env={"VOXLOG_LLM_CMD": "no-such-llm-command-xyz"})
+
+    def test_relative_path_arg_made_absolute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "tools"))
+            with open(os.path.join(tmp, "tools", "fake_llm.py"), "w"):
+                pass
+            old = os.getcwd()
+            os.chdir(tmp)
+            try:
+                cmd = ask.llm_command(
+                    {"VOXLOG_LLM_CMD": "python3 tools/fake_llm.py --flag"}
+                )
+            finally:
+                os.chdir(old)
+        self.assertEqual(
+            cmd,
+            ["python3", os.path.join(tmp, "tools", "fake_llm.py"), "--flag"],
+        )
+
+    def test_bare_words_not_changed(self):
+        cmd = ask.llm_command({"VOXLOG_LLM_CMD": "python3 -m claude --flag"})
+        self.assertEqual(cmd, ["python3", "-m", "claude", "--flag"])
+
+    def test_missing_relative_path_not_changed(self):
+        cmd = ask.llm_command({"VOXLOG_LLM_CMD": "python3 no/such/file.py"})
+        self.assertEqual(cmd, ["python3", "no/such/file.py"])
+
+    def test_absolute_path_not_changed(self):
+        cmd = ask.llm_command({"VOXLOG_LLM_CMD": "%s %s" % (sys.executable, FAKE_LLM)})
+        self.assertEqual(cmd, [sys.executable, FAKE_LLM])
+
+
+class RelativeCommandTest(unittest.TestCase):
+    """G-125: 상대경로 VOXLOG_LLM_CMD 로도 묻기·자동 태그가 돈다."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        old = os.getcwd()
+        self.addCleanup(os.chdir, old)
+        os.chdir(self._tmp.name)
+        os.makedirs("sub")
+        shutil.copyfile(FAKE_LLM, os.path.join("sub", "fake_llm.py"))
+        self.env = {
+            "VOXLOG_LLM_CMD": "%s sub/fake_llm.py" % shlex.quote(sys.executable),
+        }
+
+    def _wait(self, asker):
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            if asker.idle():
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_question_with_relative_command(self):
+        prompt = ask.build_prompt(
+            "summary", "", [item("r-1", "2026-01-01T00:00:00", "글")]
+        )
+        out = ask.run_llm(prompt, env=self.env)
+        self.assertIn("가짜 답", out)
+        self.assertIn("녹취 1건", out)
+
+    def test_autotag_with_relative_command(self):
+        rid = "r-1"
+        store = FakeStore({rid: {"id": rid, "recorded_at": "2026-01-01T00:00:00",
+                                 "transcript": "글"}})
+        asker = ask.Asker(store, env=self.env)
+        asker.start()
+        try:
+            self.assertTrue(asker.submit_tag(rid))
+            self.assertTrue(self._wait(asker), "idle 대기 초과")
+        finally:
+            asker.stop()
+        self.assertEqual(store.get(rid)["autotag"], "done")
+        self.assertEqual(store.get(rid)["tags"], ["회의", "가짜 태그", "세번째"])
 
 
 class AskerTest(unittest.TestCase):

@@ -90,11 +90,25 @@ def build_tag_prompt(text):
     return TAG_HEAD + "\n" + _GUARD + "\n<녹취>\n" + body + "\n</녹취>"
 
 
+def _resolve_relative_paths(cmd):
+    """`/` 를 품은 상대경로 낱말을 명령을 읽는 때의 작업 폴더 기준 절대경로로 바꾼다.
+
+    run_llm 이 빈 임시 폴더에서 명령을 돌리므로 상대경로 그대로면 풀리지 않는다.
+    `/` 없는 낱말(claude·python3·플래그)과 그 자리에 없는 경로는 그대로 둔다.
+    """
+    out = []
+    for arg in cmd:
+        if "/" in arg and not os.path.isabs(arg) and os.path.isfile(arg):
+            arg = os.path.abspath(arg)
+        out.append(arg)
+    return out
+
+
 def llm_command(env=None):
     env = os.environ if env is None else env
     cmd = env.get("VOXLOG_LLM_CMD")
     if cmd:
-        return shlex.split(cmd)
+        return _resolve_relative_paths(shlex.split(cmd))
     return ["claude", "-p", "--tools", "", "--strict-mcp-config",
             "--setting-sources", "", "--no-session-persistence",
             "--output-format", "text"]
