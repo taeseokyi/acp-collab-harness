@@ -875,18 +875,24 @@ class RequestRateLimiter:
 
 
 def _requests_eta_from_graphs(requests, graphs):
-    """열린 요청에 아직 안 끝난 그래프가 있으면 남은 시간은 그래프의 것을 쓴다.
+    """열린 요청에 아직 안 끝난 그래프가 있으면 남은 시간과 진행률은 그래프의 것을 쓴다.
 
-    요청 쪽 추정은 서브태스크가 모두 한꺼번에 돈다고 본다. 그래프는 의존 순서를 따라 재므로, 같은 요청을
-    두고 요청 카드와 그래프 카드가 서로 다른 남은 시간을 말하지 않게 그래프 값을 정본으로 삼는다.
+    요청 쪽 추정은 서브태스크가 모두 한꺼번에 돈다고 보고, 진행률은 끝난 서브태스크 수로 센다. 그래프는 의존 순서를
+    따라 재고 진행률도 걸리는 시간으로 재므로, 같은 요청을 두고 요청 카드와 그래프 카드가 서로 다른 값을 말하지 않게
+    그래프 값을 정본으로 삼는다. 요청에 그래프가 여럿이면(검수 뒤 후속 그래프) 진행률은 노드 수로 무게를 둔 평균이다.
     """
     if not isinstance(requests, list) or not isinstance(graphs, list):
         return
     left: dict = {}
+    share: dict = {}      # 요청 -> [(그래프 진행률, 노드 수)] - 끝난 그래프도 센다
     for g in graphs:
         if not isinstance(g, dict):
             continue
         eta, pct = g.get("eta_seconds"), g.get("percent")
+        head = str(g.get("request") or "").split()
+        nn = len(g.get("nodes") or [])
+        if head and nn and isinstance(pct, (int, float)) and not isinstance(pct, bool):
+            share.setdefault(head[0], []).append((float(pct), nn))
         if isinstance(eta, bool) or not isinstance(eta, (int, float)) or eta <= 0:
             continue
         if isinstance(pct, (int, float)) and pct >= 100:
@@ -903,6 +909,9 @@ def _requests_eta_from_graphs(requests, graphs):
             req["eta_sec"] = int(max(e for _, e in gs))
             req["eta_basis"] = ("그래프 " + ", ".join(i for i, _ in gs) + " 의 남은 시간 (의존 순서대로 잰 값"
                                 + (", 여럿이면 가장 오래 남은 것)" if len(gs) > 1 else ")"))
+            sh = share.get(req.get("id"))
+            if sh:
+                req["progress_pct"] = round(sum(p * n for p, n in sh) / sum(n for _, n in sh), 1)
 
 
 def _empty_state(root, errors):

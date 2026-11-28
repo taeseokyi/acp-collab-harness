@@ -38,7 +38,8 @@ class CommandTest(unittest.TestCase):
     def test_worker_argv(self):
         c = claude_h.ADAPTER.command(_spec(model="opus"))     # 접두 떼기는 `fleet.normalize_model` 이 spawn 에서 한 번
         self.assertEqual(c.argv, ["claude", "-p", "--model", "opus", "--output-format", "stream-json", "--verbose",
-                                  "--permission-mode", "acceptEdits", "--allowedTools", claude_h.WORKER_TOOLS])
+                                  "--permission-mode", "acceptEdits", "--allowedTools", claude_h.WORKER_TOOLS,
+                                  "--add-dir", "/tmp"])
         self.assertEqual(c.stdin_path, "/x/brief.md")
         self.assertEqual(c.cwd, str(REPO))
         self.assertEqual(c.env_unset, claude_h.NESTED_ENV)
@@ -153,6 +154,20 @@ class ReportTest(unittest.TestCase):
             d = _session_dir(tmp, FIXTURE.read_text().splitlines())
             self.assertEqual(claude_h.ADAPTER.final_report(d), "DONE")
             self.assertIs(claude_h.ADAPTER.limit_signal(d), False)
+
+    def test_final_report_keeps_earlier_results_under_the_last_one(self):
+        """알림에 답한 짧은 글이 마지막 result 여도 본 보고가 사라지지 않는다 - 마지막 말이 맨 위, 앞의 것은 아래."""
+        res = lambda t: json.dumps({"type": "result", "result": t})  # noqa: E731
+        with tempfile.TemporaryDirectory() as tmp:
+            d = _session_dir(tmp, [res("상태: PARTIAL\n\n긴 본 보고"), res("상태: DONE\n\n정정"), res("상태: DONE\n\n정정")])
+            rep = claude_h.ADAPTER.final_report(d)
+        self.assertTrue(rep.startswith("상태: DONE"))
+        self.assertIn("긴 본 보고", rep)
+        self.assertEqual(rep.count("정정"), 1)                      # 같은 글은 한 번만
+        self.assertEqual(rep.count(claude_h.EARLIER_REPORT_MARK), 1)
+
+    def test_worker_tools_allow_copying_for_mutation_checks(self):
+        self.assertIn("Bash(cp:*)", claude_h.WORKER_TOOLS.split(","))
 
     def test_final_report_without_result(self):
         with tempfile.TemporaryDirectory() as tmp:

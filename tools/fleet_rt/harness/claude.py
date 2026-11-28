@@ -19,6 +19,12 @@ NESTED_ENV = ("CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID
               "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH")
 
 # 작업자에 허용하는 도구. 편집은 자동 승인(acceptEdits), 셸은 읽기·검증 명령만. commit/push/rm/설치는 목록에 없다.
+#: 작업자가 사본·임시 파일을 두는 곳 (`_argv` 의 `--add-dir`)
+SCRATCH_DIR = "/tmp"
+
+#: 한 세션이 result 를 여럿 냈을 때, 앞서 낸 것 위에 붙이는 표지 (`final_report`)
+EARLIER_REPORT_MARK = "--- 앞서 낸 보고 ---"
+
 WORKER_TOOLS = ",".join([
     "Read", "Edit", "Write", "Glob", "Grep",
     # 권한 규칙의 접두사 문법은 `Bash(cmd:*)` (콜론). 공백 별표는 글자 그대로 비교돼 아무것도 허용하지 않는다.
@@ -27,7 +33,9 @@ WORKER_TOOLS = ",".join([
     "Bash(PYTHONPATH=tools python3:*)", "Bash(PYTHONPATH=tools python:*)", "Bash(PYTHONPATH=. python3:*)",
     "Bash(PYTHONPYCACHEPREFIX=/tmp/pyc python3:*)", "Bash(node:*)", "Bash(npm test:*)",
     "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(grep:*)",
-    "Bash(sed -n:*)", "Bash(pwd)", "Bash(mkdir:*)", "Bash(diff:*)", "Bash(git status:*)",
+    # cp: /tmp 에 사본을 만들 때 쓴다(파일 하나씩 - 옵션이 붙은 `cp -r` 은 그래도 승인에 막혀, 폴더째는 지시문 머리말이
+    # 일러 주는 `shutil.copytree` 로 한다). python3 가 이미 허용이라 새로 열리는 힘은 없다
+    "Bash(sed -n:*)", "Bash(pwd)", "Bash(mkdir:*)", "Bash(cp:*)", "Bash(diff:*)", "Bash(git status:*)",
     "Bash(git diff:*)", "Bash(git log:*)", "Bash(curl:*)", "Bash(cd:*)", "Bash(echo:*)",
     "Bash(timeout:*)", "Bash(sleep:*)", "Bash(ss:*)", "Bash(kill:*)",
 ])
@@ -167,7 +175,10 @@ class ClaudeHarness:
         base.require_repo_cwd(spec.cwd, "claude")
         argv = ["claude", "-p", *(["--model", spec.model] if spec.model else []),
                 "--output-format", "stream-json", "--verbose",
-                "--permission-mode", "acceptEdits", "--allowedTools", spec.tools or WORKER_TOOLS]
+                "--permission-mode", "acceptEdits", "--allowedTools", spec.tools or WORKER_TOOLS,
+                # /tmp 를 작업 폴더로 더한다 - 허용 목록에 있어도 작업 폴더 밖 쓰기(mkdir·cp·Edit)는 승인을 기다리며 막혀,
+                # 검수자가 사본을 만들어 고침을 되돌려 보는 확인을 못 했다 (2026-11-28 실측: 더하면 승인 없이 됨)
+                "--add-dir", SCRATCH_DIR]
         denied = (spec.extra or {}).get("disallowed_tools")
         if denied:
             # 허용 목록이 실수로 넓어져도 이것들은 막는다 (관리자 `manager.MANAGER_DENIED`) - `claude --help` 의 철자
@@ -244,9 +255,15 @@ class ClaudeHarness:
 
     def final_report(self, session_dir) -> str:
         evs = self._events(session_dir)
-        for d in reversed(evs):
-            if d.get("type") == "result":
-                return str(d.get("result") or "").strip()
+        results = [str(d.get("result") or "").strip() for d in evs if d.get("type") == "result"]
+        if results:
+            # 백그라운드 알림이 오면 대화가 한 차례 더 돌아 result 가 여럿 생긴다. 마지막 것만 쓰면 알림에 답한 짧은 글이
+            # 본 보고를 가리고(R51 T-458·R54 T-493), 앞의 것만 쓰면 뒤에 고친 상태를 놓친다. 그래서 마지막 말을 맨 위에
+            # 두고(첫 줄 = 지금의 상태), 앞서 낸 것은 최근 것부터 아래에 붙인다
+            earlier = [r for r in dict.fromkeys(reversed(results[:-1])) if r and r != results[-1]]
+            if not earlier:
+                return results[-1]
+            return "\n\n".join([results[-1]] + [f"{EARLIER_REPORT_MARK}\n{r}" for r in earlier]).strip()
         # result 없이 끝남: 마지막 assistant 메시지의 본문 (같은 message id 의 줄들은 이어 붙인다)
         parts, mid = [], None
         for d in reversed(evs):

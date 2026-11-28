@@ -862,6 +862,26 @@ class ClosedRequestContractTests(unittest.TestCase):
         self.assertEqual([s["id"] for s in by["Q-3"]["subtasks"]], ["T-9"])   # 파일에 적힌 분담이 있으면 그것이 정본
         self.assertEqual(none["Q-1"]["subtasks"], [])
 
+    def test_open_request_takes_progress_from_its_graphs(self):
+        """요청 카드와 그래프 카드가 같은 진행률을 말한다 - 그래프가 여럿이면 노드 수로 무게를 둔 평균."""
+        from aimem_monitor import server
+        nodes = lambda n: [{"id": f"T-{i}"} for i in range(n)]  # noqa: E731
+        reqs = [{"id": "Q-1", "status": "IN-PROGRESS", "progress_pct": 16.7, "eta_sec": 1},
+                {"id": "Q-2", "status": "IN-PROGRESS", "progress_pct": 55.0, "eta_sec": 1},
+                {"id": "Q-3", "status": "DONE", "progress_pct": 100.0, "eta_sec": None}]
+        graphs = [{"id": "G-1", "request": "Q-1", "percent": 39.3, "eta_seconds": 1926, "nodes": nodes(6)},
+                  {"id": "G-2", "request": "Q-2", "percent": 100.0, "eta_seconds": 0, "nodes": nodes(6)},
+                  {"id": "G-3", "request": "Q-2", "percent": 10.0, "eta_seconds": 600, "nodes": nodes(2)},
+                  {"id": "G-4", "request": "Q-3", "percent": 10.0, "eta_seconds": 600, "nodes": nodes(2)}]
+        server._requests_eta_from_graphs(reqs, graphs)
+        self.assertEqual(reqs[0]["progress_pct"], 39.3)            # 그래프 하나면 그 값 그대로
+        self.assertEqual(reqs[1]["progress_pct"], 77.5)            # (100*6 + 10*2) / 8
+        self.assertEqual(reqs[2]["progress_pct"], 100.0)           # 닫힌 요청은 그대로
+        done = [{"id": "Q-9", "status": "IN-PROGRESS", "progress_pct": 85.0, "eta_sec": None}]
+        server._requests_eta_from_graphs(done, [{"id": "G-9", "request": "Q-9", "percent": 100.0, "eta_seconds": 0,
+                                                 "nodes": nodes(3)}])
+        self.assertEqual(done[0]["progress_pct"], 85.0)            # 도는 그래프가 없으면 요청 쪽 셈 그대로
+
     def test_open_request_takes_eta_from_unfinished_graph(self):
         from aimem_monitor import server
         reqs = [{"id": "Q-1", "status": "PLANNED", "eta_sec": 500, "eta_basis": "병렬 가정"},
