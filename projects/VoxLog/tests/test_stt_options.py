@@ -143,6 +143,13 @@ class NormalizeTest(unittest.TestCase):
         self.assertEqual(normalize({"context": "a\u2029b"}), {"context": "a\nb"})
         self.assertEqual(normalize({"context": "a\u200bb"}), {"context": "ab"})
 
+    # 22
+    def test_context_drops_lone_surrogates_and_encodes_utf8(self):
+        got = normalize({"context": "a\ud800b"})["context"]
+        self.assertEqual(got, "ab")
+        self.assertNotIn("\ud800", got)
+        got.encode("utf-8")
+
 
 class FormFieldsTest(unittest.TestCase):
     # 11
@@ -178,6 +185,12 @@ class FormFieldsTest(unittest.TestCase):
     def test_bad_options_raise(self):
         with self.assertRaises(ValueError):
             form_fields({"num_speakers": 21})
+
+    # 23
+    def test_form_fields_context_encodes_utf8(self):
+        fields = form_fields({"context": "a\ud800b"})
+        self.assertEqual(fields["context"], "ab")
+        fields["context"].encode("utf-8")
 
 
 class UsedFromResultTest(unittest.TestCase):

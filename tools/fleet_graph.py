@@ -851,6 +851,39 @@ def _board_sync(task_id, status, slot=None, g=None):
         return None
 
 
+def _board_slot(task_id, slot, g=None):
+    """보드 `tasks.slot` 을 노드가 옮겨 간 슬롯으로. `_board_sync` 와 같은 규칙 - 끝난 줄(`DONE`·`REJECTED`)은 안 건드리고,
+    줄을 만들지 않고, DB 가 없으면 아무것도 안 하고, 실패해도 멈추지 않는다. 고쳤으면 True.
+
+    옮긴 노드는 그래프에서만 새 슬롯이고 보드는 옛 슬롯을 보였다(R55: T-497 S6→S3, T-498 S2→S8)."""
+    db = _board_db()
+    if not db.is_file() or not slot:
+        return None
+    try:
+        con = sqlite3.connect(db.as_uri() + "?mode=rw", uri=True, timeout=2)
+        try:
+            with con:
+                now = _now()
+                cur = con.execute("UPDATE tasks SET slot=?, updated=? WHERE id=? AND status NOT IN ('DONE','REJECTED') "
+                                  "AND COALESCE(slot,'') != ?", (slot, now, task_id, slot))
+                hit = cur.rowcount > 0
+                if hit:
+                    r = con.execute("SELECT value FROM meta WHERE key='rev'").fetchone()
+                    try:
+                        rev = int(r[0]) if r else None
+                    except (TypeError, ValueError):
+                        rev = None
+                    con.execute("INSERT INTO events(at,actor,rev,kind,body) VALUES(?,?,?,?,?)",
+                                (now, BOARD_ACTOR, rev, "task", f"{task_id} 슬롯 {slot}"))
+            return hit
+        finally:
+            con.close()
+    except Exception as e:  # noqa: BLE001 - 보드가 잠겨도 옮기기는 된다
+        if g is not None:
+            _log_once(g, ("board-slot", type(e).__name__), f"warn 보드 슬롯 고치기 실패({task_id} -> {slot}): {type(e).__name__}: {e}")
+        return None
+
+
 _BOARD_FILLED = set()      # 이 프로세스가 보드 줄을 이미 만들어·채워 본 (그래프, 태스크)
 
 
@@ -1664,6 +1697,7 @@ def move_node(g, node_id, slot, policy=None, why=""):
                        f"{label.get(old_tier, old_tier or '등급 모름')}입니다")
     moved = _move_ownership(list(n.get("write") or []), slot, f"{g.get('id')} {node_id} {old}→{slot}")
     n["slot"] = slot
+    _board_slot(node_id, slot, g)
     n.setdefault("moves", []).append({"from": old, "to": slot, "at": _now(), "why": str(why or "")[:300]})
     if len(n.get("attempts") or []) >= int(n.get("max_attempts", 2)):
         n["max_attempts"] = len(n["attempts"]) + 1

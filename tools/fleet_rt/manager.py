@@ -3,13 +3,10 @@
 관리자는 `role="manager"` 인 claude 세션일 뿐이다. 엔진(`fleet_ctl.launch_round`)이 `sessions.spawn` 으로 직접
 띄우고, 여기에는 그 명세를 만드는 것만 둔다 - 의존 방향은 fleet_ctl -> fleet_rt 이라 `fleet` 은 들이지 않는다.
 
-허용 도구 목록(`MANAGER_TOOLS`)은 **사고를 막는 난간이지 보안 경계가 아니다.** `Write` 와 `python3 -m unittest` 가
-있으므로 관리자는 마음먹으면 아무 코드나 돌릴 수 있다. 목록이 하는 일은 흔한 실수 - 커밋·푸시, 지우기, 설치,
-남의 프로세스 끊기, 운영 모니터 다시 띄우기 - 를 한 줄 명령으로 바로 하지 못하게 하는 것뿐이다. 그래서:
-- 넣지 않은 것: `fleet_ctl.py` 의 `status`·`chain status` 밖 동작(라운드 띄우기·모드 바꾸기는 엔진과 사람 몫),
-  `kill`/`pkill`(끊기는 엔진이 표식을 대조해 한다), `monitorctl.sh`(운영 모니터는 사람 몫), `node`·`timeout`·`cd`
-  (아무 명령이나 감싸 돌리는 통로), `python3 projects/`(프로젝트 코드는 검사로 돌린다), `curl`
-- 그래도 허용 목록이 넓어질 때를 대비해 `MANAGER_DENIED` 를 `--disallowedTools` 로 따로 건다 (거부가 허용보다 앞선다)
+관리자의 도구는 작업자와 같다 - Bash 를 통째로 허용하고 거부 목록을 걸지 않는다 (태석님 2026-11-28: "관리자에게 더 많은
+권한을 위임하고 싶어. 지나가는 난간은 필요없어"). 전에는 명령 접두사 목록과 거부 목록이 있었는데 **보안 경계가 아니었다**:
+`Write` 와 `python3 -m unittest` 로 아무 코드나 돌릴 수 있었고, 목록은 명령을 잇는 방식(`;`·`$(…)`·`for`)에 걸려 관리자의
+헛걸음만 만들었다(R55 7건). 관리자가 무엇을 해도 되는지는 도구가 아니라 위임문과 `AIMEM.md`·브리프가 정한다.
 """
 from __future__ import annotations
 
@@ -19,30 +16,7 @@ import uuid
 
 from .base import DEFAULT_IDLE_TIMEOUT_SEC, SessionSpec
 
-#: Claude Code 권한 문법 `Bash(<접두>:*)`. 접두 뒤가 무엇이든 허용한다 - 그래서 접두를 도구 파일 이름까지 적는다.
-MANAGER_TOOLS = ",".join([
-    "Read", "Edit", "Write", "Glob", "Grep",
-    "Bash(python3 tools/fleet.py:*)", "Bash(python3 tools/fleet_graph.py:*)",
-    "Bash(python3 tools/fleet_ctl.py status:*)", "Bash(python3 tools/fleet_ctl.py chain status:*)",
-    "Bash(python3 tools/aimem_db.py:*)",
-    "Bash(python3 tools/aimem_lint.py:*)",
-    # 표준 브리프가 시키는 일: 노드의 verify 를 붙이기 전에 검사를 한 번 돌려 본다
-    "Bash(python3 -m unittest:*)", "Bash(PYTHONPATH=tools python3 -m unittest:*)",
-    # 검사 스크립트는 `Bash(python3 tests/*)` 꼴이어야 한다 - `Bash(python3 tests/:*)` 는 낱말 경계에서만 맞아
-    # `python3 tests/browser_x.py` 를 허용하지 않는다.
-    "Bash(python3 tests/*)", "Bash(PYTHONPATH=tools python3 tests/*)",
-    # 전체 검사 한 줄과, 관리자가 노드의 verify 로 쓰려고 만든 검증 도구 - 붙이기 전에 지금 트리에서 한 번 돌려 본다(8.0-8).
-    # 없을 때는 unittest 꼴로 감싸 돌려야 했다 (R28 관리자 제안, 2026-11-14 태석님 승인)
-    "Bash(python3 tools/check.py:*)", "Bash(python3 .aimem/graph/inputs/*)",
-    # 읽기 명령 - 작업자 목록(`harness.claude.WORKER_TOOLS`)의 읽기 쪽과 같다
-    "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(grep:*)",
-    "Bash(sed -n:*)", "Bash(diff:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",
-    "Bash(pwd)", "Bash(mkdir:*)", "Bash(echo:*)", "Bash(sleep:*)",
-])
-
-#: 허용 목록과 따로 거는 거부 목록 (`--disallowedTools`) - 위임문이 늘 거절하는 것. 난간이다(머리말).
-MANAGER_DENIED = ("Bash(git commit:*),Bash(git push:*),Bash(git reset:*),Bash(git checkout:*),Bash(rm:*),"
-                  "Bash(pip:*),Bash(npm install:*),Bash(sudo:*)")
+MANAGER_TOOLS = "Read,Edit,Write,Glob,Grep,Bash"
 
 MANAGER_MODEL = "opus"
 MANAGER_HARNESS = "claude"
@@ -64,7 +38,7 @@ def spec(sid, n, cwd, *, at=None, by="사람", brief="", workspace="", provider=
     """관리자 세션 명세. 작업자와 같은 기준이다 - 벽시계 한도는 없고 멈췄을 때만(침묵) 끊는다.
     그래프가 도는 동안 관리자는 정당하게 오래 말이 없으므로, 감독은 도는 작업자가 있으면 침묵으로 치지 않는다(`run.py`)."""
     extra = {"harness_session_id": str(uuid.uuid4()), "by": str(by)[:60], "brief": brief,
-             "workspace": workspace, "disallowed_tools": MANAGER_DENIED}
+             "workspace": workspace}
     return SessionSpec(
         id=sid, role="manager", harness=MANAGER_HARNESS, brief_path="", cwd=str(cwd),
         model=MANAGER_MODEL, provider=provider, round=int(n), label=label(n, at),

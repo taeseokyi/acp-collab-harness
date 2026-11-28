@@ -1821,3 +1821,8 @@ button:disabled { opacity: 0.6; }
 .pane-gate-pick .btn-link { text-align: left; overflow-wrap: anywhere; }
 .pane-gate-pick-pre { color: var(--st-ink); font-weight: 600; }
 .pane-gate-pick-x { color: var(--st-ink-muted); padding: 2px 8px; }
+
+/* 같은 일감을 두 곳에 적지 않는다 (2026-11-28): 요청 카드는 요약 한 줄, 보드는 그래프 밖의 것만 */
+.req-summary { margin: var(--st-s-1) 0 0; color: var(--st-ink); }
+.req-summary .btn-link, .board-graph-note .btn-link { margin-left: var(--st-s-1); padding: 4px 10px; }
+.board-graph-note { margin: 0 0 var(--st-s-1); }

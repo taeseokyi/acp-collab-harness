@@ -664,7 +664,7 @@ class ReviewFixes(Base):
             self.assertIn(f"{name}=", texts)                             # 관리자(anthropic)는 `.env` 에서 아무것도 받지 않는다
         meta = sessions.load_meta(d)
         self.assertEqual(meta["env_file_names"], [])
-        self.assertEqual(meta["extra"]["disallowed_tools"], rt_manager.MANAGER_DENIED)
+        self.assertNotIn("disallowed_tools", meta["extra"])
 
 
 def _spawn_worker(slot, round_n, task, task_id="T-900"):
@@ -835,8 +835,8 @@ class ResumeAfterTransientApiError(Base):
         self.assertEqual(meta["extra"]["resume_session"], f"fake-{sid}")       # 끊긴 세션의 대화 id (사건에서)
         self.assertEqual(meta["extra"]["harness_session_id"], f"fake-{sid}")
         self.assertTrue(meta["label"].endswith("(이어 감)"))
-        self.assertEqual((meta["model"], meta["tools"], meta["idle_timeout"], meta["extra"]["disallowed_tools"]),
-                         ("opus", rt_manager.MANAGER_TOOLS, 600.0, rt_manager.MANAGER_DENIED))    # 침묵 한도만
+        self.assertEqual((meta["model"], meta["tools"], meta["idle_timeout"]),
+                         ("opus", rt_manager.MANAGER_TOOLS, 600.0))    # 침묵 한도만
         self.assertNotIn("timeout", meta)                                                         # 벽시계 한도 없음
         self.assertIn("모델 API 오류", (self.sroot / new / "brief.md").read_text(encoding="utf-8"))
         # 작업자·노드는 그대로, 마감 없음, 감시자를 새로 띄우지 않음(이 감시자가 계속 본다)

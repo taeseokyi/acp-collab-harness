@@ -25,20 +25,11 @@ SCRATCH_DIR = "/tmp"
 #: 한 세션이 result 를 여럿 냈을 때, 앞서 낸 것 위에 붙이는 표지 (`final_report`)
 EARLIER_REPORT_MARK = "--- 앞서 낸 보고 ---"
 
-WORKER_TOOLS = ",".join([
-    "Read", "Edit", "Write", "Glob", "Grep",
-    # 권한 규칙의 접두사 문법은 `Bash(cmd:*)` (콜론). 공백 별표는 글자 그대로 비교돼 아무것도 허용하지 않는다.
-    "Bash(python3:*)", "Bash(python:*)", "Bash(pytest:*)",
-    # 환경변수 접두사가 붙은 호출은 별도 규칙이 필요하다
-    "Bash(PYTHONPATH=tools python3:*)", "Bash(PYTHONPATH=tools python:*)", "Bash(PYTHONPATH=. python3:*)",
-    "Bash(PYTHONPYCACHEPREFIX=/tmp/pyc python3:*)", "Bash(node:*)", "Bash(npm test:*)",
-    "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(grep:*)",
-    # cp: /tmp 에 사본을 만들 때 쓴다(파일 하나씩 - 옵션이 붙은 `cp -r` 은 그래도 승인에 막혀, 폴더째는 지시문 머리말이
-    # 일러 주는 `shutil.copytree` 로 한다). python3 가 이미 허용이라 새로 열리는 힘은 없다
-    "Bash(sed -n:*)", "Bash(pwd)", "Bash(mkdir:*)", "Bash(cp:*)", "Bash(diff:*)", "Bash(git status:*)",
-    "Bash(git diff:*)", "Bash(git log:*)", "Bash(curl:*)", "Bash(cd:*)", "Bash(echo:*)",
-    "Bash(timeout:*)", "Bash(sleep:*)", "Bash(ss:*)", "Bash(kill:*)",
-])
+#: 작업자의 도구. Bash 는 통째로 허용한다 (태석님 2026-11-28: "이미 python 으로 열려 있는데 bash 를 막을 필요는 없다").
+#: 전에는 명령 접두사 목록이었는데, `python3` 가 이미 무엇이든 돌릴 수 있어 벽이 되지 못했고 명령을 잇는 방식
+#: (`cd …; git …`·`$(…)`·`for`·스크립트 실행)에 걸려 검수자가 헛걸음만 했다 (R55 T-501: 8건 거절, 시험 11꼴 중 9꼴 거절 → 0꼴).
+#: 거부 목록도 걸지 않는다 - 감싸면 지나가는 난간은 필요 없다(같은 날). 커밋·푸시·삭제·설치를 하지 말라는 말은 지시문 머리말이 한다
+WORKER_TOOLS = "Read,Edit,Write,Glob,Grep,Bash"
 
 
 def _tool_summary(name, inp):
@@ -181,7 +172,8 @@ class ClaudeHarness:
                 "--add-dir", SCRATCH_DIR]
         denied = (spec.extra or {}).get("disallowed_tools")
         if denied:
-            # 허용 목록이 실수로 넓어져도 이것들은 막는다 (관리자 `manager.MANAGER_DENIED`) - `claude --help` 의 철자
+            # 명세가 거부 목록을 주면 붙인다 (`claude --help` 의 철자). 함대는 지금 아무 세션에도 주지 않는다 -
+            # 셸·python 으로 감싸면 지나가는 난간이라 걷었다 (태석님 2026-11-28). 하지 말 것은 지시문 머리말·브리프가 말한다
             argv += ["--disallowedTools", str(denied)]
         if spec.settings_path:
             argv += ["--settings", spec.settings_path]

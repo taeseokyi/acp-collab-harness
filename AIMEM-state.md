@@ -1,18 +1,19 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-28T12:57:45 / REV 213
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-28T14:37:13 / REV 214
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | `a41f0c` | claude | opus | R54 쉼 (무료 중심) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
-| S2 | `d27e93` | codex | kisti/kistillm | R54 VoxLog 큐: serve.py N4·브라우저 검사 N3·N8·N11·N12 | 무료 |
-| S3 | `5b8c1e` | opencode | opencode-go/deepseek-v4.1-flash | R54 VoxLog 큐: stt_options.py N2·문서 | 무료 |
-| S4 | `6cd650` | claude | sonnet | R54 VoxLog 적대적 검수(부작용 중심) | 유료, 검수만 |
-| S5 | `61dfcc` | claude | sonnet | R54 쉼 (무료 중심) |  |
-| S6 | `47764b` | freebuff | (하네스 기본) | R54 VoxLog 큐: 화면 N12·기본값 읽기 표준 방식 조사 | 무료 |
-| S7 | `120a3c` | opencode | opencode-go/glm-5.3-flash | 작업자 | opencode go 구독 (태석님 2026-11-28) |
+| S1 | `a41f0c` | claude | opus | R55 쉼 (무료 중심) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S2 | `d27e93` | codex | kisti/kistillm | R55 VoxLog 브라우저 검사(67·N4·N5·N7·N9) | 무료 |
+| S3 | `5b8c1e` | opencode | opencode-go/deepseek-v4.1-flash | R55 VoxLog stt_options Cs·app.js 기본값 읽기 abort·전체 검사 | 무료 |
+| S4 | `6cd650` | claude | sonnet | R55 VoxLog 적대적 검수(부작용 중심) | 유료, 검수만 |
+| S5 | `61dfcc` | claude | sonnet | R55 쉼 (무료 중심) |  |
+| S6 | `47764b` | freebuff | (하네스 기본) | R55 VoxLog app.js 기본값 읽기 abort 방식·N4 | 무료 |
+| S7 | `120a3c` | opencode | opencode-go/glm-5.3-flash | R55 VoxLog 문서 | opencode go 구독 (태석님 2026-11-28) |
+| S8 | `b6fe17` | opencode | opencode-go/deepseek-v4.1-flash | R55 VoxLog 브라우저 검사(67·N4·N5·N7·N9) |  |
 
 ## 3. 작업 보드
 
@@ -200,14 +201,20 @@
 | T-491 | Q-261128-1527 | [VoxLog] 조사: 옵션 칸 기본값 읽기·잠금·시간 제한의 표준 방식 (R53-N7·N9·N10, 구현하지 않음) | S6 | DONE | rounds/R54/RESEARCH-stt-defaults.md |
 | T-492 | Q-261128-1527 | [VoxLog] 브라우저 검사 - N12 고침 검사·t64 가짜 응답을 실제 모양으로(N3)·50/66 을 응답 쥐기로·안 보던 갈래(N8·N11) | S2 | DONE | projects/VoxLog/tests/browser_voxlog.py |
 | T-493 | Q-261128-1527 | [VoxLog] R54 적대적 검수 - R53 하 등급 묶음 고침(부작용 중심) | S4 | DONE | rounds/R54/REVIEW-r54.md |
-| T-494 | Q-261128-1527 | [VoxLog] R54-N1·N2 context 태그 글자 범위를 8자리로 바로잡고 깃발 시험 값을 진짜 태그로 | S3 | BLOCKED |  |
-| T-495 | Q-261128-1527 | [VoxLog] R54 재검수 - N1·N2 고침(태그 글자 범위·깃발 시험 값) | S4 | BLOCKED |  |
+| T-494 | Q-261128-1527 | [VoxLog] R54-N1·N2 context 태그 글자 범위를 8자리로 바로잡고 깃발 시험 값을 진짜 태그로 | S3 | DONE | R55 T-496 가 고침이 들어가 있고 되돌리면 실패함을 확인, T-501 검수 통과 |
+| T-495 | Q-261128-1527 | [VoxLog] R54 재검수 - N1·N2 고침(태그 글자 범위·깃발 시험 값) | S4 | DONE | R55 T-501 검수가 대신함(판정 통과) |
+| T-496 | Q-261128-8001 | [VoxLog] R54-N3 context 외톨이 서로게이트(Cs)도 거르기 + N1·N2 고침이 되돌리면 실패하는지 확인 | S3 | DONE | projects/VoxLog/voxlog/stt_options.py, projects/VoxLog/tests/test_stt_options.py |
+| T-497 | Q-261128-8001 | [VoxLog] R53-N7·N9 옵션 칸 기본값 읽기를 묶음별 AbortController 로(조사 권고안) + R54-N4 재시도 성공 때 다시 연 칸은 안 닫기 | S3 | DONE | projects/VoxLog/web/app.js, web/api.js, web/sw.js |
+| T-498 | Q-261128-8001 | [VoxLog] 브라우저 검사 - 검사 67 을 abort 방식에 맞춤·N4/N5 같은 녹음 양방향·N7 저장 잠금·N9 걸린 읽기 대신 새로 읽기 | S8 | DONE | projects/VoxLog/tests/browser_voxlog.py |
+| T-499 | Q-261128-8001 | [VoxLog] 문서 - context 서로게이트 거르기·기본값 읽기 AbortController·15초 맞바꿈(R53-N10) | S7 | DONE | projects/VoxLog/docs/INTERFACE.md, projects/VoxLog/README.md |
+| T-500 | Q-261128-8001 | [VoxLog] R55 전체 검사 - 단위+브라우저 한 번, 결과를 rounds/R55/TESTS.md 에 | S3 | DONE | rounds/R55/TESTS.md |
+| T-501 | Q-261128-8001 | [VoxLog] R55 적대적 검수 - 기본값 읽기 abort 방식·N4 가드·Cs 거르기·새 검사(부작용 중심) | S4 | DONE | rounds/R55/REVIEW-r55.md |
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
-| 1 | [VoxLog] R54 에서 남은 것(쌓아 둠 - 같은 파일을 건드리는 요청이 올 때 같이): R54-N1 context 거르기가 남기기로 한 태그 글자(U+E0020~E007F)를 여전히 지움(범위가 틀린 글자로 적힘)·R54-N2 그 검사의 깃발 시험 값도 같은 실수(검수 등급 상 - 고침이 뜻대로 안 들어감, 영향은 받아쓰기 힌트 글의 깃발 이모지), R54-N3 외톨이 서로게이트가 거르기를 통과해 요청 본문 만들기에서 터짐, R54-N4 같은 녹음에서 칸을 닫았다 다시 연 사이 성공하면 다시 연 칸이 닫힘, R54-N5 그 반대 방향 검사 없음, R53-N7·N9·N10 기본값 읽기·저장 중 잠금·15초 제한은 조사만 함(rounds/R54/RESEARCH-stt-defaults.md, 구현 없음), R53-N5 기록만. R54 는 완전 중지로 끝남(G-118 버림). 원문 rounds/R54/REVIEW-r54.md | S2·S3 무료 |  |
+| 1 | [VoxLog] R55 검수 하 묶음(쌓아 둠 - 같은 파일을 건드리는 요청이 올 때 같이): R55-N1 저장 PUT 이 응답 없이 걸리면 설정 칸이 잠긴 채·다시 열어도 안 읽음(PUT 에 시간 제한 없음), R55-N2 읽기 15초 제한이 fetch 시작 뒤에만 들음(getConfig 가 걸리면 안 풀림), R55-N3 새 검사가 못 잡는 되돌림(저장 실패 때 잠금 풀기·closeDetail abort·성공 쪽 current()·openDetail abort 겹침), R55-N4 저장 쪽 abort 는 사람이 못 닿는 길(77 이 합성 클릭으로 시험, 기록만). 원문 rounds/R55/REVIEW-r55.md | 무료 |  |
 
 ## 6. 파일 소유권
 
@@ -231,15 +238,15 @@
 | `CLAUDE.md` | 관리자 | 부트스트랩. 자동 주입되는 유일한 파일 |
 | `README.md` | 관리자 | 저장소 소개 |
 | `projects/**` | 관리자 | 프로젝트 결과물 projects/<이름>/ - 여러 라운드에 걸쳐 쌓임 (REV 142). 관리자가 하위 경로를 슬롯에 배정 |
-| `projects/VoxLog/README.md` | S3 | R52 |
+| `projects/VoxLog/README.md` | S7 | R55 |
 | `projects/VoxLog/docs/**` | S6 | R39 |
 | `projects/VoxLog/docs/DESIGN-next-features.md` | S3 | R50 |
-| `projects/VoxLog/docs/INTERFACE.md` | S3 | R52 |
+| `projects/VoxLog/docs/INTERFACE.md` | S7 | R55 |
 | `projects/VoxLog/docs/RESEARCH-draft-owner.md` | S3 | R50 |
 | `projects/VoxLog/serve.py` | S2 | R52 |
 | `projects/VoxLog/settings.example.json` | S2 | R44 |
 | `projects/VoxLog/tests/**` | S6 | R39 |
-| `projects/VoxLog/tests/browser_voxlog.py` | S2 | R53 |
+| `projects/VoxLog/tests/browser_voxlog.py` | S8 | G-119 T-498 S2→S8 |
 | `projects/VoxLog/tests/fake_llm.py` | S3 | R49 |
 | `projects/VoxLog/tests/fake_tag_llm.py` | S2 | R49 |
 | `projects/VoxLog/tests/test_ask.py` | S2 | R49 |
@@ -247,24 +254,24 @@
 | `projects/VoxLog/tests/test_serve_ask_body.py` | S2 | R46 |
 | `projects/VoxLog/tests/test_store.py` | S3 | R52 |
 | `projects/VoxLog/tests/test_stt.py` | S2 | R52 |
-| `projects/VoxLog/tests/test_stt_options.py` | S3 | R51 |
+| `projects/VoxLog/tests/test_stt_options.py` | S3 | R55 |
 | `projects/VoxLog/tests/test_tags.py` | S2 | R49 |
 | `projects/VoxLog/voxlog/**` | S6 | R39 |
 | `projects/VoxLog/voxlog/__init__.py` | S3 | R33 |
 | `projects/VoxLog/voxlog/ask.py` | S2 | R49 |
 | `projects/VoxLog/voxlog/store.py` | S3 | R52 |
 | `projects/VoxLog/voxlog/stt.py` | S2 | R52 |
-| `projects/VoxLog/voxlog/stt_options.py` | S3 | R54 |
+| `projects/VoxLog/voxlog/stt_options.py` | S3 | R55 |
 | `projects/VoxLog/voxlog/tags.py` | S2 | R49 |
 | `projects/VoxLog/web/**` | S4 | R34 |
-| `projects/VoxLog/web/api.js` | S6 | R41 |
-| `projects/VoxLog/web/app.js` | S6 | R54 |
+| `projects/VoxLog/web/api.js` | S3 | G-119 T-497 S6→S3 |
+| `projects/VoxLog/web/app.js` | S3 | G-119 T-497 S6→S3 |
 | `projects/VoxLog/web/icons/**` | S5 | R33 |
 | `projects/VoxLog/web/index.html` | S6 | R52 |
 | `projects/VoxLog/web/manifest.webmanifest` | S5 | R33 |
 | `projects/VoxLog/web/queue.js` | S3 | R46 |
 | `projects/VoxLog/web/style.css` | S6 | R52 |
-| `projects/VoxLog/web/sw.js` | S6 | R54 |
+| `projects/VoxLog/web/sw.js` | S3 | G-119 T-497 S6→S3 |
 | `projects/웹워들/README.md` | S3 | R10 |
 | `projects/웹워들/app.json` | S3 | R10 |
 | `projects/웹워들/docs/**` | S1 | R12 T-152 미리보기 기록 저장 설계 문서 (새 경로) |
@@ -393,6 +400,10 @@
 | `rounds/R54/RESEARCH-stt-defaults.md` | S6 | R54 |
 | `rounds/R54/REVIEW-r54-2.md` | S4 | R54 |
 | `rounds/R54/REVIEW-r54.md` | S4 | R54 |
+| `rounds/R55/REVIEW-r55-2.md` | S4 | R55 |
+| `rounds/R55/REVIEW-r55-3.md` | S4 | R55 |
+| `rounds/R55/REVIEW-r55.md` | S4 | R55 |
+| `rounds/R55/TESTS.md` | S3 | R55 |
 | `skills/**` | 관리자 | **현재 비어 있음** (REV 101 에서 `acp-slot-lifecycle` 제거). 되살아나면 이 행이 그대로 적용된다 |
 | `tests/browser_monitor_app.py` | S3 | R10 T-131 |
 | `tests/browser_monitor_app_server.py` | S5 | R32 |
@@ -505,3 +516,4 @@
 | Q-261127-8f71 | [VoxLog] 다시 받아쓰기의 지난 글을 여러 벌 남기기 (판 기록, R51-N8 결정) | 태석 (클로드 코드 전달) | DONE | 2026-11-27T21:56:58 |
 | Q-261128-22db | [VoxLog] 대기 큐의 VoxLog 항목 다섯 모두 정리 (R51·R52 검수 하 등급) | 태석 (클로드 코드 전달) | DONE | 2026-11-28T00:41:46 |
 | Q-261128-1527 | [VoxLog] R53 대기 큐 하 등급 묶음 처리 (R53-N2~N5·N7~N12) | 태석 | DONE | 2026-11-28T08:24:58 |
+| Q-261128-8001 | [VoxLog] 대기 큐 1번 정리 (R54-N1~N5, R53-N7·N9·N10) | 태석 (클로드 코드 전달) | DONE | 2026-11-28T13:00:24 |

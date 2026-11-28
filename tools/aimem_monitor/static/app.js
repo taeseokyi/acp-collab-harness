@@ -3516,7 +3516,21 @@ function renderBoard(data) {
   const wrap = $('board-table-wrap');
   const filterBox = $('board-filter');
   wrap.textContent = '';
-  const all = Array.isArray(data.board) ? data.board : [];
+  const everything = Array.isArray(data.board) ? data.board : [];
+  const all = boardOutsideGraphs(data);
+  const inGraphs = everything.length - all.length;
+  if (inGraphs) {
+    const note = document.createElement('p');
+    note.className = 'hint board-graph-note';
+    note.textContent = `도는 그래프의 노드 ${inGraphs}건은 여기 없습니다 - `;
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'btn-link';
+    go.textContent = '태스크 그래프에서 보기';
+    go.addEventListener('click', () => { selectTab('requests', true); const sec = $('graphs-section'); if (sec) sec.scrollIntoView({ block: 'start' }); });
+    note.appendChild(go);
+    wrap.appendChild(note);
+  }
   if (filterBox) {
     filterBox.textContent = '';
     for (const f of BOARD_FILTERS) {
@@ -3535,7 +3549,7 @@ function renderBoard(data) {
   const filter = BOARD_FILTERS.find((f) => f.key === state.boardFilter) || BOARD_FILTERS[0];
   const board = all.filter((b) => filter.test(b, data)).slice().reverse();   // 최신 태스크가 위
   if (!board.length) {
-    wrap.appendChild(emptyP(all.length ? '이 필터에 해당하는 작업 없음' : '보드 없음'));
+    wrap.appendChild(emptyP(all.length ? '이 필터에 해당하는 작업 없음' : (inGraphs ? '그래프 밖에 남은 작업 없음' : '보드 없음')));
     return;
   }
   const runIndex = new Map((Array.isArray(data.runs) ? data.runs : []).map((r) => [r.id, r]));
@@ -3619,6 +3633,35 @@ function graphFinished(g) {
   const nodes = Array.isArray(g.nodes) ? g.nodes : [];
   if (!nodes.length) return Number(g.percent) >= 100;
   return nodes.every((n) => ['done', 'failed', 'blocked'].includes(String(n.status || '').toLowerCase()));
+}
+
+// 같은 일감을 두 곳에 적지 않는다 (2026-11-28 태석님): 도는 그래프의 노드는 태스크 그래프에서만 보이고,
+// 보드는 그래프 밖에 남은 것(막힘·검토 대기·이월)만, 요청 카드는 요약과 그래프로 가는 단추만 보인다.
+function liveGraphNodeIds(data) {
+  const ids = new Set();
+  for (const g of (data && Array.isArray(data.graphs) ? data.graphs : [])) {
+    if (!g || graphFinished(g)) continue;
+    for (const n of (Array.isArray(g.nodes) ? g.nodes : [])) if (n && n.id) ids.add(n.id);
+  }
+  return ids;
+}
+function boardOutsideGraphs(data) {
+  const live = liveGraphNodeIds(data);
+  return (data && Array.isArray(data.board) ? data.board : []).filter((b) => b && !live.has(b.id));
+}
+// 요청에 딸린 그래프 - 그래프의 `request` 글머리에 요청 id 가 적힌다 (요청 여럿이면 여럿)
+function graphsOfRequest(reqId, data) {
+  if (!reqId) return [];
+  return (data && Array.isArray(data.graphs) ? data.graphs : [])
+    .filter((g) => g && String(g.request || '').split(/\s+/).includes(reqId));
+}
+function showGraph(graphId) {
+  state.graphKnown.add(graphId);
+  state.graphOpen.add(graphId);
+  if (state.data && !(state.data.graphs || []).filter((g) => !graphArchivable(g)).some((g) => g.id === graphId)) state.showClosedGraphs = true;
+  if (state.data) renderGraphs(state.data);
+  const el = document.getElementById('graph-' + graphId);
+  if (el) el.scrollIntoView({ block: 'start' });
 }
 
 function graphArchivable(g) {
@@ -3832,6 +3875,7 @@ function graphBlock(g) {
 
   const block = document.createElement('div');
   block.className = 'graph-block' + (open ? '' : ' is-folded');
+  if (key) block.id = 'graph-' + key;
 
   const head = document.createElement('div');
   head.className = 'graph-head';
@@ -4295,6 +4339,32 @@ function renderRequests(data) {
       // 진행 중이면 위의 안내 줄(req-wait-line)이 같은 말을 한다 - 펼쳤을 때 두 번 적지 않는다 (2026-11-12)
       const emptyText = String(req.status || '').toUpperCase() === 'IN-PROGRESS' ? '' : subtaskEmptyText(req);
       if (emptyText) body.appendChild(emptyP(emptyText));
+    } else if (graphsOfRequest(req.id, data).length) {
+      // 노드별 상태는 태스크 그래프가 정본이다 - 여기서는 몇 건이 어디까지 갔는지와 그래프로 가는 단추만
+      const count = { done: 0, review: 0, running: 0, blocked: 0, todo: 0 };
+      for (const st of subtasks) {
+        const k = String(st.status || '').toUpperCase();
+        if (k === 'DONE') count.done++;
+        else if (k === 'REVIEW') count.review++;
+        else if (k === 'IN-PROGRESS') count.running++;
+        else if (k === 'BLOCKED' || k === 'REJECTED') count.blocked++;
+        else count.todo++;
+      }
+      const sum = document.createElement('p');
+      sum.className = 'req-summary';
+      sum.textContent = [`서브태스크 ${subtasks.length}건`, `끝남 ${count.done}`,
+        count.review ? `검토 대기 ${count.review}` : '', count.running ? `진행 중 ${count.running}` : '',
+        count.todo ? `대기 ${count.todo}` : '', count.blocked ? `막힘 ${count.blocked}` : ''].filter(Boolean).join(' · ') + ' · ';
+      for (const g of graphsOfRequest(req.id, data)) {
+        const go = document.createElement('button');
+        go.type = 'button';
+        go.className = 'btn-link';
+        go.textContent = show(g.id) + ' 그래프 보기';
+        go.addEventListener('click', () => showGraph(g.id));
+        sum.appendChild(go);
+        sum.appendChild(document.createTextNode(' '));
+      }
+      body.appendChild(sum);
     } else {
       const subRows = subtasks.map((st) => {
         const run = st.run_id ? runs.get(st.run_id) : null;
@@ -4437,7 +4507,7 @@ function renderTabCounts(data) {
   // 보드·큐 탭은 숫자 둘을 따로: '보드' 옆 = 미완료 태스크, '큐' 옆 = 대기 큐 건수 (큐 머리글에도 같은 수).
   // 큐는 기다리는 일이라 강조색을 안 쓴다 (2026-11-23 태석님: 보드와 큐의 갯수를 분리해서 표시)
   const queue = Array.isArray(data.queue) ? data.queue.length : 0;
-  const openTasks = (Array.isArray(data.board) ? data.board : []).filter((t) => !boardClosed(t)).length;
+  const openTasks = boardOutsideGraphs(data).filter((t) => !boardClosed(t)).length;   // 도는 그래프의 노드는 세지 않는다 (보드에 안 나온다)
   setTabCount('tab-count-board', openTasks, true);
   setTabCount('tab-count-queue', queue, false);
   const qc = $('queue-count');

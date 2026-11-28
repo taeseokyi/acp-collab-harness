@@ -57,32 +57,23 @@ class CommandTest(unittest.TestCase):
                                            extra={"harness_session_id": "abc-123"}))
         self.assertEqual(c.argv[-2:], ["--session-id", "abc-123"])
 
-    def test_disallowed_tools_backstop(self):
-        """관리자 명세의 거부 목록이 `--disallowedTools` 로 붙는다 (`claude --help` 의 철자). 없으면 붙지 않는다."""
+    def test_deny_list_is_passed_only_when_a_spec_gives_one(self):
+        """명세가 거부 목록을 주면 `--disallowedTools` 로 붙는다 (`claude --help` 의 철자). 함대의 관리자·작업자는 주지 않는다."""
         from fleet_rt import manager as rt_manager
         spec = rt_manager.spec("M-R3-000000", 3, REPO)
-        for c in (claude_h.ADAPTER.command(spec), claude_h.ADAPTER.resume_command(spec, "abc", "/x/m.md")):
-            i = c.argv.index("--disallowedTools")
-            self.assertEqual(c.argv[i + 1], rt_manager.MANAGER_DENIED)
-        self.assertNotIn("--disallowedTools", claude_h.ADAPTER.command(_spec()).argv)
+        for c in (claude_h.ADAPTER.command(spec), claude_h.ADAPTER.resume_command(spec, "abc", "/x/m.md"),
+                  claude_h.ADAPTER.command(_spec())):
+            self.assertNotIn("--disallowedTools", c.argv)
+        c = claude_h.ADAPTER.command(_spec(extra={"disallowed_tools": "Bash(x:*)"}))
+        self.assertEqual(c.argv[c.argv.index("--disallowedTools") + 1], "Bash(x:*)")
 
-    def test_manager_tool_list_is_a_guardrail(self):
+    def test_manager_and_workers_get_all_of_bash(self):
         from fleet_rt import manager as rt_manager
-        tools = rt_manager.MANAGER_TOOLS.split(",")
-        for gone in ("Bash(kill:*)", "Bash(node:*)", "Bash(timeout:*)", "Bash(cd:*)", "Bash(python3 projects/:*)",
-                     "Bash(tools/aimem_monitor/monitorctl.sh:*)", "Bash(bash tools/aimem_monitor/monitorctl.sh:*)"):
-            self.assertNotIn(gone, tools)
-        self.assertFalse([t for t in tools if "monitorctl" in t or "kill" in t])
-        for kept in ("Bash(python3 tools/fleet.py:*)", "Bash(python3 tools/fleet_graph.py:*)", "Bash(python3 -m unittest:*)",
-                     "Bash(PYTHONPATH=tools python3 -m unittest:*)", "Bash(python3 tests/*)",
-                     "Bash(PYTHONPATH=tools python3 tests/*)", "Bash(python3 tools/fleet_ctl.py status:*)",
-                     "Bash(python3 tools/fleet_ctl.py chain status:*)", "Read", "Bash(git status:*)"):
-            self.assertIn(kept, tools)
-        denied = rt_manager.MANAGER_DENIED.split(",")
-        for d in ("Bash(git commit:*)", "Bash(git push:*)", "Bash(rm:*)", "Bash(sudo:*)"):
-            self.assertIn(d, denied)
-        self.assertFalse(set(denied) & set(tools))
-        self.assertIn("보안 경계가 아니다", rt_manager.__doc__)
+        want = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]
+        self.assertEqual(rt_manager.MANAGER_TOOLS.split(","), want)
+        self.assertEqual(claude_h.WORKER_TOOLS.split(","), want)
+        self.assertFalse(hasattr(rt_manager, "MANAGER_DENIED") or hasattr(claude_h, "WORKER_DENIED"))
+        self.assertIn("보안 경계가 아니었다", rt_manager.__doc__)
 
     def test_resume(self):
         c = claude_h.ADAPTER.resume_command(_spec(role="manager", model="opus",
@@ -165,9 +156,6 @@ class ReportTest(unittest.TestCase):
         self.assertIn("긴 본 보고", rep)
         self.assertEqual(rep.count("정정"), 1)                      # 같은 글은 한 번만
         self.assertEqual(rep.count(claude_h.EARLIER_REPORT_MARK), 1)
-
-    def test_worker_tools_allow_copying_for_mutation_checks(self):
-        self.assertIn("Bash(cp:*)", claude_h.WORKER_TOOLS.split(","))
 
     def test_final_report_without_result(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -341,9 +329,8 @@ class ResumeCommandTest(unittest.TestCase):
         c = claude_h.ADAPTER.command(spec)
         self.assertEqual(c.argv[-2:], ["--resume", "hsid-1"])
         self.assertNotIn("--session-id", c.argv)
-        # 모델·도구·거부 목록은 처음과 같다 (처음 것의 `--session-id <id>` 만 `--resume <id>` 로)
+        # 모델·도구는 처음과 같다 (처음 것의 `--session-id <id>` 만 `--resume <id>` 로)
         self.assertEqual(c.argv[:-2], first.argv[:-2])
-        self.assertIn("--disallowedTools", c.argv)
         self.assertEqual(c.stdin_path, "/x/brief.md")
         self.assertEqual((spec.id, spec.round, spec.idle_timeout, spec.role), ("M-R9-120500", 9, old["idle_timeout"], "manager"))
         self.assertEqual(spec.label, "관리자 R9 (Opus) 2026-11-13 (이어 감)")

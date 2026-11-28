@@ -27,9 +27,10 @@
     detailLastTags: '',
     detailSttOptions: null,
     detailPrevText: null,
-    sttDefaults: null,
-    sttDefaultsReq: null,
     sttFields: null,
+    // 묶음(설정·상세)마다 지금 도는 기본값 읽기 { ac, timer }. 열 때마다 앞 읽기를 끊고 새로 읽는다(R53-N7·N9).
+    sttReads: { defaults: null, detail: null },
+    sttSaving: false,
     // 묶음(설정·상세)마다 여는 차례를 세는 번호. 응답 처리기는 자기 번호일 때만 칸을 채우고 푼다(R53-N6).
     sttSeq: { defaults: 0, detail: 0 },
     // 녹음
@@ -267,40 +268,48 @@
 
   var STT_DEFAULTS_TIMEOUT_MS = 15000;
 
-  function sttDefaults() {
-    if (state.sttDefaults) return Promise.resolve(state.sttDefaults);
-    if (state.sttDefaultsReq) return state.sttDefaultsReq;
-    var req;
-    var timer = 0;
-    function settle() {
+  // 이 묶음에 걸린 기본값 읽기를 끊는다. 끊긴 쪽의 처리기는 주인이 아니므로 아무것도 하지 않는다.
+  function abortSttRead(bundle) {
+    var r = state.sttReads[bundle];
+    if (!r) return;
+    clearTimeout(r.timer);
+    r.ac.abort();
+    state.sttReads[bundle] = null;
+  }
+
+  // 받아쓰기 기본값 읽기. 열 때마다 앞 읽기를 끊는다 - 끊긴 쪽은 조용히 돌아간다(R53-N7·N9).
+  // 응답이 아예 오지 않아도 칸이 잠긴 채 남지 않게 손 타이머로 15초를 제한한다(R53-N6).
+  function readSttDefaults(bundle, seq, onFill, onFail) {
+    abortSttRead(bundle);
+    var ac;
+    try { ac = new AbortController(); } catch (e) { onFail(new Error('불러오지 못했습니다')); return; }
+    var timedOut = false;
+    var timer = setTimeout(function () { timedOut = true; ac.abort(); }, STT_DEFAULTS_TIMEOUT_MS);
+    state.sttReads[bundle] = { ac: ac, timer: timer };
+    // 이 읽기가 아직 그 묶음의 주인인가 - 새 읽기나 저장이 끊었으면 false.
+    function current() { var r = state.sttReads[bundle]; return r && r.ac === ac; }
+    api().json('api/stt-options', { signal: ac.signal }).then(function (d) {
+      if (!current()) return; // 앞 읽기였거나 끊겼다 - 새 주인이 이 칸을 맡는다
       clearTimeout(timer);
-      if (state.sttDefaultsReq === req) state.sttDefaultsReq = null;
-    }
-    req = new Promise(function (resolve, reject) {
-      // 응답이 아예 오지 않아도 칸이 잠긴 채 남지 않게 시간을 제한한다(R53-N6).
-      timer = setTimeout(function () {
-        settle();
-        reject(new Error('시간이 지났습니다'));
-      }, STT_DEFAULTS_TIMEOUT_MS);
-      api().json('api/stt-options').then(function (d) {
-        if (state.sttDefaultsReq !== req) return; // 시간이 지나 자리를 비운 뒤 온 응답은 아무것도 하지 않는다
-        var o = d && d.options;
-        state.sttDefaults = o && typeof o === 'object' && !Array.isArray(o) ? o : {};
-        settle();
-        resolve(state.sttDefaults);
-      }, function (e) {
-        settle();
-        reject(e);
-      });
+      state.sttReads[bundle] = null;
+      if (seq !== state.sttSeq[bundle]) return;
+      var o = d && d.options;
+      onFill(o && typeof o === 'object' && !Array.isArray(o) ? o : {});
+    }, function (e) {
+      if (!current()) return; // 내가(다음 열기나 저장이) 끊었다
+      clearTimeout(timer);
+      state.sttReads[bundle] = null;
+      if (seq !== state.sttSeq[bundle]) return;
+      onFail(timedOut ? new Error('시간이 지났습니다') : e);
     });
-    state.sttDefaultsReq = req;
-    return req;
   }
 
   function loadSttSettings() {
     var box = $('stt-defaults');
     if (isolated()) { box.hidden = true; return; }
     box.hidden = false;
+    // 저장 중에는 읽지 않는다 - 저장 응답이 칸을 서버 값으로 되돌려 쓴다(R53-N7).
+    if (state.sttSaving) return;
     var note = $('stt-defaults-note');
     var st = $('stt-defaults-state');
     var els = state.sttFields.defaults;
@@ -308,18 +317,15 @@
     note.textContent = '';
     $('stt-defaults-fields').hidden = false;
     saveBtn.hidden = false;
-    state.sttDefaults = null; // 열 때마다 전체 기본값을 새로 읽는다(R51-N6)
     var seq = ++state.sttSeq.defaults; // 이번에 연 묶음의 번호 - 이 번호의 응답만 채우고 푼다(R53-N6)
     setSttFieldsBusy(els, true, saveBtn);
     st.textContent = '불러오는 중…';
-    sttDefaults().then(function (opts) {
-      if (seq !== state.sttSeq.defaults) return; // 낡은 응답 - 지금 열린 묶음의 차례가 아니다
+    readSttDefaults('defaults', seq, function (opts) {
       setSttFieldsBusy(els, false, saveBtn);
       st.textContent = '';
       // 응답을 기다리는 사이 설정 칸을 닫았으면 채우지 않는다(다음에 열 때 새로 읽는다).
       if (!$('settings').hidden) fillSttFields(els, opts);
     }, function (e) {
-      if (seq !== state.sttSeq.defaults) return;
       setSttFieldsBusy(els, false, saveBtn);
       st.textContent = '';
       $('stt-defaults-fields').hidden = true;
@@ -329,18 +335,28 @@
   }
 
   function saveSttDefaults() {
+    var els = state.sttFields.defaults;
+    var saveBtn = $('stt-defaults-save');
     var opts;
-    try { opts = readSttFields(state.sttFields.defaults); }
+    try { opts = readSttFields(els); }
     catch (e) { toast(e.message); return; }
     var st = $('stt-defaults-state');
+    // 저장이 이 칸의 주인이다 - 걸린 읽기를 끊고, 저장 중에는 열기 읽기를 시작하지 않는다(R53-N7).
+    state.sttSaving = true;
+    abortSttRead('defaults');
+    setSttFieldsBusy(els, true, saveBtn);
     st.textContent = '저장 중…';
     api().json('api/stt-options', { method: 'PUT', body: { options: opts } }).then(function (d) {
+      state.sttSaving = false;
       var o = d && d.options;
-      state.sttDefaults = o && typeof o === 'object' && !Array.isArray(o) ? o : opts;
-      fillSttFields(state.sttFields.defaults, state.sttDefaults);
+      var next = o && typeof o === 'object' && !Array.isArray(o) ? o : opts;
+      setSttFieldsBusy(els, false, saveBtn);
+      fillSttFields(els, next);
       st.textContent = '';
       toast('받아쓰기 기본값을 저장했습니다.');
     }, function (e) {
+      state.sttSaving = false;
+      setSttFieldsBusy(els, false, saveBtn);
       st.textContent = '';
       toast((e && e.message) || '받아쓰기 기본값을 저장하지 못했습니다');
     });
@@ -358,14 +374,15 @@
     var st = $('detail-stt-state');
     var seq = ++state.sttSeq.detail; // 열고 닫을 때마다 번호를 올린다 - 이 번호의 응답만 채우고 푼다(R53-N6)
     if (!opening) {
-      // 닫는 사이 걸려 있던 읽기의 응답이 이 칸을 잠그거나 채우지 않게 잠금도 함께 푼다.
+      // 닫는 사이 걸려 있던 읽기를 끊고 잠금도 함께 푼다.
+      abortSttRead('detail');
       setSttFieldsBusy(els, false, runBtn);
       st.textContent = '';
       return;
     }
-    state.sttDefaults = null; // 상세 칸을 열 때도 전체 기본값을 새로 읽는다(R51-N6)
     if (hasSttOptions(state.detailSttOptions)) {
-      // 이 녹음은 읽지 않고 바로 채우므로 기다릴 것이 없다 - 앞 열기의 잠금도 남기지 않는다.
+      // 이 녹음은 읽지 않고 바로 채우므로 기다릴 것이 없다 - 앞 열기의 읽기·잠금도 남기지 않는다.
+      abortSttRead('detail');
       fillSttFields(els, state.detailSttOptions);
       setSttFieldsBusy(els, false, runBtn);
       st.textContent = '';
@@ -374,14 +391,12 @@
     fillSttFields(els, {});
     setSttFieldsBusy(els, true, runBtn);
     st.textContent = '불러오는 중…';
-    sttDefaults().then(function (opts) {
-      if (seq !== state.sttSeq.detail) return; // 낡은 응답 - 옮겼거나 닫았다
+    readSttDefaults('detail', seq, function (opts) {
       setSttFieldsBusy(els, false, runBtn);
       st.textContent = '';
       // 여는 사이 다른 녹취로 바뀌었거나 다시 닫았으면 채우지 않는다 (폴링도 이 입력은 지우지 않는다)
       if (state.detailId === id && !$('detail-stt').hidden) fillSttFields(els, opts);
     }, function (e) {
-      if (seq !== state.sttSeq.detail) return;
       setSttFieldsBusy(els, false, runBtn);
       st.textContent = '';
       if (state.detailId === id && !$('detail-stt').hidden) {
@@ -403,10 +418,13 @@
     api().json('api/recordings/' + encodeURIComponent(id) + '/retry', { method: 'POST', body: { options: opts } }).then(function () {
       if (state.detailId === id && state.sttSeq.detail === seq) st.textContent = '';
       toast('옵션을 바꿔 다시 받아쓰기를 요청했습니다. 바뀌기 전 글은 \'지난 글\' 에 5벌까지 남습니다.');
-      // 아직 같은 녹음을 보고 있을 때만 칸을 닫고 그 녹음을 다시 읽는다(R51-N7)
+      // 아직 같은 녹음을 보고 있을 때만 칸을 닫고 그 녹음을 다시 읽는다(R51-N7).
+      // 그 사이 같은 녹음의 칸을 닫았다 다시 열었으면(번호 증가) 사람이 다시 연 칸은 그대로 둔다(R54-N4).
       if (state.detailId === id) {
-        $('detail-stt').hidden = true;
-        $('detail-retry-opts').setAttribute('aria-expanded', 'false');
+        if (state.sttSeq.detail === seq) {
+          $('detail-stt').hidden = true;
+          $('detail-retry-opts').setAttribute('aria-expanded', 'false');
+        }
         loadDetail(id);
       }
       loadList();
@@ -1283,8 +1301,9 @@
     $('detail-stt-used').textContent = '';
     $('detail-prev').hidden = true;
     $('detail-prev-list').textContent = '';
-    // 다른 녹음으로 옮기면 앞 녹음의 읽기 응답은 낡은 것이다 - 잠금을 풀고 번호를 올린다(R53-N6).
+    // 다른 녹음으로 옮기면 앞 녹음의 읽기 응답은 낡은 것이다 - 걸린 읽기를 끊고 잠금을 풀고 번호를 올린다(R53-N6).
     state.sttSeq.detail++;
+    abortSttRead('detail');
     setSttFieldsBusy(state.sttFields.detail, false, $('detail-stt-run'));
     fillSttFields(state.sttFields.detail, {});
     Array.prototype.forEach.call($('list').children, function (li) {
@@ -1305,8 +1324,9 @@
     state.detailStatus = null;
     state.detailAutotag = null;
     clearTimeout(state.detailTimer);
-    // 닫은 칸의 잠금이 남지 않게 풀고, 걸려 있던 읽기의 응답이 이 칸을 건드리지 않게 번호를 올린다(R53-N6).
+    // 닫은 칸의 잠금이 남지 않게 풀고, 걸려 있던 읽기를 끊고 번호를 올린다(R53-N6).
     state.sttSeq.detail++;
+    abortSttRead('detail');
     setSttFieldsBusy(state.sttFields.detail, false, $('detail-stt-run'));
     $('detail-stt-state').textContent = '';
     $('detail').hidden = true;

@@ -73,16 +73,25 @@ def build(root):
                                         att("N6-S2-a3", fail_kind="timeout", session_state="stalled", why="시간 초과로 끊음")]),
         node("N7", "done", attempts=[att("N7-S2-a1")]),
     ]
-    (gd / "G-1.json").write_text(json.dumps({"id": "G-1", "request": "그래프 상태 검사", "created": now, "updated": now,
+    (gd / "G-1.json").write_text(json.dumps({"id": "G-1", "request": "Q-1 그래프 상태 검사", "created": now, "updated": now,
                                               "nodes": nodes}, ensure_ascii=False), encoding="utf-8")
     # 끝나지 않았는데 실행기가 없는 그래프 - 대기 요약에 들지 않고 '실행기 없음' 으로 보인다
     (gd / "G-2.json").write_text(json.dumps({"id": "G-2", "request": "실행기 없는 그래프", "created": now, "updated": now,
                                               "nodes": [node("M1", "todo", waiting="provider:kisti")]}, ensure_ascii=False), encoding="utf-8")
+    # 끝난 그래프 - 그 노드는 보드에 남는다 (판정을 기다리는 줄)
+    (gd / "G-3.json").write_text(json.dumps({"id": "G-3", "request": "끝난 그래프", "created": now, "updated": now,
+                                              "nodes": [node("F1", "done", attempts=[att("F1-S2-a1")])]}, ensure_ascii=False), encoding="utf-8")
     con = sqlite3.connect(str(root / ".aimem" / "aimem.db"))
-    for tid, st in (("N1", "TODO"), ("N5", "BLOCKED"), ("N6", "BLOCKED"), ("N7", "REVIEW")):
-        con.execute("INSERT OR REPLACE INTO tasks(id, title, slot, status, inherited, artifacts, created, updated)"
-                    " VALUES (?,?,?,?,?,?,?,?)", (tid, "노드 " + tid, "S2", st, "", "", now, now))
+    # X9 는 어느 그래프에도 없는 줄(버린 그래프에서 남은 막힘) - 보드가 보여 줄 것
+    for tid, st in (("N1", "TODO"), ("N5", "BLOCKED"), ("N6", "BLOCKED"), ("N7", "REVIEW"), ("F1", "REVIEW"), ("X9", "BLOCKED")):
+        con.execute("INSERT OR REPLACE INTO tasks(id, request_id, title, slot, status, inherited, artifacts, created, updated)"
+                    " VALUES (?,?,?,?,?,?,?,?,?)", (tid, "Q-1" if tid.startswith("N") else None, "노드 " + tid, "S2", st, "", "", now, now))
     con.commit(); con.close()
+    # 그래프 G-1 이 딸린 요청 - 요청 카드는 노드 목록 대신 요약 한 줄과 그래프로 가는 단추를 보인다
+    rd = root / ".aimem" / "requests"
+    rd.mkdir(parents=True, exist_ok=True)
+    (rd / "Q-1.json").write_text(json.dumps({"id": "Q-1", "created": now, "requester": "검사", "title": "그래프가 딸린 요청",
+                                             "detail": "", "status": "IN-PROGRESS", "subtasks": []}, ensure_ascii=False), encoding="utf-8")
 
 
 FLEET = {"mode": "running", "label": "실행", "default": False, "idle": False, "running_runs": 0, "graphs": [],
@@ -143,17 +152,37 @@ def scenario(browser, base, checks, width):
             body = page.locator("#detail-body").inner_text()
             checks.ok("N5 상세: 공급자 장애 시도·안내", "공급자 장애" in body and "unblock" in body and "재접속 오류" in body, body[-300:])
             page.locator("#detail-close").click()
-            # 보드는 DB 값 그대로 (그래프 노드 상태로 바꿔 보여 주지 않는다)
+            # 요청 카드: 노드 목록(표) 대신 요약 한 줄 + 그래프로 가는 단추
+            card = page.locator("#requests-list article", has_text="그래프가 딸린 요청").first
+            if card.locator(".req-summary").count() == 0:
+                card.locator(".fold-btn").first.click()
+            summary = card.locator(".req-summary").inner_text()
+            checks.ok("요청 카드: 요약 한 줄 (건수·상태별 수)", all(w in summary for w in ("서브태스크 4건", "검토 대기 1", "대기 1", "막힘 2")), summary)
+            checks.ok("요청 카드: 노드 표가 없다", card.locator("table").count() == 0)
+            card.locator(".req-summary button", has_text="G-1 그래프 보기").click()
+            checks.ok("요청 카드: 단추가 그 그래프를 펼쳐 보인다",
+                      page.locator("#graph-G-1").count() == 1 and "is-folded" not in (page.locator("#graph-G-1").get_attribute("class") or ""))
+            # 보드는 도는 그래프의 노드를 빼고 그래프 밖에 남은 것만 보인다 (같은 일감을 두 곳에 적지 않는다)
             page.click("#tab-board")
             page.wait_for_selector("#board-filter button", state="visible", timeout=15000)
             page.locator("#board-filter button", has_text="전체").click()
+            def rows(t):
+                return page.locator("#board-section tbody tr", has_text=t).count()
             def st(t):
                 return page.locator("#board-section tbody tr", has_text=t).first.locator(".badge").first.get_attribute("data-status")
-            checks.ok("보드: N1 은 DB 값 TODO 그대로 (노드는 todo)", st("N1") == "TODO", str(st("N1")))
-            checks.ok("보드: N7 은 REVIEW 그대로 (노드는 done)", st("N7") == "REVIEW", str(st("N7")))
-            checks.ok("보드: N6 은 BLOCKED", st("N6") == "BLOCKED", str(st("N6")))
+            checks.ok("보드: 도는 그래프(G-1)의 노드 N1·N5·N6·N7 은 없다", [rows(t) for t in ("N1", "N5", "N6", "N7")] == [0, 0, 0, 0],
+                      str([rows(t) for t in ("N1", "N5", "N6", "N7")]))
+            checks.ok("보드: 그래프 밖에 남은 X9 는 BLOCKED 로 보인다", rows("X9") == 1 and st("X9") == "BLOCKED")
+            checks.ok("보드: 끝난 그래프(G-3)의 F1 은 DB 값 REVIEW 그대로 (노드는 done)", rows("F1") == 1 and st("F1") == "REVIEW")
+            note = page.locator("#board-section .board-graph-note").inner_text()
+            checks.ok("보드: 뺀 노드 수와 그래프로 가는 단추", "4건" in note and "태스크 그래프에서 보기" in note, note)
             page.locator("#board-filter button", has_text="미완료").click()
-            checks.ok("미완료 칩에 REVIEW 포함 (4건)", "미완료 4" in page.locator("#board-filter").inner_text(), page.locator("#board-filter").inner_text())
+            checks.ok("미완료 칩에 REVIEW 포함 (2건)", "미완료 2" in page.locator("#board-filter").inner_text(), page.locator("#board-filter").inner_text())
+            checks.ok("탭 숫자도 그래프 밖의 미완료만 (2)", page.locator("#tab-count-board").inner_text().strip() == "2",
+                      page.locator("#tab-count-board").inner_text())
+            page.locator("#board-section .board-graph-note button").click()
+            page.wait_for_selector("#graphs-list .graph-block", state="visible", timeout=5000)
+            checks.ok("단추를 누르면 태스크 그래프가 있는 탭으로 간다", page.locator("#tab-requests").get_attribute("aria-selected") == "true")
         checks.ok(f"[{width}] 자바스크립트 오류 없음", not errors, "; ".join(errors)[:200])
     finally:
         ctx.close()

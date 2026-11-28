@@ -59,7 +59,7 @@ def normalize(obj) -> dict:
                 if ch in "\n\t"
                 or ch == "\u200d"
                 or 0xE0020 <= ord(ch) <= 0xE007F
-                or unicodedata.category(ch) not in ("Cf", "Cc")
+                or unicodedata.category(ch) not in ("Cf", "Cc", "Cs")
             ).strip()
             if not text:
                 continue

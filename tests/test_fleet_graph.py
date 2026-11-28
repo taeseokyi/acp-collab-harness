@@ -910,6 +910,24 @@ class EngineV2Stage3(unittest.TestCase):
         self.assertEqual(board, {"T-1": "IN-PROGRESS", "T-2": "DONE", "T-3": "REJECTED", "T-4": "BLOCKED"})
         self.assertEqual(events, 2)
 
+    def test_board_slot_follows_a_moved_node(self):
+        import sqlite3
+        db = self._db([("T-1", "IN-PROGRESS"), ("T-2", "DONE")])
+        con = sqlite3.connect(db)
+        con.execute("UPDATE tasks SET slot='S6'")
+        con.commit()
+        con.close()
+        self.assertIs(fleet_graph._board_slot("T-1", "S3"), True)
+        self.assertIs(fleet_graph._board_slot("T-1", "S3"), False)                 # 같은 값은 다시 안 적는다
+        self.assertIs(fleet_graph._board_slot("T-2", "S3"), False)                 # 끝난 줄은 그대로
+        self.assertIs(fleet_graph._board_slot("T-404", "S3"), False)               # 줄을 만들지 않는다
+        con = sqlite3.connect(db)
+        rows = dict(con.execute("SELECT id,slot FROM tasks"))
+        events = [r[0] for r in con.execute("SELECT body FROM events")]
+        con.close()
+        self.assertEqual(rows, {"T-1": "S3", "T-2": "S6"})
+        self.assertEqual(events, ["T-1 슬롯 S3"])
+
     def test_board_rows_come_from_the_graph(self):
         # 그래프가 정본이다: 없는 보드 줄은 만들고, 있는 줄은 빈 제목·슬롯만 채운다. 관리자가 적은 값은 덮지 않는다
         # (R42 는 제목·슬롯이 비었고 R44 는 줄이 아예 없어 라운드 내내 보드에 안 보였다)

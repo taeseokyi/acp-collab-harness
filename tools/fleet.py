@@ -413,7 +413,7 @@ def _brief_text(slot, token, rev, label, write, harness, task):
         "검증 명령은 접두사 없이 그대로 쓴다: `python3 ...`, `ls/cat/grep/sed -n/wc/diff/git status/git diff ...` "
         "(셸 변수 대입 따위를 앞에 붙이지 않는다). py_compile 이 만드는 __pycache__ 는 쓰기로 치지 않는다.",
         "고침을 되돌려 보는 따위로 사본이 필요하면 `/tmp` 아래에 `python3 -c \"import shutil; shutil.copytree(원본, 사본)\"` 로 "
-        "만들고, 끝나면 `shutil.rmtree` 로 지운다 (`cp -r`·`rm` 은 승인에 막힐 수 있다).",
+        "만들고, 끝나면 지운다.",
         "", task.strip(), ""])
 
 

@@ -57,6 +57,7 @@
     opts = opts || {};
     return getConfig().then(function (cfg) {
       var init = { method: opts.method || 'GET', headers: authHeaders(cfg), cache: 'no-store' };
+      if (opts.signal) init.signal = opts.signal;
       if (opts.body !== undefined) {
         init.headers['Content-Type'] = 'application/json';
         init.body = JSON.stringify(opts.body);

@@ -85,7 +85,7 @@ meta 의 `label`/`tags`/`tags_auto`/`tags_human`/`autotag` 로 이름·태그·�
 | -- | -- | -- |
 | `preprocess` | `none`·`basic`·`level`·`dereverb`·`denoise` | `preprocess` |
 | `num_speakers` | 정수 1~20 (`bool` 은 안 됨) | `num_speakers` = `str(n)` |
-| `context` | 글. 먼저 `\r\n`·`\r`·U+2028·U+2029 를 `\n` 으로 바꾼 뒤, 유니코드 형식 문자(`Cf`)와 제어 문자(`Cc`)를 빼되 줄바꿈·탭과 ZWJ(U+200D)·태그 문자(U+E0020~U+E007F)는 남긴다. 앞뒤 공백을 자르고, 비면 없는 것, 4000자 넘으면 거절 | `context` |
+| `context` | 글. 먼저 `\r\n`·`\r`·U+2028·U+2029 를 `\n` 으로 바꾼 뒤, 유니코드 형식 문자(`Cf`)·제어 문자(`Cc`)와 외톨이 서로게이트(`Cs`)를 빼되 줄바꿈·탭과 ZWJ(U+200D)·태그 문자(U+E0020~U+E007F)는 남긴다. 앞뒤 공백을 자르고, 비면 없는 것, 4000자 넘으면 거절 | `context` |
 | `auto` | `true`/`false` | `auto` = `"1"`/`"0"` |
 | `review` | `true`/`false` | `review` = `"1"`/`"0"` |
 
@@ -102,7 +102,7 @@ PREPROCESS = ("none", "basic", "level", "dereverb", "denoise")
 SPEAKERS_MIN, SPEAKERS_MAX = 1, 20
 CONTEXT_MAX = 4000
 def normalize(obj) -> dict       # None → {}. dict 아님·모르는 키·틀린 값 → ValueError.
-                                 # 고른 키만 담은 새 dict (null 값 키는 빠짐, context 는 \r\n·\r·U+2028·U+2029 를 \n 으로 바꾼 뒤 Cf·Cc(줄바꿈·탭·ZWJ·태그 문자는 남김)를 빼고 strip 해 빈 값 빠짐)
+                                 # 고른 키만 담은 새 dict (null 값 키는 빠짐, context 는 \r\n·\r·U+2028·U+2029 를 \n 으로 바꾼 뒤 Cf·Cc·Cs(줄바꿈·탭·ZWJ·태그 문자는 남김)를 빼고 strip 해 빈 값 빠짐)
 def form_fields(opts) -> dict    # normalize 결과 → 서버 multipart 필드 dict. {} → {}
 def used_from_result(result) -> dict
     # 서버 결과에서 실제 쓰인 값. result 가 dict 가 아니면 {}
@@ -454,7 +454,8 @@ Error(서버의 error 글)), `VoxApi.audioUrl(id) -> Promise<blobURL>`.
 잡음이 많은 녹음은 denoise 가 나을 수 있지만 보장은 아니고 깨끗한 녹음에서는 오히려 나빠질 수 있다고 적는다.
 - 설정 칸: `#stt-defaults` 안 `#stt-defaults-fields`·`#stt-defaults-save`·`#stt-defaults-state`·`#stt-defaults-note`.
   열 때 `GET api/stt-options` 로 채우고 저장은 `PUT api/stt-options`(`{options: …}`). 격리 출처(`isolated()`)면 숨기고,
-  불러오기 실패면 입력·저장 단추를 숨기고 까닭 한 줄을 보인다. 저장 뒤 `state.sttDefaults` 를 갱신한다.
+  불러오기 실패면 입력·저장 단추를 숨기고 까닭 한 줄을 보인다. 칸을 열 때마다 앞 기본값 읽기를 `AbortController` 로
+  끊고 새로 읽는다. 저장 중에는 칸을 잠그고 걸린 읽기를 끊는다(저장 응답이 칸을 서버 값으로 되돌려 쓴다).
 - 상세: 기존 `#detail-retry`(옵션 그대로 다시)는 그대로 두고, 옆의 `#detail-retry-opts`(`옵션 바꿔 다시 받아쓰기`)가
   `#detail-stt` 묶음을 연다. 녹음의 `stt_options` 가 비어 있지 않으면 그것으로, 없거나 비어 있으면 전체 기본값으로
   채운다. 상세 묶음의 빈 값 이름은 칸을 채울 때마다 그 녹음의 옵션 유무로 `기본(서버 기본)` / `기본(앱 설정 따름)` 을
@@ -473,6 +474,10 @@ Error(서버의 error 글)), `VoxApi.audioUrl(id) -> Promise<blobURL>`.
 
 ## 고친 이력
 
+- R55: `context` 거르기가 외톨이 서로게이트(`Cs`)도 뺀다. 설정 칸의 기본값 읽기를 한 벌 캐시 대신 묶음별 읽기로
+  바꾸었다 - 칸을 열 때마다 앞 기본값 읽기를 `AbortController` 로 끊고 새로 읽고, 저장 중에는 칸을 잠그고 걸린
+  읽기를 끊는다. 알려진 맞바꿈: 기본값 읽기가 15초를 넘기면 끊고 칸을 풀며 늦게 온 정상 응답은 버린다
+  (R53-N10, 숨은 탭에서 돌아올 때도 같음).
 - R53: `Store.get(rid, with_prev=True)`·`GET /api/recordings/<id>?prev=0`(받아쓰는 중의 되풀이 읽기만 지난 글을 덜어 냄),
   지난 글에서 지금 글과 같은 벌 빼기, 깨진 `.prev.json` 이면 옛 `.prev.txt` 이어받기, 빈 결과(api·command)는
   `EMPTY_TEXT_ERROR` 로 failed, 상세 옵션 칸 빈 값 이름 `기본(서버 기본)`/`기본(앱 설정 따름)`, `context` 의 CR·U+2028/2029 정규화와 Cf·Cc 거르기(ZWJ·태그 문자는 남김),
