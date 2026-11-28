@@ -305,9 +305,9 @@ def tab_counts_scenario(browser, base, checks):
         page.wait_for_function("() => document.getElementById('tab-count-fleet').textContent.trim() !== ''", timeout=15000)
         txt = lambda i: page.locator(i).inner_text().strip()  # noqa: E731
         checks.ok("탭 숫자: 함대는 실행 중 작업자만 (관리자 제외)", txt("#tab-count-fleet") == "1", txt("#tab-count-fleet"))
-        checks.ok("탭 숫자: 보드 옆은 미완료 태스크 (3), 큐 옆은 대기 큐 건수 (3) - 큐 머리글도 같은 수",
-                  txt("#tab-count-board") == "3" and txt("#tab-count-queue") == "3" and txt("#queue-count") == "3",
-                  f"{txt('#tab-count-board')} / {txt('#tab-count-queue')} / {txt('#queue-count')}")
+        checks.ok("탭 숫자: 보드·큐 탭은 대기 큐 건수만 (3) - 큐 머리글도 같은 수, 보드 숫자는 없다",
+                  page.locator("#tab-count-board").count() == 0 and txt("#tab-count-queue") == "3" and txt("#queue-count") == "3",
+                  f"{page.locator('#tab-count-board').count()} / {txt('#tab-count-queue')} / {txt('#queue-count')}")
         sec = page.locator("#runs-table-wrap").locator("xpath=ancestor::section[1]//h2").first.inner_text()
         checks.ok("실행 표 머리글은 '실행 상태'", sec.strip().startswith("실행 상태"), sec)
     finally:

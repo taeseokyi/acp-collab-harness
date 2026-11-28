@@ -2,10 +2,23 @@
 """VoxLog 끝에서 끝 브라우저 검사 (크롬만, 파이썬 Playwright).
 
 실행: python3 projects/VoxLog/tests/browser_voxlog.py
+      python3 projects/VoxLog/tests/browser_voxlog.py --only 67,75-78
+      python3 projects/VoxLog/tests/browser_voxlog.py --match "기본값 읽기"
 서버는 이 검사가 임시 data 폴더로 직접 띄우고(subprocess) 끝나면 내린다.
 검사는 모두 77개입니다.
-마지막 줄 `N/M 통과`, 하나라도 실패면 종료 코드 1.
+
+`--only` 는 번호를 쉼표 목록·`a-b` 닫힌 범위로 받고(예: `--only 67,75-78`) 여러 번 줄 수
+있습니다. `--match` 는 검사 이름에 들어 있는 글을 받고 여러 번 줄 수 있습니다(대소문자 그대로).
+둘 다 주면 합집합이고, 인자가 없으면 지금처럼 전체를 돕니다.
+앞 검사의 상태(같은 page·ctx·서버 자료 수)에 기대는 검사는 그 앞 검사까지 함께 돌립니다
+(예: `--only 3` 은 2 까지, `--only 7` 은 2·3 까지). 그래서 검사 하나만 골라도 1분 안에 돕니다.
+
+끝줄은 전체 실행이면 `N/M 통과`, 일부 실행이면
+`부분 실행: n/77 돌림 · m 건너뜀 · p/n 통과 (전체 통과 아님)` 입니다 - 일부 실행은 전체
+통과가 아닙니다. 실패가 있거나 고른 검사가 하나도 없으면(그때는 끝줄 앞에
+`고른 검사가 없습니다`) 종료 코드 1, 돌린 검사가 있고 실패가 없으면 0.
 """
+import argparse
 import json
 import os
 import re
@@ -23,6 +36,113 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 RESULTS = []  # (이름, 통과, 까닭)
+SELECTION = None  # None 이면 전체, set[int] 이면 고른 번호만
+SKIPPED = 0  # 고르지 않아 부르지 않은 검사 수
+
+# 앞 검사의 상태(같은 page·ctx·서버 자료 수)에 기대는 검사 → 먼저 돌아야 할 번호들.
+# t2 만든 녹음·t3 연 상세·t5 더한 녹음이 뒤 검사의 '목록/서버 자료 수' 를 이룬다.
+NEEDS = {
+    3: (2,),      # 목록 1개의 '완료' 상태 + 그 상세 글
+    4: (3,),      # transcripts txt 1개 - 받아쓰기가 끝나야 생기므로 t3 의 '완료' 기다림이 필요
+    5: (2,),      # 목록 2개 = t2 의 1개 + 새 1개
+    6: (2, 5),    # 서버 목록 2개 = t2·t5 의 두 건
+    7: (3,),      # '받아 적은 글이 있는 녹취' 가 있어야 묻기가 400 이 아님
+}
+
+
+def test_number(name):
+    """검사 이름 맨 앞 번호."""
+    m = re.match(r"\s*(\d+)", name)
+    if not m:
+        raise ValueError("검사 이름에 번호가 없습니다: %r" % name)
+    return int(m.group(1))
+
+
+def _parse_only(value):
+    """`67,75-78` 같은 --only 값을 번호 집합으로. 틀린 값은 argparse 오류."""
+    nums = set()
+    for part in value.split(","):
+        part = part.strip()
+        m = re.fullmatch(r"(\d+)(?:-(\d+))?", part)
+        if not m:
+            raise argparse.ArgumentTypeError("잘못된 --only 값: %r" % part)
+        start = int(m.group(1))
+        if m.group(2) is None:
+            nums.add(start)
+            continue
+        end = int(m.group(2))
+        if end < start:
+            raise argparse.ArgumentTypeError("잘못된 --only 범위: %r" % part)
+        nums.update(range(start, end + 1))
+    return nums
+
+
+def parse_selection(argv):
+    """명령줄 인자 → (only: set[int] | None, match: list[str])"""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--only", action="append", type=_parse_only, default=None)
+    parser.add_argument("--match", action="append", default=None)
+    ns = parser.parse_args(argv)
+    only = None
+    if ns.only:
+        only = set()
+        for group in ns.only:
+            only |= group
+    return only, list(ns.match or [])
+
+
+def expand_needs(selected, needs=NEEDS):
+    """기대는 번호를 거듭 따라가 모두 더한 집합(고리가 있어도 끝난다)."""
+    out = set(selected)
+    todo = list(selected)
+    while todo:
+        for dep in needs.get(todo.pop(), ()):
+            if dep not in out:
+                out.add(dep)
+                todo.append(dep)
+    return out
+
+
+def summary_line(ran, total, passed, skipped):
+    """전체 실행이면 `N/M 통과`, 일부 실행이면 `부분 실행: … (전체 통과 아님)`."""
+    if skipped == 0:
+        return "%d/%d 통과" % (passed, total)
+    return "부분 실행: %d/%d 돌림 · %d 건너뜀 · %d/%d 통과 (전체 통과 아님)" % (
+        ran, total, skipped, passed, ran)
+
+
+def exit_code(ran, failed):
+    """돌린 검사가 1개 이상이고 실패가 0 이면 0, 아니면 1."""
+    return 0 if (ran > 0 and failed == 0) else 1
+
+
+def _known_names():
+    """--match 를 번호로 풀려고 이 파일의 check("N 이름", ...) 줄에서 이름을 모은다."""
+    try:
+        src = Path(__file__).read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    return {int(num): rest for num, rest in re.findall(r'^\s*check\("(\d+)\s+([^"]*)"', src, re.M)}
+
+
+def resolve_selection(only, match):
+    """--only·--match 를 번호 집합으로 풀고 NEEDS 로 넓힌다. 인자가 없으면 None(전체)."""
+    if only is None and not match:
+        return None
+    chosen = set(only or ())
+    if match:
+        for num, rest in _known_names().items():
+            if any(text in "%d %s" % (num, rest) for text in match):
+                chosen.add(num)
+    return expand_needs(chosen)
+
+
+def apply_selection(argv):
+    """명령줄 인자로 SELECTION 을 정하고 돌려준다. 인자가 없으면 None(전체)."""
+    global SELECTION
+    only, match = parse_selection(argv)
+    SELECTION = resolve_selection(only, match)
+    return SELECTION
 
 
 def free_port():
@@ -123,6 +243,10 @@ def wait_for(fn, timeout, step=0.2, pg=None):
 
 
 def check(name, fn):
+    global SKIPPED
+    if SELECTION is not None and test_number(name) not in SELECTION:
+        SKIPPED += 1
+        return
     try:
         fn()
         RESULTS.append((name, True, ""))
@@ -315,6 +439,8 @@ def overlap(a, b):
 
 
 def main():
+    apply_selection(sys.argv[1:])
+
     from playwright.sync_api import sync_playwright
 
     tmp = Path(tempfile.mkdtemp(prefix="voxlog-e2e-"))
@@ -339,8 +465,12 @@ def main():
     bad = [(n, m) for n, p, m in RESULTS if not p]
     for n, m in bad:
         print("실패한 항목: %s - %s" % (n, m))
-    print("%d/%d 통과" % (ok, len(RESULTS)))
-    return 0 if not bad else 1
+    ran = len(RESULTS)
+    total = ran + SKIPPED
+    if ran == 0:
+        print("고른 검사가 없습니다")
+    print(summary_line(ran, total, ok, SKIPPED))
+    return exit_code(ran, len(bad))
 
 
 def run_all(browser, base, data, tmp, procs):

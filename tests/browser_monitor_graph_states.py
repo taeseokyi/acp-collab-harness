@@ -72,6 +72,7 @@ def build(root):
         node("N6", "failed", attempts=[att("N6-S2-a1", fail_kind="work"), att("N6-S2-a2", fail_kind="limit"),
                                         att("N6-S2-a3", fail_kind="timeout", session_state="stalled", why="시간 초과로 끊음")]),
         node("N7", "done", attempts=[att("N7-S2-a1")]),
+        node("N8", "running", attempts=[att("N8-S2-a1")]),
     ]
     (gd / "G-1.json").write_text(json.dumps({"id": "G-1", "request": "Q-1 그래프 상태 검사", "created": now, "updated": now,
                                               "nodes": nodes}, ensure_ascii=False), encoding="utf-8")
@@ -174,13 +175,15 @@ def scenario(browser, base, checks, width):
                       str([rows(t) for t in ("N1", "N5", "N6", "N7")]))
             checks.ok("보드: 그래프 밖에 남은 X9 는 BLOCKED 로 보인다", rows("X9") == 1 and st("X9") == "BLOCKED")
             checks.ok("보드: 끝난 그래프(G-3)의 F1 은 DB 값 REVIEW 그대로 (노드는 done)", rows("F1") == 1 and st("F1") == "REVIEW")
-            note = page.locator("#board-section .board-graph-note").inner_text()
-            checks.ok("보드: 뺀 노드 수와 그래프로 가는 단추", "4건" in note and "태스크 그래프에서 보기" in note, note)
+            notes = page.locator("#board-section .board-graph-note").all_inner_texts()
+            checks.ok("보드: 도는 그래프마다 한 줄 - 실행 중 태스크 번호·상태별 수·그래프로 가는 단추",
+                      len(notes) == 2 and "G-1" in notes[0] and "실행 중 1건 (N8)" in notes[0] and "대기 4" in notes[0]
+                      and "막힘 2" in notes[0] and "끝남 1" in notes[0] and "그래프 보기" in notes[0]
+                      and "G-2" in notes[1] and "실행 중 없음" in notes[1], str(notes))
             page.locator("#board-filter button", has_text="미완료").click()
             checks.ok("미완료 칩에 REVIEW 포함 (2건)", "미완료 2" in page.locator("#board-filter").inner_text(), page.locator("#board-filter").inner_text())
-            checks.ok("탭 숫자도 그래프 밖의 미완료만 (2)", page.locator("#tab-count-board").inner_text().strip() == "2",
-                      page.locator("#tab-count-board").inner_text())
-            page.locator("#board-section .board-graph-note button").click()
+            checks.ok("보드 탭에는 보드 숫자가 없다 (큐 숫자만)", page.locator("#tab-count-board").count() == 0)
+            page.locator("#board-section .board-graph-note button").first.click()
             page.wait_for_selector("#graphs-list .graph-block", state="visible", timeout=5000)
             checks.ok("단추를 누르면 태스크 그래프가 있는 탭으로 간다", page.locator("#tab-requests").get_attribute("aria-selected") == "true")
         checks.ok(f"[{width}] 자바스크립트 오류 없음", not errors, "; ".join(errors)[:200])

@@ -1,19 +1,19 @@
 # AIMEM-state.md - 운영 상태 스냅샷 (읽기 전용, `python3 tools/aimem_db.py render` 가 생성)
 
-- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-28T14:37:13 / REV 214
+- 정본은 `.aimem/aimem.db` 입니다. 이 파일을 손으로 고치지 마십시오. 생성 2026-11-28T17:22:24 / REV 216
 
 ## 2. 세션 명부
 
 | 슬롯 | 확인토큰 | 하네스 | 모델 | 역할 | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| S1 | `a41f0c` | claude | opus | R55 쉼 (무료 중심) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
+| S1 | `a41f0c` | claude | opus | R56 쉼 (무료 중심) | 11-09 CLI 작업자. `claude -p --model opus`(=opus-5.5, 태석님 17:45) |
 | S2 | `d27e93` | codex | kisti/kistillm | R55 VoxLog 브라우저 검사(67·N4·N5·N7·N9) | 무료 |
-| S3 | `5b8c1e` | opencode | opencode-go/deepseek-v4.1-flash | R55 VoxLog stt_options Cs·app.js 기본값 읽기 abort·전체 검사 | 무료 |
-| S4 | `6cd650` | claude | sonnet | R55 VoxLog 적대적 검수(부작용 중심) | 유료, 검수만 |
-| S5 | `61dfcc` | claude | sonnet | R55 쉼 (무료 중심) |  |
+| S3 | `5b8c1e` | opencode | opencode-go/deepseek-v4.1-flash | R56 VoxLog 브라우저 검사 골라 돌리기 구현 | 무료 |
+| S4 | `6cd650` | claude | sonnet | R56 VoxLog 적대적 검수(부작용 중심) | 유료, 검수만 |
+| S5 | `61dfcc` | claude | sonnet | R56 쉼 (무료 중심) |  |
 | S6 | `47764b` | freebuff | (하네스 기본) | R55 VoxLog app.js 기본값 읽기 abort 방식·N4 | 무료 |
-| S7 | `120a3c` | opencode | opencode-go/glm-5.3-flash | R55 VoxLog 문서 | opencode go 구독 (태석님 2026-11-28) |
-| S8 | `b6fe17` | opencode | opencode-go/deepseek-v4.1-flash | R55 VoxLog 브라우저 검사(67·N4·N5·N7·N9) |  |
+| S7 | `120a3c` | opencode | opencode-go/glm-5.3-flash | R56 VoxLog README 검사 절 | opencode go 구독 (태석님 2026-11-28) |
+| S8 | `b6fe17` | opencode | opencode-go/deepseek-v4.1-flash | R56 VoxLog R56-N1 고르기 단위 검사 보강 |  |
 
 ## 3. 작업 보드
 
@@ -209,12 +209,19 @@
 | T-499 | Q-261128-8001 | [VoxLog] 문서 - context 서로게이트 거르기·기본값 읽기 AbortController·15초 맞바꿈(R53-N10) | S7 | DONE | projects/VoxLog/docs/INTERFACE.md, projects/VoxLog/README.md |
 | T-500 | Q-261128-8001 | [VoxLog] R55 전체 검사 - 단위+브라우저 한 번, 결과를 rounds/R55/TESTS.md 에 | S3 | DONE | rounds/R55/TESTS.md |
 | T-501 | Q-261128-8001 | [VoxLog] R55 적대적 검수 - 기본값 읽기 abort 방식·N4 가드·Cs 거르기·새 검사(부작용 중심) | S4 | DONE | rounds/R55/REVIEW-r55.md |
+| T-502 | Q-261128-79fe | [VoxLog] 브라우저 검사를 번호·이름으로 골라 돌리기(--only·--match, 기대는 검사 따라 돌림, 끝줄 돌린 수/건너뜀) | S3 | DONE | projects/VoxLog/tests/browser_voxlog.py |
+| T-503 | Q-261128-79fe | [VoxLog] 고르기 단위 검사 - parse_selection·expand_needs·summary_line (+ 단위 전체 한 번) | S8 | DONE | projects/VoxLog/tests/test_browser_select.py |
+| T-504 | Q-261128-79fe | [VoxLog] README 에 검사 절 - 단위·브라우저 검사 돌리는 법과 골라 돌리기 한 문단 | S7 | DONE | projects/VoxLog/README.md |
+| T-505 | Q-261128-79fe | [VoxLog] R56 적대적 검수 - 브라우저 검사 골라 돌리기(부작용 중심) | S4 | DONE | rounds/R56/REVIEW-r56.md |
+| T-506 | Q-261128-79fe | [VoxLog] R56-N1 고르기 단위 검사가 쓰는 자리(check 건너뛰기·resolve_selection·실제 NEEDS·_known_names·rc 규칙)를 지키게 | S8 | DONE | projects/VoxLog/tests/test_browser_select.py,projects/VoxLog/tests/browser_voxlog.py |
+| T-507 | Q-261128-79fe | [VoxLog] R56 재검수 - R56-N1 고침(고르기 단위 검사 보강·exit_code) | S4 | DONE | rounds/R56/REVIEW-r56-2.md |
 
 ## 4.5 대기 큐
 
 | 순서 | 태스크 | 후보 슬롯 | 비고 |
 | --- | --- | --- | --- |
 | 1 | [VoxLog] R55 검수 하 묶음(쌓아 둠 - 같은 파일을 건드리는 요청이 올 때 같이): R55-N1 저장 PUT 이 응답 없이 걸리면 설정 칸이 잠긴 채·다시 열어도 안 읽음(PUT 에 시간 제한 없음), R55-N2 읽기 15초 제한이 fetch 시작 뒤에만 들음(getConfig 가 걸리면 안 풀림), R55-N3 새 검사가 못 잡는 되돌림(저장 실패 때 잠금 풀기·closeDetail abort·성공 쪽 current()·openDetail abort 겹침), R55-N4 저장 쪽 abort 는 사람이 못 닿는 길(77 이 합성 클릭으로 시험, 기록만). 원문 rounds/R55/REVIEW-r55.md | 무료 |  |
+| 2 | [VoxLog] R56 검수 하 묶음(쌓아 둠 - browser_voxlog.py 고르기를 다시 건드리는 요청이 올 때 같이): R56-N2 없는 번호(--only 8,999)·빈 선택이 조용함·0개여도 서버를 띄운 뒤 알림, R56-N3 부분 실행 끝줄의 'n/n 통과' 부분 문자열과 rc 0(README 로는 충분), R56-N4 --match 가 소스 정규식(check("N 이름"))에 기댐, R56-N5 main() 이 apply_selection 을 부르는지 지키는 검사 없음(빠지면 --only 가 조용히 전체를 돎, 거짓 통과는 아님). 원문 rounds/R56/REVIEW-r56.md·REVIEW-r56-2.md | 무료 |  |
 
 ## 6. 파일 소유권
 
@@ -238,7 +245,7 @@
 | `CLAUDE.md` | 관리자 | 부트스트랩. 자동 주입되는 유일한 파일 |
 | `README.md` | 관리자 | 저장소 소개 |
 | `projects/**` | 관리자 | 프로젝트 결과물 projects/<이름>/ - 여러 라운드에 걸쳐 쌓임 (REV 142). 관리자가 하위 경로를 슬롯에 배정 |
-| `projects/VoxLog/README.md` | S7 | R55 |
+| `projects/VoxLog/README.md` | S7 | R56 |
 | `projects/VoxLog/docs/**` | S6 | R39 |
 | `projects/VoxLog/docs/DESIGN-next-features.md` | S3 | R50 |
 | `projects/VoxLog/docs/INTERFACE.md` | S7 | R55 |
@@ -246,10 +253,11 @@
 | `projects/VoxLog/serve.py` | S2 | R52 |
 | `projects/VoxLog/settings.example.json` | S2 | R44 |
 | `projects/VoxLog/tests/**` | S6 | R39 |
-| `projects/VoxLog/tests/browser_voxlog.py` | S8 | G-119 T-498 S2→S8 |
+| `projects/VoxLog/tests/browser_voxlog.py` | S8 | R56 N1 |
 | `projects/VoxLog/tests/fake_llm.py` | S3 | R49 |
 | `projects/VoxLog/tests/fake_tag_llm.py` | S2 | R49 |
 | `projects/VoxLog/tests/test_ask.py` | S2 | R49 |
+| `projects/VoxLog/tests/test_browser_select.py` | S8 | R56 |
 | `projects/VoxLog/tests/test_serve.py` | S2 | R52 |
 | `projects/VoxLog/tests/test_serve_ask_body.py` | S2 | R46 |
 | `projects/VoxLog/tests/test_store.py` | S3 | R52 |
@@ -404,6 +412,8 @@
 | `rounds/R55/REVIEW-r55-3.md` | S4 | R55 |
 | `rounds/R55/REVIEW-r55.md` | S4 | R55 |
 | `rounds/R55/TESTS.md` | S3 | R55 |
+| `rounds/R56/REVIEW-r56-2.md` | S4 | R56 |
+| `rounds/R56/REVIEW-r56.md` | S4 | R56 |
 | `skills/**` | 관리자 | **현재 비어 있음** (REV 101 에서 `acp-slot-lifecycle` 제거). 되살아나면 이 행이 그대로 적용된다 |
 | `tests/browser_monitor_app.py` | S3 | R10 T-131 |
 | `tests/browser_monitor_app_server.py` | S5 | R32 |
@@ -517,3 +527,4 @@
 | Q-261128-22db | [VoxLog] 대기 큐의 VoxLog 항목 다섯 모두 정리 (R51·R52 검수 하 등급) | 태석 (클로드 코드 전달) | DONE | 2026-11-28T00:41:46 |
 | Q-261128-1527 | [VoxLog] R53 대기 큐 하 등급 묶음 처리 (R53-N2~N5·N7~N12) | 태석 | DONE | 2026-11-28T08:24:58 |
 | Q-261128-8001 | [VoxLog] 대기 큐 1번 정리 (R54-N1~N5, R53-N7·N9·N10) | 태석 (클로드 코드 전달) | DONE | 2026-11-28T13:00:24 |
+| Q-261128-79fe | [VoxLog] 브라우저 검사를 골라 돌리기 (이름·번호로 일부만) | 태석 (클로드 코드 전달) | DONE | 2026-11-28T14:37:07 |

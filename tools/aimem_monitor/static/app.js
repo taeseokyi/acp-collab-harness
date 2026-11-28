@@ -3519,15 +3519,24 @@ function renderBoard(data) {
   const everything = Array.isArray(data.board) ? data.board : [];
   const all = boardOutsideGraphs(data);
   const inGraphs = everything.length - all.length;
-  if (inGraphs) {
+  // 도는 그래프마다 한 줄: 지금 실행 중인 태스크 번호와 상태별 수, 그래프로 가는 단추 (2026-11-28 태석님 -
+  // 보드에서 노드를 뺐어도 무엇이 돌고 있는지는 여기서 보여야 한다)
+  for (const g of (Array.isArray(data.graphs) ? data.graphs : [])) {
+    if (!g || graphFinished(g)) continue;
+    const nodes = Array.isArray(g.nodes) ? g.nodes : [];
+    const by = (...want) => nodes.filter((n) => want.includes(String(n.status || '').toLowerCase()));
+    const running = by('running').map((n) => show(n.id, ''));
     const note = document.createElement('p');
     note.className = 'hint board-graph-note';
-    note.textContent = `도는 그래프의 노드 ${inGraphs}건은 여기 없습니다 - `;
+    note.textContent = `도는 그래프 ${show(g.id)} · `
+      + [running.length ? `실행 중 ${running.length}건 (${running.join(', ')})` : '실행 중 없음',
+        by('todo').length ? `대기 ${by('todo').length}` : '', by('failed', 'blocked').length ? `막힘 ${by('failed', 'blocked').length}` : '',
+        by('done').length ? `끝남 ${by('done').length}` : ''].filter(Boolean).join(' · ') + ' ';
     const go = document.createElement('button');
     go.type = 'button';
     go.className = 'btn-link';
-    go.textContent = '태스크 그래프에서 보기';
-    go.addEventListener('click', () => { selectTab('requests', true); const sec = $('graphs-section'); if (sec) sec.scrollIntoView({ block: 'start' }); });
+    go.textContent = '그래프 보기';
+    go.addEventListener('click', () => { selectTab('requests', true); showGraph(g.id); });
     note.appendChild(go);
     wrap.appendChild(note);
   }
@@ -4501,14 +4510,12 @@ function renderTabCounts(data) {
   setTabCount('tab-count-fleet', running, true);
   const projects = Array.isArray(data.projects) ? data.projects : [];
   const unfinished = projects.filter((p) => !projectDone(p)).length;
-  // 네 탭 모두 같은 규칙: 숫자 = 그 탭에서 지금 살아 있는 것(도는 작업자 / 진행 중 프로젝트 / 미완료 태스크 · 대기 큐 / 열린 요청), 0 이면 숨김.
+  // 네 탭 모두 같은 규칙: 숫자 = 그 탭에서 지금 살아 있는 것(도는 작업자 / 진행 중 프로젝트 / 대기 큐 / 열린 요청), 0 이면 숨김.
   // 전에는 프로젝트만 전체 수라 다 끝나도 늘 1 이 떠 있었다 (2026-11-12 저녁 태석님: 직접 처리)
   setTabCount('tab-count-projects', unfinished, true);
-  // 보드·큐 탭은 숫자 둘을 따로: '보드' 옆 = 미완료 태스크, '큐' 옆 = 대기 큐 건수 (큐 머리글에도 같은 수).
-  // 큐는 기다리는 일이라 강조색을 안 쓴다 (2026-11-23 태석님: 보드와 큐의 갯수를 분리해서 표시)
+  // 보드·큐 탭의 숫자는 대기 큐 건수 하나뿐이다 (큐 머리글에도 같은 수). 보드 숫자는 두지 않는다 - 도는 일은 태스크 그래프와
+  // 보드 위의 한 줄이 보여 준다 (2026-11-28 태석님: "탭숫자는 필요없어. 그냥 큐만 보여줘"). 큐는 기다리는 일이라 강조색을 안 쓴다
   const queue = Array.isArray(data.queue) ? data.queue.length : 0;
-  const openTasks = boardOutsideGraphs(data).filter((t) => !boardClosed(t)).length;   // 도는 그래프의 노드는 세지 않는다 (보드에 안 나온다)
-  setTabCount('tab-count-board', openTasks, true);
   setTabCount('tab-count-queue', queue, false);
   const qc = $('queue-count');
   if (qc) qc.textContent = queue ? String(queue) : '';
@@ -4519,8 +4526,6 @@ function renderTabCounts(data) {
   if (f) f.title = '실행 중인 작업자';
   const pj = $('tab-count-projects');
   if (pj) pj.title = `진행 중인 프로젝트 ${unfinished}개 (전체 ${projects.length}개)`;
-  const b = $('tab-count-board');
-  if (b) b.title = `미완료 태스크 ${openTasks}건`;
   const bq = $('tab-count-queue');
   if (bq) bq.title = `대기 큐 ${queue}건`;
   const q = $('tab-count-requests');
