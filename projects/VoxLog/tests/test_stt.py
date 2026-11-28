@@ -715,6 +715,24 @@ class TranscriberTest(unittest.TestCase):
         self.assertIn("비었습니다", store.error_of(rid)[1])
         self.assertIsNone(store.transcripts.get(rid))
 
+    def test_command_blank_result_failure_uses_empty_text_error(self):
+        rid = "r-20260101-000000-onec"
+        store = self._store(rid)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        wav = pathlib.Path(tmp.name) / "blank.wav"
+        wav.write_bytes(b"")
+        env = {"VOXLOG_STT_CMD": "%s -c pass {wav}" % sys.executable}
+        with mock.patch.object(stt, "to_audio", lambda path, fmt: wav):
+            tr = stt.Transcriber(store, env=env, transcribe_fn=stt.transcribe)
+            tr.start()
+            try:
+                self.assertTrue(wait_idle(tr))
+            finally:
+                tr.stop()
+        self.assertEqual(store.status_of(rid), "failed")
+        self.assertEqual(store.error_of(rid)[1], stt.EMPTY_TEXT_ERROR)
+
     def test_blank_api_result_keeps_current_and_prev_transcripts(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -769,7 +787,7 @@ class TranscriberTest(unittest.TestCase):
         after = store.get(rid)
         self.assertEqual(after["transcript"], "")
         self.assertEqual(after["status"], "failed")
-        self.assertIn("비었습니다", after["error"])
+        self.assertEqual(after["error"], stt.EMPTY_TEXT_ERROR)
         self.assertEqual(after["prev_transcripts"], [])
         self.assertEqual(done, [])
 

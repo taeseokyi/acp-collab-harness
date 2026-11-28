@@ -1,0 +1,10 @@
+{
+ "id": "Q-261128-1527",
+ "created": "2026-11-28T08:24:58",
+ "requester": "태석",
+ "project": "VoxLog",
+ "title": "[VoxLog] R53 대기 큐 하 등급 묶음 처리 (R53-N2~N5·N7~N12)",
+ "detail": "R53 대기큐 검사결사 여러가자 N 결함 모두 고쳐.",
+ "status": "DONE",
+ "subtasks": []
+}

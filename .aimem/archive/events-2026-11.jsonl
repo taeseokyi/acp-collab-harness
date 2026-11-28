@@ -1134,3 +1134,68 @@
 {"seq": 1245, "at": "2026-11-14T00:00:40", "actor": "M-R28-232048", "rev": 175, "kind": "slot", "body": "slot remove S5 (claude, 모델 sonnet, 소유권 1행 내림)"}
 {"seq": 1246, "at": "2026-11-14T00:00:40", "actor": "M-R28-232048", "rev": 175, "kind": "graph", "body": "G-061 끝: T-300 낱말(S4, 어근 13 지움·흔한 말 32 보탬·ANSWERS 약속 시험) DONE, T-301 브라우저(S5, 90/90, V3·V6 잡힘) DONE, T-302 README 수(S2 kistillm) DONE, T-303 재검수(S1) 판정 검사 목표 닫음·새 결함 하 4건(큐). 남은 것: 큐 R28-N1~N4, R27-P1 재현 확인 중"}
 {"seq": 1247, "at": "2026-11-14T00:02:33", "actor": "M-R28-232048", "rev": 175, "kind": "queue", "body": "queue -1 [함대] R27-P1 시험 격리: 관리자 세션 안에서 python3 -m unittest discover -s tests 를 돌리면 AIFLEET_ROLE=manager·AIFLEET_SESSION 이 새어 test_rt_autonomy(29 오류)·test_aimem_db_cli SlotCommandTest·test_aimem_monitor_slots(6 실패)가 깨짐 - slot_add 가 시험 호출을 관리자 추가로 셈. 해당 시험 setUp 에서 두 변수를 지울 것(하, R27 종료 점검)"}
+{"seq": 1250, "at": "2026-11-14T00:20:00", "actor": "관리자", "rev": 176, "kind": "ownership", "body": "projects/자모맞히기/tests/browser_modes.py -> S4"}
+{"seq": 1251, "at": "2026-11-14T00:20:00", "actor": "관리자", "rev": 176, "kind": "ownership", "body": "projects/자모맞히기/tests/README.md -> S4"}
+{"seq": 1252, "at": "2026-11-14T00:20:00", "actor": "관리자", "rev": 176, "kind": "ownership", "body": "projects/자모맞히기/tests/test_words.py -> S2"}
+{"seq": 1253, "at": "2026-11-14T00:20:00", "actor": "관리자", "rev": 176, "kind": "ownership", "body": "projects/자모맞히기/web/js/words.js -> S2"}
+{"seq": 1254, "at": "2026-11-14T00:20:00", "actor": "관리자", "rev": 176, "kind": "ownership", "body": "rounds/R29/REVIEW-r29.md -> S1"}
+{"seq": 1255, "at": "2026-11-14T00:20:00", "actor": "관리자", "rev": 176, "kind": "slot", "body": "slot set S1: 역할"}
+{"seq": 1256, "at": "2026-11-14T00:20:00", "actor": "관리자", "rev": 176, "kind": "slot", "body": "slot set S2: 역할"}
+{"seq": 1257, "at": "2026-11-14T00:20:01", "actor": "관리자", "rev": 176, "kind": "slot", "body": "slot set S3: 역할"}
+{"seq": 1258, "at": "2026-11-14T00:20:01", "actor": "관리자", "rev": 176, "kind": "slot", "body": "slot set S4: 역할"}
+{"seq": 1260, "at": "2026-11-14T00:22:35", "actor": "관리자", "rev": 176, "kind": "task", "body": "T-304 TODO S4 브라우저: 줄 낸 판 하드 잠금·빈 판 맞춤 판 번호 시험 - V16·V14 (R28-N1·N2)"}
+{"seq": 1261, "at": "2026-11-14T00:22:35", "actor": "관리자", "rev": 176, "kind": "task", "body": "T-305 TODO S2 낱말: 남은 어근 걷기·파일 훑기 + 빠진 흔한 말 30개 (R28-N3·N4)"}
+{"seq": 1262, "at": "2026-11-14T00:22:35", "actor": "관리자", "rev": 176, "kind": "task", "body": "T-306 TODO S1 가벼운 적대적 재검수: R28-N1~N4"}
+{"seq": 1263, "at": "2026-11-14T00:22:35", "actor": "관리자", "rev": 176, "kind": "request", "body": "Q-261114-23ef PLANNED"}
+{"seq": 1264, "at": "2026-11-14T00:22:39", "actor": "그래프 실행기", "rev": 176, "kind": "task", "body": "T-304 IN-PROGRESS S4"}
+{"seq": 1265, "at": "2026-11-14T00:22:39", "actor": "그래프 실행기", "rev": 176, "kind": "task", "body": "T-305 IN-PROGRESS S2"}
+{"seq": 1266, "at": "2026-11-14T00:32:22", "actor": "그래프 실행기", "rev": 176, "kind": "task", "body": "T-304 REVIEW S4"}
+{"seq": 1267, "at": "2026-11-14T00:32:22", "actor": "그래프 실행기", "rev": 176, "kind": "task", "body": "T-305 REVIEW S2"}
+{"seq": 1268, "at": "2026-11-14T00:32:22", "actor": "그래프 실행기", "rev": 176, "kind": "task", "body": "T-306 IN-PROGRESS S1"}
+{"seq": 1269, "at": "2026-11-14T00:48:28", "actor": "그래프 실행기", "rev": 176, "kind": "task", "body": "T-306 REVIEW S1"}
+{"seq": 1270, "at": "2026-11-14T00:48:49", "actor": "관리자", "rev": 176, "kind": "queue", "body": "queue -1 [자모맞히기] R28-N1·N2·N3·N4 (모두 하, rounds/R28/REVIEW-r28.md 5절): R28-N1 같은 모드에서 줄을 낸 판의 하드 잠금(hardModeLocked) 브라우저 시험(변이 R28-V16 생존). R28-N2 alignEmptyHard 가 판 번호를 지키는지(puzzleNumber 0 아님) 시험(R28-V14 생존). R28-N3 갈래 파일 어근 선선 눅눅 촉촉(확실)·용감·채이다(경계) 지우고 BANNED, 파일 전체를 '-하다 없이 홀로 쓰이나' 로 훑기. R28-N4 덮는 범위 21.7%: 4절 빠진 흔한 말 30개 보태고 다음 검수는 새 표본으로. 목표 15/15 는 닫힘 - 품질 보강"}
+{"seq": 1271, "at": "2026-11-14T00:48:55", "actor": "관리자", "rev": 176, "kind": "queue", "body": "queue +1 [자모맞히기] R29-N1·N2 (모두 하, rounds/R29/REVIEW-r29.md 5절): R29-N1 잠금 시나리오(scenario_hard_locked_after_play)가 잠금 시도 뒤 저장된 설정(localStorage settings.hardMode)이 그대로인지 안 봄(검수 변이 19번 생존) - 시나리오 끝에 저장 설정 false 확인 하나. R29-N2 아주 흔한 동사 '배우다' 가 ALLOWED 에 없음(새 표본 60 중 유일한 빠짐 1.7%) - 풀이씨 묶음에 보태고 words.js 재생성. 목표 15/15 는 닫힘 - 품질 보강"}
+{"seq": 1272, "at": "2026-11-14T00:48:55", "actor": "관리자", "rev": 176, "kind": "task", "body": "T-304 DONE"}
+{"seq": 1273, "at": "2026-11-14T00:48:55", "actor": "관리자", "rev": 176, "kind": "task", "body": "T-305 DONE"}
+{"seq": 1274, "at": "2026-11-14T00:48:55", "actor": "관리자", "rev": 176, "kind": "task", "body": "T-306 DONE"}
+{"seq": 1275, "at": "2026-11-14T00:48:55", "actor": "관리자", "rev": 176, "kind": "request", "body": "Q-261114-23ef DONE"}
+{"seq": 1276, "at": "2026-11-14T00:48:55", "actor": "M-R29-001827", "rev": 176, "kind": "note", "body": "G-062 finished: T-304 done(S4, modes 90→97, V16·V14 잡힘) · T-305 done(S2 kistillm, 어근 5 걷음·30개 보탬, ALLOWED 2181) · T-306 done(S1, 판정 R28-N1~N4 닫음, 하 2 → 큐 R29-N1·N2). 남은 것: 큐 1건"}
+{"seq": 1278, "at": "2026-11-14T00:55:44", "actor": "M-R30-005228", "rev": 177, "kind": "request", "body": "Q-261114-a3cf PLANNED"}
+{"seq": 1279, "at": "2026-11-14T00:55:45", "actor": "M-R30-005228", "rev": 177, "kind": "task", "body": "T-307 ASSIGNED S4 브라우저: 하드 잠금 뒤 저장 설정 시험 - V19 (R29-N1)"}
+{"seq": 1280, "at": "2026-11-14T00:55:45", "actor": "M-R30-005228", "rev": 177, "kind": "task", "body": "T-308 ASSIGNED S3 낱말: 배우다 보태기·words.js 재생성 (R29-N2)"}
+{"seq": 1281, "at": "2026-11-14T00:55:45", "actor": "M-R30-005228", "rev": 177, "kind": "task", "body": "T-309 ASSIGNED S1 가벼운 적대적 재검수: R29-N1·N2"}
+{"seq": 1282, "at": "2026-11-14T00:55:47", "actor": "관리자", "rev": 177, "kind": "ownership", "body": "projects/자모맞히기/tests/browser_modes.py -> S4"}
+{"seq": 1283, "at": "2026-11-14T00:55:47", "actor": "관리자", "rev": 177, "kind": "ownership", "body": "projects/자모맞히기/tests/README.md -> S4"}
+{"seq": 1284, "at": "2026-11-14T00:55:47", "actor": "관리자", "rev": 177, "kind": "ownership", "body": "projects/자모맞히기/data/words/풀이씨.txt -> S3"}
+{"seq": 1285, "at": "2026-11-14T00:55:47", "actor": "관리자", "rev": 177, "kind": "ownership", "body": "projects/자모맞히기/web/js/words.js -> S3"}
+{"seq": 1286, "at": "2026-11-14T00:55:47", "actor": "관리자", "rev": 177, "kind": "ownership", "body": "rounds/R30/REVIEW-r30.md -> S1"}
+{"seq": 1287, "at": "2026-11-14T00:55:48", "actor": "관리자", "rev": 177, "kind": "slot", "body": "slot set S1: 역할"}
+{"seq": 1288, "at": "2026-11-14T00:55:49", "actor": "관리자", "rev": 177, "kind": "slot", "body": "slot set S2: 역할"}
+{"seq": 1289, "at": "2026-11-14T00:55:49", "actor": "관리자", "rev": 177, "kind": "slot", "body": "slot set S3: 역할"}
+{"seq": 1290, "at": "2026-11-14T00:55:49", "actor": "관리자", "rev": 177, "kind": "slot", "body": "slot set S4: 역할"}
+{"seq": 1291, "at": "2026-11-14T00:55:59", "actor": "그래프 실행기", "rev": 177, "kind": "task", "body": "T-307 IN-PROGRESS S4"}
+{"seq": 1292, "at": "2026-11-14T00:55:59", "actor": "그래프 실행기", "rev": 177, "kind": "task", "body": "T-308 IN-PROGRESS S3"}
+{"seq": 1293, "at": "2026-11-14T01:05:01", "actor": "그래프 실행기", "rev": 177, "kind": "task", "body": "T-307 REVIEW S4"}
+{"seq": 1294, "at": "2026-11-14T01:15:16", "actor": "관리자", "rev": 177, "kind": "ownership", "body": "projects/자모맞히기/data/words/풀이씨.txt -> S4"}
+{"seq": 1295, "at": "2026-11-14T01:15:16", "actor": "관리자", "rev": 177, "kind": "ownership", "body": "projects/자모맞히기/web/js/words.js -> S4"}
+{"seq": 1296, "at": "2026-11-14T01:15:16", "actor": "관리자", "rev": 177, "kind": "task", "body": "T-308  S4"}
+{"seq": 1297, "at": "2026-11-14T01:15:21", "actor": "관리자", "rev": 177, "kind": "ownership", "body": "projects/자모맞히기/data/words/풀이씨.txt -> S3"}
+{"seq": 1298, "at": "2026-11-14T01:15:21", "actor": "관리자", "rev": 177, "kind": "ownership", "body": "projects/자모맞히기/web/js/words.js -> S3"}
+{"seq": 1299, "at": "2026-11-14T01:15:21", "actor": "관리자", "rev": 177, "kind": "task", "body": "T-308  S3"}
+{"seq": 1300, "at": "2026-11-14T01:15:23", "actor": "그래프 실행기", "rev": 177, "kind": "task", "body": "T-308 BLOCKED S3"}
+{"seq": 1301, "at": "2026-11-14T01:15:23", "actor": "그래프 실행기", "rev": 177, "kind": "task", "body": "T-309 BLOCKED S1"}
+{"seq": 1302, "at": "2026-11-14T01:15:28", "actor": "관리자(move)", "rev": 177, "kind": "ownership", "body": "projects/자모맞히기/data/words/풀이씨.txt -> S4"}
+{"seq": 1303, "at": "2026-11-14T01:15:28", "actor": "관리자(move)", "rev": 177, "kind": "ownership", "body": "projects/자모맞히기/web/js/words.js -> S4"}
+{"seq": 1304, "at": "2026-11-14T01:15:28", "actor": "관리자", "rev": 177, "kind": "ownership", "body": "projects/자모맞히기/data/words/풀이씨.txt -> S4"}
+{"seq": 1305, "at": "2026-11-14T01:15:28", "actor": "관리자", "rev": 177, "kind": "ownership", "body": "projects/자모맞히기/web/js/words.js -> S4"}
+{"seq": 1306, "at": "2026-11-14T01:15:28", "actor": "관리자", "rev": 177, "kind": "task", "body": "T-308  S4"}
+{"seq": 1307, "at": "2026-11-14T01:15:30", "actor": "그래프 실행기", "rev": 177, "kind": "task", "body": "T-308 IN-PROGRESS S4"}
+{"seq": 1308, "at": "2026-11-14T01:15:45", "actor": "그래프 실행기", "rev": 177, "kind": "task", "body": "T-308 REVIEW S4"}
+{"seq": 1309, "at": "2026-11-14T01:15:45", "actor": "그래프 실행기", "rev": 177, "kind": "task", "body": "T-309 IN-PROGRESS S1"}
+{"seq": 1310, "at": "2026-11-14T01:24:27", "actor": "그래프 실행기", "rev": 177, "kind": "task", "body": "T-309 REVIEW S1"}
+{"seq": 1311, "at": "2026-11-14T01:28:25", "actor": "M-R30-005228", "rev": 177, "kind": "graph", "body": "G-063 finished: T-307 DONE(S4, modes 97→100, V19 잡힘) · T-308 DONE(S3 opencode 침묵 3번으로 INFRA 막힘 → S4 로 옮김, 배우다 ALLOWED 2182) · T-309 DONE(S1, R29-N1·N2 닫음, 하 1건 R30-N1 은 INBOX 지시대로 큐에 안 넣음). 남은 것 없음"}
+{"seq": 1312, "at": "2026-11-14T01:28:26", "actor": "M-R30-005228", "rev": 177, "kind": "task", "body": "T-307 DONE"}
+{"seq": 1313, "at": "2026-11-14T01:28:26", "actor": "M-R30-005228", "rev": 177, "kind": "task", "body": "T-308 DONE"}
+{"seq": 1314, "at": "2026-11-14T01:28:26", "actor": "M-R30-005228", "rev": 177, "kind": "task", "body": "T-309 DONE"}
+{"seq": 1315, "at": "2026-11-14T01:28:26", "actor": "M-R30-005228", "rev": 177, "kind": "queue", "body": "queue -1 [자모맞히기] R29-N1·N2 (모두 하, rounds/R29/REVIEW-r29.md 5절): R29-N1 잠금 시나리오(scenario_hard_locked_after_play)가 잠금 시도 뒤 저장된 설정(localStorage settings.hardMode)이 그대로인지 안 봄(검수 변이 19번 생존) - 시나리오 끝에 저장 설정 false 확인 하나. R29-N2 아주 흔한 동사 '배우다' 가 ALLOWED 에 없음(새 표본 60 중 유일한 빠짐 1.7%) - 풀이씨 묶음에 보태고 words.js 재생성. 목표 15/15 는 닫힘 - 품질 보강"}
+{"seq": 1316, "at": "2026-11-14T01:28:26", "actor": "M-R30-005228", "rev": 177, "kind": "request", "body": "Q-261114-a3cf DONE"}

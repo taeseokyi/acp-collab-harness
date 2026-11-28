@@ -30,6 +30,8 @@
     sttDefaults: null,
     sttDefaultsReq: null,
     sttFields: null,
+    // 묶음(설정·상세)마다 여는 차례를 세는 번호. 응답 처리기는 자기 번호일 때만 칸을 채우고 푼다(R53-N6).
+    sttSeq: { defaults: 0, detail: 0 },
     // 녹음
     rec: null, stream: null, chunks: [], startedAt: 0, startedIso: '', mime: '',
     timer: 0, wake: null, busy: false,
@@ -144,7 +146,8 @@
     var els = {};
     // 설정 묶음의 빈 칸은 서버 기본값, 상세 묶음의 빈 칸은 앱 설정(전체 기본값)을 따른다는 뜻이다.
     var detailGroup = prefix === 'detail-stt';
-    var defaultLabel = detailGroup ? '기본(앱 설정 따름)' : '서버 기본';
+    // 상세 묶음의 빈 칸 이름은 이 녹음에 옵션이 있는지에 따라 달라진다(fillSttFields 가 채울 때마다 맞춘다).
+    var defaultLabel = detailGroup ? detailEmptyLabel() : '서버 기본';
     function field(labelText, child, key) {
       var label = document.createElement('label');
       label.className = 'field';
@@ -195,7 +198,14 @@
     var tri = [['', defaultLabel], ['1', '켬'], ['0', '끔']];
     els.auto = select('자동 추정', 'auto', tri);
     els.review = select('LLM 검토', 'review', tri);
+    if (detailGroup) {
+      els.defaultOpts = [els.preprocess.options[0], els.auto.options[0], els.review.options[0]];
+    }
     return els;
+  }
+
+  function detailEmptyLabel() {
+    return hasSttOptions(state.detailSttOptions) ? '기본(서버 기본)' : '기본(앱 설정 따름)';
   }
 
   // 녹음에 저장된 옵션이 '비어 있지 않은 dict' 일 때만 그것을 쓴다(없음·{} 는 전체 기본값).
@@ -205,6 +215,10 @@
 
   function fillSttFields(els, opts) {
     if (!els) return;
+    if (els.defaultOpts) {
+      var emptyLabel = detailEmptyLabel();
+      els.defaultOpts.forEach(function (o) { o.textContent = emptyLabel; });
+    }
     opts = opts && typeof opts === 'object' ? opts : {};
     els.preprocess.value = STT_PREPROCESS.indexOf(opts.preprocess) >= 0 ? opts.preprocess : '';
     els.speakers.value = (typeof opts.num_speakers === 'number' && isFinite(opts.num_speakers))
@@ -212,6 +226,16 @@
     els.context.value = typeof opts.context === 'string' ? opts.context : '';
     els.auto.value = typeof opts.auto === 'boolean' ? (opts.auto ? '1' : '0') : '';
     els.review.value = typeof opts.review === 'boolean' ? (opts.review ? '1' : '0') : '';
+  }
+
+  // 새로 읽는 동안 그 묶음의 칸과 실행 단추를 잠근다. 늦은 응답이 사람이 고른 값을 덮지 않게 한다.
+  function setSttFieldsBusy(els, busy, button) {
+    if (els) {
+      ['preprocess', 'speakers', 'context', 'auto', 'review'].forEach(function (k) {
+        if (els[k]) els[k].disabled = !!busy;
+      });
+    }
+    if (button) button.disabled = !!busy;
   }
 
   // 고른 것만 담는다. 틀린 값은 한국어 한 줄로 던진다(서버도 같은 규칙으로 거절한다).
@@ -241,19 +265,36 @@
     return opts;
   }
 
+  var STT_DEFAULTS_TIMEOUT_MS = 15000;
+
   function sttDefaults() {
     if (state.sttDefaults) return Promise.resolve(state.sttDefaults);
     if (state.sttDefaultsReq) return state.sttDefaultsReq;
-    state.sttDefaultsReq = api().json('api/stt-options').then(function (d) {
-      var o = d && d.options;
-      state.sttDefaults = o && typeof o === 'object' && !Array.isArray(o) ? o : {};
-      state.sttDefaultsReq = null;
-      return state.sttDefaults;
-    }, function (e) {
-      state.sttDefaultsReq = null;
-      throw e;
+    var req;
+    var timer = 0;
+    function settle() {
+      clearTimeout(timer);
+      if (state.sttDefaultsReq === req) state.sttDefaultsReq = null;
+    }
+    req = new Promise(function (resolve, reject) {
+      // 응답이 아예 오지 않아도 칸이 잠긴 채 남지 않게 시간을 제한한다(R53-N6).
+      timer = setTimeout(function () {
+        settle();
+        reject(new Error('시간이 지났습니다'));
+      }, STT_DEFAULTS_TIMEOUT_MS);
+      api().json('api/stt-options').then(function (d) {
+        if (state.sttDefaultsReq !== req) return; // 시간이 지나 자리를 비운 뒤 온 응답은 아무것도 하지 않는다
+        var o = d && d.options;
+        state.sttDefaults = o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+        settle();
+        resolve(state.sttDefaults);
+      }, function (e) {
+        settle();
+        reject(e);
+      });
     });
-    return state.sttDefaultsReq;
+    state.sttDefaultsReq = req;
+    return req;
   }
 
   function loadSttSettings() {
@@ -261,14 +302,28 @@
     if (isolated()) { box.hidden = true; return; }
     box.hidden = false;
     var note = $('stt-defaults-note');
+    var st = $('stt-defaults-state');
+    var els = state.sttFields.defaults;
+    var saveBtn = $('stt-defaults-save');
     note.textContent = '';
     $('stt-defaults-fields').hidden = false;
-    $('stt-defaults-save').hidden = false;
+    saveBtn.hidden = false;
+    state.sttDefaults = null; // 열 때마다 전체 기본값을 새로 읽는다(R51-N6)
+    var seq = ++state.sttSeq.defaults; // 이번에 연 묶음의 번호 - 이 번호의 응답만 채우고 푼다(R53-N6)
+    setSttFieldsBusy(els, true, saveBtn);
+    st.textContent = '불러오는 중…';
     sttDefaults().then(function (opts) {
-      fillSttFields(state.sttFields.defaults, opts);
+      if (seq !== state.sttSeq.defaults) return; // 낡은 응답 - 지금 열린 묶음의 차례가 아니다
+      setSttFieldsBusy(els, false, saveBtn);
+      st.textContent = '';
+      // 응답을 기다리는 사이 설정 칸을 닫았으면 채우지 않는다(다음에 열 때 새로 읽는다).
+      if (!$('settings').hidden) fillSttFields(els, opts);
     }, function (e) {
+      if (seq !== state.sttSeq.defaults) return;
+      setSttFieldsBusy(els, false, saveBtn);
+      st.textContent = '';
       $('stt-defaults-fields').hidden = true;
-      $('stt-defaults-save').hidden = true;
+      saveBtn.hidden = true;
       note.textContent = '받아쓰기 옵션을 불러오지 못했습니다: ' + ((e && e.message) || '알 수 없음');
     });
   }
@@ -298,18 +353,39 @@
     var opening = box.hidden;
     box.hidden = !opening;
     $('detail-retry-opts').setAttribute('aria-expanded', opening ? 'true' : 'false');
-    if (!opening) return;
-    if (hasSttOptions(state.detailSttOptions)) {
-      fillSttFields(state.sttFields.detail, state.detailSttOptions);
+    var els = state.sttFields.detail;
+    var runBtn = $('detail-stt-run');
+    var st = $('detail-stt-state');
+    var seq = ++state.sttSeq.detail; // 열고 닫을 때마다 번호를 올린다 - 이 번호의 응답만 채우고 푼다(R53-N6)
+    if (!opening) {
+      // 닫는 사이 걸려 있던 읽기의 응답이 이 칸을 잠그거나 채우지 않게 잠금도 함께 푼다.
+      setSttFieldsBusy(els, false, runBtn);
+      st.textContent = '';
       return;
     }
-    fillSttFields(state.sttFields.detail, {});
+    state.sttDefaults = null; // 상세 칸을 열 때도 전체 기본값을 새로 읽는다(R51-N6)
+    if (hasSttOptions(state.detailSttOptions)) {
+      // 이 녹음은 읽지 않고 바로 채우므로 기다릴 것이 없다 - 앞 열기의 잠금도 남기지 않는다.
+      fillSttFields(els, state.detailSttOptions);
+      setSttFieldsBusy(els, false, runBtn);
+      st.textContent = '';
+      return;
+    }
+    fillSttFields(els, {});
+    setSttFieldsBusy(els, true, runBtn);
+    st.textContent = '불러오는 중…';
     sttDefaults().then(function (opts) {
-      // 여는 사이 다른 녹취로 바뀌었거나 다시 닫았으면 건드리지 않는다 (폴링도 이 입력은 지우지 않는다)
-      if (state.detailId === id && !$('detail-stt').hidden) fillSttFields(state.sttFields.detail, opts);
+      if (seq !== state.sttSeq.detail) return; // 낡은 응답 - 옮겼거나 닫았다
+      setSttFieldsBusy(els, false, runBtn);
+      st.textContent = '';
+      // 여는 사이 다른 녹취로 바뀌었거나 다시 닫았으면 채우지 않는다 (폴링도 이 입력은 지우지 않는다)
+      if (state.detailId === id && !$('detail-stt').hidden) fillSttFields(els, opts);
     }, function (e) {
+      if (seq !== state.sttSeq.detail) return;
+      setSttFieldsBusy(els, false, runBtn);
+      st.textContent = '';
       if (state.detailId === id && !$('detail-stt').hidden) {
-        $('detail-stt-state').textContent = '기본값을 불러오지 못했습니다: ' + ((e && e.message) || '알 수 없음');
+        st.textContent = '기본값을 불러오지 못했습니다: ' + ((e && e.message) || '알 수 없음');
       }
     });
   }
@@ -320,17 +396,22 @@
     var opts;
     try { opts = readSttFields(state.sttFields.detail); }
     catch (e) { toast(e.message); return; }
+    // 보낼 때의 녹음과 칸 번호를 기억한다 - 응답이 둘 다 그대로일 때만 상태 글을 지운다(R53-N12)
+    var seq = state.sttSeq.detail;
     var st = $('detail-stt-state');
     st.textContent = '요청 중…';
     api().json('api/recordings/' + encodeURIComponent(id) + '/retry', { method: 'POST', body: { options: opts } }).then(function () {
-      st.textContent = '';
-      $('detail-stt').hidden = true;
-      $('detail-retry-opts').setAttribute('aria-expanded', 'false');
+      if (state.detailId === id && state.sttSeq.detail === seq) st.textContent = '';
       toast('옵션을 바꿔 다시 받아쓰기를 요청했습니다. 바뀌기 전 글은 \'지난 글\' 에 5벌까지 남습니다.');
-      loadDetail(id);
+      // 아직 같은 녹음을 보고 있을 때만 칸을 닫고 그 녹음을 다시 읽는다(R51-N7)
+      if (state.detailId === id) {
+        $('detail-stt').hidden = true;
+        $('detail-retry-opts').setAttribute('aria-expanded', 'false');
+        loadDetail(id);
+      }
       loadList();
     }, function (e) {
-      st.textContent = '';
+      if (state.detailId === id && state.sttSeq.detail === seq) st.textContent = '';
       onApiError(e); // 400 이면 서버가 준 까닭이 토스트로 간다
     });
   }
@@ -1054,7 +1135,7 @@
       renderList(items);
       var busy = items.some(function (i) { return i.status === 'pending' || i.status === 'transcribing'; });
       if (state.detailId && (state.detailStatus === 'pending' || state.detailStatus === 'transcribing')) {
-        loadDetail(state.detailId);
+        loadDetail(state.detailId, false, true);
         busy = true;
       }
       if (busy) state.listTimer = setTimeout(loadList, 5000);
@@ -1103,8 +1184,11 @@
     box.appendChild(a);
   }
 
-  function loadDetail(id, forceFill) {
-    return api().json('api/recordings/' + encodeURIComponent(id)).then(function (r) {
+  function loadDetail(id, forceFill, poll, afterBusy) {
+    // 받아쓰는 중의 되풀이 읽기만 지난 글을 빼고 읽는다(R52-N5). 처음 열 때·사람이 누른 동작 뒤 읽기는 전체.
+    var omitPrev = !!poll && (state.detailStatus === 'pending' || state.detailStatus === 'transcribing');
+    var url = 'api/recordings/' + encodeURIComponent(id) + (omitPrev ? '?prev=0' : '');
+    return api().json(url).then(function (r) {
       if (state.detailId !== id) return;
       var prevStatus = state.detailStatus;
       var wasPending = state.detailAutotag === 'pending';
@@ -1115,7 +1199,7 @@
       var meta = fmtTime(r.recorded_at || r.created) +
         (r.duration_ms != null ? ' · ' + fmtClock(r.duration_ms) : '') +
         ' · ' + (STATUS[r.status] || r.status) +
-        (r.chars ? ' · ' + r.chars + '자' : '') +
+        (r.chars ? (r.status === 'failed' ? ' · 이전 글 그대로 ' + r.chars + '자' : ' · ' + r.chars + '자') : '') +
         (r.error ? ' · ' + r.error : '');
       $('detail-meta').textContent = meta;
       renderLoc(r.location);
@@ -1123,7 +1207,7 @@
       $('detail-retry-opts').hidden = isolated();
       if (isolated()) $('detail-stt').hidden = true;
       renderSttUsed(r.stt_used);
-      renderPrev(r.prev_transcripts);
+      if (Object.prototype.hasOwnProperty.call(r, 'prev_transcripts')) renderPrev(r.prev_transcripts);
       $('detail-delete').hidden = isolated();
       state.detailText = r.transcript || '';
       state.detailHead = (label || r.title || '녹취') + ' · ' + fmtTime(r.recorded_at || r.created);
@@ -1144,23 +1228,26 @@
       clearTimeout(state.detailTimer);
       if (r.autotag === 'pending') {
         state.detailTimer = setTimeout(function () {
-          if (state.detailId === id) loadDetail(id);
+          if (state.detailId === id) loadDetail(id, false, true);
         }, 2000);
       } else if (wasPending) {
         loadList();
       }
       if (r.autotag == null && r.status === 'done' &&
-          (prevStatus === 'pending' || prevStatus === 'transcribing') && state.llm) {
+          (afterBusy || prevStatus === 'pending' || prevStatus === 'transcribing') && state.llm) {
         state.detailTimer = setTimeout(function () {
-          if (state.detailId === id) loadDetail(id);
+          if (state.detailId === id) loadDetail(id, false, true);
         }, 2000);
       }
+      // ?prev=0 으로 읽었는데 더는 바쁘지 않으면, 지난 글까지 한 번 더 읽어 그린다(R52-N5).
+      // 이 읽기는 방금 바빴던 상태를 이어받아, 끝나는 순간을 잘못 받아도 AI 태그를 다시 확인한다(R49-N5).
+      if (omitPrev && r.status !== 'pending' && r.status !== 'transcribing') return loadDetail(id, false, false, true);
     }, function (e) {
       if (state.detailId === id) onApiError(e);
       if (state.detailId === id && state.detailAutotag === 'pending') {
         clearTimeout(state.detailTimer);
         state.detailTimer = setTimeout(function () {
-          if (state.detailId === id) loadDetail(id);
+          if (state.detailId === id) loadDetail(id, false, true);
         }, 5000);
       }
     });
@@ -1196,6 +1283,9 @@
     $('detail-stt-used').textContent = '';
     $('detail-prev').hidden = true;
     $('detail-prev-list').textContent = '';
+    // 다른 녹음으로 옮기면 앞 녹음의 읽기 응답은 낡은 것이다 - 잠금을 풀고 번호를 올린다(R53-N6).
+    state.sttSeq.detail++;
+    setSttFieldsBusy(state.sttFields.detail, false, $('detail-stt-run'));
     fillSttFields(state.sttFields.detail, {});
     Array.prototype.forEach.call($('list').children, function (li) {
       li.classList.toggle('open', li.dataset.id === id);
@@ -1215,6 +1305,10 @@
     state.detailStatus = null;
     state.detailAutotag = null;
     clearTimeout(state.detailTimer);
+    // 닫은 칸의 잠금이 남지 않게 풀고, 걸려 있던 읽기의 응답이 이 칸을 건드리지 않게 번호를 올린다(R53-N6).
+    state.sttSeq.detail++;
+    setSttFieldsBusy(state.sttFields.detail, false, $('detail-stt-run'));
+    $('detail-stt-state').textContent = '';
     $('detail').hidden = true;
     var audio = $('detail-audio');
     try { audio.pause(); } catch (e) { /* 무시 */ }

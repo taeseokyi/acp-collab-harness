@@ -1,0 +1,165 @@
+{
+ "id": "G-063",
+ "request": "Q-261114-a3cf",
+ "created": "2026-11-14T00:55:52",
+ "rev": 177,
+ "round": 30,
+ "concurrency": 3,
+ "nodes": [
+  {
+   "id": "T-307",
+   "slot": "S4",
+   "deps": [],
+   "project": "자모맞히기",
+   "title": "R29-N1(브라우저): 하드 잠금 시나리오가 잠금 시도 뒤 저장된 설정도 보게 - 변이 V19 잡기 + tests/README 모드 수",
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "write": [
+    "projects/자모맞히기/tests/browser_modes.py",
+    "projects/자모맞히기/tests/README.md"
+   ],
+   "task": "# T-307 하드 잠금 시험에 '저장된 설정 그대로' 더하기 (R29-N1, `rounds/R29/REVIEW-r29.md` 2절 V19·5절)\n\n쓸 파일은 둘: `projects/자모맞히기/tests/browser_modes.py`, `projects/자모맞히기/tests/README.md`. 다른 파일은 읽기만(특히 `web/js/ui.js` 는 **고치지 마십시오** - 제품은 맞고 시험이 빈 것입니다). **바로 파일을 고치십시오.**\n\n## 배경\n\n`web/js/ui.js:460-465`: 줄을 낸 판에서 `#set-hard` 를 바꾸려 하면 체크박스를 되돌리고 토스트를 띄운 뒤 **저장하기 전에** `return` 합니다. 변이 **V19** - 463행 토스트 뒤에 `settings.hardMode = !game.hardMode; saveSettings(settings);` 를 넣어 저장된 설정만 몰래 바꾸는 것 - 가 살아남습니다. `scenario_hard_locked_after_play`(991행~)의 새로 고친 뒤 확인(`open_settings_checked`)은 판이 있으면 `game.hardMode` 를 비추는 체크박스(`ui.js:451`)만 보기 때문입니다. 그러면 다음 판(연습·내일)이 뜻하지 않게 하드로 시작합니다.\n\n## 할 일\n\n`scenario_hard_locked_after_play` 에 검사를 하나 이상 더합니다(기존 97개는 그대로 → 합계 98 이상):\n- 잠금 시도 뒤(가능하면 새로 고친 뒤에도) 저장된 설정 `JSON.parse(localStorage.getItem('jamo.settings'))` 의 `hardMode` 가 참이 아님(`stored` 를 읽는 법은 600~630행 근처를 본뜨십시오). 그리고/또는 연습 모드로 옮겨 빈 연습 판의 `#set-hard` 체크박스가 꺼져 있음(`is_checked()`).\n\n화면 검사 규칙: 그려진 것을 묻습니다(`is_visible()`, `is_checked()`). 고정 `sleep` 으로 판정하지 않습니다.\n\n## README\n\n`tests/README.md` 의 모드 수 97 이 나오는 세 곳(12행 표 `통과 97 / 전체 97`, 15행 문단, 70행 `모드 97`)을 새 수로 바꿉니다. 다른 벌의 수(66 · 13 · 121)는 그대로.\n\n## 스스로 확인 (엔진의 검증도 이것)\n\n`python3 .aimem/graph/inputs/r30/v_modes.py` 의 마지막 줄이 `v_modes: 모두 통과`. 이 도구는 원본 `browser_modes.py` 가 전부 통과(98개 이상)하는지, README 수가 맞는지 본 다음 `/tmp` 사본의 `ui.js` 에 V19·V16 을 하나씩 넣어 **실패해야** 잡힌 것으로 봅니다(몇 분 걸림). 관리자 것이니 고치지 마십시오. 먼저 `python3 projects/자모맞히기/tests/browser_modes.py` 로 원본 통과를 보십시오. 자기가 만든 `/tmp` 폴더는 끝날 때 `rm -rf`.\n\n## 하지 말 것\n\n다른 파일 쓰기, `git commit`/`push`, 저장소 안 파일 삭제, 의존성 설치, 운영 모니터 부르기.\n\n보고 첫 줄은 `DONE` / `PARTIAL` / `BLOCKED` / `NEEDS-FIX: …`, 그다음 더한 검사 이름과 도구 출력의 마지막 네 줄.\n",
+   "verify": "python3 .aimem/graph/inputs/r30/v_modes.py",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-307-S4-a1-005559",
+     "started": "2026-11-14T00:55:59",
+     "ended": "2026-11-14T01:01:21",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n`scenario_hard_locked_after_play` 에 검사 3개를 더했습니다. 모드 벌은 97개에서 100개가 됐고, V19 가 잡힙니다.\n\n**고친 파일**\n- `projects/자모맞히기/tests/browser_modes.py`\n  - `T-304 잠금 시도 뒤 저장된 설정의 하드가 참이 아님`: 잠금 토스트 뒤 `jamo.settings` 의 `hardMode` 가 참이 아닌지 봅니다.\n  - `T-304 새로 고친 뒤에도 저장된 설정의 하드가 참이 아님`: 새로 고친 뒤 같은 검사를 한 번 더 합니다.\n  - `T-304 잠금 시도 뒤 빈 연습 판의 하드 체크박스가 꺼짐`: 연습 모드로 옮겨 `#set-hard` 가 보이고 꺼져 있으며 판이 비어 있는지 봅니다.\n- `projects/자모맞히기/tests/README.md`: 모드 수 97 이 나오는 12·15·70행을 100 으로 바꿨습니다. 66·13·121 은 그대로입니다.\n\n`ui.js` 는 건드리지 않았습니다.\n\n**검증**\n- `python3 projects/자모맞히기/tests/browser_modes.py` 마지막 줄: `통과 100 / 전체 100`.\n- `python3 .aimem/graph/inputs/r30/v_modes.py` 마지막 네 줄:\n```\n원본: 통과 100 / 전체 100 rc 0\nV19 잠금 분기가 설정을 몰래 저장: 잡힘 (통과 97 / 전체 100)\nV16 hardModeLocked 늘 false: 잡힘 (통과 94 / 전체 95)\nv_modes: 모두 통과\n```\n\nV19 사본에서는 새 검사 3개가 모두 실패해 97/100 이 됐습니다. 이번 일로 만든 `/tmp` 폴더는 없습니다. 커밋과 푸시는 하지 않았습니다.",
+     "report_tail": "DONE\n\n`scenario_hard_locked_after_play` 에 검사 3개를 더했습니다. 모드 벌은 97개에서 100개가 됐고, V19 가 잡힙니다.\n\n**고친 파일**\n- `projects/자모맞히기/tests/browser_modes.py`\n  - `T-304 잠금 시도 뒤 저장된 설정의 하드가 참이 아님`: 잠금 토스트 뒤 `jamo.settings` 의 `hardMode` 가 참이 아닌지 봅니다.\n  - `T-304 새로 고친 뒤에도 저장된 설정의 하드가 참이 아님`: 새로 고친 뒤 같은 검사를 한 번 더 합니다.\n  - `T-304 잠금 시도 뒤 빈 연습 판의 하드 체크박스가 꺼짐`: 연습 모드로 옮겨 `#set-hard` 가 보이고 꺼져 있으며 판이 비어 있는지 봅니다.\n- `projects/자모맞히기/tests/README.md`: 모드 수 97 이 나오는 12·15·70행을 100 으로 바꿨습니다. 66·13·121 은 그대로입니다.\n\n`ui.js` 는 건드리지 않았습니다.\n\n**검증**\n- `python3 projects/자모맞히기/tests/browser_modes.py` 마지막 줄: `통과 100 / 전체 100`.\n- `python3 .aimem/graph/inputs/r30/v_modes.py` 마지막 네 줄:\n```\n원본: 통과 100 / 전체 100 rc 0\nV19 잠금 분기가 설정을 몰래 저장: 잡힘 (통과 97 / 전체 100)\nV16 hardModeLocked 늘 false: 잡힘 (통과 94 / 전체 95)\nv_modes: 모두 통과\n```\n\nV19 사본에서는 새 검사 3개가 모두 실패해 97/100 이 됐습니다. 이번 일로 만든 `/tmp` 폴더는 없습니다. 커밋과 푸시는 하지 않았습니다.",
+     "session_state": "done",
+     "verify_rc": 0,
+     "verify_tail": "원본: 통과 100 / 전체 100 rc 0\nV19 잠금 분기가 설정을 몰래 저장: 잡힘 (통과 97 / 전체 100)\nV16 hardModeLocked 늘 false: 잡힘 (통과 94 / 전체 95)\nv_modes: 모두 통과\n",
+     "fail_kind": null
+    }
+   ]
+  },
+  {
+   "id": "T-308",
+   "slot": "S4",
+   "deps": [],
+   "project": "자모맞히기",
+   "title": "R29-N2(낱말): 흔한 동사 '배우다' 를 풀이씨 묶음에 보태고 words.js 재생성",
+   "timeout_sec": 1800,
+   "max_attempts": 2,
+   "write": [
+    "projects/자모맞히기/data/words/풀이씨.txt",
+    "projects/자모맞히기/web/js/words.js"
+   ],
+   "task": "# T-308 '배우다' 보태기 (R29-N2, `rounds/R29/REVIEW-r29.md` 4·5절)\n\n쓸 파일: `projects/자모맞히기/data/words/풀이씨.txt`, `projects/자모맞히기/web/js/words.js`(빌드 출력만). 다른 파일은 읽기만. **바로 고치십시오 - 계획을 쓰지 마십시오.**\n\n1. `풀이씨.txt` 의 `-우다` 동사들(`키우다` 187행, `피우다` 195행 근처)이 있는 묶음에 `배우다` 한 줄을 보탭니다. 다른 낱말은 건드리지 않습니다. 다른 갈래 파일에는 넣지 않습니다.\n2. `python3 projects/자모맞히기/tools/build_words.py` 로 `web/js/words.js` 를 다시 만듭니다(손으로 고치지 않음). ANSWERS 380 그대로, ALLOWED 2181 → 2182.\n3. `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'` 가 초록인지 봅니다(갈래 파일 첫 음절 상한 시험이 걸리면 보고에 적고 멈추십시오).\n\n## 스스로 확인 (엔진의 검증도 이것)\n\n`python3 .aimem/graph/inputs/r30/v_words.py` 의 마지막 줄이 `v_words: 모두 통과`. 관리자 것이니 고치지 마십시오.\n\n## 하지 말 것\n\n다른 파일 쓰기(`answers.txt`·`allowed.txt`·`build_words.py`·`test_words.py` 포함), `git commit`/`push`, 파일 삭제, 의존성 설치, 네트워크, 운영 모니터 부르기.\n\n보고 첫 줄은 `DONE` / `PARTIAL` / `BLOCKED`, 그다음 도구 출력의 마지막 세 줄.\n",
+   "verify": "python3 .aimem/graph/inputs/r30/v_words.py",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-308-S4-a1-011530",
+     "started": "2026-11-14T01:15:30",
+     "ended": "2026-11-14T01:15:44",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n\n`풀이씨.txt` 의 `-우다` 동사 묶음에 `배우다` 를 `키우다` 바로 다음 줄로 보탰다. 다른 낱말과 다른 갈래 파일은 건드리지 않았다. `build_words.py` 로 `web/js/words.js` 를 다시 만들었다. 손으로 고치지 않았다.\n\n- 슬롯 확인: `python3 tools/aimem_db.py check --slot S4 --token 6cd650 --rev 177` 가 일치로 나왔다.\n- 빌드: `python3 projects/자모맞히기/tools/build_words.py` 의 마지막 세 줄은 아래와 같다.\n  ```\n    자연마음.txt: 502개 (걸러 냄 14줄)\n    풀이씨.txt: 285개 (걸러 냄 11줄)\n  wrote /home/tsyi/work/ai-fleet/projects/자모맞히기/web/js/words.js\n  ```\n- 단위 시험: `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'` 의 마지막 세 줄은 아래와 같다. 첫 음절 상한 시험은 걸리지 않았다.\n  ```\n  Ran 13 tests in 0.061s\n\n  OK\n  ```\n- 엔진 검증: `python3 .aimem/graph/inputs/r30/v_words.py` 의 마지막 세 줄은 아래와 같다.\n  ```\n  OK\n  ANSWERS 380 · ALLOWED 2182\n  v_words: 모두 통과\n  ```\n\nANSWERS 는 380 그대로이고 ALLOWED 는 2181 에서 2182 가 됐다. 커밋과 푸시는 하지 않았다.",
+     "report_tail": "DONE\n\n`풀이씨.txt` 의 `-우다` 동사 묶음에 `배우다` 를 `키우다` 바로 다음 줄로 보탰다. 다른 낱말과 다른 갈래 파일은 건드리지 않았다. `build_words.py` 로 `web/js/words.js` 를 다시 만들었다. 손으로 고치지 않았다.\n\n- 슬롯 확인: `python3 tools/aimem_db.py check --slot S4 --token 6cd650 --rev 177` 가 일치로 나왔다.\n- 빌드: `python3 projects/자모맞히기/tools/build_words.py` 의 마지막 세 줄은 아래와 같다.\n  ```\n    자연마음.txt: 502개 (걸러 냄 14줄)\n    풀이씨.txt: 285개 (걸러 냄 11줄)\n  wrote /home/tsyi/work/ai-fleet/projects/자모맞히기/web/js/words.js\n  ```\n- 단위 시험: `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'` 의 마지막 세 줄은 아래와 같다. 첫 음절 상한 시험은 걸리지 않았다.\n  ```\n  Ran 13 tests in 0.061s\n\n  OK\n  ```\n- 엔진 검증: `python3 .aimem/graph/inputs/r30/v_words.py` 의 마지막 세 줄은 아래와 같다.\n  ```\n  OK\n  ANSWERS 380 · ALLOWED 2182\n  v_words: 모두 통과\n  ```\n\nANSWERS 는 380 그대로이고 ALLOWED 는 2181 에서 2182 가 됐다. 커밋과 푸시는 하지 않았다.",
+     "session_state": "done",
+     "verify_rc": 0,
+     "verify_tail": "Ran 13 tests in 0.062s\n\nOK\nANSWERS 380 · ALLOWED 2182\nv_words: 모두 통과\n",
+     "fail_kind": null
+    }
+   ],
+   "infra_attempts": [
+    {
+     "run_id": "T-308-S3-a1-005559",
+     "started": "2026-11-14T00:55:59",
+     "ended": "2026-11-14T01:05:00",
+     "rc": 125,
+     "state": "done",
+     "report": "",
+     "report_tail": "",
+     "session_state": "stalled",
+     "why": "침묵 240초 넘김 (사건도 읽기도 없음)",
+     "fail_kind": "infra",
+     "verify_rc": null,
+     "verify_tail": "기반 장애(침묵 240초 넘김 (사건도 읽기도 없음)) - 시도로 세지 않는다",
+     "provider": "opencode",
+     "cleared": true
+    },
+    {
+     "run_id": "T-308-S3-a1-010501",
+     "started": "2026-11-14T01:05:01",
+     "ended": "2026-11-14T01:10:12",
+     "rc": 125,
+     "state": "done",
+     "report": "",
+     "report_tail": "",
+     "session_state": "stalled",
+     "why": "침묵 240초 넘김 (사건도 읽기도 없음)",
+     "fail_kind": "infra",
+     "verify_rc": null,
+     "verify_tail": "기반 장애(침묵 240초 넘김 (사건도 읽기도 없음)) - 시도로 세지 않는다",
+     "provider": "opencode",
+     "cleared": true
+    },
+    {
+     "run_id": "T-308-S3-a1-011012",
+     "started": "2026-11-14T01:10:13",
+     "ended": "2026-11-14T01:15:23",
+     "rc": 125,
+     "state": "done",
+     "report": "",
+     "report_tail": "",
+     "session_state": "stalled",
+     "why": "침묵 240초 넘김 (사건도 읽기도 없음)",
+     "fail_kind": "infra",
+     "verify_rc": null,
+     "verify_tail": "기반 장애(침묵 240초 넘김 (사건도 읽기도 없음)) - 시도로 세지 않는다",
+     "provider": "opencode",
+     "infra": true,
+     "cleared": true
+    }
+   ],
+   "moves": [
+    {
+     "from": "S3",
+     "to": "S4",
+     "at": "2026-11-14T01:15:28",
+     "why": ""
+    }
+   ]
+  },
+  {
+   "id": "T-309",
+   "slot": "S1",
+   "deps": [
+    "T-307",
+    "T-308"
+   ],
+   "project": "자모맞히기",
+   "title": "가벼운 적대적 재검수: R29-N1·N2 닫혔나 + 변이 V19",
+   "timeout_sec": 2400,
+   "max_attempts": 2,
+   "write": [
+    "rounds/R30/REVIEW-r30.md"
+   ],
+   "task": "# T-309 가벼운 적대적 재검수 (R29-N1·N2)\n\n쓸 파일은 **하나**: `rounds/R30/REVIEW-r30.md`(새 파일). 프로젝트 파일은 **고치지 마십시오** - 결함은 기록만. 변이·실험은 `/tmp` 사본에서만(끝날 때 자기가 만든 `/tmp` 폴더를 `rm -rf`). 바로 시작하십시오. **가볍게** - 20분 안쪽을 목표로.\n\n## 배경\n\n자모맞히기 목표는 15/15 로 닫혀 있고, R29 검수 `rounds/R29/REVIEW-r29.md` 5절의 하 결함 둘을 고쳤습니다: T-307(`tests/browser_modes.py` `scenario_hard_locked_after_play` 에 잠금 시도 뒤 저장된 설정 확인, `tests/README.md` 수), T-308(`data/words/풀이씨.txt` 에 `배우다`, `web/js/words.js` 재생성).\n\n## 할 일\n\n1. **네 벌 재현**(읽기만): `node --test projects/자모맞히기/tests/*.mjs`, `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'`, `python3 projects/자모맞히기/tests/browser_game.py`, `python3 projects/자모맞히기/tests/browser_modes.py` - 수와 rc, `tests/README.md` 의 수와 맞는지.\n2. **변이**: V19(`ui.js` 잠금 분기 토스트 뒤 `settings.hardMode = !game.hardMode; saveSettings(settings);`)를 `/tmp` 사본에 넣어 잡히는지. 새 검사를 겨누는 새 변이 하나(예: 잠금 분기가 `settings.hardMode = true` 로 저장하되 체크는 되돌림).\n3. **N2**: `배우다` 가 ALLOWED 에 있고 ANSWERS 380 그대로인지, 다른 낱말이 빠지지 않았는지(`git diff --stat` 과 `풀이씨.txt` 의 diff).\n4. 판정.\n\n## 기록 꼴 (`rounds/R30/REVIEW-r30.md`)\n\n절: 1 네 벌 · 2 변이(표: 번호·변이·잡은 곳·판정) · 3 R29-N2 · 4 새 결함(표: 번호 `R30-N1`… · 심각도 상/중/하 · 무엇 · 어디 · 재현 · 고칠 방향, 없으면 '없음') · 5 판정. R29-N1·N2 각각 닫힘/열림을 적고 마지막 절에 **한 줄** `판정: R29-N1·N2 닫음` 또는 `판정: R29-N1·N2 열어 둠` 과 그 까닭. 닫는 기준: 네 벌 모두 초록, V19 잡힘, 배우다 들어감, '상'·'중' 결함 없음.\n\n## 스스로 확인 (엔진의 검증도 이것)\n\n`python3 .aimem/graph/inputs/r30/v_review.py` 의 마지막 줄이 `v_review: 모두 통과`(꼴만 봄).\n\n## 하지 말 것\n\n저장소 안 파일 쓰기(위 하나 빼고), `git commit`/`push`, 저장소 안 파일 삭제, 의존성 설치, 운영 모니터 부르기.\n\n보고 첫 줄은 `DONE` / `PARTIAL` / `BLOCKED`, 그다음 판정 줄과 새 결함 수(심각도별).\n",
+   "verify": "python3 .aimem/graph/inputs/r30/v_review.py",
+   "status": "done",
+   "attempts": [
+    {
+     "run_id": "T-309-S1-a1-011544",
+     "started": "2026-11-14T01:15:45",
+     "ended": "2026-11-14T01:24:26",
+     "rc": 0,
+     "state": "done",
+     "report": "DONE\n판정: R29-N1·N2 닫음. 새 결함은 '하' 1건이고 '상'·'중'은 없습니다.\n\n**한 일**\n- 시작 확인: `python3 tools/aimem_db.py check --slot S1 --token a41f0c --rev 177` → `일치`. 쓴 파일은 `rounds/R30/REVIEW-r30.md` 하나이고, 이 파일은 내 소유 경로에 있습니다.\n- **네 벌 재현:** 모두 rc 0이고, 수가 `tests/README.md`에 적힌 수와 세 자리 모두 같습니다.\n  - `node --test projects/자모맞히기/tests/*.mjs` → `ℹ pass 66`, `ℹ fail 0`\n  - `python3 -m unittest discover -s projects/자모맞히기/tests -p 'test_*.py'` → `Ran 13 tests`, `OK`\n  - `python3 projects/자모맞히기/tests/browser_game.py` → `통과 121 / 전체 121`\n  - `python3 projects/자모맞히기/tests/browser_modes.py` → `통과 100 / 전체 100`\n- **변이:** `/tmp/s1-r30` 사본의 `ui.js` 잠금 분기에 한 줄씩 넣었습니다. 셋 모두 `통과 97 / 전체 100`으로 잡혔고, 실패한 검사는 매번 같은 3건입니다(저장된 하드 설정 확인 2건, 빈 연습 판 체크박스 1건).\n  - V19 `settings.hardMode = !game.hardMode; saveSettings(settings);` → 잡힘\n  - 새 변이 V20 `settings.hardMode = true; saveSettings(settings);`(체크는 되돌린 채 참을 저장) → 잡힘\n  - 새 변이 V21 `saveSettings({ ...settings, hardMode: true });`(메모리 설정은 그대로 두고 저장소에만 참을 씀) → 잡힘. 화면 쪽 첫 검사(체크 되돌림·토스트)는 통과하므로, 이번에 보탠 저장소 검사가 실제로 일한다는 뜻입니다.\n- **N2:** `test_words.read_arrays()`로 세어 보니 `배우다`는 ALLOWED에 있고 ANSWERS에는 없습니다. ANSWERS는 380 그대로, ALLOWED는 2182(R29의 2181 + 1, 중복 없음)입니다.\n  - `풀이씨.txt` diff에서 이번 몫은 `키우다` 다음에 들어간 `+배우다` 하나입니다.\n  - diff에 함께 보이는 나머지 보탬과 `채이다` 지움은 T-305 몫으로, R29 검수가 이미 본 것입니다. 의도 밖으로 빠진 낱말은 없습니다.\n- **스스로 확인:** `python3 .aimem/graph/inputs/r30/v_review.py` → `v_review: 모두 통과`.\n- 내가 만든 `/tmp/s1-r30`는 지웠고, 없어진 것까지 확인했습니다.\n\n**다음 담당자가 알아야 할 것**\n- **R30-N1 (하):** `scenario_hard_locked_after_play`는 하드가 꺼진 판에서 켜기를 시도하는 방향만 봅니다. 하드가 켜진 판에서 끄기를 시도할 때 `false`를 저장하는 변이는 이 시나리오로 잡히지 않습니다. 필요하면 짝 시나리오를 하나 보태면 되고, 목표를 닫는 데에는 영향이 없습니다.\n- 저장소의 `git diff`는 HEAD 대비라서 R28·R29의 미커밋 변경이 함께 섞여 보입니다.",
+     "report_tail": "변이 V20 `settings.hardMode = true; saveSettings(settings);`(체크는 되돌린 채 참을 저장) → 잡힘\n  - 새 변이 V21 `saveSettings({ ...settings, hardMode: true });`(메모리 설정은 그대로 두고 저장소에만 참을 씀) → 잡힘. 화면 쪽 첫 검사(체크 되돌림·토스트)는 통과하므로, 이번에 보탠 저장소 검사가 실제로 일한다는 뜻입니다.\n- **N2:** `test_words.read_arrays()`로 세어 보니 `배우다`는 ALLOWED에 있고 ANSWERS에는 없습니다. ANSWERS는 380 그대로, ALLOWED는 2182(R29의 2181 + 1, 중복 없음)입니다.\n  - `풀이씨.txt` diff에서 이번 몫은 `키우다` 다음에 들어간 `+배우다` 하나입니다.\n  - diff에 함께 보이는 나머지 보탬과 `채이다` 지움은 T-305 몫으로, R29 검수가 이미 본 것입니다. 의도 밖으로 빠진 낱말은 없습니다.\n- **스스로 확인:** `python3 .aimem/graph/inputs/r30/v_review.py` → `v_review: 모두 통과`.\n- 내가 만든 `/tmp/s1-r30`는 지웠고, 없어진 것까지 확인했습니다.\n\n**다음 담당자가 알아야 할 것**\n- **R30-N1 (하):** `scenario_hard_locked_after_play`는 하드가 꺼진 판에서 켜기를 시도하는 방향만 봅니다. 하드가 켜진 판에서 끄기를 시도할 때 `false`를 저장하는 변이는 이 시나리오로 잡히지 않습니다. 필요하면 짝 시나리오를 하나 보태면 되고, 목표를 닫는 데에는 영향이 없습니다.\n- 저장소의 `git diff`는 HEAD 대비라서 R28·R29의 미커밋 변경이 함께 섞여 보입니다.",
+     "session_state": "done",
+     "verify_rc": 0,
+     "verify_tail": "REVIEW-r30.md: 48줄\nv_review: 모두 통과\n",
+     "fail_kind": null
+    }
+   ]
+  }
+ ],
+ "updated": "2026-11-14T01:24:27"
+}

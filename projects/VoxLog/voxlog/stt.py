@@ -36,6 +36,7 @@ POLL_MAX_ERRORS = 30    # 조회가 이만큼 잇달아 실패하면 그만둔�
 JOB_TIMEOUT = 6 * 3600  # 맡긴 뒤 결과까지 기다리는 상한 (서버 줄 서기 포함)
 
 NO_BACKEND_MESSAGE = "음성인식 백엔드가 없습니다 - VOXLOG_STT_URL 또는 VOXLOG_STT_CMD"
+EMPTY_TEXT_ERROR = "받아 적은 글이 비었습니다 - 소리가 없거나 말소리가 잡히지 않았을 수 있습니다(옵션을 바꿔 다시 받아써 볼 수 있음)"
 
 # 서버가 주는 작업 id 는 URL 경로(GET VOXLOG_STT_URL/<id>)에 들어간다. UUID·job_1 같은 실제 꼴을 받되
 # 경로를 벗어나는 글자(`/`, `..`)만 막는다. R41-N1.
@@ -143,7 +144,7 @@ def _transcribe_command(path, env) -> str:
             raise SttError(_decode(proc.stderr)[-200:] or "음성인식 명령이 실패했습니다")
         text = _decode(proc.stdout).strip()
         if not text:
-            raise SttError("받아 적은 글이 비었습니다")
+            raise SttError(EMPTY_TEXT_ERROR)
         return text
     finally:
         wav.unlink(missing_ok=True)
@@ -473,10 +474,10 @@ class Transcriber:
             self.store.set_status(rid, "failed", _short(exc))
         else:
             if not (text or "").strip():
-                self.store.set_status(rid, "failed", "받아 적은 글이 비었습니다")
+                self.store.set_status(rid, "failed", EMPTY_TEXT_ERROR)
                 return
             self.store.set_transcript(rid, text, used=used)
-            if (text or "").strip() and self.on_done is not None:
+            if self.on_done is not None:
                 try:
                     self.on_done(rid)
                 except Exception:  # noqa: BLE001 - 받아쓰기 결과에는 영향이 없다

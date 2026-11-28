@@ -1070,5 +1070,71 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(path.read_text(encoding="utf-8"), "둘째 글")
 
 
+    # ---- R53: 깨진 .prev.json·옛 .prev.txt·get(with_prev)·중복·공백·화면 문구 ----
+
+    def test_broken_prev_json_falls_back_to_prev_txt_and_absorbs(self):
+        rid = self.add(recorded_at="2026-01-01T10:00:00")["id"]
+        self.store.set_transcript(rid, "지금 글", used={"preprocess": "level"})
+        day_dir = self.root / "transcripts" / "2026-01-01"
+        (day_dir / (rid + ".prev.json")).write_text("{oops", encoding="utf-8")
+        (day_dir / (rid + ".prev.txt")).write_text("옛글", encoding="utf-8")
+
+        got = self.store.get(rid)
+        self.assertEqual([p["text"] for p in got["prev_transcripts"]], ["옛글"])
+
+        self.store.set_transcript(rid, "새 글", used={"preprocess": "none"})
+        stored = json.loads((day_dir / (rid + ".prev.json")).read_text(encoding="utf-8"))
+        self.assertEqual([p["text"] for p in stored], ["옛글", "지금 글"])
+        self.assertFalse((day_dir / (rid + ".prev.txt")).exists())
+        got = self.store.get(rid)
+        self.assertEqual([p["text"] for p in got["prev_transcripts"]], ["지금 글", "옛글"])
+
+    def test_get_hides_prev_entry_equal_to_current_text(self):
+        rid = self.add(recorded_at="2026-01-01T10:00:00")["id"]
+        self.store.set_transcript(rid, "같은")
+        day_dir = self.root / "transcripts" / "2026-01-01"
+        (day_dir / (rid + ".prev.txt")).write_text("같은", encoding="utf-8")
+        self.assertEqual(self.store.get(rid)["prev_transcripts"], [])
+
+    def test_legacy_prev_txt_same_as_current_is_deduped_on_retranscript(self):
+        rid = self.add(recorded_at="2026-01-01T10:00:00")["id"]
+        self.store.set_transcript(rid, "X", used={"preprocess": "level"})
+        day_dir = self.root / "transcripts" / "2026-01-01"
+        (day_dir / (rid + ".prev.txt")).write_text("X", encoding="utf-8")
+
+        self.store.set_transcript(rid, "Y", used={"preprocess": "none"})
+        stored = json.loads((day_dir / (rid + ".prev.json")).read_text(encoding="utf-8"))
+        self.assertEqual([p["text"] for p in stored], ["X"])
+        self.assertEqual(len(stored), 1)
+
+    def test_whitespace_only_difference_does_not_grow_prev_list(self):
+        rid = self.add(recorded_at="2026-01-01T10:00:00")["id"]
+        self.store.set_transcript(rid, "A")
+        self.store.set_transcript(rid, "A\n")
+        got = self.store.get(rid)
+        self.assertEqual(got["transcript"], "A\n")
+        self.assertEqual(got["prev_transcripts"], [])
+        prev_path = self.root / "transcripts" / "2026-01-01" / (rid + ".prev.json")
+        self.assertFalse(prev_path.exists())
+
+    def test_get_without_prev_does_not_read_prev_files(self):
+        rid = self.add(recorded_at="2026-01-01T10:00:00")["id"]
+        self.store.set_transcript(rid, "A", used={"preprocess": "level"})
+        self.store.set_transcript(rid, "B", used={"preprocess": "none"})
+        with mock.patch.object(Store, "_read_prev_list",
+                               side_effect=AssertionError("prev 파일을 읽었다")):
+            got = self.store.get(rid, with_prev=False)
+        self.assertNotIn("prev_transcripts", got)
+        self.assertEqual(got["transcript"], "B")
+
+    def test_screen_text_matches_prev_keep_count(self):
+        phrase = f"{store_mod.PREV_KEEP}벌"
+        web_dir = pathlib.Path(__file__).resolve().parents[1] / "web"
+        for name in ("index.html", "app.js"):
+            path = web_dir / name
+            self.assertIn(phrase, path.read_text(encoding="utf-8"),
+                          f"{name} 화면 문구가 PREV_KEEP={store_mod.PREV_KEEP} 와 다름 - PREV_KEEP 를 바꾸면 화면 문구도 바꿔야 함")
+
+
 if __name__ == "__main__":
     unittest.main()

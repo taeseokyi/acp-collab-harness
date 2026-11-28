@@ -67,6 +67,11 @@ class NormalizeTest(unittest.TestCase):
     def test_context_trim_empty_and_length_limit(self):
         self.assertEqual(normalize({"context": "  인용  "}), {"context": "인용"})
         self.assertEqual(normalize({"context": " \t\n "}), {})
+        self.assertEqual(normalize({"context": "\u200b"}), {})
+        self.assertEqual(normalize({"context": "a\x00b"}), {"context": "ab"})
+        self.assertEqual(normalize({"context": "a\nb\tc"}), {"context": "a\nb\tc"})
+        self.assertEqual(normalize({"context": "a\u200bb"}), {"context": "ab"})
+        self.assertEqual(normalize({"context": "a\u00adb\ufeffc"}), {"context": "abc"})
         self.assertEqual(
             normalize({"context": "가" * CONTEXT_MAX}),
             {"context": "가" * CONTEXT_MAX},
@@ -115,6 +120,28 @@ class NormalizeTest(unittest.TestCase):
         for message in messages:
             self.assertNotIn("\n", message)
             self.assertTrue(any("\uac00" <= ch <= "\ud7a3" for ch in message))
+
+    # 21
+    def test_context_keeps_hangul_and_emoji_sequences_and_newlines(self):
+        korean = "회의 이름: 김태석 참석자"
+        heart = "\u2764\ufe0f"
+        family = "\U0001f468\u200d\U0001f469\u200d\U0001f467"
+        flag = "\U0001F3F4\U000E0067\U000E0062\U000E0065\U000E006E\U000E0067\U000E007F"
+        self.assertEqual(normalize({"context": korean}), {"context": korean})
+        self.assertEqual(normalize({"context": heart}), {"context": heart})
+        self.assertEqual(normalize({"context": family}), {"context": family})
+        got_flag = normalize({"context": flag})["context"]
+        self.assertEqual(got_flag, flag)
+        tag_points = [ord(ch) for ch in got_flag if 0xE0020 <= ord(ch) <= 0xE007F]
+        self.assertEqual(
+            tag_points,
+            [0xE0067, 0xE0062, 0xE0065, 0xE006E, 0xE0067, 0xE007F],
+        )
+        self.assertEqual(normalize({"context": "a\rb"}), {"context": "a\nb"})
+        self.assertEqual(normalize({"context": "a\r\nb"}), {"context": "a\nb"})
+        self.assertEqual(normalize({"context": "a\u2028b"}), {"context": "a\nb"})
+        self.assertEqual(normalize({"context": "a\u2029b"}), {"context": "a\nb"})
+        self.assertEqual(normalize({"context": "a\u200bb"}), {"context": "ab"})
 
 
 class FormFieldsTest(unittest.TestCase):

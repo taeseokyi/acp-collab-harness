@@ -949,6 +949,29 @@ class EngineV2Stage3(unittest.TestCase):
         board, _ = self._board(db)
         self.assertEqual(board, {"T-1": "REVIEW", "T-2": "IN-PROGRESS"})            # 재시도 대기는 그대로
 
+    def test_step_harvests_one_verified_node_per_tick_and_saves_between(self):
+        """검증 명령이 있는 노드는 한 틱에 하나만 거둔다 - 먼저 통과한 노드가 뒤 노드의 검증을 기다리지 않게."""
+        self._db([("T-1", "IN-PROGRESS"), ("T-2", "IN-PROGRESS")])
+        n1, n2 = self.node("T-1", run="R-1", verify="true"), self.node("T-2", run="R-2", verify="true")
+        g = self.graph([n1, n2])
+        with mock.patch.object(fleet_graph, "_run_info", return_value=("done", 0, None)), \
+             mock.patch.object(fleet, "run_report", return_value="DONE"), \
+             mock.patch.object(fleet_graph, "wrote_nothing", return_value=False), \
+             mock.patch.object(fleet_graph, "_note_unconfined"), \
+             mock.patch.object(fleet_graph, "_verify", return_value=(0, "ok")) as v:
+            fleet_graph.step(g, allow_spawn=False)
+            self.assertEqual((n1["status"], n2["status"], v.call_count), ("done", "running", 1))
+            fleet_graph.step(g, allow_spawn=False)
+            self.assertEqual((n1["status"], n2["status"], v.call_count), ("done", "done", 2))
+
+    def test_verify_tail_keeps_output_order_so_the_failing_step_is_last(self):
+        """`A && B` 에서 A 가 stderr 를 길게 쏟아도, 떨어진 B 의 stdout 이 꼬리에 남는다."""
+        cmd = ("python3 -c \"import sys; sys.stderr.write('E' * 5000)\" && "
+               "python3 -c \"print('실패한 항목: 50'); raise SystemExit(1)\"")
+        rc, tail = fleet_graph._verify({"verify": cmd})
+        self.assertEqual(rc, 1)
+        self.assertIn("실패한 항목: 50", tail[-600:])
+
     def test_board_sync_failure_never_breaks_step(self):
         (self.tmp / "aimem.db").write_bytes(b"garbage")
         n = self.node()

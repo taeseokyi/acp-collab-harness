@@ -439,6 +439,16 @@ class TestServe(Base):
         self.assertEqual(status, 400)
         self.assertIn("error", body)
 
+    def test_ask_deep_json_body_400(self):
+        # R51-N4: RecursionError 를 400 JSON 으로 바꾼다(연결 끊김 아님)
+        deep = b'{"options":' + b'[' * 16000 + b']' * 16000 + b'}'
+        self.assertLess(len(deep), 32 * 1024)
+        status, _, raw = self.req("POST", "/api/ask", deep,
+                                  {"Content-Type": "application/json"})
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(raw.decode("utf-8"))["error"],
+                         "본문은 JSON 객체여야 합니다")
+
     def test_ask_nonstring_kind_400_json_then_ok(self):
         _, meta = self.upload()
         self.wait_done(meta["id"])
@@ -582,6 +592,29 @@ class TestSttOptions(Base):
         self.assertEqual(status, 400)
         self.assertIn("options", body["error"])
 
+    def test_deep_json_put_and_retry_400(self):
+        # R51-N4: 깊은 JSON 은 RecursionError 대신 400, 옵션은 안 바뀐다
+        deep = b'{"options":' + b'[' * 16000 + b']' * 16000 + b'}'
+        self.assertLess(len(deep), 32 * 1024)
+        status, _, raw = self.req("PUT", "/api/stt-options", deep,
+                                  {"Content-Type": "application/json"})
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(raw.decode("utf-8"))["error"],
+                         "본문은 JSON 객체여야 합니다")
+        _, got = self.jreq("GET", "/api/stt-options")
+        self.assertEqual(got["options"], {})
+
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.wait_done(rid)
+        self.drain()
+        status, _, raw = self.req("POST", "/api/recordings/%s/retry" % rid, deep,
+                                  {"Content-Type": "application/json"})
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(raw.decode("utf-8"))["error"],
+                         "본문은 JSON 객체여야 합니다")
+        self.assertIsNone(self.server.store.get(rid)["stt_options"])
+
     def test_put_over_32k_413(self):
         raw_body = json.dumps({"options": {"context": "가" * 40000}},
                               ensure_ascii=False).encode("utf-8")
@@ -622,6 +655,24 @@ class TestSttOptions(Base):
         self.drain()
         self.assertEqual(self.server.store.get(rid)["stt_options"],
                          {"preprocess": "denoise"})
+
+    def test_retry_reads_no_previous_transcript(self):
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.wait_done(rid)
+        self.drain()
+        calls = []
+        orig_get = self.server.store.get
+
+        def recording_get(rid, with_prev=True):
+            calls.append(with_prev)
+            return orig_get(rid, with_prev=with_prev)
+
+        with mock.patch.object(self.server.store, "get", recording_get), \
+                mock.patch.object(self.server.transcriber, "resubmit", return_value=True):
+            status, _ = self.jreq("POST", "/api/recordings/%s/retry" % rid)
+        self.assertEqual(status, 200)
+        self.assertEqual(calls, [False, False, True])
 
     def test_retry_options_saved_and_transcribes_again(self):
         _, meta = self.upload()
@@ -813,6 +864,13 @@ class TestPrevTranscriptsApi(Base):
         self.assertEqual(prev["stt_used"]["speakers"], 2)
         self.assertEqual(prev["at"], first_used["at"])
         self.assertNotIn("prev_stt_used", detail)
+
+        _, lean = self.jreq("GET", "/api/recordings/%s?prev=0" % rid)
+        self.assertEqual(lean["transcript"], "받아 적음 2")
+        self.assertNotIn("prev_transcripts", lean)
+        _, full = self.jreq("GET", "/api/recordings/%s?prev=1" % rid)
+        self.assertIn("prev_transcripts", full)
+        self.assertEqual(full["prev_transcripts"], detail["prev_transcripts"])
         self.assertNotIn("transcript_prev", detail)
         self.assertEqual(detail["stt_used"]["preprocess"], "denoise")
 
@@ -997,6 +1055,71 @@ class TestRetryUpload(Base):
         with mock.patch.object(self.server.transcriber, "resubmit", return_value=False):
             status, _ = self.jreq("POST", "/api/recordings/%s/retry" % meta["id"])
         self.assertEqual(status, 409)
+
+    def test_retry_resubmit_false_restores_old_options(self):
+        # R51-N12/M10: resubmit 이 False 면 본문 새 옵션을 옛 값으로 되돌린다
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.wait_done(rid)
+        self.drain()
+        self.server.store.set_stt_options(rid, {"preprocess": "denoise"})
+        with mock.patch.object(self.server.transcriber, "resubmit", return_value=False):
+            status, _ = self.jreq("POST", "/api/recordings/%s/retry" % rid,
+                                  {"options": {"preprocess": "basic"}})
+        self.assertEqual(status, 409)
+        self.assertEqual(self.server.store.get(rid)["stt_options"],
+                         {"preprocess": "denoise"})
+
+    def test_retry_lock_keeps_first_job_when_two_retries_overlap(self):
+        # R51-N7/N11: 두 재시도가 겹치면 뒤 것의 set_job(None) 이 앞 것의 작업 id 를 지우지 못한다.
+        # resubmit 을 느리게 바꿔 끼워, 잠금이 없으면 두 번째가 첫 번째 작업 id 를 지운다.
+        _, meta = self.upload()
+        rid = meta["id"]
+        self.wait_done(rid)
+        self.drain()
+        store = self.server.store
+        tr = self.server.transcriber
+        orig_set_opts = store.set_stt_options
+        first_opts = threading.Event()
+        calls = []
+
+        def slow_set_opts(r, opts):
+            calls.append(opts)
+            if len(calls) == 1:
+                first_opts.set()
+                time.sleep(0.2)
+            elif len(calls) == 2:
+                time.sleep(0.5)
+            return orig_set_opts(r, opts)
+
+        def fake_resubmit(r):
+            with tr._lock:
+                if r in tr._active:
+                    return False
+                tr._active.add(r)
+                store.set_job(r, "job-first")
+                return True
+
+        results = []
+        with mock.patch.object(store, "set_stt_options", slow_set_opts), \
+                mock.patch.object(tr, "resubmit", fake_resubmit):
+            def retry(opts):
+                results.append(self.jreq(
+                    "POST", "/api/recordings/%s/retry" % rid,
+                    {"options": opts})[0])
+
+            first = threading.Thread(target=retry, args=({"preprocess": "denoise"},))
+            first.start()
+            self.assertTrue(first_opts.wait(5))
+            second = threading.Thread(target=retry, args=({"preprocess": "level"},))
+            second.start()
+            first.join(5)
+            second.join(5)
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(sorted(results), [200, 409])
+        self.assertEqual(store.get(rid)["stt_job"], "job-first")
+        self.assertEqual(store.get(rid)["stt_options"], {"preprocess": "denoise"})
 
     def test_retry_resubmit_valueerror_404_json(self):
         _, meta = self.upload()
@@ -1355,6 +1478,17 @@ class TestLabelTags(Base):
             status, _, _ = self.req("PATCH", "/api/recordings/" + rid, raw,
                                     {"Content-Type": "application/json"})
             self.assertEqual(status, 400, raw)
+
+    def test_patch_deep_json_body_400(self):
+        # R51-N4: PATCH 의 6 KiB 상한 안에서도 깊은 JSON 은 400(연결 끊김 아님)
+        rid = self.seed()
+        deep = b'{"options":' + b'[' * 3000 + b']' * 3000 + b'}'
+        self.assertLess(len(deep), 6144)
+        status, _, raw = self.req("PATCH", "/api/recordings/" + rid, deep,
+                                  {"Content-Type": "application/json"})
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(raw.decode("utf-8"))["error"],
+                         "본문은 JSON 객체여야 합니다")
 
     def test_patch_missing_length_400(self):
         rid = self.seed()

@@ -3,7 +3,7 @@
 
 실행: python3 projects/VoxLog/tests/browser_voxlog.py
 서버는 이 검사가 임시 data 폴더로 직접 띄우고(subprocess) 끝나면 내린다.
-검사는 모두 56개입니다.
+검사는 모두 73개입니다.
 마지막 줄 `N/M 통과`, 하나라도 실패면 종료 코드 1.
 """
 import json
@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+import wave
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -89,6 +90,18 @@ def api_post_wav(base, path):
     return json.loads(urllib.request.urlopen(req, timeout=5).read().decode("utf-8"))
 
 
+def api_post_json(base, path, body):
+    req = urllib.request.Request(base + path, data=json.dumps(body).encode("utf-8"), method="POST")
+    req.add_header("Content-Type", "application/json")
+    return json.loads(urllib.request.urlopen(req, timeout=5).read().decode("utf-8"))
+
+
+def api_put_json(base, path, body):
+    req = urllib.request.Request(base + path, data=json.dumps(body).encode("utf-8"), method="PUT")
+    req.add_header("Content-Type", "application/json")
+    return json.loads(urllib.request.urlopen(req, timeout=5).read().decode("utf-8"))
+
+
 def wait_for(fn, timeout, step=0.2, pg=None):
     """fn 이 참이 될 때까지 폴링. fn 이 파이썬 값만 보고(route 처리기가 채우는 값 등) route 가 걸린
     페이지가 있으면 pg 를 넘길 것 - 동기 Playwright 는 Playwright 호출 중에만 처리기를 돌린다."""
@@ -147,6 +160,84 @@ def detail_ready(page):
         return page.is_visible("#detail") and "불러오는 중" not in page.inner_text("#detail-meta")
     except Exception:  # noqa: BLE001 - 아직 없으면 아직 아님
         return False
+
+
+def stt_fields_ready(page, prefix):
+    """기본값 새로 읽기가 끝나 칸과 단추가 모두 풀렸는가."""
+    fields = [prefix + "-" + k for k in ("preprocess", "speakers", "context", "auto", "review")]
+    button = "#detail-stt-run" if prefix == "detail-stt" else "#stt-defaults-save"
+    try:
+        return (page.is_visible("#" + prefix + "-fields") and
+                page.is_enabled(button) and
+                all(page.is_enabled("#" + f) for f in fields))
+    except Exception:  # noqa: BLE001 - 아직 없으면 아직 아님
+        return False
+
+
+STT_OPTIONS_HOLD_JS = """
+(() => {
+  const orig = window.fetch.bind(window);
+  const held = [];
+  let holdNext = 0;
+  window.__releasedFetchCount = 0;
+  window.__holdNextSttOptions = (n) => { holdNext = n || 1; return true; };
+  window.__sttOptionsHeld = () => held.length > 0;
+  window.__sttOptionsHeldCount = () => held.length;
+  window.__releaseSttOptions = (index) => {
+    if (!held.length) return false;
+    const i = (index === undefined) ? 0 : index;
+    if (i < 0 || i >= held.length) return false;
+    const h = held.splice(i, 1)[0];
+    window.__releasedFetchDone = false;
+    orig(h.input, h.init).then(function (res) {
+      window.__releasedFetchDone = true;
+      window.__releasedFetchCount += 1;
+      h.resolve(res);
+    }, h.reject);
+    return true;
+  };
+  window.fetch = function (input, init) {
+    const url = typeof input === 'string' ? input : input.url;
+    const method = (init && init.method) || 'GET';
+    if (holdNext > 0 && method === 'GET' && url.split('?')[0].endsWith('/api/stt-options')) {
+      holdNext -= 1;
+      return new Promise(function (resolve, reject) { held.push({input, init, resolve, reject}); });
+    }
+    return orig(input, init);
+  };
+})();
+"""
+
+
+RETRY_HOLD_JS = """
+(() => {
+  const orig = window.fetch.bind(window);
+  let held = null;
+  let holdNext = false;
+  window.__releasedRetryDone = false;
+  window.__holdNextRetry = () => { holdNext = true; return true; };
+  window.__retryHeld = () => !!held;
+  window.__releaseRetry = () => {
+    if (!held) return false;
+    const h = held; held = null;
+    window.__releasedRetryDone = false;
+    orig(h.input, h.init).then(function (res) {
+      window.__releasedRetryDone = true;
+      h.resolve(res);
+    }, h.reject);
+    return true;
+  };
+  window.fetch = function (input, init) {
+    const url = typeof input === 'string' ? input : input.url;
+    const method = (init && init.method) || 'GET';
+    if (holdNext && method === 'POST' && url.split('?')[0].endsWith('/retry')) {
+      holdNext = false;
+      return new Promise(function (resolve, reject) { held = {input, init, resolve, reject}; });
+    }
+    return orig(input, init);
+  };
+})();
+"""
 
 
 def open_tab(page, name):
@@ -402,6 +493,25 @@ def run_all(browser, base, data, tmp, procs):
 
     def server_items(b):
         return api_get(b, "/api/recordings?limit=50")["items"]
+
+    def upload_rec(b, name, options=None):
+        """검사용 녹음 하나를 서버에 넣고 받아쓰기가 끝날 때까지 기다린다."""
+        p = tmp / (name + ".wav")
+        with wave.open(str(p), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(16000)
+            w.writeframes(b"\0\0" * 16000)
+        item = api_post_wav(b, p)
+        rid = item["id"]
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid).get("status") == "done", 20),
+             "녹음 %s 첫 받아쓰기가 끝나지 않음: %r" %
+             (name, api_get(b, "/api/recordings/" + rid).get("status")))
+        if options is not None:
+            api_post_json(b, "/api/recordings/" + rid + "/retry", {"options": options})
+        need(wait_for(lambda: api_get(b, "/api/recordings/" + rid).get("status") == "done", 20),
+             "녹음 %s 가 완료되지 않음: %r" % (name, api_get(b, "/api/recordings/" + rid).get("status")))
+        return rid
 
     def db_drafts(pg):
         """IndexedDB 의 [초안 수, 조각 수]"""
@@ -1999,7 +2109,8 @@ def run_all(browser, base, data, tmp, procs):
         need(wait_for(lambda: pg.is_visible("#stt-defaults") and pg.is_visible("#stt-defaults-fields"), 10, pg=pg),
              "설정 칸의 받아쓰기 옵션 묶음이 보이지 않음")
         need(wait_for(lambda: opts_get["n"] >= 1, 10, pg=pg), "설정 칸이 GET /api/stt-options 를 읽지 않음")
-        pg.wait_for_timeout(100)
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults"), 10, pg=pg),
+             "설정 칸의 입력 칸·저장 단추가 풀리지 않음")
         pg.select_option("#stt-defaults-preprocess", "denoise")
         pg.fill("#stt-defaults-speakers", "2")
         pg.click("#stt-defaults-save")
@@ -2017,6 +2128,8 @@ def run_all(browser, base, data, tmp, procs):
 
         need(wait_for(reloaded_values, 10, pg=pg),
              "새로고침 뒤 설정 칸에 denoise·화자 2 가 그대로가 아님")
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults"), 10, pg=pg),
+             "새로고침 뒤 설정 칸의 입력 칸·저장 단추가 풀리지 않음")
         need(api_get(b, "/api/stt-options")["options"] == expected,
              "새로고침 뒤 서버 GET 값이 바뀜: %r" % api_get(b, "/api/stt-options")["options"])
         c.close()
@@ -2028,6 +2141,7 @@ def run_all(browser, base, data, tmp, procs):
         c = new_ctx()
         pg = c.new_page()
         bodies = []
+        pg.add_init_script(STT_OPTIONS_HOLD_JS)
 
         def track_retry(req):
             url = req.url.split("?")[0]
@@ -2046,8 +2160,27 @@ def run_all(browser, base, data, tmp, procs):
         pg.locator("#list .rec-item .rec-main").first.click()
         need(wait_for(lambda: pg.is_visible("#detail-edit") and detail_ready(pg), 10, pg=pg),
              "상세 편집 칸이 보이지 않거나 첫 읽기가 끝나지 않음")
+        pg.evaluate("window.__holdNextSttOptions()")
         pg.click("#detail-retry-opts")
-        need(wait_for(lambda: pg.is_visible("#detail-stt"), 5, pg=pg), "옵션 바꿔 다시 받아쓰기 묶음이 열리지 않음")
+        locked = pg.evaluate("""() => ({
+            visible: !document.querySelector('#detail-stt').hidden,
+            fields: ['preprocess', 'speakers', 'context', 'auto', 'review'].map(function (k) {
+                return document.querySelector('#detail-stt-' + k).disabled;
+            }),
+            run: document.querySelector('#detail-stt-run').disabled,
+            state: document.querySelector('#detail-stt-state').textContent
+        })""")
+        need(locked["visible"], "옵션 바꿔 다시 받아쓰기 묶음이 열리지 않음: %r" % locked)
+        need(all(locked["fields"]), "기본값 응답 전 상세 입력 칸이 잠기지 않음: %r" % locked)
+        need(locked["run"], "기본값 응답 전 상세 실행 단추가 잠기지 않음: %r" % locked)
+        need(locked["state"] == "불러오는 중…", "기본값 응답 전 상세 상태가 '불러오는 중…' 이 아님: %r" % locked["state"])
+        need(wait_for(lambda: pg.evaluate("window.__sttOptionsHeld()"), 5, pg=pg),
+             "상세 옵션 칸의 기본값 GET 응답이 쥐어지지 않음")
+        need(pg.evaluate("window.__releaseSttOptions()"), "쥔 상세 기본값 응답을 놓지 못함")
+        need(wait_for(lambda: pg.evaluate("window.__releasedFetchDone"), 5, pg=pg),
+             "놓은 상세 기본값 응답이 도착하지 않음")
+        need(wait_for(lambda: stt_fields_ready(pg, "detail-stt"), 8, pg=pg),
+             "기본값 응답 뒤 상세 입력 칸·실행 단추가 풀리지 않음")
         pg.select_option("#detail-stt-preprocess", "denoise")
         pg.click("#detail-stt-run")
         need(wait_for(lambda: len(bodies) >= 1, 10, pg=pg), "옵션 바꿔 다시 받아쓰기 POST 가 나가지 않음")
@@ -2058,7 +2191,8 @@ def run_all(browser, base, data, tmp, procs):
         need(wait_for(lambda: api_get(b, "/api/recordings/" + rid)["stt_options"] == {"preprocess": "denoise"}, 10, pg=pg),
              "상세 GET 의 stt_options 가 denoise 가 아님: %r" % api_get(b, "/api/recordings/" + rid)["stt_options"])
         pg.click("#detail-retry-opts")
-        need(wait_for(lambda: pg.evaluate("document.querySelector('#detail-stt-preprocess').value") == "denoise", 10, pg=pg),
+        need(wait_for(lambda: pg.evaluate("document.querySelector('#detail-stt-preprocess').value") == "denoise" and
+                      stt_fields_ready(pg, "detail-stt"), 10, pg=pg),
              "상세 옵션 묶음이 녹음의 stt_options 로 채워지지 않음")
 
         open_tab(pg, "rec")
@@ -2071,6 +2205,8 @@ def run_all(browser, base, data, tmp, procs):
              "두 번째 녹취 상세가 준비되지 않음")
         pg.click("#detail-retry-opts")
         need(wait_for(lambda: pg.is_visible("#detail-stt"), 5, pg=pg), "두 번째 녹취의 옵션 묶음이 열리지 않음")
+        need(wait_for(lambda: stt_fields_ready(pg, "detail-stt"), 8, pg=pg),
+             "두 번째 녹취의 옵션 입력 칸·실행 단추가 풀리지 않음")
         start = len(bodies)
         pg.click("#detail-stt-run")
         need(wait_for(lambda: len(bodies) > start, 10, pg=pg), "기본 옵션 POST 가 나가지 않음")
@@ -2169,6 +2305,8 @@ def run_all(browser, base, data, tmp, procs):
         pg.click("#settings-btn")
         need(wait_for(lambda: pg.is_visible("#stt-defaults") and pg.is_visible("#stt-defaults-fields"), 10, pg=pg),
              "설정 옵션 묶음이 보이지 않음")
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults"), 10, pg=pg),
+             "설정 옵션 묶음의 입력 칸·저장 단추가 풀리지 않음")
         need(pg.is_visible("#detail-stt"), "상세 옵션 묶음이 설정을 열 때 숨겨짐")
 
         rects = pg.evaluate("""() => {
@@ -2246,6 +2384,8 @@ def run_all(browser, base, data, tmp, procs):
         need(wait_for(lambda: pg.is_visible("#detail-stt"), 5, pg=pg), "옵션 묶음이 열리지 않음")
         need(wait_for(lambda: opts_gets["n"] >= 1, 5, pg=pg),
              "옵션 묶음이 기본값 GET 을 마치기 전에 채워짐")
+        need(wait_for(lambda: stt_fields_ready(pg, "detail-stt"), 10, pg=pg),
+             "옵션 묶음의 입력 칸·실행 단추가 풀리지 않음")
         pg.fill("#detail-stt-context", "회의 참석자: 김, 박")
         pg.fill("#detail-stt-speakers", "2")
         before = detail_gets["n"]
@@ -2288,7 +2428,8 @@ def run_all(browser, base, data, tmp, procs):
              "설정 칸의 받아쓰기 옵션 묶음이 보이지 않음")
         need(wait_for(lambda: opts_gets["n"] >= 1, 10, pg=pg),
              "설정 칸이 기본값 GET 을 마치기 전에 채워짐")
-        pg.wait_for_timeout(100)
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults"), 10, pg=pg),
+             "설정 칸의 입력 칸·저장 단추가 풀리지 않음")
         pg.select_option("#stt-defaults-preprocess", "denoise")
         pg.click("#stt-defaults-save")
         need(wait_for(lambda: api_get(b, "/api/stt-options")["options"] == {"preprocess": "denoise"}, 10, pg=pg),
@@ -2306,7 +2447,8 @@ def run_all(browser, base, data, tmp, procs):
              "상세 편집 칸이 보이지 않거나 첫 읽기가 끝나지 않음")
         pg.click("#detail-retry-opts")
         need(wait_for(lambda: pg.is_visible("#detail-stt"), 5, pg=pg), "옵션 묶음이 열리지 않음")
-        need(wait_for(lambda: pg.evaluate("document.querySelector('#detail-stt-preprocess').value") == "denoise", 10, pg=pg),
+        need(wait_for(lambda: pg.evaluate("document.querySelector('#detail-stt-preprocess').value") == "denoise" and
+                      stt_fields_ready(pg, "detail-stt"), 10, pg=pg),
              "옵션 없는 녹취의 묶음이 전체 기본값 denoise 로 채워지지 않음")
 
         pg.select_option("#detail-stt-preprocess", "")
@@ -2351,6 +2493,8 @@ def run_all(browser, base, data, tmp, procs):
              "상세 편집 칸이 보이지 않거나 첫 읽기가 끝나지 않음")
         pg.click("#detail-retry-opts")
         need(wait_for(lambda: pg.is_visible("#detail-stt"), 5, pg=pg), "옵션 묶음이 열리지 않음")
+        need(wait_for(lambda: stt_fields_ready(pg, "detail-stt"), 10, pg=pg),
+             "옵션 묶음의 실행 단추가 풀리지 않음")
         pg.click("#detail-stt-run")
         need(wait_for(lambda: pg.is_visible("#toast") and server_text in pg.inner_text("#toast"), 5, pg=pg),
              "재시도 400 뒤 서버 글이 토스트로 보이지 않음: %r" % pg.inner_text("#toast"))
@@ -2527,6 +2671,827 @@ def run_all(browser, base, data, tmp, procs):
              "서버 응답의 옛 지난 글 벌이 다름: %r" % got.get("prev_transcripts"))
         c.close()
     check("57 옛 .prev.txt·prev_stt_used 가 지난 글 1벌로 보임", t57)
+
+
+    def t58():
+        # 격리 출처(VoxQueue/IndexedDB 없음): 설정 기본값 묶음과 상세 옵션 단추가 보이면 안 된다(F4).
+        b, _ = new_server("d58")
+        upload_rec(b, "t58-rec")
+        c = new_ctx()
+        pg = c.new_page()
+        stub = """
+        window.VoxQueue = {
+          supported: function () { return { indexedDB: false }; },
+          pending: function () { return Promise.resolve([]); },
+          draftRecover: function () { return Promise.resolve(0); },
+          flush: function () { return Promise.resolve(); },
+          retry: function () { return Promise.resolve(); },
+          remove: function () { return Promise.resolve(); },
+          getConfig: function () { return Promise.resolve({ token: '', autoRecord: false, saveLocation: true }); },
+          setConfig: function () { return Promise.resolve(); },
+          onchange: function () {},
+          onrecover: function () {}
+        };
+        """
+        pg.route("**/queue.js", lambda route: route.fulfill(
+            status=200, content_type="application/javascript", body=stub))
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        pg.click("#settings-btn")
+        need(wait_for(lambda: pg.is_visible("#settings"), 5, pg=pg), "설정 칸이 열리지 않음")
+        need(not pg.is_visible("#stt-defaults"), "격리 출처에서 #stt-defaults 가 보임")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 10, pg=pg), "목록 항목이 없음")
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "상세가 준비되지 않음")
+        need(not pg.is_visible("#detail-retry-opts"),
+             "격리 출처에서 '옵션 바꿔 다시 받아쓰기' 단추가 보임")
+        need(not pg.is_visible("#detail-stt"), "격리 출처에서 상세 옵션 칸이 보임")
+        c.close()
+    check("58 격리 출처에서 설정 기본값·상세 옵션 단추 안 보임", t58)
+
+
+    def t59():
+        # 재시도 400 서버 글에 <img ...> 가 있어도 토스트는 글자로 보이고 img 가 생기지 않는다(F6).
+        b, _ = new_server("d59")
+        upload_rec(b, "t59-rec")
+        c = new_ctx()
+        pg = c.new_page()
+        payload = "<img src=x onerror=alert(1)>"
+        pg.route("**/api/recordings/*/retry", lambda route: route.fulfill(
+            status=400, content_type="application/json",
+            body=json.dumps({"error": payload}, ensure_ascii=False)))
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 10, pg=pg), "목록 항목이 없음")
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "상세가 준비되지 않음")
+        pg.click("#detail-retry")
+        need(wait_for(lambda: pg.is_visible("#toast") and payload in pg.inner_text("#toast"), 5, pg=pg),
+             "토스트에 서버 글이 글자로 보이지 않음: %r" % pg.inner_text("#toast"))
+        need(pg.locator("#toast img").count() == 0, "토스트 안에 img 요소가 생김")
+        need(pg.evaluate("document.querySelector('#toast').innerHTML").find("&lt;img") >= 0,
+             "토스트가 글자가 아니라 HTML 로 들어감")
+        c.close()
+    check("59 재시도 400 의 <img> 서버 글: 토스트 글자·img 요소 없음", t59)
+
+
+    def t60():
+        # 지난 글 본문이 <img ...> 꼴이어도 펼친 .prev-item 에 글자로 보이고 img 가 없다(W2).
+        b, _ = new_server("d60")
+        rid = upload_rec(b, "t60-rec")
+        c = new_ctx()
+        pg = c.new_page()
+        payload = "<img src=x onerror=alert(2)>지난 글"
+
+        def inject(route):
+            req = route.request
+            url = req.url.split("?")[0]
+            if req.method != "GET" or "/audio" in url or not re.search(r"/api/recordings/[^/]+$", url):
+                route.continue_()
+                return
+            data = api_get(b, "/api/recordings/" + rid)
+            data["prev_transcripts"] = [{
+                "text": payload,
+                "at": "2026-11-20T09:15:00+09:00",
+                "stt_used": {},
+            }]
+            data["autotag"] = "done"
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(data, ensure_ascii=False))
+
+        pg.route("**/api/recordings/*", inject)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 10, pg=pg), "목록 항목이 없음")
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "상세가 준비되지 않음")
+        pg.click("#detail-prev summary")
+        need(wait_for(lambda: pg.locator("#detail-prev-list .prev-item").count() == 1, 5, pg=pg),
+             "지난 글 벌이 보이지 않음")
+        pg.locator("#detail-prev-list .prev-item summary").first.click()
+        pre = pg.locator("#detail-prev-list .prev-item pre.transcript").first
+        need(wait_for(lambda: pre.is_visible(), 5, pg=pg), "지난 글 벌을 펼쳐도 글칸이 보이지 않음")
+        need(pre.inner_text().strip() == payload, "지난 글 본문이 글자로 보이지 않음: %r" % pre.inner_text())
+        need(pg.locator("#detail-prev-list .prev-item img").count() == 0,
+             "지난 글 안에 img 요소가 생김")
+        c.close()
+    check("60 지난 글 <img> 본문: 글자로 보이고 img 요소 없음", t60)
+
+
+    def t61():
+        # 상세 옵션 칸 빈 값 이름·설정 칸 '서버 기본'·'합치지 않음' 안내(N13).
+        b, _ = new_server("d61")
+        rid_plain = upload_rec(b, "t61-plain")
+        rid_opts = upload_rec(b, "t61-opts", options={"num_speakers": 2})
+        c = new_ctx()
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        pg.click("#settings-btn")
+        need(wait_for(lambda: pg.is_visible("#stt-defaults-fields"), 10, pg=pg),
+             "설정 칸의 옵션 묶음이 보이지 않음")
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults"), 10, pg=pg),
+             "설정 칸의 입력 칸·저장 단추가 풀리지 않음")
+        pre_label = pg.evaluate("document.querySelector('#stt-defaults-preprocess').selectedOptions[0].textContent")
+        need("서버 기본" in pre_label, "설정 전처리 빈 값 이름이 '서버 기본' 이 아님: %r" % pre_label)
+        for key in ("auto", "review"):
+            label = pg.evaluate("document.querySelector('#stt-defaults-%s').selectedOptions[0].textContent" % key)
+            need(label == "서버 기본", "설정 %s 빈 값 이름이 '서버 기본' 이 아님: %r" % (key, label))
+        pg.click("#settings-btn")
+
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 2, 10, pg=pg), "목록 항목이 2개가 아님")
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid_plain).click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "옵션 없는 녹음 상세가 준비되지 않음")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.is_visible("#detail-stt"), 5, pg=pg), "상세 옵션 묶음이 열리지 않음")
+        need(wait_for(lambda: stt_fields_ready(pg, "detail-stt"), 10, pg=pg),
+             "상세 옵션 묶음의 입력 칸·실행 단추가 풀리지 않음")
+        labels_plain = pg.evaluate("""() => ['preprocess', 'auto', 'review'].map(function (k) {
+            return document.querySelector('#detail-stt-' + k).selectedOptions[0].textContent;
+        })""")
+        need(labels_plain == ["기본(앱 설정 따름)"] * 3,
+             "옵션 없는 녹음의 빈 값 이름이 '기본(앱 설정 따름)' 이 아님: %r" % labels_plain)
+        need("합치지 않음" in pg.inner_text("#detail-stt"), "'합치지 않음' 안내가 없음")
+
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid_opts).click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "옵션 있는 녹음 상세가 준비되지 않음")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.is_visible("#detail-stt"), 5, pg=pg), "상세 옵션 묶음이 열리지 않음")
+        need(wait_for(lambda: stt_fields_ready(pg, "detail-stt"), 10, pg=pg),
+             "상세 옵션 묶음의 입력 칸·실행 단추가 풀리지 않음")
+        labels_opts = pg.evaluate("""() => ['preprocess', 'auto', 'review'].map(function (k) {
+            return document.querySelector('#detail-stt-' + k).selectedOptions[0].textContent;
+        })""")
+        need(labels_opts == ["기본(서버 기본)"] * 3,
+             "옵션 있는 녹음의 빈 값 이름이 '기본(서버 기본)' 이 아님: %r" % labels_opts)
+        need("합치지 않음" in pg.inner_text("#detail-stt"), "'합치지 않음' 안내가 없음")
+        c.close()
+    check("61 상세 옵션 빈 값 이름·설정 '서버 기본'·'합치지 않음' 안내", t61)
+
+
+    def t62():
+        # 설정 칸을 닫았다 여는 사이 다른 기기가 기본값을 바꾸면 다시 열 때 새 값으로 채운다(N6).
+        b, _ = new_server("d62")
+        c = new_ctx()
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        pg.click("#settings-btn")
+        need(wait_for(lambda: pg.is_visible("#stt-defaults-fields"), 10, pg=pg),
+             "설정 칸의 옵션 묶음이 보이지 않음")
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults"), 10, pg=pg),
+             "설정 칸의 입력 칸·저장 단추가 풀리지 않음")
+        pg.wait_for_timeout(200)
+        api_put_json(b, "/api/stt-options", {"options": {"preprocess": "denoise", "num_speakers": 3}})
+        pg.click("#settings-btn")
+        need(not pg.is_visible("#settings"), "설정 칸이 닫히지 않음")
+        pg.click("#settings-btn")
+        need(wait_for(lambda: pg.is_visible("#stt-defaults-fields"), 10, pg=pg),
+             "설정 칸을 다시 열어도 옵션 묶음이 보이지 않음")
+        def reopened():
+            return (stt_fields_ready(pg, "stt-defaults") and
+                    pg.evaluate("document.querySelector('#stt-defaults-preprocess').value") == "denoise" and
+                    pg.evaluate("document.querySelector('#stt-defaults-speakers').value") == "3")
+        need(wait_for(reopened, 10, pg=pg),
+             "다시 열 때 새 기본값이 아님: %r / %r" % (
+                 pg.evaluate("document.querySelector('#stt-defaults-preprocess').value"),
+                 pg.evaluate("document.querySelector('#stt-defaults-speakers').value")))
+        c.close()
+    check("62 설정 칸 다시 열기: 다른 기기 PUT 새 값 반영", t62)
+
+
+    def t63():
+        # 실패 + chars 상세 줄은 '이전 글 그대로 N자', 까닭 문구, '다시 받아쓰기' 단추(N8·N10).
+        b, _ = new_server("d63")
+        rid = upload_rec(b, "t63-rec")
+        c = new_ctx()
+        pg = c.new_page()
+        empty_error = ("받아 적은 글이 비었습니다 - 소리가 없거나 말소리가 잡히지 않았을 수 있습니다"
+                       "(옵션을 바꿔 다시 받아써 볼 수 있음)")
+
+        def inject(route):
+            req = route.request
+            url = req.url.split("?")[0]
+            if req.method != "GET" or "/audio" in url or not re.search(r"/api/recordings/[^/]+$", url):
+                route.continue_()
+                return
+            data = api_get(b, "/api/recordings/" + rid)
+            data.update({
+                "status": "failed",
+                "chars": 42,
+                "error": empty_error,
+                "transcript": "이전 글",
+                "autotag": "done",
+            })
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(data, ensure_ascii=False))
+
+        pg.route("**/api/recordings/*", inject)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 10, pg=pg), "목록 항목이 없음")
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "상세가 준비되지 않음")
+        meta = pg.inner_text("#detail-meta")
+        need("이전 글 그대로 42자" in meta, "실패 줄에 '이전 글 그대로 42자' 가 없음: %r" % meta)
+        need("소리가 없거나" in meta, "실패 줄에 '소리가 없거나' 문구가 없음: %r" % meta)
+        need(pg.is_visible("#detail-retry"), "'다시 받아쓰기' 단추가 보이지 않음")
+        c.close()
+    check("63 실패+chars 상세 줄: 이전 글 그대로·까닭 문구·다시 받아쓰기", t63)
+
+
+    def t64():
+        # 받아쓰는 중 폴링은 ?prev=0, 끝나면 ?prev=0 없는 읽기 뒤 지난 글 묶음이 보인다(N5).
+        b, _ = new_server("d64")
+        rid = upload_rec(b, "d64-rec")
+        c = new_ctx()
+        pg = c.new_page()
+        urls = []
+        phase = {"n": 0}
+        poll_n = {"n": 0}
+        prev = [{"text": "옛 글", "at": "2026-11-20T09:15:00+09:00", "stt_used": {}}]
+
+        def inject(route):
+            req = route.request
+            url = req.url
+            path = url.split("?")[0]
+            if req.method != "GET" or "/audio" in path or not re.search(r"/api/recordings/[^/]+$", path):
+                route.continue_()
+                return
+            urls.append(url)
+            data = api_get(b, "/api/recordings/" + rid)
+            if "prev=0" in url:
+                poll_n["n"] += 1
+                data.update({
+                    "status": "transcribing",
+                    "transcript": "",
+                    "autotag": "pending",
+                })
+                # 실제 서버의 ?prev=0 응답에는 prev_transcripts 키가 없다(R53-N3).
+                data.pop("prev_transcripts", None)
+                if poll_n["n"] > 1:
+                    data.update({
+                        "status": "done",
+                        "transcript": "새 글",
+                        "autotag": "done",
+                    })
+            elif phase["n"] == 0:
+                phase["n"] = 1
+                data.update({
+                    "status": "transcribing",
+                    "transcript": "",
+                    "autotag": "pending",
+                    "prev_transcripts": prev,
+                })
+            else:
+                data.update({
+                    "status": "done",
+                    "transcript": "새 글",
+                    "autotag": "done",
+                    "prev_transcripts": prev,
+                })
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(data, ensure_ascii=False))
+        pg.route("**/api/recordings/*", inject)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 10, pg=pg), "목록 항목이 없음")
+        pg.locator("#list .rec-item .rec-main").first.click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "상세가 준비되지 않음")
+        need(wait_for(lambda: pg.is_visible("#detail-prev") and
+                      pg.inner_text("#detail-prev-summary").strip() == "지난 글 1벌", 10, pg=pg),
+             "첫 읽기의 지난 글 묶음이 보이지 않음: %r" % pg.inner_text("#detail-prev-summary"))
+        pg.click("#detail-prev summary")
+        need(wait_for(lambda: pg.evaluate("document.querySelector('#detail-prev').open"), 5, pg=pg),
+             "지난 글 묶음이 펼쳐지지 않음")
+        pg.locator("#detail-prev-list .prev-item summary").first.click()
+        prev_pre = pg.locator("#detail-prev-list .prev-item pre.transcript").first
+        need(wait_for(lambda: prev_pre.is_visible() and prev_pre.inner_text().strip() == "옛 글", 5, pg=pg),
+             "지난 글 벌 본문이 보이지 않거나 다름: %r" % prev_pre.inner_text())
+        need(wait_for(lambda: any("prev=0" in u for u in urls), 10, pg=pg),
+             "받아쓰는 중 폴링 요청이 ?prev=0 이 아님: %r" % urls)
+        pg.wait_for_timeout(200)
+        need(pg.is_visible("#detail-prev") and
+             pg.evaluate("document.querySelector('#detail-prev').open") and
+             pg.locator("#detail-prev-list .prev-item details").first.get_attribute("open") is not None and
+             prev_pre.is_visible() and prev_pre.inner_text().strip() == "옛 글",
+             "키 없는 ?prev=0 응답 뒤 펼친 지난 글 묶음이 바뀜")
+        first_omit = next(i for i, u in enumerate(urls) if "prev=0" in u)
+        need(wait_for(lambda: any("prev=0" not in u for u in urls[first_omit + 1:]), 10, pg=pg),
+             "끝난 뒤 ?prev=0 없는 읽기가 없음: %r" % urls)
+        need(wait_for(lambda: pg.is_visible("#detail-prev") and
+                      pg.inner_text("#detail-prev-summary").strip() == "지난 글 1벌", 10, pg=pg),
+             "끝난 뒤 지난 글 묶음이 보이지 않음: %r" % pg.inner_text("#detail-prev-summary"))
+        c.close()
+    check("64 받아쓰는 중 폴링 ?prev=0(키 없음), 펼친 지난 글 유지·끝난 뒤 묶음", t64)
+
+
+    def t65():
+        # 옵션 재시도 응답 전에 다른 녹음으로 옮기면 새 녹음의 옵션 칸을 닫지 않는다(N7).
+        b, _ = new_server("d65")
+        rid_a = upload_rec(b, "t65-a")
+        rid_b = upload_rec(b, "t65-b")
+        c = new_ctx()
+        pg = c.new_page()
+        retry_responses = {"n": 0}
+
+        def slow_retry(route):
+            time.sleep(0.6)
+            route.fulfill(status=200, content_type="application/json", body=json.dumps({"ok": True}))
+
+        def track_retry(resp):
+            url = resp.url.split("?")[0]
+            if resp.request.method == "POST" and "/api/recordings/" in url and url.endswith("/retry"):
+                retry_responses["n"] += 1
+
+        pg.route("**/api/recordings/*/retry", slow_retry)
+        pg.on("response", track_retry)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 2, 10, pg=pg), "목록 항목이 2개가 아님")
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid_a).click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "A 상세가 준비되지 않음")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.is_visible("#detail-stt"), 5, pg=pg), "A 옵션 칸이 열리지 않음")
+        need(wait_for(lambda: stt_fields_ready(pg, "detail-stt"), 10, pg=pg),
+             "A 옵션 칸의 입력 칸·실행 단추가 풀리지 않음")
+        # 같은 JS 작업 안에서 재시도를 보내고 곧바로 B 로 옮긴다. 응답은 route 가 늦게 준다.
+        pg.evaluate("""() => {
+            document.querySelector('#detail-stt-run').click();
+            document.querySelector("#list .rec-item[data-id='%s'] .rec-main").click();
+        }""" % rid_b)
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "B 상세가 준비되지 않음")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.is_visible("#detail-stt"), 5, pg=pg), "B 옵션 칸이 열리지 않음")
+        need(wait_for(lambda: stt_fields_ready(pg, "detail-stt"), 10, pg=pg),
+             "B 옵션 칸의 입력 칸·실행 단추가 풀리지 않음")
+        need(wait_for(lambda: retry_responses["n"] >= 1, 10, pg=pg),
+             "A 옵션 재시도 응답이 오지 않음")
+        need(pg.is_visible("#detail-stt"), "A 재시도 응답 뒤 B 옵션 칸이 닫힘")
+        need(pg.evaluate("document.querySelector('#detail-retry-opts').getAttribute('aria-expanded')") == "true",
+             "B 옵션 단추가 접힘 상태로 바뀜")
+        c.close()
+    check("65 재시도 응답 전 녹음 이동: 새 녹음 옵션 칸 유지", t65)
+
+
+    def t66():
+        # 설정 칸의 기본값 GET 을 늦춰, 응답 전 입력·저장 단추가 잠기고 응답 뒤 고른 값이 PUT 본문에 실리는지 본다.
+        b, _ = new_server("d66")
+        c = new_ctx()
+        pg = c.new_page()
+        pg.add_init_script(STT_OPTIONS_HOLD_JS)
+        put_bodies = []
+
+        def track_put(req):
+            if req.method == "PUT" and req.url.split("?")[0].endswith("/api/stt-options"):
+                put_bodies.append(req.post_data)
+
+        pg.on("request", track_put)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        pg.evaluate("window.__holdNextSttOptions()")
+        pg.click("#settings-btn")
+        locked = pg.evaluate("""() => ({
+            visible: !document.querySelector('#settings').hidden && !document.querySelector('#stt-defaults').hidden &&
+                     !document.querySelector('#stt-defaults-fields').hidden,
+            fields: ['preprocess', 'speakers', 'context', 'auto', 'review'].map(function (k) {
+                return document.querySelector('#stt-defaults-' + k).disabled;
+            }),
+            save: document.querySelector('#stt-defaults-save').disabled,
+            state: document.querySelector('#stt-defaults-state').textContent
+        })""")
+        need(locked["visible"], "설정 칸의 옵션 묶음이 보이지 않음: %r" % locked)
+        need(all(locked["fields"]), "기본값 응답 전 설정 입력 칸이 잠기지 않음: %r" % locked)
+        need(locked["save"], "기본값 응답 전 설정 저장 단추가 잠기지 않음: %r" % locked)
+        need(locked["state"] == "불러오는 중…", "기본값 응답 전 설정 상태가 '불러오는 중…' 이 아님: %r" % locked["state"])
+        need(wait_for(lambda: pg.evaluate("window.__sttOptionsHeld()"), 5, pg=pg),
+             "설정 칸의 기본값 GET 응답이 쥐어지지 않음")
+        need(pg.evaluate("window.__releaseSttOptions()"), "쥔 설정 기본값 응답을 놓지 못함")
+        need(wait_for(lambda: pg.evaluate("window.__releasedFetchDone"), 5, pg=pg),
+             "놓은 설정 기본값 응답이 도착하지 않음")
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults"), 8, pg=pg),
+             "기본값 응답 뒤 설정 입력 칸·저장 단추가 풀리지 않음")
+        pg.select_option("#stt-defaults-preprocess", "denoise")
+        pg.fill("#stt-defaults-speakers", "2")
+        pg.click("#stt-defaults-save")
+        need(wait_for(lambda: len(put_bodies) >= 1, 10, pg=pg),
+             "설정 저장 PUT 가 나가지 않음")
+        need(json.loads(put_bodies[0]) == {"options": {"preprocess": "denoise", "num_speakers": 2}},
+             "풀린 뒤 고른 값이 설정 저장 본문에 그대로가 아님: %r" % put_bodies[0])
+        need(wait_for(lambda: api_get(b, "/api/stt-options")["options"] ==
+                      {"preprocess": "denoise", "num_speakers": 2}, 10, pg=pg),
+             "저장한 기본값이 서버 GET 에 없음: %r" % api_get(b, "/api/stt-options")["options"])
+        c.close()
+    check("66 설정 칸 늦은 기본값 응답: 입력·저장 잠김, 풀린 뒤 고른 값 저장", t66)
+
+
+    def t67():
+        # 옵션 없는 A 의 기본값 GET 응답을 쥔 채 옵션 있는 B 로 옮겨 같은 칸을 연다(R53-N6).
+        b, _ = new_server("d67")
+        rid_a = upload_rec(b, "t67-a")
+        rid_b = upload_rec(b, "t67-b", options={"preprocess": "denoise"})
+        c = new_ctx()
+        pg = c.new_page()
+        pg.add_init_script(STT_OPTIONS_HOLD_JS)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 2, 10, pg=pg), "목록 항목이 2개가 아님")
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid_a).click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "A 상세가 준비되지 않음")
+        pg.evaluate("window.__holdNextSttOptions()")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.evaluate("window.__sttOptionsHeld()"), 5, pg=pg),
+             "A 기본값 GET 응답이 쥐어지지 않음")
+        need(not pg.is_enabled("#detail-stt-preprocess") and not pg.is_enabled("#detail-stt-run"),
+             "A 기본값 응답 전 칸·실행 단추가 잠기지 않음")
+        need(pg.inner_text("#detail-stt-state") == "불러오는 중…",
+             "A 기본값 응답 전 상태가 '불러오는 중…' 이 아님: %r" % pg.inner_text("#detail-stt-state"))
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid_b).click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "B 상세가 준비되지 않음")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.is_visible("#detail-stt"), 5, pg=pg), "B 옵션 묶음이 열리지 않음")
+        keys = ("preprocess", "speakers", "context", "auto", "review")
+        need(all(pg.is_enabled("#detail-stt-" + k) for k in keys), "B 입력 칸이 enabled 가 아님")
+        need(pg.is_enabled("#detail-stt-run"), "B 실행 단추가 enabled 가 아님")
+        need(pg.input_value("#detail-stt-preprocess") == "denoise",
+             "B 의 옵션 값이 보이지 않음: %r" % pg.input_value("#detail-stt-preprocess"))
+        need(pg.inner_text("#detail-stt-state").strip() == "",
+             "B 상태 글에 이유 없이 글이 남음: %r" % pg.inner_text("#detail-stt-state"))
+
+        def snapshot():
+            return {
+                "fields": [pg.is_enabled("#detail-stt-" + k) for k in keys],
+                "run": pg.is_enabled("#detail-stt-run"),
+                "values": [pg.input_value("#detail-stt-" + k) for k in keys],
+                "state": pg.inner_text("#detail-stt-state"),
+            }
+
+        before = snapshot()
+        need(pg.evaluate("window.__releaseSttOptions()"), "쥔 A 응답을 놓지 못함")
+        need(wait_for(lambda: pg.evaluate("window.__releasedFetchDone"), 5, pg=pg),
+             "놓은 A 응답이 도착하지 않음")
+        pg.wait_for_timeout(300)
+        after = snapshot()
+        need(before == after, "A 응답을 놓은 뒤 B 칸이 바뀜: %r -> %r" % (before, after))
+        need(not pg.evaluate("window.__sttOptionsHeld()"), "A 응답이 아직 쥐어져 있음")
+        c.close()
+    check("67 기본값 응답을 쥔 채 녹음 이동: B 칸 유지", t67)
+
+
+    def t68():
+        # 기본값 GET 이 500 으로 실패하면 상세·설정 칸이 잠긴 채 남지 않고 실패 글이 보인다(N8).
+        b, _ = new_server("d68")
+        rid_a = upload_rec(b, "t68-a")
+        c = new_ctx()
+        pg = c.new_page()
+
+        def fail_options(route):
+            req = route.request
+            if req.method == "GET" and req.url.split("?")[0].endswith("/api/stt-options"):
+                route.fulfill(status=500, content_type="application/json", body=json.dumps({"error": "boom"}))
+            else:
+                route.continue_()
+
+        pg.route("**/api/stt-options", fail_options)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 10, pg=pg), "목록 항목이 1개가 아님")
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid_a).click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "A 상세가 준비되지 않음")
+        pg.click("#detail-retry-opts")
+        keys = ("preprocess", "speakers", "context", "auto", "review")
+
+        def detail_failure_ready():
+            try:
+                return (pg.is_visible("#detail-stt") and
+                        all(pg.is_enabled("#detail-stt-" + k) for k in keys) and
+                        pg.is_enabled("#detail-stt-run") and
+                        pg.is_visible("#detail-stt-state") and
+                        "기본값을 불러오지 못했습니다" in pg.inner_text("#detail-stt-state"))
+            except Exception:  # noqa: BLE001 - 아직 없으면 아직 아님
+                return False
+
+        need(wait_for(detail_failure_ready, 10, pg=pg),
+             "읽기 실패 뒤 상세 칸이 풀리지 않거나 실패 글이 없음: %r" % pg.inner_text("#detail-stt-state"))
+        txt = pg.inner_text("#detail-stt-state").strip()
+        need(txt.startswith("기본값을 불러오지 못했습니다"), "상세 실패 글 첫 줄이 아님: %r" % txt)
+
+        pg.click("#settings-btn")
+        need(wait_for(lambda: pg.is_visible("#stt-defaults-note") and
+                      "받아쓰기 옵션을 불러오지 못했습니다" in pg.inner_text("#stt-defaults-note"), 10, pg=pg),
+             "설정 기본값 읽기 실패 글이 보이지 않음: %r" % pg.inner_text("#stt-defaults-note"))
+        need(all(pg.is_enabled("#stt-defaults-" + k) for k in keys), "설정 입력 칸이 잠긴 채 남음")
+        need(pg.is_enabled("#stt-defaults-save"), "설정 저장 단추가 잠긴 채 남음")
+        c.close()
+    check("68 기본값 읽기 실패: 칸 풀림·실패 글", t68)
+
+
+    def t69():
+        # GET 을 쥔 채 page.clock 으로 15초를 넘기면 시간 제한이 칸을 풀고 시간 초과 글을 보인다(R53-N6).
+        b, _ = new_server("d69")
+        rid_a = upload_rec(b, "t69-a")
+        c = new_ctx()
+        pg = c.new_page()
+        pg.clock.install()
+        pg.add_init_script(STT_OPTIONS_HOLD_JS)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 10, pg=pg), "목록 항목이 1개가 아님")
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid_a).click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "A 상세가 준비되지 않음")
+        pg.evaluate("window.__holdNextSttOptions()")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.evaluate("window.__sttOptionsHeld()"), 5, pg=pg),
+             "A 기본값 GET 응답이 쥐어지지 않음")
+        keys = ("preprocess", "speakers", "context", "auto", "review")
+        need(not pg.is_enabled("#detail-stt-preprocess") and not pg.is_enabled("#detail-stt-run"),
+             "시간이 지나기 전 칸·실행 단추가 잠기지 않음")
+        pg.clock.fast_forward(15000)
+        need(wait_for(lambda: all(pg.is_enabled("#detail-stt-" + k) for k in keys) and
+                      pg.is_enabled("#detail-stt-run") and
+                      "시간이 지났습니다" in pg.inner_text("#detail-stt-state"), 5, pg=pg),
+             "15초 뒤 칸이 풀리지 않거나 시간 초과 글이 없음: %r" % pg.inner_text("#detail-stt-state"))
+        need("기본값을 불러오지 못했습니다" in pg.inner_text("#detail-stt-state"),
+             "시간 초과 실패 글 첫 줄이 아님: %r" % pg.inner_text("#detail-stt-state"))
+        pg.evaluate("window.__releaseSttOptions()")
+        pg.wait_for_timeout(200)
+        need("시간이 지났습니다" in pg.inner_text("#detail-stt-state"),
+             "늦게 온 응답이 시간 초과 글을 지움: %r" % pg.inner_text("#detail-stt-state"))
+        c.close()
+    check("69 기본값 15초 시간 제한: 칸 풀림·시간 초과 글", t69)
+
+
+    def t70():
+        # A 의 옵션 재시도 POST 응답을 쥔 채 옵션 없는 B 칸을 열어, A 응답이 B 의 상태 글·잠금을 건드리지 않는지 본다(N12).
+        b, _ = new_server("d70")
+        rid_a = upload_rec(b, "t70-a")
+        rid_b = upload_rec(b, "t70-b")
+        c = new_ctx()
+        pg = c.new_page()
+        pg.add_init_script(STT_OPTIONS_HOLD_JS)
+        pg.add_init_script(RETRY_HOLD_JS)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 2, 10, pg=pg), "목록 항목이 2개가 아님")
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid_a).click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "A 상세가 준비되지 않음")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: stt_fields_ready(pg, "detail-stt"), 10, pg=pg),
+             "A 옵션 칸의 입력 칸·실행 단추가 풀리지 않음")
+        pg.evaluate("window.__holdNextRetry()")
+        pg.click("#detail-stt-run")
+        need(wait_for(lambda: pg.evaluate("window.__retryHeld()"), 5, pg=pg),
+             "A 옵션 재시도 POST 응답이 쥐어지지 않음")
+
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid_b).click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "B 상세가 준비되지 않음")
+        pg.evaluate("window.__holdNextSttOptions()")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.is_visible("#detail-stt") and pg.evaluate("window.__sttOptionsHeld()"), 5, pg=pg),
+             "B 기본값 GET 응답이 쥐어지지 않거나 칸이 열리지 않음")
+        keys = ("preprocess", "speakers", "context", "auto", "review")
+        need(not all(pg.is_enabled("#detail-stt-" + k) for k in keys) and not pg.is_enabled("#detail-stt-run"),
+             "B 칸이 기본값 응답 전 잠기지 않음")
+        need(pg.inner_text("#detail-stt-state") == "불러오는 중…",
+             "B 상태가 '불러오는 중…' 이 아님: %r" % pg.inner_text("#detail-stt-state"))
+
+        need(pg.evaluate("window.__releaseRetry()"), "쥔 A 재시도 응답을 놓지 못함")
+        need(wait_for(lambda: pg.evaluate("window.__releasedRetryDone"), 5, pg=pg),
+             "놓은 A 재시도 응답이 도착하지 않음")
+        pg.wait_for_timeout(200)
+        need(pg.is_visible("#detail-stt"), "A 재시도 응답 뒤 B 옵션 칸이 닫힘")
+        need(pg.evaluate("document.querySelector('#detail-retry-opts').getAttribute('aria-expanded')") == "true",
+             "A 재시도 응답 뒤 B 옵션 단추가 접힘 상태로 바뀜")
+        need(pg.inner_text("#detail-stt-state") == "불러오는 중…",
+             "A 재시도 응답이 B 의 '불러오는 중…' 글을 지움: %r" % pg.inner_text("#detail-stt-state"))
+        need(not all(pg.is_enabled("#detail-stt-" + k) for k in keys) and not pg.is_enabled("#detail-stt-run"),
+             "A 재시도 응답이 B 칸을 풀음")
+
+        need(pg.evaluate("window.__releaseSttOptions()"), "쥔 B 기본값 응답을 놓지 못함")
+        need(wait_for(lambda: pg.evaluate("window.__releasedFetchDone"), 5, pg=pg),
+             "놓은 B 기본값 응답이 도착하지 않음")
+        need(wait_for(lambda: stt_fields_ready(pg, "detail-stt"), 10, pg=pg),
+             "B 기본값 응답 뒤 칸·실행 단추가 풀리지 않음")
+        need(pg.inner_text("#detail-stt-state").strip() == "",
+             "B 기본값 응답 뒤 상태 글이 남음: %r" % pg.inner_text("#detail-stt-state"))
+        c.close()
+    check("70 재시도 응답 쥔 채 옵션 없는 B 칸: 상태 글·잠금 유지", t70)
+
+
+    def t71():
+        # 설정 칸을 닫은 사이 온 기본값 응답은 칸을 채우지 않고, 다시 열면 새 값을 읽는다(N8).
+        b, _ = new_server("d71")
+        api_put_json(b, "/api/stt-options", {"options": {"preprocess": "denoise"}})
+        c = new_ctx()
+        pg = c.new_page()
+        pg.add_init_script(STT_OPTIONS_HOLD_JS)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        pg.evaluate("window.__holdNextSttOptions()")
+        pg.click("#settings-btn")
+        need(wait_for(lambda: pg.is_visible("#stt-defaults-fields") and pg.evaluate("window.__sttOptionsHeld()"), 5, pg=pg),
+             "설정 기본값 GET 응답이 쥐어지지 않음")
+        need(not pg.is_enabled("#stt-defaults-preprocess"), "설정 입력 칸이 기본값 응답 전 잠기지 않음")
+        pg.click("#settings-btn")
+        need(pg.evaluate("document.querySelector('#settings').hidden"), "설정 칸을 닫지 못함")
+        need(pg.evaluate("window.__releaseSttOptions()"), "쥔 설정 기본값 응답을 놓지 못함")
+        need(wait_for(lambda: pg.evaluate("window.__releasedFetchDone"), 5, pg=pg),
+             "놓은 설정 기본값 응답이 도착하지 않음")
+        pg.wait_for_timeout(200)
+        need(pg.evaluate("document.querySelector('#settings').hidden"), "닫은 설정 칸이 다시 열림")
+        need(pg.evaluate("document.querySelector('#stt-defaults-preprocess').value") == "",
+             "닫은 사이 온 응답이 설정 칸을 채움: %r" %
+             pg.evaluate("document.querySelector('#stt-defaults-preprocess').value"))
+
+        api_put_json(b, "/api/stt-options", {"options": {"preprocess": "none", "num_speakers": 2}})
+        pg.click("#settings-btn")
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults") and
+                      pg.input_value("#stt-defaults-preprocess") == "none" and
+                      pg.input_value("#stt-defaults-speakers") == "2", 10, pg=pg),
+             "다시 열었을 때 새 기본값이 채워지지 않음: %r / %r" %
+             (pg.input_value("#stt-defaults-preprocess"), pg.input_value("#stt-defaults-speakers")))
+        c.close()
+    check("71 설정 칸 닫은 사이 응답: 채우지 않음·다시 열면 새 값", t71)
+
+
+    def t72():
+        # B 칸을 열지 않고 이동만 한 뒤 A 로 돌아와 열면, 쥔 기본값 응답이 풀어 채운다(N11).
+        b, _ = new_server("d72")
+        api_put_json(b, "/api/stt-options", {"options": {"preprocess": "denoise"}})
+        rid_a = upload_rec(b, "t72-a")
+        rid_b = upload_rec(b, "t72-b")
+        c = new_ctx()
+        pg = c.new_page()
+        pg.add_init_script(STT_OPTIONS_HOLD_JS)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 2, 10, pg=pg), "목록 항목이 2개가 아님")
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid_a).click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "A 상세가 준비되지 않음")
+        pg.evaluate("window.__holdNextSttOptions()")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.evaluate("window.__sttOptionsHeld()"), 5, pg=pg),
+             "A 기본값 GET 응답이 쥐어지지 않음")
+        need(not pg.is_enabled("#detail-stt-preprocess") and not pg.is_enabled("#detail-stt-run"),
+             "A 칸이 기본값 응답 전 잠기지 않음")
+
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid_b).click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "B 상세가 준비되지 않음")
+        need(not pg.is_visible("#detail-stt"), "B 칸을 열지 않았는데 옵션 칸이 보임")
+
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid_a).click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "A 상세로 돌아오지 못함")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.evaluate("window.__sttOptionsHeld()"), 5, pg=pg),
+             "A 를 다시 열었을 때 쥔 응답이 사라짐")
+        need(not pg.is_enabled("#detail-stt-preprocess") and not pg.is_enabled("#detail-stt-run"),
+             "A 를 다시 열었을 때 칸이 잠기지 않음")
+        need(pg.evaluate("window.__releaseSttOptions()"), "쥔 A 기본값 응답을 놓지 못함")
+        need(wait_for(lambda: pg.evaluate("window.__releasedFetchDone"), 5, pg=pg),
+             "놓은 A 기본값 응답이 도착하지 않음")
+        need(wait_for(lambda: stt_fields_ready(pg, "detail-stt") and
+                      pg.input_value("#detail-stt-preprocess") == "denoise", 10, pg=pg),
+             "A 칸이 풀려 기본값으로 채워지지 않음: %r" % pg.input_value("#detail-stt-preprocess"))
+        c.close()
+    check("72 B 칸 없이 이동 뒤 A 다시 열기: 풀려 채워짐", t72)
+
+
+    def t73():
+        # 옵션 없는 B 칸이 새 기본값 GET 을 기다리는 동안 A 의 시간 초과 뒤 늦은 응답이 와도 B 를 풀지 않는다(N11).
+        b, _ = new_server("d73")
+        api_put_json(b, "/api/stt-options", {"options": {"preprocess": "denoise"}})
+        rid_a = upload_rec(b, "t73-a")
+        rid_b = upload_rec(b, "t73-b")
+        c = new_ctx()
+        pg = c.new_page()
+        pg.clock.install()
+        pg.add_init_script(STT_OPTIONS_HOLD_JS)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 2, 10, pg=pg), "목록 항목이 2개가 아님")
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid_a).click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "A 상세가 준비되지 않음")
+        pg.evaluate("window.__holdNextSttOptions()")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.evaluate("window.__sttOptionsHeldCount()") == 1, 5, pg=pg),
+             "A 기본값 GET 응답이 쥐어지지 않음")
+        keys = ("preprocess", "speakers", "context", "auto", "review")
+        need(not pg.is_enabled("#detail-stt-preprocess") and not pg.is_enabled("#detail-stt-run"),
+             "A 칸이 기본값 응답 전 잠기지 않음")
+        pg.clock.fast_forward(15000)
+        need(wait_for(lambda: all(pg.is_enabled("#detail-stt-" + k) for k in keys) and
+                      pg.is_enabled("#detail-stt-run") and
+                      "시간이 지났습니다" in pg.inner_text("#detail-stt-state"), 5, pg=pg),
+             "A 시간 제한 뒤 칸이 풀리지 않음: %r" % pg.inner_text("#detail-stt-state"))
+
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid_b).click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "B 상세가 준비되지 않음")
+        pg.evaluate("window.__holdNextSttOptions()")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.evaluate("window.__sttOptionsHeldCount()") == 2, 5, pg=pg),
+             "B 기본값 GET 응답이 쥐어지지 않음")
+        need(not all(pg.is_enabled("#detail-stt-" + k) for k in keys) and not pg.is_enabled("#detail-stt-run"),
+             "B 칸이 기본값 응답 전 잠기지 않음")
+        need(pg.inner_text("#detail-stt-state") == "불러오는 중…",
+             "B 상태가 '불러오는 중…' 이 아님: %r" % pg.inner_text("#detail-stt-state"))
+
+        need(pg.evaluate("window.__releaseSttOptions(0)"), "쥔 A 늦은 응답을 놓지 못함")
+        need(wait_for(lambda: pg.evaluate("window.__releasedFetchCount") >= 1, 5, pg=pg),
+             "놓은 A 늦은 응답이 도착하지 않음")
+        pg.wait_for_timeout(200)
+        need(not all(pg.is_enabled("#detail-stt-" + k) for k in keys) and not pg.is_enabled("#detail-stt-run"),
+             "A 의 늦은 응답이 B 칸을 풀음")
+        need(pg.inner_text("#detail-stt-state") == "불러오는 중…",
+             "A 의 늦은 응답이 B 상태 글을 바꿈: %r" % pg.inner_text("#detail-stt-state"))
+
+        need(pg.evaluate("window.__releaseSttOptions(0)"), "쥔 B 기본값 응답을 놓지 못함")
+        need(wait_for(lambda: pg.evaluate("window.__releasedFetchCount") >= 2, 5, pg=pg),
+             "놓은 B 기본값 응답이 도착하지 않음")
+        need(wait_for(lambda: stt_fields_ready(pg, "detail-stt") and
+                      pg.input_value("#detail-stt-preprocess") == "denoise", 10, pg=pg),
+             "B 칸이 풀려 기본값으로 채워지지 않음: %r" % pg.input_value("#detail-stt-preprocess"))
+        c.close()
+    check("73 옵션 없는 B 칸 잠금: A 의 늦은 응답이 풀지 않음", t73)
+
+
+    def t74():
+        # 시간 제한 뒤 사람이 입력한 값은 늦게 온 기본값 응답이 덮지 않는다(N11).
+        b, _ = new_server("d74")
+        api_put_json(b, "/api/stt-options", {"options": {"preprocess": "denoise", "num_speakers": 1}})
+        rid_a = upload_rec(b, "t74-a")
+        c = new_ctx()
+        pg = c.new_page()
+        pg.clock.install()
+        pg.add_init_script(STT_OPTIONS_HOLD_JS)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "list")
+        need(wait_for(lambda: list_count(pg) == 1, 10, pg=pg), "목록 항목이 1개가 아님")
+        pg.locator("#list .rec-item[data-id='%s'] .rec-main" % rid_a).click()
+        need(wait_for(lambda: pg.is_visible("#detail") and detail_ready(pg), 10, pg=pg),
+             "A 상세가 준비되지 않음")
+        pg.evaluate("window.__holdNextSttOptions()")
+        pg.click("#detail-retry-opts")
+        need(wait_for(lambda: pg.evaluate("window.__sttOptionsHeld()"), 5, pg=pg),
+             "A 기본값 GET 응답이 쥐어지지 않음")
+        keys = ("preprocess", "speakers", "context", "auto", "review")
+        need(not pg.is_enabled("#detail-stt-preprocess") and not pg.is_enabled("#detail-stt-run"),
+             "A 칸이 기본값 응답 전 잠기지 않음")
+        pg.clock.fast_forward(15000)
+        need(wait_for(lambda: all(pg.is_enabled("#detail-stt-" + k) for k in keys) and
+                      pg.is_enabled("#detail-stt-run") and
+                      "시간이 지났습니다" in pg.inner_text("#detail-stt-state"), 5, pg=pg),
+             "시간 제한 뒤 칸이 풀리지 않음: %r" % pg.inner_text("#detail-stt-state"))
+        pg.select_option("#detail-stt-preprocess", "basic")
+        pg.fill("#detail-stt-speakers", "3")
+        pg.fill("#detail-stt-context", "테스트 문맥")
+        need(pg.evaluate("window.__releaseSttOptions()"), "쥔 늦은 기본값 응답을 놓지 못함")
+        need(wait_for(lambda: pg.evaluate("window.__releasedFetchCount") >= 1, 5, pg=pg),
+             "놓은 늦은 기본값 응답이 도착하지 않음")
+        pg.wait_for_timeout(200)
+        need(pg.input_value("#detail-stt-preprocess") == "basic" and
+             pg.input_value("#detail-stt-speakers") == "3" and
+             pg.input_value("#detail-stt-context") == "테스트 문맥",
+             "늦은 응답이 사람이 입력한 값을 덮음: %r / %r / %r" %
+             (pg.input_value("#detail-stt-preprocess"), pg.input_value("#detail-stt-speakers"),
+              pg.input_value("#detail-stt-context")))
+        need("시간이 지났습니다" in pg.inner_text("#detail-stt-state"),
+             "늦은 응답이 시간 초과 글을 지움: %r" % pg.inner_text("#detail-stt-state"))
+        c.close()
+    check("74 시간 제한 뒤 늦은 응답: 사람이 입력한 값 유지", t74)
 
 
 if __name__ == "__main__":

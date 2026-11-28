@@ -220,7 +220,9 @@ class Store:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
-        except FileNotFoundError:
+        except (OSError, ValueError):
+            raw = None
+        if not isinstance(raw, list):
             prev = self._read_prev_transcript(meta)
             if not prev.strip():
                 return []
@@ -230,10 +232,6 @@ class Store:
             at = used.get("at") if isinstance(used, dict) else None
             return [{"text": prev, "stt_used": dict(used) if used is not None else None,
                      "at": at if isinstance(at, str) else None}]
-        except (OSError, ValueError):
-            return []
-        if not isinstance(raw, list):
-            return []
         items = []
         for entry in raw:
             if not isinstance(entry, dict):
@@ -450,7 +448,7 @@ class Store:
                     if ev is not None:
                         ev.set()
 
-    def get(self, rid):
+    def get(self, rid, with_prev=True):
         if not _valid_rid(rid):
             return None
         with self._lock:
@@ -464,7 +462,10 @@ class Store:
             out.pop("transcript_prev", None)
             out.pop("prev_stt_used", None)
             out["transcript"] = self._read_transcript(meta)
-            out["prev_transcripts"] = list(reversed(self._read_prev_list(meta)))
+            if with_prev:
+                current = out["transcript"].strip()
+                out["prev_transcripts"] = [item for item in reversed(self._read_prev_list(meta))
+                                           if item["text"].strip() != current]
             return out
 
     def list(self, q=None, date_from=None, date_to=None, status=None, limit=200, tag=None):

@@ -443,15 +443,18 @@ def _verify(n):
     from fleet_rt import sandbox  # noqa: PLC0415
     root = pathlib.Path(ROOT)
     argv, _note = sandbox.wrap(["bash", "-c", cmd], root)
+    # 두 출력을 한 줄기로, 나온 차례대로 받는다 - 따로 받아 이어 붙이면 `A && B` 에서 A 의 stderr 가 꼬리를 채워
+    # 정작 떨어진 B 의 stdout 이 잘린다 (R52 T-473·R53 T-475: 까닭을 끝내 못 봄). 파이썬은 파이프에 버퍼를 두므로 끈다
+    env = dict(sandbox.clean_env(os.environ, root), PYTHONUNBUFFERED="1")
     try:
-        p = subprocess.Popen(argv, cwd=str(root), env=sandbox.clean_env(os.environ, root), stdin=subprocess.DEVNULL,
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace",
+        p = subprocess.Popen(argv, cwd=str(root), env=env, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace",
                              start_new_session=True)
     except OSError as e:
         return 127, f"검증을 띄우지 못함: {type(e).__name__}: {e}"[-2000:]
     try:
-        out, err = p.communicate(timeout=VERIFY_TIMEOUT_SEC)
-        return p.returncode, (out + err)[-2000:]
+        out, _ = p.communicate(timeout=VERIFY_TIMEOUT_SEC)
+        return p.returncode, (out or "")[-2000:]
     except subprocess.TimeoutExpired:
         # 내가 띄운 그룹(새 세션의 리더 = p.pid)만 죽인다. 울타리 안의 것은 bwrap 이 죽으면 `--die-with-parent` 로 같이 끝난다
         try:
@@ -464,7 +467,8 @@ def _verify(n):
             # 그룹을 떠난(setsid 한) 손자가 파이프를 쥐고 있다 - 기다리지 않고 닫는다
             for f in (p.stdout, p.stderr):
                 try:
-                    f.close()
+                    if f is not None:
+                        f.close()
                 except OSError:
                     pass
             p.wait()
@@ -1031,6 +1035,7 @@ def _step(g, concurrency=None, allow_spawn=None, hold_on_block=False):
             changed = True
             continue
         att = n["attempts"][-1]
+        ran_verify = False
         state, rc, sinfo = _run_info(att["run_id"])
         if n.get("slot") in unusable and _cut_unusable(g, n, att, unusable[n["slot"]], state, rc):
             changed = True
@@ -1098,6 +1103,7 @@ def _step(g, concurrency=None, allow_spawn=None, hold_on_block=False):
             if rc == 0:
                 if n.get("verify"):
                     _note_unconfined(g)
+                    ran_verify = True
                 vrc, vtail = _verify(n)
             else:
                 vrc, vtail = -1, "실행 rc != 0"
@@ -1110,6 +1116,11 @@ def _step(g, concurrency=None, allow_spawn=None, hold_on_block=False):
             att["fail_kind"] = "work"
             _retry_or_fail(g, n, f"rc={rc} verify_rc={vrc}")
         changed = True
+        if ran_verify:
+            # 검증 명령을 돌린 노드는 한 틱에 하나만 거둔다 - 검증은 몇 분이 걸리는데, 끝난 노드를 모두 차례로 검증한
+            # 뒤에야 저장·띄우기를 하면 먼저 통과한 노드가 그동안 running 으로 보이고 빈 자리에 다음 노드도 못 뜬다
+            # (R54: 자리가 15분 놀았다). 남은 것은 다음 틱이 거둔다
+            break
     changed |= _cut_unsent(g)
     # 2) 의존이 실패한 노드는 막힘으로
     nodes = {n["id"]: n for n in g["nodes"]}

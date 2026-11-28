@@ -137,6 +137,10 @@ def _parse_location(raw):
 class VoxServer(ThreadingHTTPServer):
     daemon_threads = True
 
+    def __init__(self, *args, **kwargs):
+        self.retry_lock = threading.Lock()
+        super().__init__(*args, **kwargs)
+
     def server_close(self):
         for worker in (getattr(self, "transcriber", None), getattr(self, "asker", None)):
             if worker is not None:
@@ -384,6 +388,22 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return b"".join(chunks)
 
+    def _read_json_body(self, limit, empty_as_object=False):
+        """본문을 JSON 객체로 읽는다. 아니면 이미 400 을 보낸 뒤 None."""
+        data = self._read_body(limit)
+        if data is None:
+            return None
+        if not data and empty_as_object:
+            return {}
+        try:
+            body = json.loads(data.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            body = None
+        if not isinstance(body, dict):
+            self._err(400, "본문은 JSON 객체여야 합니다")
+            return None
+        return body
+
     def _rec_upload(self, _u):
         length = self._content_length(MAX_AUDIO_BYTES)
         if length is None:
@@ -521,7 +541,9 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"items": items, "stats": store.stats()})
 
     def _rec_get(self, rid):
-        meta = self.server.store.get(rid)
+        q = parse_qs(urlsplit(self.path).query)
+        prev = (q.get("prev") or [""])[0].strip()
+        meta = self.server.store.get(rid, with_prev=prev != "0")
         if meta is None:
             return self._err(404, "없는 녹음입니다")
         self._json(200, meta)
@@ -539,15 +561,9 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def _stt_options_put(self):
-        data = self._read_body(STT_OPTIONS_JSON_MAX)
-        if data is None:
+        body = self._read_json_body(STT_OPTIONS_JSON_MAX)
+        if body is None:
             return
-        try:
-            body = json.loads(data.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
-            body = None
-        if not isinstance(body, dict):
-            return self._err(400, "본문은 JSON 객체여야 합니다")
         if "options" not in body:
             return self._err(400, "본문에는 options 가 있어야 합니다")
         try:
@@ -558,15 +574,9 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"options": saved})
 
     def _rec_patch(self, rid):
-        data = self._read_body(PATCH_JSON_MAX)
-        if data is None:
+        body = self._read_json_body(PATCH_JSON_MAX)
+        if body is None:
             return
-        try:
-            body = json.loads(data.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
-            body = None
-        if not isinstance(body, dict):
-            return self._err(400, "본문은 JSON 객체여야 합니다")
         patch = {}
         if "label" in body:
             try:
@@ -628,67 +638,56 @@ class Handler(BaseHTTPRequestHandler):
 
     def _rec_retry(self, rid):
         store = self.server.store
-        meta = store.get(rid)
-        if meta is None:
+        if store.get(rid, with_prev=False) is None:
             return self._err(404, "없는 녹음입니다")
-        tr = self.server.transcriber
-        if tr.busy(rid):
-            return self._err(409, "받아쓰는 중입니다")
         has_change = False
         new_opts = None
         if self.headers.get("Content-Length") is not None:
-            data = self._read_body(STT_OPTIONS_JSON_MAX)
-            if data is None:
+            body = self._read_json_body(STT_OPTIONS_JSON_MAX, empty_as_object=True)
+            if body is None:
                 return
-            if data:
+            if "options" in body:
                 try:
-                    body = json.loads(data.decode("utf-8"))
-                except (ValueError, UnicodeDecodeError):
-                    body = None
-                if not isinstance(body, dict):
-                    return self._err(400, "본문은 JSON 객체여야 합니다")
-                if "options" in body:
-                    raw_opts = body["options"]
-                    try:
-                        norm = stt_options.normalize(raw_opts)
-                    except ValueError as exc:
-                        return self._err(400, str(exc))
-                    has_change = True
-                    new_opts = norm or None
-        prev_opts = meta.get("stt_options")
-        if has_change:
-            try:
-                store.set_stt_options(rid, new_opts)
-            except ValueError:  # 본문을 읽는 동안 녹음이 지워짐
-                return self._err(404, "없는 녹음입니다")
+                    norm = stt_options.normalize(body["options"])
+                except ValueError as exc:
+                    return self._err(400, str(exc))
+                has_change = True
+                new_opts = norm or None
 
-        try:
-            store.set_job(rid, None)  # 사람이 누른 재시도는 옛 작업을 잇지 않는다(앱 재시작 이어받기는 그대로)
-        except ValueError:  # 옵션을 저장한 뒤 녹음이 지워짐
-            return self._err(404, "없는 녹음입니다")
-        try:
-            ok = tr.resubmit(rid)
-        except ValueError:  # 위 get 과 resubmit 사이에 녹음이 지워짐
-            return self._err(404, "없는 녹음입니다")
-        if not ok:
+        tr = self.server.transcriber
+        with self.server.retry_lock:
+            meta = store.get(rid, with_prev=False)
+            if meta is None:
+                return self._err(404, "없는 녹음입니다")
+            if tr.busy(rid):
+                return self._err(409, "받아쓰는 중입니다")
+            prev_opts = meta.get("stt_options")
             if has_change:
                 try:
-                    store.set_stt_options(rid, prev_opts)
-                except ValueError:
-                    pass
-            return self._err(409, "받아쓰는 중입니다")
+                    store.set_stt_options(rid, new_opts)
+                except ValueError:  # 본문을 읽는 동안 녹음이 지워짐
+                    return self._err(404, "없는 녹음입니다")
+            try:
+                store.set_job(rid, None)  # 사람이 누른 재시도는 옛 작업을 잇지 않는다(앱 재시작 이어받기는 그대로)
+            except ValueError:  # 옵션을 저장한 뒤 녹음이 지워짐
+                return self._err(404, "없는 녹음입니다")
+            try:
+                ok = tr.resubmit(rid)
+            except ValueError:  # 위 get 과 resubmit 사이에 녹음이 지워짐
+                return self._err(404, "없는 녹음입니다")
+            if not ok:
+                if has_change:
+                    try:
+                        store.set_stt_options(rid, prev_opts)
+                    except ValueError:
+                        pass
+                return self._err(409, "받아쓰는 중입니다")
         self._json(200, store.get(rid))
 
     def _ask(self):
-        data = self._read_body(JSON_BODY_MAX)
-        if data is None:
+        body = self._read_json_body(JSON_BODY_MAX)
+        if body is None:
             return
-        try:
-            body = json.loads(data.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
-            body = None
-        if not isinstance(body, dict):
-            return self._err(400, "본문은 JSON 객체여야 합니다")
         prompt = body.get("prompt", "")
         if prompt is None:
             prompt = ""

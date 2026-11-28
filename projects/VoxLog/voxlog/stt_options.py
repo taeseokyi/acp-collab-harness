@@ -5,6 +5,8 @@
 맞춘다. 틀린 값은 사람이 읽을 한국어 한 줄 ValueError 로 알린다.
 """
 
+import unicodedata
+
 PREPROCESS = ("none", "basic", "level", "dereverb", "denoise")
 SPEAKERS_MIN, SPEAKERS_MAX = 1, 20
 CONTEXT_MAX = 4000
@@ -49,7 +51,16 @@ def normalize(obj) -> dict:
         elif key == "context":
             if not isinstance(value, str):
                 raise ValueError(_CONTEXT_TYPE_ERROR)
-            text = value.strip()
+            text = value.replace("\r\n", "\n").replace("\r", "\n")
+            text = text.replace("\u2028", "\n").replace("\u2029", "\n")
+            text = "".join(
+                ch
+                for ch in text
+                if ch in "\n\t"
+                or ch == "\u200d"
+                or 0xE0020 <= ord(ch) <= 0xE007F
+                or unicodedata.category(ch) not in ("Cf", "Cc")
+            ).strip()
             if not text:
                 continue
             if len(text) > CONTEXT_MAX:
