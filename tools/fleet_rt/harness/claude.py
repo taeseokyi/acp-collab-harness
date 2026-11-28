@@ -29,7 +29,7 @@ EARLIER_REPORT_MARK = "--- 앞서 낸 보고 ---"
 #: 전에는 명령 접두사 목록이었는데, `python3` 가 이미 무엇이든 돌릴 수 있어 벽이 되지 못했고 명령을 잇는 방식
 #: (`cd …; git …`·`$(…)`·`for`·스크립트 실행)에 걸려 검수자가 헛걸음만 했다 (R55 T-501: 8건 거절, 시험 11꼴 중 9꼴 거절 → 0꼴).
 #: 거부 목록도 걸지 않는다 - 감싸면 지나가는 난간은 필요 없다(같은 날). 커밋·푸시·삭제·설치를 하지 말라는 말은 지시문 머리말이 한다
-WORKER_TOOLS = "Read,Edit,Write,Glob,Grep,Bash"
+WORKER_TOOLS = "Read,Edit,Write,Glob,Grep,Bash,Skill"
 
 
 def _tool_summary(name, inp):

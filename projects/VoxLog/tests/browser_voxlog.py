@@ -222,6 +222,11 @@ def api_put_json(base, path, body):
     return json.loads(urllib.request.urlopen(req, timeout=5).read().decode("utf-8"))
 
 
+#: 녹음 단추가 켜지고 꺼지기를 기다리는 한도(초). 되는 실행은 0.2초 안에 지나가므로 넉넉히 둔다 - 기계가 몇 초
+#: 버벅이는 순간(다른 실행·원격 접속 바뀜)에 5초 한도가 걸려 전체 실행이 거짓으로 떨어졌다 (R56)
+REC_WAIT = 20
+
+
 def wait_for(fn, timeout, step=0.2, pg=None):
     """fn 이 참이 될 때까지 폴링. fn 이 파이썬 값만 보고(route 처리기가 채우는 값 등) route 가 걸린
     페이지가 있으면 pg 를 넘길 것 - 동기 Playwright 는 Playwright 호출 중에만 처리기를 돌린다."""
@@ -268,10 +273,10 @@ def queue_n(page):
 
 def rec_cycle(page, seconds=2):
     page.click("#rec")
-    need(wait_for(lambda: page.get_attribute("#rec", "aria-pressed") == "true", 5), "녹음이 켜지지 않음")
+    need(wait_for(lambda: page.get_attribute("#rec", "aria-pressed") == "true", REC_WAIT), "녹음이 켜지지 않음")
     time.sleep(seconds)
     page.click("#rec")
-    need(wait_for(lambda: page.get_attribute("#rec", "aria-pressed") == "false", 5), "녹음이 꺼지지 않음")
+    need(wait_for(lambda: page.get_attribute("#rec", "aria-pressed") == "false", REC_WAIT), "녹음이 꺼지지 않음")
 
 
 def list_count(page):
@@ -555,10 +560,10 @@ def run_all(browser, base, data, tmp, procs):
     def t8():
         p2 = ctx.new_page()
         p2.goto(base + "/?action=toggle")
-        need(wait_for(lambda: p2.get_attribute("#rec", "aria-pressed") == "true", 8), "?action=toggle 로 녹음이 켜지지 않음")
+        need(wait_for(lambda: p2.get_attribute("#rec", "aria-pressed") == "true", REC_WAIT), "?action=toggle 로 녹음이 켜지지 않음")
         time.sleep(1)
         p2.click("#rec")
-        need(wait_for(lambda: p2.get_attribute("#rec", "aria-pressed") == "false", 5), "다시 눌러도 꺼지지 않음")
+        need(wait_for(lambda: p2.get_attribute("#rec", "aria-pressed") == "false", REC_WAIT), "다시 눌러도 꺼지지 않음")
         time.sleep(0.5)
         p2.close()
     check("8 ?action=toggle 켜짐·다시 누르면 꺼짐", t8)
@@ -756,16 +761,16 @@ def run_all(browser, base, data, tmp, procs):
         time.sleep(0.5)
         url = b + "/?source=launch"
         pg.evaluate("u => window.__lq({targetURL: u})", url)
-        need(wait_for(lambda: pg.get_attribute("#rec", "aria-pressed") == "true", 8), "launchQueue 신호로 녹음이 켜지지 않음")
+        need(wait_for(lambda: pg.get_attribute("#rec", "aria-pressed") == "true", REC_WAIT), "launchQueue 신호로 녹음이 켜지지 않음")
         time.sleep(1.5)
         pg.evaluate("u => window.__lq({targetURL: u})", url)
-        need(wait_for(lambda: pg.get_attribute("#rec", "aria-pressed") == "false", 8), "launchQueue 두 번째 신호로 꺼지지 않음")
+        need(wait_for(lambda: pg.get_attribute("#rec", "aria-pressed") == "false", REC_WAIT), "launchQueue 두 번째 신호로 꺼지지 않음")
         time.sleep(1)
         # 같은 출처의 새 페이지를 ?source=launch 로 열고 첫 신호를 3초 안에 두 번 보낸다 → 녹음은 한 번만 켜져야 함
         p2 = c.new_page()
         p2.goto(url)
         p2.wait_for_selector("#rec")
-        need(wait_for(lambda: p2.get_attribute("#rec", "aria-pressed") == "true", 8), "?source=launch 로 녹음이 켜지지 않음")
+        need(wait_for(lambda: p2.get_attribute("#rec", "aria-pressed") == "true", REC_WAIT), "?source=launch 로 녹음이 켜지지 않음")
         p2.evaluate("u => { window.__lq({targetURL: u}); window.__lq({targetURL: u}); }", url)
         time.sleep(1.5)
         need(p2.get_attribute("#rec", "aria-pressed") == "true", "열린 직후 같은 신호 두 번에 녹음이 꺼짐(한 번만 켜져야 함)")
@@ -848,7 +853,7 @@ def run_all(browser, base, data, tmp, procs):
         pg.goto(b + "/")
         pg.wait_for_selector("#rec")
         pg.click("#rec")
-        need(wait_for(lambda: pg.get_attribute("#rec", "aria-pressed") == "true", 5), "녹음이 켜지지 않음")
+        need(wait_for(lambda: pg.get_attribute("#rec", "aria-pressed") == "true", REC_WAIT), "녹음이 켜지지 않음")
         time.sleep(6.5)
         pg.reload()
         pg.wait_for_selector("#rec")
@@ -916,10 +921,10 @@ def run_all(browser, base, data, tmp, procs):
         pg.wait_for_selector("#rec")
         for i in range(2):  # 멈춤 직후 바로 다시 시작
             pg.click("#rec")
-            need(wait_for(lambda: pg.get_attribute("#rec", "aria-pressed") == "true", 5), "녹음 %d 가 켜지지 않음" % (i + 1))
+            need(wait_for(lambda: pg.get_attribute("#rec", "aria-pressed") == "true", REC_WAIT), "녹음 %d 가 켜지지 않음" % (i + 1))
             time.sleep(1.5)
             pg.click("#rec")
-            need(wait_for(lambda: pg.get_attribute("#rec", "aria-pressed") == "false", 5), "녹음 %d 가 꺼지지 않음" % (i + 1))
+            need(wait_for(lambda: pg.get_attribute("#rec", "aria-pressed") == "false", REC_WAIT), "녹음 %d 가 꺼지지 않음" % (i + 1))
         need(wait_for(lambda: len(server_items(b)) >= 2, 30), "서버 목록이 2건이 되지 않음: %d" % len(server_items(b)))
         time.sleep(3)
         need(len(server_items(b)) == 2, "서버 목록 %d건 (기대 정확히 2)" % len(server_items(b)))
@@ -1106,7 +1111,7 @@ def run_all(browser, base, data, tmp, procs):
             need(pg.evaluate("!!navigator.serviceWorker.controller"), "다시 연 페이지를 서비스 워커가 맡지 않음")
             pg.goto(b + "/?action=toggle")         # 바로가기 주소로도 열림(검색어 무시) - 녹음이 저절로 켜짐
             pg.wait_for_selector("#rec", timeout=10000)
-            need(wait_for(lambda: pg.get_attribute("#rec", "aria-pressed") == "true", 8, pg=pg),
+            need(wait_for(lambda: pg.get_attribute("#rec", "aria-pressed") == "true", REC_WAIT, pg=pg),
                  "서버 없이 ?action=toggle 로 열었을 때 녹음이 켜지지 않음")
             time.sleep(2)
             pg.click("#rec")                       # 연결 없이 녹음을 멈춤 → 대기열에 남음
@@ -1251,7 +1256,7 @@ def run_all(browser, base, data, tmp, procs):
             p1.goto(b + "/")
             p1.wait_for_selector("#rec")
             p1.click("#rec")
-            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", 5, pg=p1), "탭1 녹음이 켜지지 않음")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", REC_WAIT, pg=p1), "탭1 녹음이 켜지지 않음")
             time.sleep(7)
             need(db_drafts(p1)[1] >= 1, "녹음 중 조각이 초안에 쌓이지 않음: %s" % db_drafts(p1))
             p2 = c.new_page()
@@ -1263,7 +1268,7 @@ def run_all(browser, base, data, tmp, procs):
             need(queue_n(p2) == 0, "탭2 가 녹음 중인 초안을 대기열에 넣음")
             need("끝나지 않은 녹음" not in p2.inner_text("#toast"), "탭2 가 살렸다고 알림: " + p2.inner_text("#toast"))
             p1.click("#rec")
-            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "false", 5, pg=p1), "탭1 녹음이 꺼지지 않음")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "false", REC_WAIT, pg=p1), "탭1 녹음이 꺼지지 않음")
             need(wait_for(lambda: len(server_items(b)) == 1, 30, pg=p1), "탭1 녹음이 서버에 올라가지 않음")
             it = server_items(b)[0]
             need((it.get("duration_ms") or 0) >= 6000, "녹음이 잘려 올라감: %s ms" % it.get("duration_ms"))
@@ -1343,11 +1348,11 @@ def run_all(browser, base, data, tmp, procs):
             need(p1.evaluate("window.VoxQueue.supported().draftLocks === false"),
                  "웹 잠금이 없는데 supported().draftLocks 가 false 가 아님")
             p1.click("#rec")
-            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", 5, pg=p1), "탭1 녹음이 켜지지 않음")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", REC_WAIT, pg=p1), "탭1 녹음이 켜지지 않음")
             time.sleep(7)
             need(db_drafts(p1) == [0, 0], "웹 잠금 없는 탭이 초안을 만듦: %s" % db_drafts(p1))
             p1.click("#rec")
-            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "false", 5, pg=p1), "탭1 녹음이 꺼지지 않음")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "false", REC_WAIT, pg=p1), "탭1 녹음이 꺼지지 않음")
             need(wait_for(lambda: len(server_items(b)) == 1, 30, pg=p1), "탭1 녹음이 서버에 올라가지 않음")
             it = server_items(b)[0]
             need((it.get("duration_ms") or 0) >= 6000, "녹음이 잘려 올라감: %s ms" % it.get("duration_ms"))
@@ -1412,7 +1417,7 @@ def run_all(browser, base, data, tmp, procs):
             p1.goto(b + "/")
             p1.wait_for_selector("#rec")
             p1.click("#rec")
-            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", 5, pg=p1), "탭1 녹음이 켜지지 않음")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", REC_WAIT, pg=p1), "탭1 녹음이 켜지지 않음")
             time.sleep(7)
             need(db_drafts(p1)[0] == 1, "탭1 녹음 중 초안이 없음: %s" % db_drafts(p1))
             n = p2.evaluate("window.VoxQueue.draftRecover()")
@@ -1437,7 +1442,7 @@ def run_all(browser, base, data, tmp, procs):
             p.goto(b + "/")
             p.wait_for_selector("#rec")
             p.click("#rec")
-            need(wait_for(lambda: p.get_attribute("#rec", "aria-pressed") == "true", 5, pg=p), "녹음이 켜지지 않음")
+            need(wait_for(lambda: p.get_attribute("#rec", "aria-pressed") == "true", REC_WAIT, pg=p), "녹음이 켜지지 않음")
             time.sleep(7)
             need(db_drafts(p)[0] == 1, "새로고침 전 초안이 없음: %s" % db_drafts(p))
             p.reload()
@@ -1491,11 +1496,11 @@ def run_all(browser, base, data, tmp, procs):
             p1.wait_for_selector("#rec")
             p1.evaluate("() => { window.VoxQueue.draftAppend = () => Promise.reject(new Error('x')); }")
             p1.click("#rec")
-            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", 5, pg=p1), "녹음이 켜지지 않음")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", REC_WAIT, pg=p1), "녹음이 켜지지 않음")
             time.sleep(7)
             need(db_drafts(p1)[0] == 1, "녹음 중 초안이 없음: %s" % db_drafts(p1))
             p1.click("#rec")
-            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "false", 5, pg=p1), "녹음이 꺼지지 않음")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "false", REC_WAIT, pg=p1), "녹음이 꺼지지 않음")
             need(wait_for(lambda: len(server_items(b)) == 1, 30, pg=p1), "draftAppend 실패 뒤 녹음이 올라가지 않음")
             need((server_items(b)[0].get("duration_ms") or 0) >= 6000,
                  "녹음이 잘려 올라감: %s ms" % server_items(b)[0].get("duration_ms"))
@@ -1578,7 +1583,7 @@ def run_all(browser, base, data, tmp, procs):
             p1.goto(b + "/")
             p1.wait_for_selector("#rec")
             p1.click("#rec")
-            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", 5, pg=p1), "녹음이 켜지지 않음")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", REC_WAIT, pg=p1), "녹음이 켜지지 않음")
             time.sleep(7)
             info = draft_info(p1)
             need(info is not None, "녹음 중 초안이 없음")
@@ -1603,7 +1608,7 @@ def run_all(browser, base, data, tmp, procs):
             p1.goto(b + "/")
             p1.wait_for_selector("#rec")
             p1.click("#rec")
-            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", 5, pg=p1), "녹음이 켜지지 않음")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "true", REC_WAIT, pg=p1), "녹음이 켜지지 않음")
             time.sleep(7)
             info = draft_info(p1)
             need(info is not None and info["lock"] is True, "녹음 중 새 세대 초안이 없음: %s" % info)
@@ -1620,7 +1625,7 @@ def run_all(browser, base, data, tmp, procs):
             need(wait_for(lambda: lock_names(p2, "pending").count(name) == 1, 10, pg=p2),
                  "resume 뒤 pending 에 %s 가 다시 1개가 아님: %s" % (name, lock_names(p2, "pending")))
             p1.click("#rec")
-            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "false", 5, pg=p1), "녹음이 꺼지지 않음")
+            need(wait_for(lambda: p1.get_attribute("#rec", "aria-pressed") == "false", REC_WAIT, pg=p1), "녹음이 꺼지지 않음")
             need(wait_for(lambda: len(server_items(b)) == 1, 20, pg=p1), "녹음이 정상 저장되지 않음")
             need(wait_for(lambda: db_drafts(p2) == [0, 0], 10, pg=p2), "초안·조각이 남음: %s" % db_drafts(p2))
             need("끝나지 않은 녹음" not in p2.inner_text("#toast"), "탭2 가 살렸다고 알림: " + p2.inner_text("#toast"))
@@ -1652,10 +1657,10 @@ def run_all(browser, base, data, tmp, procs):
             time.sleep(0.5)
             p.evaluate("() => { MediaRecorder.prototype.start = window.__mrStart; }")
             p.click("#rec")
-            need(wait_for(lambda: p.get_attribute("#rec", "aria-pressed") == "true", 5, pg=p),
+            need(wait_for(lambda: p.get_attribute("#rec", "aria-pressed") == "true", REC_WAIT, pg=p),
                  "원래 start 복원 뒤 다시 녹음이 시작되지 않음")
             p.click("#rec")
-            need(wait_for(lambda: p.get_attribute("#rec", "aria-pressed") == "false", 5, pg=p),
+            need(wait_for(lambda: p.get_attribute("#rec", "aria-pressed") == "false", REC_WAIT, pg=p),
                  "다시 시작한 녹음이 멈추지 않음")
         finally:
             c.close()

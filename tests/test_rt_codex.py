@@ -1,5 +1,6 @@
 import _fleet_env  # noqa: F401
 import json
+import os
 import pathlib
 import tempfile
 import unittest
@@ -41,7 +42,14 @@ class CommandTest(unittest.TestCase):
         c = A.command(self.spec())
         self.assertEqual(c.argv, ["codex", "exec", "--skip-git-repo-check", "--ephemeral", "-C", str(ROOT),
                                   "--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true",
-                                  "--json", "-"])
+                                  "-c", c.argv[11], "--json", "-"])
+        # playwright-cli 가 쓰는 자리(홈 캐시·소켓)를 울타리에서 연다 - 안 열면 브라우저가 EROFS 로 안 뜬다
+        key, _, val = c.argv[11].partition("=")
+        self.assertEqual(key, "sandbox_workspace_write.writable_roots")
+        roots = json.loads(val)
+        self.assertTrue(roots[0].endswith("/.cache/ms-playwright/daemon"), roots)
+        self.assertFalse(any(r.endswith("/ms-playwright") for r in roots), "크롬 실행 파일이 든 폴더를 통째로 열지 않는다")
+        self.assertTrue(all(os.path.isabs(r) for r in roots), roots)
         self.assertEqual(c.stdin_path, "/b/brief.md")
         self.assertEqual(c.cwd, str(ROOT))
 

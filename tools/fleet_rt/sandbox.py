@@ -63,6 +63,32 @@ def available():
     return res
 
 
+def browser_cli_dirs():
+    """`playwright-cli` 가 쓰는 자리 셋 - 세션 기록(`daemon`)·브라우저 표식(`b`)·소켓(`$XDG_RUNTIME_DIR/playwright`).
+
+    울타리는 홈을 읽기 전용으로 두므로 이 셋을 안 열면 브라우저가 뜨지 않는다(EROFS). 작업자(codex 울타리)와
+    검증(이 울타리)이 같은 목록을 써야 화면을 같은 도구로 본다. `~/.cache/ms-playwright` 를 통째로 열지는 않는다 -
+    거기엔 크롬 실행 파일이 있어, 쓰게 두면 울타리 안에서 바꿔 놓은 것이 밖에서 돈다.
+    도구가 안 깔린 기계(그 폴더가 없음)에서는 빈 목록.
+    """
+    base = pathlib.Path(os.path.expanduser("~")) / ".cache" / "ms-playwright"
+    if not base.is_dir():
+        return []
+    dirs = [base / "daemon", base / "b"]
+    run = os.environ.get("XDG_RUNTIME_DIR")
+    if run and os.path.isabs(run) and os.path.isdir(run):
+        dirs.append(pathlib.Path(run) / "playwright")
+    out = []
+    for d in dirs:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
+        if d.is_dir() and not d.is_symlink():
+            out.append(str(d))
+    return out
+
+
 def wrap(argv, repo, *, extra_rw=()):
     """`argv` 를 울타리 안에서 돌리는 명령줄과 한 줄 설명. (argv2, note)
 
@@ -84,7 +110,7 @@ def wrap(argv, repo, *, extra_rw=()):
     git = repo / ".git"
     if git.exists():
         a += ["--ro-bind", str(git), str(git)]
-    for p in extra_rw:
+    for p in list(extra_rw) + browser_cli_dirs():
         p = pathlib.Path(p).resolve()
         a += ["--bind", str(p), str(p)]
     # 가리기는 쓰기 묶기 **뒤에** - 앞에 두면 뒤의 묶기가 덮어 다시 보인다

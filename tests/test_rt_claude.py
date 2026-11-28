@@ -71,7 +71,8 @@ class CommandTest(unittest.TestCase):
         from fleet_rt import manager as rt_manager
         want = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]
         self.assertEqual(rt_manager.MANAGER_TOOLS.split(","), want)
-        self.assertEqual(claude_h.WORKER_TOOLS.split(","), want)
+        # 작업자는 스킬도 부른다 (화면을 보는 playwright-cli 스킬 - Skill 이 없으면 권한 거절로 막힌다)
+        self.assertEqual(claude_h.WORKER_TOOLS.split(","), want + ["Skill"])
         self.assertFalse(hasattr(rt_manager, "MANAGER_DENIED") or hasattr(claude_h, "WORKER_DENIED"))
         self.assertIn("보안 경계가 아니었다", rt_manager.__doc__)
 

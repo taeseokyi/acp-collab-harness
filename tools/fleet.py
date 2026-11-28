@@ -414,6 +414,10 @@ def _brief_text(slot, token, rev, label, write, harness, task):
         "(셸 변수 대입 따위를 앞에 붙이지 않는다). py_compile 이 만드는 __pycache__ 는 쓰기로 치지 않는다.",
         "고침을 되돌려 보는 따위로 사본이 필요하면 `/tmp` 아래에 `python3 -c \"import shutil; shutil.copytree(원본, 사본)\"` 로 "
         "만들고, 끝나면 지운다.",
+        "화면을 직접 볼 때는 `playwright-cli` 를 쓴다: `open <주소>` → `snapshot` → `click`·`fill`·`eval` → `close` "
+        "(나머지는 `playwright-cli --help`). 여러 걸음은 한 셸 명령에 `&&` 로 이어 쓴다 - 명령 사이에 브라우저가 닫히는 "
+        "하네스가 있다. 가짜 마이크가 물려 있고 결과 파일은 `/tmp/playwright-cli` 에 쌓인다. "
+        "되풀이할 검사는 눌러 보는 데서 끝내지 않고 검사 스크립트로 남긴다.",
         "", task.strip(), ""])
 
 

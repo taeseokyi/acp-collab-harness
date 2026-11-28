@@ -14,6 +14,7 @@ import shutil
 import subprocess
 from typing import Optional
 
+from .. import sandbox
 from ..base import (LIMIT_RE, Command, Event, ProbeResult, SessionSpec, no_report_tail, one_line as _one_line,
                     read_event_lines, require_repo_cwd)
 
@@ -58,7 +59,8 @@ class CodexHarness:
     def command(self, spec: SessionSpec) -> Command:
         cwd = str(require_repo_cwd(spec.cwd, "codex"))
         argv = ["codex", "exec", "--skip-git-repo-check", "--ephemeral", "-C", cwd, "--sandbox", "workspace-write",
-                "-c", "sandbox_workspace_write.network_access=true", "--json"]
+                "-c", "sandbox_workspace_write.network_access=true",
+                "-c", "sandbox_workspace_write.writable_roots=" + json.dumps(sandbox.browser_cli_dirs()), "--json"]
         if spec.model:
             # 슬롯 꼴 `kisti/kistillm` → codex 는 모델과 공급자를 따로 받는다. 첫 '/' 앞이 공급자다 -
             # 모델 id 에 '/' 가 든 공급자가 있다 (`openrouter/deepseek/deepseek-v4.1-flash`).

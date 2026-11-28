@@ -110,6 +110,10 @@ class Confined(Base):
         # 가리기는 저장소 쓰기 묶기 뒤 (앞이면 다시 보인다)
         self.assertLess(joined.index(f"--bind {r} {r}"), joined.index(f"/dev/null {r}/.env"))
         self.assertEqual(argv[-3:], ["bash", "-c", "true"])
+        # 화면 도구(playwright-cli)가 쓰는 자리는 작업자와 같은 목록으로 연다 - 크롬 실행 파일 폴더는 통째로 열지 않는다
+        for d in sandbox.browser_cli_dirs():
+            self.assertIn(f"--bind {d} {d}", joined)
+            self.assertFalse(d.endswith("/ms-playwright"), d)
 
     def test_writes_inside_the_repo_and_tmp_work(self):
         tmpf = pathlib.Path(tempfile.gettempdir()) / f"rt-sandbox-{os.getpid()}-{time.time_ns()}.txt"

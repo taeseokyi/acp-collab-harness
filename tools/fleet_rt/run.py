@@ -97,6 +97,8 @@ class Supervisor:
         env[ENV_SESSION] = self.d.name
         env[ENV_ROLE] = str(m.get("role"))
         env[ENV_ROOT] = sessions._root_str(self.d.parent)
+        # `playwright-cli` 는 이름 없는 세션을 작업 폴더마다 하나만 둔다 - 같이 도는 작업자가 한 브라우저를 나눠 쓰지 않게 세션마다 이름을 준다
+        env["PLAYWRIGHT_CLI_SESSION"] = self.d.name
         names = m.get("env_set_names") or []
         if names:
             # 값은 meta 에 적지 않았다 - 어댑터로 명령을 다시 만들어 이름이 같은 것만 가져온다.
