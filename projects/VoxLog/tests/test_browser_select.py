@@ -97,23 +97,23 @@ class ExpandNeedsTest(unittest.TestCase):
     def test_real_needs_numbers_sane(self):
         for num, deps in browser_voxlog.NEEDS.items():
             self.assertGreaterEqual(num, 1)
-            self.assertLessEqual(num, 78)
+            self.assertLessEqual(num, 86)
             for dep in deps:
                 self.assertGreaterEqual(dep, 1)
-                self.assertLessEqual(dep, 78)
+                self.assertLessEqual(dep, 86)
                 self.assertNotEqual(dep, num)
 
 
 class SummaryLineTest(unittest.TestCase):
     # 14
     def test_full_run_ends_with_full_pass(self):
-        line = browser_voxlog.summary_line(77, 77, 77, 0)
-        self.assertEqual(line, "77/77 통과")
-        self.assertTrue(line.endswith("77/77 통과"))
+        line = browser_voxlog.summary_line(85, 85, 85, 0)
+        self.assertEqual(line, "85/85 통과")
+        self.assertTrue(line.endswith("85/85 통과"))
 
     # 15
     def test_partial_run_is_not_full_pass(self):
-        line = browser_voxlog.summary_line(3, 77, 3, 74)
+        line = browser_voxlog.summary_line(3, 85, 3, 82)
         self.assertIn("부분 실행", line)
         self.assertIn("건너뜀", line)
         self.assertIn("전체 통과 아님", line)
@@ -121,7 +121,7 @@ class SummaryLineTest(unittest.TestCase):
 
     # 16
     def test_partial_run_with_failure_still_not_full_pass(self):
-        line = browser_voxlog.summary_line(3, 77, 2, 74)
+        line = browser_voxlog.summary_line(3, 85, 2, 82)
         self.assertIn("2/3 통과", line)
         self.assertIsNone(re.search(r"\d+/\d+ 통과$", line))
 
@@ -175,9 +175,10 @@ class RealNeedsTest(unittest.TestCase):
 
 class KnownNamesTest(unittest.TestCase):
     # 22
-    def test_collects_all_77_and_41_absent(self):
+    def test_collects_all_85_and_41_absent(self):
+        # 1~86 중 41번이 없어 실제 검사는 85개다.
         names = browser_voxlog._known_names()
-        self.assertEqual(len(names), 77)
+        self.assertEqual(len(names), 85)
         self.assertNotIn(41, names)
 
 

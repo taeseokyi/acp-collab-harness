@@ -4,8 +4,8 @@ The single source of truth for every AI session that works in `/home/tsyi/work/a
 workers coordinate here and only here. **This file is the protocol; `.aimem/aimem.db` is the state.**
 `AIMEM-state.md` and `.aimem/handoff.md` (the handoff log) are read-only views generated from the DB.
 
-- **REV: 217** (workers: if your brief's REV differs, stop and ask - `0.1`)
-- Last updated: 2026-11-28 18:47 KST
+- **REV: 219** (workers: if your brief's REV differs, stop and ask - `0.1`)
+- Last updated: 2026-11-28 20:35 KST
 - **`sss` = sub-session slots.** A slot is a one-shot harness CLI worker that the
   Manager launches with `tools/fleet.py spawn` (`8.0`)
 - Manager (sole write authority): **the `role=manager` session the engine starts for a round**, identified by its session id `M-R<N>-<HHMMSS>` (form pinned in the linter). `tools/fleet_ctl.py
@@ -100,7 +100,7 @@ python3 tools/aimem_db.py task list
 python3 tools/aimem_db.py task set --id T-069 --slot S<n> --status DONE  # Manager only
 ```
 
-Status values: `TODO` / `ASSIGNED` / `IN-PROGRESS` / `REVIEW` / `DONE` / `BLOCKED`. The graph runner moves a task
+Status values: `TODO` / `ASSIGNED` / `IN-PROGRESS` / `REVIEW` / `DONE` / `BLOCKED` / `QUEUED`. The graph runner moves a task
 with its node - `IN-PROGRESS` when it starts, `REVIEW` when it finishes, `BLOCKED` when it fails - as the Manager's
 hand, not a second writer. **`DONE` is the Manager's verdict; the runner never sets or overwrites it.** Finished rows
 stay in the DB until archived (`Section 6`, Archive Lifecycle).
@@ -145,6 +145,10 @@ New web requests (`NEW`) come first each round; then the queue, top down. The we
   work, `[함대]` for the fleet's own. A project's items are that project's remaining work - a chain run on the project
   does not end while they are left, and files them as that project's request. No tag, or a name with no folder,
   counts as the fleet's
+
+- **A blocked node that stays unresolved goes to the queue at round close:** `queue add --task "..." --inherited
+  T-<n>` names it as the source. That task becomes `QUEUED` - closed as a task, off the board, still shown as a
+  blocked node in its graph - and the queue item carries the work
 
 The Manager takes the next task from the top (`8.0-4`). When the queue is empty it reports a summary and stops; it
 never invents items.

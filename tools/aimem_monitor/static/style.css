@@ -1149,6 +1149,7 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.55; }
 
 /* Claude 사용 한도 */
 .claude-usage { display: grid; gap: var(--st-s-2); }
+#go-usage-wrap { margin-top: var(--st-s-4); }
 .usage-row {
   display: flex; align-items: center; gap: var(--st-s-2);
   min-width: 0;

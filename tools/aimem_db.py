@@ -50,7 +50,9 @@ HANDOFF_HEADER = ("# Handoff Log (generated)\n\n"
 
 
 #: 태스크·요청 상태 어휘 (CLI choices 와 검사가 같이 쓴다)
-TASK_STATUSES = ("TODO", "ASSIGNED", "IN-PROGRESS", "REVIEW", "DONE", "BLOCKED")
+#: `QUEUED` = 막힌 채 못 풀어 대기 큐로 넘긴 태스크. 이 태스크로서는 끝난 줄이다(보드에서 빠지고 그래프에는 막힌 노드로 남는다)
+TASK_STATUSES = ("TODO", "ASSIGNED", "IN-PROGRESS", "REVIEW", "DONE", "BLOCKED", "QUEUED")
+TASK_CLOSED_SQL = "('DONE','QUEUED')"
 REQUEST_STATUSES = ("NEW", "PLANNED", "IN-PROGRESS", "DONE", "REJECTED")
 
 
@@ -815,7 +817,7 @@ def archive_plan(days=14, now=None):
             "total_records": 0}
     with connect() as con:
         for r in con.execute("SELECT id,title,slot,status,inherited,artifacts,updated FROM tasks "
-                             "WHERE status='DONE' AND COALESCE(updated,created,'') <= ? ORDER BY id", (cutoff,)):
+                             f"WHERE status IN {TASK_CLOSED_SQL} AND COALESCE(updated,created,'') <= ? ORDER BY id", (cutoff,)):
             plan["tasks"].append(dict(r))
         task_status = {r["id"]: r["status"] for r in con.execute("SELECT id,status FROM tasks")}
         request_ids = {r["id"] for r in con.execute("SELECT id FROM requests")}
@@ -1072,7 +1074,7 @@ def archive_apply(plan, actor="관리자"):
                     marker = f"| {r['id']} |"
                     if any(line.startswith(marker) for line in old_lines):
                         continue
-                    row = f"| {r['id']} | {cell(r['title'])} | {cell(r['slot'])} | DONE | {cell(r['inherited'])} | {cell(r['artifacts'])} |"
+                    row = f"| {r['id']} | {cell(r['title'])} | {cell(r['slot'])} | {r['status']} | {cell(r['inherited'])} | {cell(r['artifacts'])} |"
                     fh.write(row + "\n")
                     old_lines.append(row)
                     moved_any = True
@@ -1084,8 +1086,8 @@ def archive_apply(plan, actor="관리자"):
         ids = [r["id"] for r in rows]
         with connect() as con:
             deleted = [r["id"] for r in con.execute(
-                f"SELECT id FROM tasks WHERE id IN ({','.join('?' * len(ids))}) AND status='DONE'", ids)]
-            con.execute(f"DELETE FROM tasks WHERE id IN ({','.join('?' * len(ids))}) AND status='DONE'", ids)
+                f"SELECT id FROM tasks WHERE id IN ({','.join('?' * len(ids))}) AND status IN {TASK_CLOSED_SQL}", ids)]
+            con.execute(f"DELETE FROM tasks WHERE id IN ({','.join('?' * len(ids))}) AND status IN {TASK_CLOSED_SQL}", ids)
             con.commit()
         out["tasks"] = deleted
         if deleted:
@@ -1457,7 +1459,7 @@ def _project_refs(con, name):
                          "file": f.name})
     ids = [r["id"] for r in reqs]
     tasks = [r["id"] for r in con.execute(
-        f"SELECT id FROM tasks WHERE request_id IN ({','.join('?' * len(ids))}) AND status NOT IN ('DONE','BLOCKED') ORDER BY id",
+        f"SELECT id FROM tasks WHERE request_id IN ({','.join('?' * len(ids))}) AND status NOT IN ('DONE','BLOCKED','QUEUED') ORDER BY id",
         ids)] if ids else []
     tag = re.compile(r"\A\s*\[\s*" + re.escape(name) + r"\s*\]")
     queue = [{"pos": r["pos"], "task": r["task"]} for r in con.execute("SELECT pos,task FROM queue ORDER BY pos")
@@ -1487,7 +1489,7 @@ def project_close(name, actor="사람"):
             marks = ",".join("?" * len(ids))
             con.execute(f"UPDATE requests SET status='REJECTED', updated=? WHERE id IN ({marks})", (now, *ids))
             con.execute(f"UPDATE tasks SET status='BLOCKED', updated=? WHERE request_id IN ({marks}) "
-                        "AND status NOT IN ('DONE','BLOCKED')", (now, *ids))
+                        "AND status NOT IN ('DONE','BLOCKED','QUEUED')", (now, *ids))
         for q in refs["queue"]:
             con.execute("DELETE FROM queue WHERE pos=?", (q["pos"],))
         if refs["queue"]:
@@ -1535,6 +1537,14 @@ def cmd_queue(a):
             con.execute("INSERT INTO queue(pos,task,slot_hint,inherited,note) VALUES(?,?,?,?,?)",
                         (pos, a.task, a.slot_hint, a.inherited, a.note))
             body = f"queue +{pos} {a.task}"
+            # 출처 태스크가 막힌 채면 큐로 넘긴 것으로 닫는다 - 일은 큐 항목이 잇고, 보드에는 막힌 줄이 남지 않는다
+            moved = []
+            for tid in dict.fromkeys(re.findall(r"\bT-\d+\b", str(a.inherited or ""))):
+                cur = con.execute("UPDATE tasks SET status='QUEUED', updated=? WHERE id=? AND status='BLOCKED'", (_now(), tid))
+                if cur.rowcount:
+                    moved.append(tid)
+            if moved:
+                body += f" (막힌 {', '.join(moved)} → QUEUED)"
         elif a.action == "edit":
             # 제자리 고치기 - drop 뒤 add 로 고치면 맨 뒤로 가서 순서가 바뀐다
             row = con.execute("SELECT task FROM queue WHERE pos=?", (a.pos,)).fetchone()
@@ -1776,7 +1786,7 @@ def slot_set(slot, harness=None, model=None, role=None, note=None, actor="관리
 
 def slot_open_tasks(slot):
     with connect() as con:
-        return [r["id"] for r in con.execute("SELECT id FROM tasks WHERE slot=? AND status NOT IN ('DONE') ORDER BY id", (slot,))]
+        return [r["id"] for r in con.execute("SELECT id FROM tasks WHERE slot=? AND status NOT IN ('DONE','QUEUED') ORDER BY id", (slot,))]
 
 
 def slot_remove(slot, actor="관리자", force=False):
@@ -1793,7 +1803,7 @@ def slot_remove(slot, actor="관리자", force=False):
         running = _slot_running(slot)
         if running:
             raise ValueError(f"{slot} 에 작업자가 돌고 있습니다 ({running}) - 끝난 뒤 삭제하십시오")
-        open_tasks = [r["id"] for r in con.execute("SELECT id FROM tasks WHERE slot=? AND status NOT IN ('DONE')", (slot,))]
+        open_tasks = [r["id"] for r in con.execute("SELECT id FROM tasks WHERE slot=? AND status NOT IN ('DONE','QUEUED')", (slot,))]
         if open_tasks and not force:
             raise ValueError(f"{slot} 에 끝나지 않은 태스크가 있습니다: {', '.join(open_tasks)} (force 로 강제)")
         n_own = con.execute("DELETE FROM ownership WHERE owner=?", (slot,)).rowcount

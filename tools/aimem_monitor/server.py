@@ -926,6 +926,7 @@ def _empty_state(root, errors):
                   "managers": manager_status(root), "errors": errors, "projects": list_projects(root)})
     state["fleet"] = fleet_state(root)
     state["claude_usage"] = _safe_claude_usage(root)
+    state["go_usage"] = go_usage(root)
     return scrub_public(state, root)
 
 
@@ -958,7 +959,7 @@ def _blank_keys(root):
         "tz": tz_info(root),
         "aimem": {}, "slots": [], "board": [], "queue": [],
         "log": [], "runs": [], "requests": [],
-        "claude_usage": None,
+        "claude_usage": None, "go_usage": None,
     }
 
 
@@ -1066,6 +1067,88 @@ def claude_usage(root=ROOT):
             age_seconds = None
 
     return {"at": at, "age_seconds": age_seconds, "rows": rows}
+
+
+#: 오픈코드 Go 구독의 사용 한도 (2026-11-28 태석님) - 공급자가 주는 조회 주소 하나. 문서: https://opencode.ai/docs/go/
+GO_USAGE_URL = "https://opencode.ai/inference/go/v1/usage"
+GO_USAGE_PROVIDER = "opencode-go"
+GO_USAGE_TTL_S = 300          # 5분에 한 번만 묻는다 (`/api/state` 는 5초마다 돈다)
+GO_USAGE_ROWS = (("rolling", "5시간"), ("weekly", "주간"), ("monthly", "월간"))
+#: 모니터 서버가 뜰 때만 켠다 (`serve`) - 검사나 다른 도구가 상태를 모을 때 밖으로 나가지 않게
+GO_USAGE_FETCH = False
+_go_usage_lock = threading.Lock()
+_go_usage_cache = {}          # root -> {"asked": monotonic, "busy": bool, "value": {...} | None}
+
+
+def parse_go_usage(data, at):
+    """조회 응답 `{"usage": {rolling|weekly|monthly: {status, percent, resetsAt}}}` → 함대 탭 행. 읽을 것이 없으면 None."""
+    usage = data.get("usage") if isinstance(data, dict) else None
+    if not isinstance(usage, dict):
+        return None
+    rows = []
+    for key, label in GO_USAGE_ROWS:
+        row = usage.get(key)
+        if not isinstance(row, dict):
+            continue
+        percent = _usage_percent(row)
+        if percent is None:
+            continue
+        rows.append({"key": key, "label": label, "percent": round(percent, 1),
+                     "resets_at_iso": _usage_resets_at(row.get("resetsAt")),
+                     "limited": row.get("status") == "rate-limited"})
+    return {"at": at, "rows": rows} if rows else None
+
+
+def _go_usage_key(root):
+    fleet_env = _fleet_rt("env")           # 키는 저장소 `.env` 한 곳에서만
+    name = fleet_env.session_key_name(root, GO_USAGE_PROVIDER)
+    return fleet_env.load_env(root).get(name) if name else None
+
+
+def _go_usage_refresh(root, key):
+    value = None
+    try:
+        req = urllib.request.Request(GO_USAGE_URL, headers={"Authorization": "Bearer " + key, "User-Agent": "fleet-monitor"})
+        with urllib.request.urlopen(req, timeout=15) as res:   # noqa: S310 - 고정된 https 주소
+            value = parse_go_usage(json.loads(res.read(64 * 1024).decode("utf-8")),
+                                   datetime.datetime.now().isoformat(timespec="seconds"))
+    except Exception:  # noqa: BLE001 - 못 물었으면 앞의 값을 그대로 둔다 (나이는 화면이 말한다)
+        value = None
+    with _go_usage_lock:
+        slot = _go_usage_cache.setdefault(str(root), {})
+        slot["busy"] = False
+        if value is not None:
+            slot["value"] = value
+
+
+def go_usage(root=ROOT):
+    """오픈코드 Go 사용 한도 `{at, age_seconds, rows}` 또는 None. **부르는 쪽을 기다리게 하지 않는다** -
+    낡았으면 뒤에서 다시 묻고 지금 가진 값을 돌려준다. 키가 없거나 조회가 꺼져 있으면 None."""
+    if not GO_USAGE_FETCH:
+        return None
+    try:
+        key = _go_usage_key(root)
+    except Exception:  # noqa: BLE001 - 곁다리 카드가 상태 전체를 죽이지 않게
+        key = None
+    if not key:
+        return None
+    now = time.monotonic()
+    with _go_usage_lock:
+        slot = _go_usage_cache.setdefault(str(root), {})
+        due = not slot.get("busy") and (slot.get("asked") is None or now - slot["asked"] >= GO_USAGE_TTL_S)
+        if due:
+            slot["busy"], slot["asked"] = True, now
+        value = slot.get("value")
+    if due:
+        threading.Thread(target=_go_usage_refresh, args=(root, key), daemon=True).start()
+    if not value:
+        return None
+    out = dict(value)
+    try:
+        out["age_seconds"] = max(0, int((datetime.datetime.now() - datetime.datetime.fromisoformat(value["at"])).total_seconds()))
+    except (TypeError, ValueError):
+        out["age_seconds"] = None
+    return out
 
 
 #: 확인토큰 꼴. **이 꼴일 때만 비밀로 취급합니다** - 길이 하한만 두면 토큰이
@@ -1209,6 +1292,7 @@ def collect_state(root=ROOT):
     state["managers"] = manager_status(root)
     state["fleet"] = fleet_state(root)
     state["claude_usage"] = _safe_claude_usage(root)
+    state["go_usage"] = go_usage(root)
     return scrub_public(state, root)
 
 
@@ -4115,6 +4199,8 @@ def serve(host=HOST, port=PORT, root=ROOT, once=False, tls=False, auth=None):
     반대로 `--tls` 없이 띄우면 옛 동작 그대로(로컬 http, 인증 없음)입니다.
     """
     require_auth = bool(tls) if auth is None else bool(auth)
+    global GO_USAGE_FETCH
+    GO_USAGE_FETCH = not once             # 떠 있는 서버만 공급자에게 사용량을 묻는다
     try:    # 로그·화면 시각을 설정 시간대 하나로 (`fleet.toml` `[time] zone`)
         _fleet_rt("timezone").apply(root)
     except Exception:  # noqa: BLE001

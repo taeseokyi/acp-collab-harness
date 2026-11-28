@@ -416,8 +416,12 @@ def _brief_text(slot, token, rev, label, write, harness, task):
         "만들고, 끝나면 지운다.",
         "화면을 직접 볼 때는 `playwright-cli` 를 쓴다: `open <주소>` → `snapshot` → `click`·`fill`·`eval` → `close` "
         "(나머지는 `playwright-cli --help`). 여러 걸음은 한 셸 명령에 `&&` 로 이어 쓴다 - 명령 사이에 브라우저가 닫히는 "
-        "하네스가 있다. 가짜 마이크가 물려 있고 결과 파일은 `/tmp/playwright-cli` 에 쌓인다. "
+        "하네스가 있다. `eval` 은 식 하나만 받는다(여러 문장은 `() => { ...; return x; }`). 응답 붙잡기·페이지가 뜨기 전에 "
+        "값 넣기·숨은 파일 칸에 올리기는 `run-code \"async page => { ... }\"` 로 한다. "
+        "가짜 마이크가 물려 있고 결과 파일은 `/tmp/playwright-cli` 에 쌓인다. "
         "되풀이할 검사는 눌러 보는 데서 끝내지 않고 검사 스크립트로 남긴다.",
+        "서버 따위를 뒤에 띄울 때는 묶음 전체의 입출력을 돌린다: `(cd <폴더> && exec <명령>) ><로그> 2>&1 </dev/null &` "
+        "- `cd <폴더> && <명령> ><로그> &` 꼴은 뒤에 남은 셸이 출력을 쥐고 있어 명령이 시간 제한까지 안 끝난다.",
         "", task.strip(), ""])
 
 

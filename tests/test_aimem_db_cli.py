@@ -954,6 +954,23 @@ class QueueFindingIdsTest(DbFixture, unittest.TestCase):
         self.q("add", task="R17-N5·N6(낮음): 고칠 것")
         self.assertEqual(self.tasks(), ["R17-N5·N6(낮음): 고칠 것"])
 
+    def test_add_with_source_task_closes_blocked_row_as_queued(self):
+        """막힌 태스크를 큐로 넘기면(`--inherited T-n`) 그 줄은 QUEUED 로 닫힌다 - 막히지 않은 줄은 그대로."""
+        now = aimem_db._now()
+        with aimem_db.connect() as con:
+            for tid, st in (("T-901", "BLOCKED"), ("T-902", "REVIEW"), ("T-903", "BLOCKED")):
+                con.execute("INSERT INTO tasks(id,title,slot,status,created,updated) VALUES(?,?,?,?,?,?)",
+                            (tid, "일 " + tid, "S2", st, now, now))
+            con.commit()
+        self.q("add", task="[함대] 막힌 일 다음에", inherited="T-901, T-902")
+        with aimem_db.connect() as con:
+            got = {r["id"]: r["status"] for r in con.execute("SELECT id,status FROM tasks WHERE id LIKE 'T-90%'")}
+        self.assertEqual(got, {"T-901": "QUEUED", "T-902": "REVIEW", "T-903": "BLOCKED"})
+        self.assertIn("QUEUED", aimem_db.TASK_STATUSES)
+        # 큐로 넘긴 줄은 끝난 줄이다 - 정리(아카이브) 대상에 들고, 슬롯을 지울 때 미완으로 세지 않는다
+        self.assertIn("T-901", [t["id"] for t in aimem_db.archive_plan(0)["tasks"]])
+        self.assertNotIn("T-903", [t["id"] for t in aimem_db.archive_plan(0)["tasks"]])
+
     def test_edit_in_place_keeps_order(self):
         for t in ("하나", "둘", "셋"):
             self.q("add", task=t)

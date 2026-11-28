@@ -53,11 +53,33 @@
     return e;
   }
 
+  function timeoutError() {
+    var e = fail('응답이 없습니다', 0);
+    e.timeout = true;
+    return e;
+  }
+
   function json(path, opts) {
     opts = opts || {};
-    return getConfig().then(function (cfg) {
+    var timeoutMs = opts.timeoutMs > 0 ? opts.timeoutMs : 0;
+    // 시간 제한이 있으면 내부 컨트롤러로 fetch 를 끊는다. 없으면 지금과 똑같이 동작한다.
+    var ac = null;
+    if (timeoutMs) {
+      try { ac = new AbortController(); } catch (e) { ac = null; }
+    }
+    var timedOut = false;
+    var work = getConfig().then(function (cfg) {
       var init = { method: opts.method || 'GET', headers: authHeaders(cfg), cache: 'no-store' };
-      if (opts.signal) init.signal = opts.signal;
+      if (ac) {
+        init.signal = ac.signal;
+        // 바깥 신호와 시간 제한을 함께 듣는다: 바깥이 끊기면 내부 컨트롤러도 끊는다.
+        if (opts.signal) {
+          if (opts.signal.aborted) ac.abort();
+          else opts.signal.addEventListener('abort', function () { ac.abort(); }, { once: true });
+        }
+      } else if (opts.signal) {
+        init.signal = opts.signal;
+      }
       if (opts.body !== undefined) {
         init.headers['Content-Type'] = 'application/json';
         init.body = JSON.stringify(opts.body);
@@ -78,8 +100,20 @@
           return data == null ? {} : data;
         });
       }, function () {
+        if (timedOut) throw timeoutError();
         throw fail('서버에 연결할 수 없습니다', 0);
       });
+    });
+    if (!timeoutMs) return work;
+    // getConfig 대기부터 fetch 끝까지를 덮는다. 시간이 지나면 (내부 컨트롤러가 있으면) fetch 를 끊고 거절한다.
+    return new Promise(function (resolve, reject) {
+      var timer = setTimeout(function () {
+        timedOut = true;
+        if (ac) { try { ac.abort(); } catch (e) { /* 아래에서 거절한다 */ } }
+        reject(timeoutError());
+      }, timeoutMs);
+      work.then(function (v) { clearTimeout(timer); resolve(v); },
+                function (e) { clearTimeout(timer); reject(e); });
     });
   }
 

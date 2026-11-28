@@ -79,6 +79,8 @@ SERVER_KEYS = {
     # Claude Code 상태줄이 적어 둔 `.aimem/claude-usage.json` 을 읽어 만든 사용 한도 (2026-11-12, R18).
     # 파일이 없거나 읽을 수 없으면 null.
     "claude_usage": "{at, age_seconds, rows:[{key, label, percent, resets_at_iso}]} 또는 null",
+    # 오픈코드 Go 구독의 사용 한도 - 모니터 서버가 5분에 한 번 공급자에게 묻는다. 키가 없거나 아직 못 물었으면 null.
+    "go_usage": "{at, age_seconds, rows:[{key, label, percent, resets_at_iso, limited}]} 또는 null",
 }
 
 #: 공개면에서 **절대 나가면 안 되는** 것 (REV 114, S4 유출 검수 5번).
@@ -146,6 +148,7 @@ PROGRESS_WEIGHTS = {
     "REVIEW": 0.8,
     "DONE": 1.0,
     "BLOCKED": 0.0,
+    "QUEUED": 0.0,
 }
 
 #: 작업자 실행 상태. `fleet.py` `_run_state()` 와 같은 어휘여야 합니다.

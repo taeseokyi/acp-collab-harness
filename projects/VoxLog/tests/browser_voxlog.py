@@ -5,7 +5,7 @@
       python3 projects/VoxLog/tests/browser_voxlog.py --only 67,75-78
       python3 projects/VoxLog/tests/browser_voxlog.py --match "기본값 읽기"
 서버는 이 검사가 임시 data 폴더로 직접 띄우고(subprocess) 끝나면 내린다.
-검사는 모두 77개입니다.
+검사는 모두 85개입니다.
 
 `--only` 는 번호를 쉼표 목록·`a-b` 닫힌 범위로 받고(예: `--only 67,75-78`) 여러 번 줄 수
 있습니다. `--match` 는 검사 이름에 들어 있는 글을 받고 여러 번 줄 수 있습니다(대소문자 그대로).
@@ -14,7 +14,7 @@
 (예: `--only 3` 은 2 까지, `--only 7` 은 2·3 까지). 그래서 검사 하나만 골라도 1분 안에 돕니다.
 
 끝줄은 전체 실행이면 `N/M 통과`, 일부 실행이면
-`부분 실행: n/77 돌림 · m 건너뜀 · p/n 통과 (전체 통과 아님)` 입니다 - 일부 실행은 전체
+`부분 실행: n/85 돌림 · m 건너뜀 · p/n 통과 (전체 통과 아님)` 입니다 - 일부 실행은 전체
 통과가 아닙니다. 실패가 있거나 고른 검사가 하나도 없으면(그때는 끝줄 앞에
 `고른 검사가 없습니다`) 종료 코드 1, 돌린 검사가 있고 실패가 없으면 0.
 """
@@ -3992,6 +3992,433 @@ def run_all(browser, base, data, tmp, procs):
              pg.input_value("#stt-defaults-preprocess"))
         c.close()
     check("78 상세·설정 칸 닫았다 다시 열기: 앞 읽기 끊김·새 GET 으로 채움", t78)
+
+
+    def t79():
+        # 설정 저장 PUT 이 응답 없이 시간을 넘기면 칸·단추를 풀고 토스트로 알리며, 다시 열면 새 기본값
+        # GET 이 나간다. PUT 500 뒤에도 칸이 풀리고 다시 열면 새 GET 이 나간다(R55-N1·N3 ①).
+        b, _ = new_server("d79")
+        c = new_ctx()
+        pg = c.new_page()
+        pg.add_init_script("window.__VOX_STT_TIMEOUT_MS__ = 1000;")
+        pg.add_init_script(STT_SAVE_HOLD_JS)
+        gets = []
+
+        def track_get(req):
+            url = req.url.split("?")[0]
+            if req.method == "GET" and url.endswith("/api/stt-options"):
+                gets.append(url)
+
+        pg.on("request", track_get)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        pg.click("#settings-btn")
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults"), 10, pg=pg),
+             "설정 기본값 첫 읽기가 끝나지 않음")
+
+        pg.evaluate("window.__holdNextSave()")
+        pg.click("#stt-defaults-save")
+        need(wait_for(lambda: pg.evaluate("window.__saveHeld()"), 5, pg=pg),
+             "설정 저장 PUT 응답이 쥐어지지 않음")
+        need(pg.evaluate("document.querySelector('#stt-defaults-state').textContent") == "저장 중…",
+             "저장 응답 전 상태가 '저장 중…' 이 아님")
+        need(not pg.is_enabled("#stt-defaults-preprocess") and not pg.is_enabled("#stt-defaults-save"),
+             "저장 응답 전 설정 칸·저장 단추가 잠기지 않음")
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults"), 3, pg=pg),
+             "시간 제한 뒤 설정 입력 칸·저장 단추가 풀리지 않음")
+        need(pg.evaluate("document.querySelector('#stt-defaults-state').textContent") == "",
+             "시간 제한 뒤 상태 글이 비지 않음: %r" %
+             pg.evaluate("document.querySelector('#stt-defaults-state').textContent"))
+        need(pg.is_visible("#toast") and
+             "받아쓰기 기본값을 저장하지 못했습니다: 시간이 지났습니다" in pg.inner_text("#toast"),
+             "시간 제한 저장 실패 토스트가 보이지 않음: %r" % pg.inner_text("#toast"))
+
+        before_gets = len(gets)
+        pg.click("#settings-btn")
+        need(pg.evaluate("document.querySelector('#settings').hidden"), "설정 칸을 닫지 못함")
+        pg.click("#settings-btn")
+        need(wait_for(lambda: len(gets) >= before_gets + 1, 10, pg=pg),
+             "저장 시간 초과 뒤 다시 열었는데 새 기본값 GET 이 나가지 않음: %r" % gets[before_gets:])
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults"), 10, pg=pg),
+             "다시 연 설정 칸이 풀리지 않음")
+
+        server_text = "저장 거절 - 서버가 준 까닭"
+
+        def put_500(route):
+            req = route.request
+            url = req.url.split("?")[0]
+            if req.method == "PUT" and url.endswith("/api/stt-options"):
+                route.fulfill(status=500, content_type="application/json",
+                              body=json.dumps({"error": server_text}, ensure_ascii=False))
+            else:
+                route.continue_()
+
+        pg.route("**/api/stt-options", put_500)
+        pg.click("#stt-defaults-save")
+        need(wait_for(lambda: pg.is_visible("#toast") and server_text in pg.inner_text("#toast"), 5, pg=pg),
+             "500 저장 실패 뒤 서버 까닭이 토스트로 보이지 않음: %r" % pg.inner_text("#toast"))
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults"), 5, pg=pg),
+             "500 저장 실패 뒤 설정 칸·저장 단추가 풀리지 않음")
+        need(pg.evaluate("document.querySelector('#stt-defaults-state').textContent") == "",
+             "500 저장 실패 뒤 상태 글이 비지 않음")
+        pg.unroute("**/api/stt-options", put_500)
+
+        before_gets = len(gets)
+        pg.click("#settings-btn")
+        need(pg.evaluate("document.querySelector('#settings').hidden"), "설정 칸을 닫지 못함")
+        pg.click("#settings-btn")
+        need(wait_for(lambda: len(gets) >= before_gets + 1, 10, pg=pg),
+             "500 저장 실패 뒤 다시 열었는데 새 기본값 GET 이 나가지 않음: %r" % gets[before_gets:])
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults"), 10, pg=pg),
+             "500 실패 뒤 다시 연 설정 칸이 풀리지 않음")
+        c.close()
+    check("79 설정 저장 응답 없음: 제한 시간 뒤 칸·저장 단추 풀림·토스트·다시 열면 새 GET", t79)
+
+
+    def t80():
+        # getConfig 가 끝나지 않아 fetch 가 시작되기 전에도 타이머가 직접 칸을 푼다(R55-N2).
+        b, _ = new_server("d80")
+        c = new_ctx()
+        pg = c.new_page()
+        pg.add_init_script("window.__VOX_STT_TIMEOUT_MS__ = 1000;")
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        pg.evaluate("""() => {
+            window.__origVoxQueueGetConfig = window.VoxQueue.getConfig;
+            window.VoxQueue.getConfig = function () { return new Promise(function () {}); };
+        }""")
+        pg.click("#settings-btn")
+        need(wait_for(lambda: pg.is_visible("#stt-defaults-fields") and
+                      pg.evaluate("document.querySelector('#stt-defaults-preprocess').disabled"), 5, pg=pg),
+             "getConfig 가 걸린 채 설정 칸이 잠기지 않음")
+        need(wait_for(lambda: "불러오지 못했습니다: 시간이 지났습니다" in pg.inner_text("#stt-defaults-note"),
+                      3, pg=pg),
+             "getConfig 대기 중 시간 제한이 칸을 풀지 않음: %r" % pg.inner_text("#stt-defaults-note"))
+        need(not pg.evaluate("['preprocess', 'speakers', 'context', 'auto', 'review'].some(function (k) {"
+                             " return document.querySelector('#stt-defaults-' + k).disabled; })"),
+             "시간 제한 뒤 설정 칸이 잠긴 채 남음")
+        need(pg.evaluate("document.querySelector('#stt-defaults-fields').hidden"),
+             "시간 제한 뒤 설정 칸이 숨겨지지 않음")
+
+        pg.evaluate("window.VoxQueue.getConfig = window.__origVoxQueueGetConfig;")
+        pg.click("#settings-btn")
+        need(pg.evaluate("document.querySelector('#settings').hidden"), "설정 칸을 닫지 못함")
+        pg.click("#settings-btn")
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults"), 10, pg=pg),
+             "getConfig 를 되돌리고 다시 열어도 설정 칸이 채워지지 않음")
+        need(pg.inner_text("#stt-defaults-note") == "",
+             "getConfig 를 되돌리고 다시 열었는데 실패 글이 남음: %r" % pg.inner_text("#stt-defaults-note"))
+        c.close()
+    check("80 설정 읽기 getConfig 가 걸려도 제한 시간 뒤 풀림", t80)
+
+
+    def t81():
+        # 목록을 못 불러오면 목록 위에 오류 줄과 '다시 시도' 가 남고, 5xx 는 '서버 오류',
+        # 응답 없음은 제한 시간 뒤 '연결 안 됨' 이 되며 옛 목록은 지우지 않는다(R57 B-D2).
+        b, _ = new_server("d81")
+        upload_rec(b, "one")  # 다시 시도가 채울 목록 1건
+        c = new_ctx()
+        pg = c.new_page()
+        pg.add_init_script("window.__VOX_LIST_TIMEOUT_MS__ = 1000;")
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+
+        def list_503(route):
+            req = route.request
+            url = req.url.split("?")[0]
+            if req.method == "GET" and url.endswith("/api/recordings"):
+                route.fulfill(status=503, content_type="application/json",
+                              body=json.dumps({"error": "목록을 불러오지 못했습니다 (503)"},
+                                              ensure_ascii=False))
+            else:
+                route.continue_()
+
+        pg.route("**/api/recordings?*", list_503)
+        open_tab(pg, "list")
+        need(wait_for(lambda: pg.is_visible("#list-error"), 8, pg=pg),
+             "503 목록 실패 뒤 오류 줄이 보이지 않음")
+        need("목록을 불러오지 못했습니다" in pg.inner_text("#list-error"),
+             "오류 줄 글에 '목록을 불러오지 못했습니다' 가 없음: %r" % pg.inner_text("#list-error"))
+        need(pg.is_visible("#list-retry"), "오류 줄 안의 '다시 시도' 단추가 보이지 않음")
+        need(pg.inner_text("#conn").strip() == "서버 오류",
+             "503 인데 연결 표시가 '서버 오류' 가 아님: %r" % pg.inner_text("#conn"))
+
+        pg.unroute("**/api/recordings?*", list_503)
+        pg.click("#list-retry")
+        need(wait_for(lambda: pg.evaluate("document.querySelector('#list-error').hidden"), 8, pg=pg),
+             "다시 시도 성공 뒤 오류 줄이 숨지 않음")
+        need(wait_for(lambda: list_count(pg) >= 1, 8, pg=pg),
+             "다시 시도 성공 뒤 목록이 채워지지 않음 (%d)" % list_count(pg))
+        need(pg.inner_text("#conn").strip() == "연결됨",
+             "다시 시도 성공 뒤 연결 표시가 '연결됨' 이 아님: %r" % pg.inner_text("#conn"))
+
+        # 응답 없음: 목록 GET 을 영원히 안 끝나는 Promise 로 바꾼다.
+        pg.evaluate("""() => {
+            window.__origFetchList = window.fetch;
+            window.fetch = function (input, init) {
+                const url = typeof input === 'string' ? input : input.url;
+                const method = (init && init.method) || 'GET';
+                if (method === 'GET' && url.split('?')[0].endsWith('/api/recordings')) {
+                    return new Promise(function () {});
+                }
+                return window.__origFetchList(input, init);
+            };
+            return 'patched';
+        }""")
+        before = list_count(pg)
+        open_tab(pg, "list")
+        need(wait_for(lambda: pg.get_attribute("#list", "aria-busy") == "true", 3, pg=pg),
+             "목록을 불러오는 동안 #list 에 aria-busy 가 없음")
+        need(wait_for(lambda: pg.is_visible("#list-error") and
+                      "응답이 없습니다" in pg.inner_text("#list-error"), 5, pg=pg),
+             "응답 없음 뒤 오류 줄이 보이지 않음: %r" % pg.inner_text("#list-error"))
+        need(pg.inner_text("#conn").strip() == "연결 안 됨",
+             "응답 없음 뒤 연결 표시가 '연결 안 됨' 이 아님: %r" % pg.inner_text("#conn"))
+        need(pg.get_attribute("#list", "aria-busy") is None,
+             "끝난 뒤 #list 의 aria-busy 가 남음: %r" % pg.get_attribute("#list", "aria-busy"))
+        need(before >= 1 and list_count(pg) == before,
+             "응답 없음 뒤 옛 목록이 지워짐 (%d → %d)" % (before, list_count(pg)))
+
+        # 320px 에서도 오류 줄·단추가 화면 안에 있고 가로 넘침이 없다.
+        pg.set_viewport_size({"width": 320, "height": 700})
+        need(wait_for(lambda: pg.is_visible("#list-error") and pg.is_visible("#list-retry"), 3, pg=pg),
+             "320 에서 오류 줄·'다시 시도' 가 보이지 않음")
+        box = pg.evaluate("""() => {
+            const e = document.querySelector('#list-error').getBoundingClientRect();
+            const r = document.querySelector('#list-retry').getBoundingClientRect();
+            return {sw: document.documentElement.scrollWidth, vw: window.innerWidth,
+                    ex: e.x, er: e.right, rx: r.x, rr: r.right};
+        }""")
+        need(box["sw"] <= box["vw"] + 0.5,
+             "320 에서 가로 넘침: scrollWidth %r > innerWidth %r" % (box["sw"], box["vw"]))
+        need(box["ex"] >= -0.5 and box["er"] <= box["vw"] + 0.5 and
+             box["rx"] >= -0.5 and box["rr"] <= box["vw"] + 0.5,
+             "320 에서 오류 줄·단추가 화면 밖: %r" % box)
+        c.close()
+    check("81 목록 503·응답 없음: 오류 줄·다시 시도·연결 표시·aria-busy", t81)
+
+
+    def t82():
+        # 묻기 POST 가 응답 없이 시간을 넘기면 묻기 단추를 풀고 안내 글을 남긴다(R57 B-D3).
+        b, _ = new_server("d82")
+        upload_rec(b, "askable")  # '오늘' 범위에 담길 녹취 1건
+        c = new_ctx()
+        pg = c.new_page()
+        pg.add_init_script("window.__VOX_ASK_TIMEOUT_MS__ = 1000;")
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        pg.evaluate("""() => {
+            window.__origFetchAsk = window.fetch;
+            window.fetch = function (input, init) {
+                const url = typeof input === 'string' ? input : input.url;
+                const method = (init && init.method) || 'GET';
+                if (method === 'POST' && url.split('?')[0].endsWith('/api/ask')) {
+                    return new Promise(function () {});
+                }
+                return window.__origFetchAsk(input, init);
+            };
+            return 'patched';
+        }""")
+        open_tab(pg, "ask")
+        pg.select_option("#ask-scope", "today")
+        pg.click("#ask-go")
+        need(wait_for(lambda: pg.evaluate("document.querySelector('#ask-go').disabled"), 3, pg=pg),
+             "묻기 직후 단추가 잠기지 않음")
+        need(wait_for(lambda: not pg.evaluate("document.querySelector('#ask-go').disabled"), 5, pg=pg),
+             "응답 없음 뒤 묻기 단추가 풀리지 않음")
+        need("지난 답" in pg.inner_text("#answer-status") and
+             "서버에서 이미 답을 만들고 있을 수 있으니" in pg.inner_text("#answer-status"),
+             "응답 없음 뒤 안내 글이 없음: %r" % pg.inner_text("#answer-status"))
+        c.close()
+    check("82 묻기 POST 응답 없음: 제한 시간 뒤 단추 풀림·안내 글", t82)
+
+
+    def t83():
+        # 녹음·파일 올리기가 대기열에서 빠져 서버에 올라가면 녹음 탭 상태 글이 '올리는 중' 에서
+        # '올렸습니다' 로 바뀐다(R57 A-D2). 새 서버·문맥에서 혼자 돈다.
+        b, _ = new_server("d83")
+        c = new_ctx()
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+
+        rec_cycle(pg)
+        need(wait_for(lambda: ("올렸습니다" in pg.inner_text("#rec-result") and
+                              "올리는 중" not in pg.inner_text("#rec-result")), 20, pg=pg),
+             "녹음 업로드 뒤 상태 글이 '올렸습니다' 로 바뀌지 않음: %r" % pg.inner_text("#rec-result"))
+        text = pg.inner_text("#rec-result")
+        need("마지막 녹음" in text, "녹음 상태 글에 '마지막 녹음' 이 없음: %r" % text)
+        need("기록 탭에서 볼 수 있습니다" in text, "녹음 완료 안내가 없음: %r" % text)
+        need(wait_for(lambda: len(server_items(b)) == 1, 10, pg=pg), "녹음이 서버에 올라가지 않음")
+
+        small = tmp / "r57-small.wav"
+        with wave.open(str(small), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(16000)
+            w.writeframes(b"\0\0" * 8000)
+        pg.set_input_files("#file-input", str(small))
+        need(wait_for(lambda: ("올렸습니다" in pg.inner_text("#rec-result") and
+                              "올리는 중" not in pg.inner_text("#rec-result") and
+                              "r57-small.wav" in pg.inner_text("#rec-result")), 20, pg=pg),
+             "파일 업로드 뒤 상태 글이 '올렸습니다' 로 바뀌지 않음: %r" % pg.inner_text("#rec-result"))
+        text = pg.inner_text("#rec-result")
+        need(text.startswith("파일 r57-small.wav"), "파일 상태 글 형식이 다름: %r" % text)
+        need(wait_for(lambda: len(server_items(b)) == 2, 10, pg=pg), "파일이 서버에 올라가지 않음")
+        c.close()
+    check("83 녹음 뒤 올리기가 끝나면 상태 글이 '올렸습니다' 로", t83)
+
+
+    def t84():
+        # 320px 에서 긴 토스트가 화면 폭(92vw)까지 퍼지고 화면 안에 있으며,
+        # 짧은 글 토스트는 글 폭에 맞게 좁다(R57 B-D1). 새 서버·문맥에서 혼자 돈다.
+        b, _ = new_server("d84")
+        c = new_ctx(viewport={"width": 320, "height": 700})
+        pg = c.new_page()
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        pg.click("#settings-btn")
+        need(wait_for(lambda: stt_fields_ready(pg, "stt-defaults"), 10, pg=pg),
+             "설정 기본값 읽기가 끝나지 않음")
+
+        long_msg = ("저장하지 못했습니다 - 서버가 잠시 응답하지 못해 기본값을 저장할 수 없습니다. "
+                    "잠시 뒤 다시 시도해 주세요. 계속 실패하면 서버 상태를 확인해 주세요.")
+        wanted = {"error": long_msg}
+
+        def put_503(route):
+            req = route.request
+            if req.method == "PUT" and req.url.split("?")[0].endswith("/api/stt-options"):
+                route.fulfill(status=503, content_type="application/json",
+                              body=json.dumps({"error": wanted["error"]}, ensure_ascii=False))
+            else:
+                route.continue_()
+
+        pg.route("**/api/stt-options", put_503)
+        pg.click("#stt-defaults-save")
+        need(wait_for(lambda: pg.is_visible("#toast") and long_msg in pg.inner_text("#toast"), 8, pg=pg),
+             "긴 오류 토스트가 뜨지 않음: %r" % pg.inner_text("#toast"))
+        box = pg.locator("#toast").bounding_box()
+        need(box is not None, "긴 토스트의 bounding box 가 없음")
+        need(box["width"] > 160 and box["width"] >= 250,
+             "320px 긴 토스트 폭이 화면 절반(%r)에 머묾" % box["width"])
+        need(box["x"] >= -0.5 and box["x"] + box["width"] <= 320 + 0.5,
+             "긴 토스트가 화면 밖: %r" % box)
+
+        wanted["error"] = "짧음"
+        pg.click("#stt-defaults-save")
+        need(wait_for(lambda: pg.inner_text("#toast").strip() == "짧음", 8, pg=pg),
+             "짧은 오류 토스트가 뜨지 않음: %r" % pg.inner_text("#toast"))
+        small = pg.locator("#toast").bounding_box()
+        need(small is not None, "짧은 토스트의 bounding box 가 없음")
+        need(small["width"] < 160, "짧은 토스트가 글 폭보다 훨씬 넓음(%.1fpx)" % small["width"])
+        need(small["width"] < box["width"], "짧은 토스트가 긴 토스트보다 좁지 않음: %r < %r" %
+             (small["width"], box["width"]))
+        c.close()
+    check("84 320px 긴 토스트가 화면 폭 거의 끝까지 퍼짐", t84)
+
+
+    def t85():
+        # R57-N1: 묻는 도중 펼친 답을 지우면 그 묻기를 버리므로 '묻기' 단추가 바로 풀린다.
+        # R57-N2: 묻기 POST 가 시간 제한으로 끊기면 지난 답을 다시 읽고 그 길을 안내한다.
+        b, _ = new_server("d85")
+        upload_rec(b, "askable85")
+
+        # (a) 답을 만들어 펼친 뒤, POST /api/ask 를 붙잡고 묻기 → 그 답 지우기 → 1초 안에 단추 풀림
+        c = new_ctx()
+        pg = c.new_page()
+        pg.on("dialog", lambda dlg: dlg.accept())
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        open_tab(pg, "ask")
+        pg.select_option("#ask-scope", "today")
+        pg.select_option("#ask-kind", "summary")
+        pg.click("#ask-go")
+        need(wait_for(lambda: "가짜 답" in pg.inner_text("#answer"), 20, pg=pg), "답이 오지 않음")
+        need(wait_for(lambda: pg.locator("#answers .answer-del").count() == 1, 10, pg=pg),
+             "지난 답 '지우기' 단추가 없음")
+        pg.locator("#answers .answer-open").click()          # 답을 펼친다
+        need(wait_for(lambda: pg.is_visible("#answer-actions"), 5, pg=pg), "답이 펼쳐지지 않음")
+        pg.evaluate("""() => {
+            window.__origFetchAsk = window.fetch;
+            window.fetch = function (input, init) {
+                const url = typeof input === 'string' ? input : input.url;
+                const method = (init && init.method) || 'GET';
+                if (method === 'POST' && url.split('?')[0].endsWith('/api/ask')) {
+                    return new Promise(function () {});
+                }
+                return window.__origFetchAsk(input, init);
+            };
+            return 'patched';
+        }""")
+        pg.click("#ask-go")
+        need(wait_for(lambda: pg.evaluate("document.querySelector('#ask-go').disabled"), 3, pg=pg),
+             "묻기 직후 단추가 잠기지 않음")
+        pg.click("#answers .answer-del")
+        need(wait_for(lambda: not pg.evaluate("document.querySelector('#ask-go').disabled"), 1, pg=pg),
+             "펼친 답을 지운 뒤 1초 안에 묻기 단추가 풀리지 않음")
+        c.close()
+
+        # (b) 제한 1000ms 로 POST 를 붙잡고 묻기 → 안내 글에 '지난 답' + GET /api/answers 한 번 더
+        c = new_ctx()
+        pg = c.new_page()
+        pg.add_init_script("window.__VOX_ASK_TIMEOUT_MS__ = 1000;")
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        pg.evaluate("""() => {
+            window.__answersGets = 0;
+            window.__origFetchAsk = window.fetch;
+            window.fetch = function (input, init) {
+                const url = typeof input === 'string' ? input : input.url;
+                const method = (init && init.method) || 'GET';
+                if (method === 'POST' && url.split('?')[0].endsWith('/api/ask')) {
+                    return new Promise(function () {});
+                }
+                if (method === 'GET' && url.split('?')[0].endsWith('/api/answers')) {
+                    window.__answersGets += 1;
+                }
+                return window.__origFetchAsk(input, init);
+            };
+            return 'patched';
+        }""")
+        open_tab(pg, "ask")
+        need(wait_for(lambda: pg.evaluate("window.__answersGets") >= 1, 5, pg=pg), "지난 답을 읽지 않음")
+        before = pg.evaluate("window.__answersGets")
+        pg.select_option("#ask-scope", "today")
+        pg.select_option("#ask-kind", "summary")
+        pg.click("#ask-go")
+        need(wait_for(lambda: "지난 답" in pg.inner_text("#answer-status"), 3, pg=pg),
+             "시간 제한 뒤 안내 글에 '지난 답' 이 없음: %r" % pg.inner_text("#answer-status"))
+        need(wait_for(lambda: pg.evaluate("window.__answersGets") >= before + 1, 3, pg=pg),
+             "시간 제한 뒤 GET /api/answers 가 한 번 더 나가지 않음")
+        c.close()
+    check("85 묻는 도중 펼친 답 지우기: 단추 풀림 / 시간 제한 뒤 지난 답 다시 읽기", t85)
+
+
+    def t86():
+        # R57-N3: 영구 실패(400) 뒤 상태 글이 '올리지 못했습니다' 로 바뀌는지 지킨다.
+        # 서비스 워커를 막고 POST /api/recordings 만 400 으로 돌려준다(기존 t15 와 같은 흉내 장치).
+        b, _ = new_server("d86")
+        c = new_ctx(service_workers="block")
+        pg = c.new_page()
+
+        def refuse(route):
+            if route.request.method == "POST" and route.request.url.split("?")[0].endswith("/api/recordings"):
+                route.fulfill(status=400, content_type="application/json",
+                              body=json.dumps({"error": "받을 수 없음"}, ensure_ascii=False))
+            else:
+                route.continue_()
+        pg.route("**/api/recordings", refuse)
+        pg.goto(b + "/")
+        pg.wait_for_selector("#rec")
+        rec_cycle(pg)
+        need(wait_for(lambda: "올리지 못했습니다" in pg.inner_text("#rec-result"), 15, pg=pg),
+             "영구 실패(400) 뒤 상태 글이 '올리지 못했습니다' 로 바뀌지 않음: %r" % pg.inner_text("#rec-result"))
+        need("마지막 녹음" in pg.inner_text("#rec-result"),
+             "상태 글에 '마지막 녹음' 이 없음: %r" % pg.inner_text("#rec-result"))
+        need(wait_for(lambda: pg.locator("#failed-list .failed-item").count() == 1, 10, pg=pg),
+             "'올리지 못한 녹음' 칸에 1 줄이 보이지 않음")
+        c.close()
+    check("86 올리기 영구 실패(400): 상태 글이 '올리지 못했습니다'", t86)
 
 
 if __name__ == "__main__":

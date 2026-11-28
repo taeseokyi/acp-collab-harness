@@ -81,10 +81,15 @@ def build(root):
                                               "nodes": [node("M1", "todo", waiting="provider:kisti")]}, ensure_ascii=False), encoding="utf-8")
     # 끝난 그래프 - 그 노드는 보드에 남는다 (판정을 기다리는 줄)
     (gd / "G-3.json").write_text(json.dumps({"id": "G-3", "request": "끝난 그래프", "created": now, "updated": now,
-                                              "nodes": [node("F1", "done", attempts=[att("F1-S2-a1")])]}, ensure_ascii=False), encoding="utf-8")
+                                              "nodes": [node("F1", "done", attempts=[att("F1-S2-a1")]), node("K1", "blocked")]}, ensure_ascii=False), encoding="utf-8")
+    # 같은 요청(Q-1)의 앞 그래프가 끝났고 G-1 이 아직 돈다 - 끝난 노드 P1 은 보드에 안 내리고, 막힌 P2 는 보드에 보인다
+    (gd / "G-4.json").write_text(json.dumps({"id": "G-4", "request": "Q-1 앞 그래프", "created": now, "updated": now,
+                                              "nodes": [node("P1", "done", attempts=[att("P1-S2-a1")]),
+                                                        node("P2", "blocked")]}, ensure_ascii=False), encoding="utf-8")
     con = sqlite3.connect(str(root / ".aimem" / "aimem.db"))
     # X9 는 어느 그래프에도 없는 줄(버린 그래프에서 남은 막힘) - 보드가 보여 줄 것
-    for tid, st in (("N1", "TODO"), ("N5", "BLOCKED"), ("N6", "BLOCKED"), ("N7", "REVIEW"), ("F1", "REVIEW"), ("X9", "BLOCKED")):
+    for tid, st in (("N1", "TODO"), ("N5", "BLOCKED"), ("N6", "BLOCKED"), ("N7", "REVIEW"), ("F1", "REVIEW"), ("X9", "BLOCKED"),
+                    ("P1", "REVIEW"), ("P2", "BLOCKED"), ("K1", "QUEUED")):   # K1 = 막힌 채 큐로 넘긴 줄
         con.execute("INSERT OR REPLACE INTO tasks(id, request_id, title, slot, status, inherited, artifacts, created, updated)"
                     " VALUES (?,?,?,?,?,?,?,?,?)", (tid, "Q-1" if tid.startswith("N") else None, "노드 " + tid, "S2", st, "", "", now, now))
     con.commit(); con.close()
@@ -175,17 +180,26 @@ def scenario(browser, base, checks, width):
                       str([rows(t) for t in ("N1", "N5", "N6", "N7")]))
             checks.ok("보드: 그래프 밖에 남은 X9 는 BLOCKED 로 보인다", rows("X9") == 1 and st("X9") == "BLOCKED")
             checks.ok("보드: 끝난 그래프(G-3)의 F1 은 DB 값 REVIEW 그대로 (노드는 done)", rows("F1") == 1 and st("F1") == "REVIEW")
+            checks.ok("보드: 같은 요청의 그래프가 도는 동안 앞 그래프(G-4)의 끝난 P1 은 없고 막힌 P2 는 보인다",
+                      rows("P1") == 0 and rows("P2") == 1 and st("P2") == "BLOCKED", str([rows("P1"), rows("P2")]))
+            checks.ok("보드: 큐로 넘긴 K1(QUEUED)은 없다", rows("K1") == 0, str(rows("K1")))
             notes = page.locator("#board-section .board-graph-note").all_inner_texts()
             checks.ok("보드: 도는 그래프마다 한 줄 - 실행 중 태스크 번호·상태별 수·그래프로 가는 단추",
                       len(notes) == 2 and "G-1" in notes[0] and "실행 중 1건 (N8)" in notes[0] and "대기 4" in notes[0]
                       and "막힘 2" in notes[0] and "끝남 1" in notes[0] and "그래프 보기" in notes[0]
                       and "G-2" in notes[1] and "실행 중 없음" in notes[1], str(notes))
             page.locator("#board-filter button", has_text="미완료").click()
-            checks.ok("미완료 칩에 REVIEW 포함 (2건)", "미완료 2" in page.locator("#board-filter").inner_text(), page.locator("#board-filter").inner_text())
+            checks.ok("미완료 칩에 REVIEW 포함 (3건)", "미완료 3" in page.locator("#board-filter").inner_text(), page.locator("#board-filter").inner_text())
             checks.ok("보드 탭에는 보드 숫자가 없다 (큐 숫자만)", page.locator("#tab-count-board").count() == 0)
             page.locator("#board-section .board-graph-note button").first.click()
             page.wait_for_selector("#graphs-list .graph-block", state="visible", timeout=5000)
             checks.ok("단추를 누르면 태스크 그래프가 있는 탭으로 간다", page.locator("#tab-requests").get_attribute("aria-selected") == "true")
+            # 큐로 넘긴 K1 은 닫힌 그래프(G-3)를 펼치면 막힌 노드로 남아 보인다
+            page.locator("#graphs-list .closed-fold").first.click()
+            head = page.locator("#graph-G-3").text_content() or ""
+            page.locator("#graph-G-3 button").first.click()          # 접힌 그래프를 편다
+            g3 = page.locator("#graph-G-3").text_content() or ""
+            checks.ok("그래프: 큐로 넘긴 K1 은 닫힌 그래프 G-3 에 막힌 노드로 남는다", "막힘 1" in head and "K1" in g3, g3[:200])
         checks.ok(f"[{width}] 자바스크립트 오류 없음", not errors, "; ".join(errors)[:200])
     finally:
         ctx.close()

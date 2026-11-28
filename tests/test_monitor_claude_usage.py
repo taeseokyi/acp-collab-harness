@@ -380,3 +380,35 @@ class ClaudeUsageTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GoUsageTest(unittest.TestCase):
+    """오픈코드 Go 사용 한도 (2026-11-28): 응답을 함대 탭 행으로 읽고, 모니터 서버가 아니면 밖으로 묻지 않는다."""
+
+    def test_parse_reads_three_meters_in_order(self):
+        out = server.parse_go_usage({"usage": {
+            "monthly": {"status": "ok", "percent": 50, "resetsAt": "2026-12-01T00:00:00.000Z"},
+            "rolling": {"status": "ok", "percent": 30, "resetsAt": "2026-11-21T15:00:00.000Z"},
+            "weekly": {"status": "rate-limited", "percent": 100, "resetsAt": "2026-11-23T00:00:00.000Z"}}}, "2026-11-21T10:00:00")
+        self.assertEqual([r["key"] for r in out["rows"]], ["rolling", "weekly", "monthly"])
+        self.assertEqual([r["label"] for r in out["rows"]], ["5시간", "주간", "월간"])
+        self.assertEqual([r["percent"] for r in out["rows"]], [30.0, 100.0, 50.0])
+        self.assertEqual([r["limited"] for r in out["rows"]], [False, True, False])
+        self.assertTrue(all(r["resets_at_iso"] for r in out["rows"]))
+
+    def test_parse_refuses_what_it_cannot_read(self):
+        for bad in (None, [], {}, {"usage": []}, {"usage": {"rolling": "x"}}, {"usage": {"rolling": {"percent": True}}},
+                    {"type": "error", "error": {"type": "EntitlementError"}}):
+            self.assertIsNone(server.parse_go_usage(bad, "t"), bad)
+
+    def test_no_fetch_outside_a_running_monitor(self):
+        self.assertFalse(server.GO_USAGE_FETCH)
+        with mock.patch.object(server.urllib.request, "urlopen", side_effect=AssertionError("밖으로 나갔다")):
+            self.assertIsNone(server.go_usage(server.ROOT))
+            self.assertIsNone(server.collect_state(server.ROOT).get("go_usage"))
+
+    def test_no_key_means_no_fetch_and_blank_state_has_the_key(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(server, "GO_USAGE_FETCH", True), \
+                mock.patch.object(server.urllib.request, "urlopen", side_effect=AssertionError("밖으로 나갔다")):
+            self.assertIsNone(server.go_usage(pathlib.Path(d)))
+        self.assertIn("go_usage", server._blank_keys(server.ROOT))

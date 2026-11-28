@@ -5,6 +5,7 @@ const STATUS_CLASS = {
   REVIEW: 'review',
   DONE: 'done',
   BLOCKED: 'blocked',
+  QUEUED: 'neutral',
   NEW: 'new',
   PLANNED: 'planned',
   REJECTED: 'rejected',
@@ -133,7 +134,7 @@ function badge(text, cls) {
 const STATUS_LABEL = {
   done: '완료', running: '실행 중', 'in-progress': '진행 중', todo: '할 일', assigned: '배정됨', review: '검토 중',
   blocked: '막힘', failed: '실패', lost: '사라짐', new: '새 요청', planned: '계획됨', rejected: '거절',
-  partial: '일부 완료', unknown: '모름', infra: '공급자 장애',
+  partial: '일부 완료', unknown: '모름', infra: '공급자 장애', queued: '큐로 넘김',
 };
 // 보드(와 요청 안 서브태스크)의 칸은 엔진이 그래프 노드를 따라 고친다 - REVIEW 는 관리자 판정 대기, BLOCKED 는 막힘이거나 실패
 const BOARD_LABEL = { review: '관리자 확인 대기', blocked: '막힘·실패' };
@@ -2249,6 +2250,7 @@ function renderClaudeUsage(data) {
   const box = $('claude-usage');
   const stale = $('usage-stale');
   if (stale) stale.textContent = '';
+  renderGoUsage(data);
   if (!box) return;
   box.textContent = '';
 
@@ -2258,13 +2260,29 @@ function renderClaudeUsage(data) {
     return;
   }
   if (stale) stale.textContent = usageStaleText(usage.age_seconds);
+  usageRows(box, usage.rows);
+}
 
-  for (const item of usage.rows) {
+// 오픈코드 Go 구독 한도 - 키가 없거나 아직 못 물었으면 자리째 숨긴다
+function renderGoUsage(data) {
+  const wrap = $('go-usage-wrap');
+  const box = $('go-usage');
+  if (!wrap || !box) return;
+  const usage = data && data.go_usage;
+  const rows = usage && Array.isArray(usage.rows) ? usage.rows : [];
+  wrap.hidden = rows.length === 0;
+  box.textContent = '';
+  if ($('go-usage-stale')) $('go-usage-stale').textContent = rows.length ? usageStaleText(usage.age_seconds) : '';
+  usageRows(box, rows);
+}
+
+function usageRows(box, rows) {
+  for (const item of rows) {
     if (!item) continue;
     const percent = Number(item.percent);
     const pct = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0;
     const row = document.createElement('div');
-    row.className = 'usage-row ' + (pct < 80 ? 'usage-ok' : (pct < 95 ? 'usage-warn' : 'usage-crit'));
+    row.className = 'usage-row ' + (item.limited ? 'usage-crit' : pct < 80 ? 'usage-ok' : (pct < 95 ? 'usage-warn' : 'usage-crit'));
     row.dataset.key = show(item.key, '');
 
     const label = document.createElement('span');
@@ -2282,7 +2300,7 @@ function renderClaudeUsage(data) {
 
     const pctText = document.createElement('span');
     pctText.className = 'usage-pct';
-    pctText.textContent = Math.round(pct) + '%';
+    pctText.textContent = Math.round(pct) + '%' + (item.limited ? ' · 한도 닿음' : '');
     row.appendChild(pctText);
 
     const resetText = fmtUsageReset(item.resets_at_iso);
@@ -3380,7 +3398,7 @@ function resolveBoardRunId(taskId, data) {
 
 // 보드 칸은 엔진이 그래프 노드 상태를 따라 직접 고친다(running→IN-PROGRESS, done→REVIEW, failed·blocked→BLOCKED).
 // DONE·REJECTED 만 관리자의 판정 - 그 둘만 '닫힘'. REVIEW 는 끝났고 관리자 판정을 기다리는 상태다.
-const boardClosed = (b) => ['DONE', 'REJECTED'].includes(String(b.status || '').toUpperCase());
+const boardClosed = (b) => ['DONE', 'REJECTED', 'QUEUED'].includes(String(b.status || '').toUpperCase());
 const BOARD_FILTERS = [
   { key: 'open', label: '미완료', test: (b) => !boardClosed(b) },
   { key: 'done', label: '완료', test: (b) => String(b.status || '').toUpperCase() === 'DONE' },
@@ -3646,17 +3664,28 @@ function graphFinished(g) {
 
 // 같은 일감을 두 곳에 적지 않는다 (2026-11-28 태석님): 도는 그래프의 노드는 태스크 그래프에서만 보이고,
 // 보드는 그래프 밖에 남은 것(막힘·검토 대기·이월)만, 요청 카드는 요약과 그래프로 가는 단추만 보인다.
+// 한 요청이 그래프를 여럿 거치면(1차 그래프가 끝나고 2차가 도는 라운드) 끝난 그래프의 끝난 노드도 아직 그래프의 일이다 -
+// 같은 요청의 그래프가 하나라도 도는 동안에는 보드에 내리지 않는다 (막힌 노드는 보드에 보인다).
 function liveGraphNodeIds(data) {
   const ids = new Set();
-  for (const g of (data && Array.isArray(data.graphs) ? data.graphs : [])) {
-    if (!g || graphFinished(g)) continue;
-    for (const n of (Array.isArray(g.nodes) ? g.nodes : [])) if (n && n.id) ids.add(n.id);
+  const graphs = (data && Array.isArray(data.graphs) ? data.graphs : []).filter(Boolean);
+  const reqIds = (g) => String(g.request || '').split(/\s+/).filter((w) => /^Q-/.test(w));
+  const liveReqs = new Set();
+  for (const g of graphs) if (!graphFinished(g)) for (const r of reqIds(g)) liveReqs.add(r);
+  for (const g of graphs) {
+    const live = !graphFinished(g);
+    if (!live && !reqIds(g).some((r) => liveReqs.has(r))) continue;
+    for (const n of (Array.isArray(g.nodes) ? g.nodes : [])) {
+      if (n && n.id && (live || String(n.status || '').toLowerCase() === 'done')) ids.add(n.id);
+    }
   }
   return ids;
 }
 function boardOutsideGraphs(data) {
   const live = liveGraphNodeIds(data);
-  return (data && Array.isArray(data.board) ? data.board : []).filter((b) => b && !live.has(b.id));
+  // 큐로 넘긴 줄(QUEUED)은 보드에서 빠진다 - 일은 대기 큐 항목이 잇고, 막힌 노드는 태스크 그래프에 남아 보인다
+  return (data && Array.isArray(data.board) ? data.board : [])
+    .filter((b) => b && !live.has(b.id) && String(b.status || '').toUpperCase() !== 'QUEUED');
 }
 // 요청에 딸린 그래프 - 그래프의 `request` 글머리에 요청 id 가 적힌다 (요청 여럿이면 여럿)
 function graphsOfRequest(reqId, data) {
@@ -4350,20 +4379,21 @@ function renderRequests(data) {
       if (emptyText) body.appendChild(emptyP(emptyText));
     } else if (graphsOfRequest(req.id, data).length) {
       // 노드별 상태는 태스크 그래프가 정본이다 - 여기서는 몇 건이 어디까지 갔는지와 그래프로 가는 단추만
-      const count = { done: 0, review: 0, running: 0, blocked: 0, todo: 0 };
+      const count = { done: 0, review: 0, running: 0, blocked: 0, todo: 0, queued: 0 };
       for (const st of subtasks) {
         const k = String(st.status || '').toUpperCase();
         if (k === 'DONE') count.done++;
         else if (k === 'REVIEW') count.review++;
         else if (k === 'IN-PROGRESS') count.running++;
         else if (k === 'BLOCKED' || k === 'REJECTED') count.blocked++;
+        else if (k === 'QUEUED') count.queued++;
         else count.todo++;
       }
       const sum = document.createElement('p');
       sum.className = 'req-summary';
       sum.textContent = [`서브태스크 ${subtasks.length}건`, `끝남 ${count.done}`,
         count.review ? `검토 대기 ${count.review}` : '', count.running ? `진행 중 ${count.running}` : '',
-        count.todo ? `대기 ${count.todo}` : '', count.blocked ? `막힘 ${count.blocked}` : ''].filter(Boolean).join(' · ') + ' · ';
+        count.todo ? `대기 ${count.todo}` : '', count.blocked ? `막힘 ${count.blocked}` : '', count.queued ? `큐로 넘김 ${count.queued}` : ''].filter(Boolean).join(' · ') + ' · ';
       for (const g of graphsOfRequest(req.id, data)) {
         const go = document.createElement('button');
         go.type = 'button';

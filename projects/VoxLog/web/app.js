@@ -8,6 +8,11 @@
   var KIND = { summary: '요약', keywords: '핵심어', todo: '할 일', custom: '직접 묻기' };
   var UNSUPPORTED = '녹음은 VoxLog 자체 주소에서 - 여기서는 기록·묻기만';
 
+  // 목록·묻기 요청의 시간 제한. 검사는 window.__VOX_LIST_TIMEOUT_MS__·__VOX_ASK_TIMEOUT_MS__ 로 줄일 수 있다.
+  // 0 이하거나 없으면 기본값(목록 15초·묻기 POST 30초).
+  var LIST_TIMEOUT_MS = (window.__VOX_LIST_TIMEOUT_MS__ > 0) ? window.__VOX_LIST_TIMEOUT_MS__ : 15000;
+  var ASK_TIMEOUT_MS = (window.__VOX_ASK_TIMEOUT_MS__ > 0) ? window.__VOX_ASK_TIMEOUT_MS__ : 30000;
+
   var state = {
     cfg: { token: '', autoRecord: false, saveLocation: true },
     selected: new Set(),
@@ -19,6 +24,7 @@
     searchTimer: 0,
     lastItems: [],
     queueCount: 0,
+    recUpload: null,
     tagFilter: '',
     llm: false,
     detailTimer: 0,
@@ -31,6 +37,8 @@
     // 묶음(설정·상세)마다 지금 도는 기본값 읽기 { ac, timer }. 열 때마다 앞 읽기를 끊고 새로 읽는다(R53-N7·N9).
     sttReads: { defaults: null, detail: null },
     sttSaving: false,
+    // 지금 도는 기본값 저장의 주인 표. 타이머가 시간을 다하면 이 표를 비워 늦은 응답을 무시한다(R55-N1).
+    sttSave: null,
     // 묶음(설정·상세)마다 여는 차례를 세는 번호. 응답 처리기는 자기 번호일 때만 칸을 채우고 푼다(R53-N6).
     sttSeq: { defaults: 0, detail: 0 },
     // 녹음
@@ -266,7 +274,8 @@
     return opts;
   }
 
-  var STT_DEFAULTS_TIMEOUT_MS = 15000;
+  // 검사는 window.__VOX_STT_TIMEOUT_MS__ 로 줄일 수 있다. 0 이하거나 없으면 15초.
+  var STT_DEFAULTS_TIMEOUT_MS = (window.__VOX_STT_TIMEOUT_MS__ > 0) ? window.__VOX_STT_TIMEOUT_MS__ : 15000;
 
   // 이 묶음에 걸린 기본값 읽기를 끊는다. 끊긴 쪽의 처리기는 주인이 아니므로 아무것도 하지 않는다.
   function abortSttRead(bundle) {
@@ -283,11 +292,18 @@
     abortSttRead(bundle);
     var ac;
     try { ac = new AbortController(); } catch (e) { onFail(new Error('불러오지 못했습니다')); return; }
-    var timedOut = false;
-    var timer = setTimeout(function () { timedOut = true; ac.abort(); }, STT_DEFAULTS_TIMEOUT_MS);
-    state.sttReads[bundle] = { ac: ac, timer: timer };
+    state.sttReads[bundle] = { ac: ac, timer: 0 };
     // 이 읽기가 아직 그 묶음의 주인인가 - 새 읽기나 저장이 끊었으면 false.
     function current() { var r = state.sttReads[bundle]; return r && r.ac === ac; }
+    // 타이머가 울리면 fetch 가 시작되기 전(getConfig 대기)에도 바로 칸을 푼다.
+    // 뒤늦게 오는 응답·거절은 주인이 아니라 아무것도 하지 않는다(R55-N2).
+    var timer = setTimeout(function () {
+      if (!current()) return;
+      state.sttReads[bundle] = null;
+      ac.abort();
+      if (seq === state.sttSeq[bundle]) onFail(new Error('시간이 지났습니다'));
+    }, STT_DEFAULTS_TIMEOUT_MS);
+    state.sttReads[bundle].timer = timer;
     api().json('api/stt-options', { signal: ac.signal }).then(function (d) {
       if (!current()) return; // 앞 읽기였거나 끊겼다 - 새 주인이 이 칸을 맡는다
       clearTimeout(timer);
@@ -296,11 +312,11 @@
       var o = d && d.options;
       onFill(o && typeof o === 'object' && !Array.isArray(o) ? o : {});
     }, function (e) {
-      if (!current()) return; // 내가(다음 열기나 저장이) 끊었다
+      if (!current()) return; // 내가(다음 열기나 저장이) 끊었거나 시간이 지났다
       clearTimeout(timer);
       state.sttReads[bundle] = null;
       if (seq !== state.sttSeq[bundle]) return;
-      onFail(timedOut ? new Error('시간이 지났습니다') : e);
+      onFail(e);
     });
   }
 
@@ -346,7 +362,27 @@
     abortSttRead('defaults');
     setSttFieldsBusy(els, true, saveBtn);
     st.textContent = '저장 중…';
-    api().json('api/stt-options', { method: 'PUT', body: { options: opts } }).then(function (d) {
+    var ac = null;
+    try { ac = new AbortController(); } catch (e) { ac = null; }
+    var token = {};
+    state.sttSave = token;
+    function currentSave() { return state.sttSave === token; }
+    // 읽기와 같은 15초 제한 - 응답이 안 오면 칸을 잠근 채 두지 않는다(R55-N1).
+    var timer = setTimeout(function () {
+      if (!currentSave()) return;
+      state.sttSave = null;
+      state.sttSaving = false;
+      if (ac) ac.abort();
+      setSttFieldsBusy(els, false, saveBtn);
+      st.textContent = '';
+      toast('받아쓰기 기본값을 저장하지 못했습니다: 시간이 지났습니다');
+    }, STT_DEFAULTS_TIMEOUT_MS);
+    var init = { method: 'PUT', body: { options: opts } };
+    if (ac) init.signal = ac.signal;
+    api().json('api/stt-options', init).then(function (d) {
+      if (!currentSave()) return; // 시간이 지나 타이머가 이미 풀었거나 새 저장이 주인이다
+      clearTimeout(timer);
+      state.sttSave = null;
       state.sttSaving = false;
       var o = d && d.options;
       var next = o && typeof o === 'object' && !Array.isArray(o) ? o : opts;
@@ -355,6 +391,9 @@
       st.textContent = '';
       toast('받아쓰기 기본값을 저장했습니다.');
     }, function (e) {
+      if (!currentSave()) return; // 타이머가 이미 풀었다 - 두 번 처리하지 않는다
+      clearTimeout(timer);
+      state.sttSave = null;
       state.sttSaving = false;
       setSttFieldsBusy(els, false, saveBtn);
       st.textContent = '';
@@ -541,6 +580,34 @@
 
   function queueApi() { try { return window.VoxQueue || null; } catch (e) { return null; } }
 
+  // 녹음·파일 올리기의 끝을 녹음 탭 상태 글에 반영한다. 판정은 대기열 목록(pending)만으로 한다 - queue.js 는 그대로.
+  function recUploadLabel(t) {
+    return t.fileName ? '파일 ' + t.fileName : '마지막 녹음 ' + fmtClock(t.durationMs || 0);
+  }
+
+  function trackRecUpload(clientId, fileName, durationMs) {
+    state.recUpload = { clientId: clientId, fileName: fileName || '', durationMs: durationMs || 0 };
+  }
+
+  function applyRecUploadStatus(arr) {
+    var t = state.recUpload;
+    if (!t) return;
+    var row = null;
+    for (var i = 0; i < arr.length; i++) {
+      if (arr[i].clientId === t.clientId) { row = arr[i]; break; }
+    }
+    var el = $('rec-result');
+    if (!row) {
+      // 대기열에서 빠졌다 = 서버에 올라갔다
+      el.textContent = recUploadLabel(t) + ' · 올렸습니다. 받아쓰기는 기록 탭에서 볼 수 있습니다.';
+      state.recUpload = null;
+    } else if (row.state === 'failed') {
+      // 영구 실패(4xx)로 '올리지 못한 녹음' 칸에 간 경우. 오프라인(waiting + lastError)은 그대로 둔다.
+      el.textContent = recUploadLabel(t) + " · 올리지 못했습니다 - 아래 '올리지 못한 녹음' 에서 다시 올릴 수 있습니다.";
+      state.recUpload = null;
+    }
+  }
+
   function updateQueue() {
     var q = queueApi();
     if (!q) return Promise.resolve();
@@ -550,6 +617,7 @@
       arr = arr || [];
       var n = arr.filter(function (r) { return r.state !== 'failed'; }).length;
       renderFailed(arr.filter(function (r) { return r.state === 'failed' || r.lastError; }));
+      applyRecUploadStatus(arr);
       var prev = state.queueCount;
       state.queueCount = n;
       var el = $('queue-count');
@@ -762,6 +830,7 @@
       rc.timer = setInterval(function () {
         $('rec-time').textContent = fmtClock(Date.now() - rc.startedAt);
       }, 500);
+      state.recUpload = null;
       $('rec-result').textContent = '녹음 중…';
       lockScreen();
     }, function (e) {
@@ -837,11 +906,14 @@
     if (!mime) { toast('올릴 수 있는 파일은 m4a · mp3 · wav · ogg · webm 입니다.'); return Promise.resolve(); }
     if (!file.size) { toast('빈 파일입니다.'); return Promise.resolve(); }
     if (file.size > FILE_MAX) { toast('파일이 너무 큽니다 (최대 50MB).'); return Promise.resolve(); }
+    state.recUpload = null;
     $('rec-result').textContent = '파일 저장 중…';
+    var clientId = uuid();
     return fileDuration(file).then(function (durationMs) {
       // 기록 시각 = 올린 때(파일에 적힌 날짜가 아니라 작업한 날) - 기록 목록에 방금 한 일로 맨 위에 보인다
-      return q.enqueue({ blob: file, mime: mime, recordedAt: localIso(new Date()), durationMs: durationMs });
+      return q.enqueue({ blob: file, mime: mime, recordedAt: localIso(new Date()), durationMs: durationMs, clientId: clientId });
     }).then(function () {
+      trackRecUpload(clientId, file.name || '', null);
       $('rec-result').textContent = '파일 ' + (file.name || '') + ' · 저장됨, 서버로 올리는 중입니다.';
       updateQueue();
     }, function (e) {
@@ -888,6 +960,7 @@
       return enqueueAndDiscard(q, item, draftId);
     });
     p.then(function () {
+      trackRecUpload(draftId, '', durationMs);
       $('rec-result').textContent = '마지막 녹음 ' + fmtClock(durationMs) + ' · 저장됨, 서버로 올리는 중입니다.';
       updateQueue();
     }, function (e) {
@@ -1138,14 +1211,46 @@
     });
   }
 
+  function setListBusy(on) {
+    var ul = $('list');
+    if (!ul) return;
+    if (on) ul.setAttribute('aria-busy', 'true');
+    else ul.removeAttribute('aria-busy');
+  }
+
+  // 목록을 못 불러오면 목록 위에 까닭과 '다시 시도' 단추를 남긴다. 옛 목록은 지우지 않는다.
+  function hideListError() {
+    var box = $('list-error');
+    if (box) box.hidden = true;
+  }
+
+  function showListError(e) {
+    var box = $('list-error');
+    if (!box) return;
+    clear(box);
+    box.appendChild(document.createTextNode(
+      '목록을 불러오지 못했습니다: ' + ((e && e.message) || '알 수 없음') + ' '));
+    var btn = document.createElement('button');
+    btn.id = 'list-retry';
+    btn.type = 'button';
+    btn.className = 'small';
+    btn.textContent = '다시 시도';
+    btn.addEventListener('click', function () { loadList(); });
+    box.appendChild(btn);
+    box.hidden = false;
+  }
+
   function loadList() {
     var seq = ++state.listSeq;
     clearTimeout(state.listTimer);
     var wasBusy = state.lastItems.some(function (i) { return i.status === 'pending' || i.status === 'transcribing'; }) ||
       (state.detailId && (state.detailStatus === 'pending' || state.detailStatus === 'transcribing'));
     var qs = filterParams(200).toString();
-    return api().json('api/recordings?' + qs).then(function (data) {
+    setListBusy(true);
+    return api().json('api/recordings?' + qs, { timeoutMs: LIST_TIMEOUT_MS }).then(function (data) {
       if (seq !== state.listSeq) return;
+      setListBusy(false);
+      hideListError();
       setConn('ok', '연결됨');
       var items = data.items || [];
       state.lastItems = items;
@@ -1159,7 +1264,10 @@
       if (busy) state.listTimer = setTimeout(loadList, 5000);
     }, function (e) {
       if (seq !== state.listSeq) return;
+      setListBusy(false);
       onApiError(e);
+      if (e && e.status >= 500) setConn('bad', '서버 오류'); // 5xx 는 연결은 됐지만 서버가 실패
+      showListError(e);
       if (wasBusy && !(e && e.status === 401)) state.listTimer = setTimeout(loadList, 5000);
     });
   }
@@ -1495,7 +1603,8 @@
     if (!window.confirm('이 답을 지울까요? 되돌릴 수 없습니다. (녹취는 그대로 남습니다)')) return;
     api().json('api/answers/' + encodeURIComponent(aid), { method: 'DELETE' }).then(function () {
       if (state.shownAnswer === aid) { // 화면에 펼쳐 둔 답이면 같이 치운다
-        state.askToken++;
+        state.askToken++;                // 진행 중인 묻기를 버린다 - 단추도 여기서 풀어야 잠긴 채 남지 않는다
+        $('ask-go').disabled = false;
         state.shownAnswer = null;
         state.shownText = '';
         $('answer-actions').hidden = true;
@@ -1570,14 +1679,21 @@
       }
       $('answer-status').textContent = '요청 중…';
       $('answer').textContent = '';
-      return api().json('api/ask', { method: 'POST', body: { kind: kind, prompt: prompt, ids: ids } }).then(function (a) {
+      return api().json('api/ask', { method: 'POST', body: { kind: kind, prompt: prompt, ids: ids }, timeoutMs: ASK_TIMEOUT_MS }).then(function (a) {
         if (token !== state.askToken) return;
         showAnswer(a);
         if (a.status === 'done' || a.status === 'failed') { $('ask-go').disabled = false; loadAnswers(); }
         else pollAnswer(a.id, token);
       });
     }).catch(function (e) {
+      if (token !== state.askToken) return;
       $('ask-go').disabled = false;
+      if (e && e.timeout) {
+        // 시간이 지나도 빈 글로 지우지 않는다. 서버에는 답이 만들어졌을 수 있으니 지난 답을 다시 읽어 보여 준다.
+        $('answer-status').textContent = '응답이 없습니다 - 서버에서 이미 답을 만들고 있을 수 있으니 아래 지난 답을 먼저 확인해 주세요.';
+        loadAnswers();
+        return;
+      }
       $('answer-status').textContent = '';
       onApiError(e);
     });
